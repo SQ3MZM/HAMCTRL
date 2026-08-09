@@ -1018,6 +1018,7 @@ body.page-wsjtx-active { overflow: hidden; }
   white-space: nowrap;
 }
 #wj-tx-freeze-btn.active { border-color: #2a6a8a; color: #4cf; background: #05202a; }
+#wj-fake-split-toggle.active { border-color: #8a6a2a; color: #fc0; background: #2a1f05; }
 
 /* Środkowy obszar */
 .wsjtx-main {

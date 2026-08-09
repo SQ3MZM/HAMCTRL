@@ -572,6 +572,9 @@
       </span>
       <div style="flex:1"></div>
       <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
+      <button id="wj-fake-split-toggle" onclick="WSJTX.toggleFakeSplit()" class="wj-btn" style="margin-left:6px;"
+        title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
+      <span id="wj-fake-split-target" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:4px;"></span>
 
       <!-- Kontrolki palety w stylu WSJT-X (Reference/Zero/Gain) -->
       <div style="display:flex;align-items:center;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">

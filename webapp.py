@@ -564,6 +564,15 @@ class App:
         # startuje na tej samej wartosci co TX, ale moze byc przesuwany calkowicie
         # niezaleznie (np. nasluch na innej czestotliwosci niz aktualne nadawanie)
 
+        # ── Fake Split (Rig Split) ───────────────────────────────────────────
+        # Przesuwa VFO PRZED nadawaniem tak, zeby audio TX bylo blisko srodka
+        # filtra SSB (~1500Hz), zamiast blisko jego krawedzi — na krawedziach
+        # filtr tlumi sygnal (moc spada, ALC/splattery). Po nadaniu VFO wraca
+        # na miejsce. Logika (niezmiennik freq_eteru = dial+audio) pochodzi z
+        # fake_split_prototype.py. Stan wlaczenia zapamietany w configu.
+        self._fake_split_enabled = bool(self.cfg.get("ft8", {}).get("fakeSplit", False))
+        self._fake_split_state = None  # dict {dial_hz, audio_hz} do przywrocenia po TX, albo None
+
         # ── Automatyka QSO (pelna automatyka w stylu WSJT-X) ────────────────
         self._qso_engine = qso_engine.QsoEngine(my_call=CALLSIGN, my_grid=LOCATOR)
         self._auto_seq_enabled = True    # ZAWSZE aktywne (nie ma juz toggle w UI);
@@ -4055,6 +4064,11 @@ class App:
                 "partner": self._qso_engine.partner_call,
                 "queue": list(self._qso_engine.queue),
             }))
+            await ws.send_str(json.dumps({
+                "type": "ft8_fake_split_status",
+                "enabled": self._fake_split_enabled,
+                "targetHz": 1500,
+            }))
             _audio_sub = False
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
@@ -5667,6 +5681,17 @@ class App:
             print(f"[ft8] Okres nadawania ustawiony na: {period}")
             await self.hub.broadcast({"type": "ft8_tx_period", "period": period})
 
+        elif t == "ft8_toggle_fake_split":
+            # Wlacz/wylacz Fake Split (patrz _apply_fake_split_before_tx).
+            # Stan zapamietany w configu — przetrwa restart serwera.
+            self._fake_split_enabled = bool(msg.get("enabled", not self._fake_split_enabled))
+            self.cfg.setdefault("ft8", {})["fakeSplit"] = self._fake_split_enabled
+            save_json(CFG_F, self.cfg)
+            print(f"[ft8] Fake Split {'WLACZONY' if self._fake_split_enabled else 'wylaczony'}")
+            await self.hub.broadcast({"type": "ft8_fake_split_status",
+                                       "enabled": self._fake_split_enabled,
+                                       "targetHz": 1500})
+
         elif t == "ft8_set_decode_mode":
             mode = msg.get("mode", "FT8")
             if mode not in ("FT8", "FT4"):
@@ -5810,6 +5835,96 @@ class App:
             self._cq_task.cancel()
         self._cq_task = None
 
+    @staticmethod
+    def _compute_fake_split(dial_hz: float, desired_audio_hz: float) -> dict:
+        """Oblicza Fake Split: o ile przesunac VFO (dial) zeby audio TX bylo
+        blisko srodka filtra SSB (~1500Hz) przy zachowanym niezmienniku
+        freq_eteru = dial + audio (musi byc identyczna przed i po). Logika
+        1:1 z fake_split_prototype.py (tam przetestowana osobno na sucho,
+        bez dotykania radia, zanim wpieta zostala tutaj w tor TX).
+
+        Zwraca dict: on_air_hz, split_needed, new_dial_hz, new_audio_hz,
+        restore_dial_hz (= dial_hz, na co wrocic po nadaniu)."""
+        TARGET_AUDIO_HZ = 1500.0
+        AUDIO_MIN_HZ, AUDIO_MAX_HZ = 300.0, 2700.0
+        VFO_STEP_HZ = 500.0  # blokowe przesuniecia — radio nie nadaza na ciagle strojenie
+
+        on_air_hz = dial_hz + desired_audio_hz
+        if AUDIO_MIN_HZ <= desired_audio_hz <= AUDIO_MAX_HZ and 600.0 <= desired_audio_hz <= 2400.0:
+            # Audio juz wystarczajaco daleko od krawedzi filtra — split zbedny.
+            return {"on_air_hz": on_air_hz, "split_needed": False,
+                    "new_dial_hz": dial_hz, "new_audio_hz": desired_audio_hz,
+                    "restore_dial_hz": dial_hz}
+
+        raw_shift = desired_audio_hz - TARGET_AUDIO_HZ
+        vfo_shift = round(raw_shift / VFO_STEP_HZ) * VFO_STEP_HZ
+        new_dial_hz = dial_hz + vfo_shift
+        new_audio_hz = on_air_hz - new_dial_hz  # dopelnienie do niezmiennika
+        return {"on_air_hz": on_air_hz, "split_needed": True,
+                "new_dial_hz": new_dial_hz, "new_audio_hz": new_audio_hz,
+                "restore_dial_hz": dial_hz}
+
+    async def _apply_fake_split_before_tx(self):
+        """Jesli Fake Split jest wlaczony, przesuwa VFO PRZED nadawaniem i
+        podmienia self._ft8_tx_freq_hz na bezpieczny offset (~1500Hz) na czas
+        TEJ transmisji — wolane raz, na samym poczatku _ft8_tx_sequence_inner,
+        PRZED sprawdzeniem cache PCM (self._pre_pcm_cache), ktory kasujemy gdy
+        split jest potrzebny: pre-gen PCM (patrz _send_auto_tx) zostal policzony
+        dla STAREGO audio offsetu sprzed przesuniecia VFO — uzycie go teraz
+        wyslaloby dzwiek niezgodny z nowa pozycja VFO i zlamalo niezmiennik
+        czestotliwosci w eterze. Stan do przywrocenia trzymany w
+        self._fake_split_state (None jesli nic nie trzeba przywracac —
+        _restore_fake_split_after_tx() jest wtedy bezpiecznym no-opem)."""
+        self._fake_split_state = None
+        if not self._fake_split_enabled:
+            return False
+        original_audio_hz = self._ft8_tx_freq_hz
+        split = self._compute_fake_split(self.rig.freq, original_audio_hz)
+        if not split["split_needed"]:
+            return False
+        self._fake_split_state = {"dial_hz": split["restore_dial_hz"],
+                                   "audio_hz": original_audio_hz}
+        self.rig.freq = split["new_dial_hz"]
+        if not self.rig.sim:
+            try:
+                await self.rig.set_freq(split["new_dial_hz"])
+            except Exception as e:
+                print(f"[ft8] Fake Split set_freq blad: {e!r}")
+                self._fake_split_state = None
+                return False
+        self._ft8_tx_freq_hz = split["new_audio_hz"]
+        self._pre_pcm_cache = None  # unieważnij — policzony dla starego audio offsetu
+        print(f"[ft8] Fake Split: VFO {split['restore_dial_hz']:.0f} -> "
+              f"{split['new_dial_hz']:.0f}Hz, audio -> {split['new_audio_hz']:.0f}Hz "
+              f"(eter bez zmian: {split['on_air_hz']:.0f}Hz)")
+        await self.hub.broadcast({"type": "freq", "freq": int(split["new_dial_hz"])})
+        await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
+                                   "frozen": self._ft8_tx_frozen})
+        return True
+
+    async def _restore_fake_split_after_tx(self):
+        """Przywraca VFO i audio TX offset do stanu sprzed
+        _apply_fake_split_before_tx(). Bezpieczny no-op gdy split nie zostal
+        zastosowany dla biezacej transmisji (self._fake_split_state is None) —
+        wolane bezwarunkowo w finally: po kazdym TX, wiec musi byc odporne na
+        wywolanie gdy nie ma czego przywracac."""
+        state = self._fake_split_state
+        if not state:
+            return
+        self._fake_split_state = None
+        self.rig.freq = state["dial_hz"]
+        if not self.rig.sim:
+            try:
+                await self.rig.set_freq(state["dial_hz"])
+            except Exception as e:
+                print(f"[ft8] Fake Split restore set_freq blad: {e!r}")
+        self._ft8_tx_freq_hz = state["audio_hz"]
+        print(f"[ft8] Fake Split: VFO przywrocone -> {state['dial_hz']:.0f}Hz, "
+              f"audio -> {state['audio_hz']:.0f}Hz")
+        await self.hub.broadcast({"type": "freq", "freq": int(state["dial_hz"])})
+        await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
+                                   "frozen": self._ft8_tx_frozen})
+
     async def _ft8_tx_sequence(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False):
         """
         Wrapper z mutexem wokol _ft8_tx_sequence_inner — zapobiega rownoleglemu
@@ -5869,6 +5984,10 @@ class App:
                 report = report[:4]
                 print(f"[ft8] Grid uciety do 4 znakow: {report}")
             import time as _tx_time
+            # Fake Split PRZED sprawdzeniem cache PCM — jesli przesuwa VFO i
+            # zmienia audio offset, kasuje _pre_pcm_cache (patrz docstring),
+            # wiec musi wystapic zanim ponizej odczytamy cache.
+            await self._apply_fake_split_before_tx()
             # Użyj pre-wygenerowanego PCM jeśli pasuje (call_to/call_de/report)
             cache = self._pre_pcm_cache
             if (cache and cache[0] == call_to and cache[1] == call_de and
@@ -6068,6 +6187,9 @@ class App:
                 await self.hub.broadcast({"type": "ptt", "ptt": False})
             except Exception as e:
                 print(f"[ft8] BLAD przy wylaczaniu PTT: {e}")
+            # Fake Split: VFO wraca na miejsce zaraz po PTT OFF (no-op jesli
+            # split nie zostal zastosowany dla tej transmisji).
+            await self._restore_fake_split_after_tx()
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
             print("[ft8] TX KONIEC")
             # Trzymaj mutex do konca biezacego okresu (PTT juz OFF)
