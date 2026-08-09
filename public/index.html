@@ -1,0 +1,3354 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ham Radio Control</title>
+<link rel="stylesheet" href="css/style.css?v=202606250001">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
+<!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
+     (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
+     martwa zaszloscia i rzucala 404 (plik przeniesiony do js/). -->
+</head>
+<body>
+
+<!-- ── #app-scale: caly UI w referencyjnym rozmiarze 1440x1080, skalowany
+     przez JS (transform:scale) wg viewportu — gwarantuje identyczne
+     pozycje px-perfect wszystkich elementow na kazdym ekranie/rozmiarze
+     okna. Patrz funkcja updateAppScale na koncu pliku. ── -->
+<!-- ─── TOP BAR ─────────────────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="logo">HAM RADIO <span class="logo-accent">CTRL</span></div>
+
+  <div class="nav-tabs">
+    <button class="tab-btn active" onclick="UI.setPage('radio')">RADIO</button>
+    <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="settings">USTAWIENIA</button>
+    <button class="tab-btn" onclick="UI.setPage('profile')" data-perm="view" id="tab-profile">👤 PROFIL</button>
+    <button class="tab-btn" onclick="UI.setPage('log')" data-perm="view" id="tab-log">LOG QSO</button>
+    <button class="tab-btn" onclick="UI.setPage('config')" data-perm="admin" id="tab-config">KONFIGURACJA</button>
+      <button class="tab-btn" id="tab-wsjtx" onclick="UI.setPage('wsjtx')" data-perm="view">FT8/WSJT-X</button>
+    <button class="tab-btn" id="tab-dxcluster" onclick="UI.setPage('dxcluster')" data-perm="view">📡 DX CLUSTER</button>
+    <button class="tab-btn" id="tab-internet" onclick="UI.setPage('internet')" data-perm="admin">🌐 INTERNET</button>
+    <button class="tab-btn" id="tab-admin" onclick="UI.setPage('admin')" style="display:none">ADMIN</button>
+  </div>
+
+  <div class="status-row">
+    <span id="sim-badge" style="display:none;background:rgba(212,168,87,0.2);color:var(--amber);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(212,168,87,0.4);">SIM</span>
+    <div class="indicator"><div class="dot" id="ptt-dot"></div><span id="ptt-label" style="font-family:var(--mono);font-size:11px;">RX</span></div>
+    <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
+    <span id="user-role" class="role-badge"></span>
+    <span id="callsign-display" style="font-family:var(--mono);font-size:13px;color:var(--green);font-weight:bold;letter-spacing:2px;">--</span>
+  </div>
+  <button class="logout-btn" onclick="Auth.logout()" title="Wyloguj">⏻ WYLOGUJ</button>
+</div>
+
+<div id="app-scale">
+
+<!-- ─── PAGE: RADIO ──────────────────────────────────────────────────────────── -->
+<div class="page-content active" id="page-radio">
+
+
+  <!-- ── KAFELKOWY GRID ── -->
+  <div class="tile-grid">
+
+    <!-- ═══════════════════════════════ LEWA KOLUMNA ═══════════════════════════ -->
+    <div class="tile tile-left">
+
+      <!-- Selektor radia (widoczny gdy >1) -->
+      <div id="rig-selector-row" style="display:none;padding:6px 8px 0;">
+        <select id="active-rig-select"
+          onchange="WS.send({type:'connect',rigId:parseInt(this.value)})">
+        </select>
+      </div>
+
+      <!-- TRYB -->
+      <div class="tile-header" data-perm="mode">TRYB</div>
+      <div class="mode-band-grid" id="mode-grid-left" data-perm="mode"></div>
+
+      <div class="tile-divider"></div>
+
+      <!-- PASMO -->
+      <div class="tile-header" data-perm="band">PASMO</div>
+      <div class="mode-band-grid" id="band-grid-left" data-perm="band"></div>
+
+      <!-- HISTORIA FREQ (rozwijalny panel) -->
+      <div class="tile-divider"></div>
+      <div style="padding:4px 8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;padding:2px 0;"
+          onclick="UI.toggleFreqHistory()">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;">HISTORIA FREQ</span>
+          <span id="freq-history-toggle" style="font-family:var(--mono);font-size:10px;color:var(--dim);">▶</span>
+        </div>
+        <div id="freq-history-list" style="display:none;max-height:180px;overflow-y:auto;padding-top:4px;font-family:var(--mono);font-size:10px;">
+          <!-- generowane przez UI.renderFreqHistory() -->
+        </div>
+      </div>
+
+      <div class="tile-divider"></div>
+
+      <!-- TRX FUNKCJE (wybor miernika pokazywanego w bargrafie pod S-metrem) -->
+      <div class="rf-section">
+        <div class="rf-section-title">TRX FUNKCJE</div>
+        <div style="padding-bottom:6px;">
+          <span class="rf-sub-lbl">WSKAZNIK (bargraf pod S-metrem)</span>
+          <select id="trx-funkcje-select"
+            onchange="UI.setTxMeter(this.value)">
+            <option value="ALC">ALC</option>
+            <option value="PWR">PWR</option>
+            <option value="SWR">SWR</option>
+            <option value="VOLT">VOLT</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tile-divider"></div>
+
+      <!-- AUDIO (przeniesione z bocznego panelu RF/AF) -->
+      <div class="rf-section">
+        <div class="rf-section-title">AUDIO</div>
+        <div style="padding-bottom:6px;">
+          <span class="rf-sub-lbl">FILTR (FIL1/2/3 — ustawienia z menu radia)</span>
+          <select id="bw-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
+            <option value="1">FIL1</option>
+            <option value="2">FIL2</option>
+            <option value="3">FIL3</option>
+          </select>
+        </div>
+        <div style="padding-bottom:6px;">
+          <span class="rf-sub-lbl">PREAMP (CI-V 16 02)</span>
+          <select id="preamp-select" onchange="WS.send({type:'preamp', value: parseInt(this.value)})">
+            <option value="0">P.AMP OFF</option>
+            <option value="1">P.AMP 1 ON</option>
+            <option value="2">P.AMP 2 ON</option>
+          </select>
+        </div>
+        <div style="padding-bottom:6px;">
+          <span class="rf-sub-lbl">ATT (CI-V 11)</span>
+          <select id="att-select" onchange="WS.send({type:'attenuator', value: this.value === '1'})">
+            <option value="0">ATT OFF</option>
+            <option value="1">ATT ON</option>
+          </select>
+        </div>
+        <button id="tx-mic-btn" class="audio-toggle-btn" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
+          onclick="WS.isTxActive() ? (WS.stopTX(), this.textContent='🎤 Nadawanie TX — mikrofon', this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent='⏹ Zatrzymaj TX mikrofon'; this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
+          🎤 Nadawanie TX — mikrofon
+        </button>
+        <!-- TX GAIN z dynamicznym VU metrem -->
+        <div style="margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">
+            <span>TX GAIN</span>
+            <div id="tx-vu-bar" style="flex:1;height:6px;background:var(--panel3);border-radius:3px;overflow:hidden;position:relative;">
+              <div id="tx-vu-fill" style="height:100%;width:0%;background:var(--green);border-radius:3px;transition:width 0.05s;"></div>
+            </div>
+            <span id="tx-gain-val" style="width:30px;text-align:right;">1.0x</span>
+          </div>
+          <input type="range" id="tx-gain-slider" min="0.01" max="1" step="0.01" value="0.15"
+            style="width:100%;accent-color:var(--green);cursor:pointer;"
+            oninput="AudioControls.setTxGain(parseFloat(this.value))">
+        </div>
+        <!-- RX VOL -->
+        <div style="margin-top:6px;">
+          <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">
+            <span>RX VOL</span>
+            <span id="rx-vol-val" style="margin-left:auto;width:30px;text-align:right;">70%</span>
+          </div>
+          <input type="range" id="rx-vol-slider" min="0" max="100" step="1" value="70"
+            style="width:100%;accent-color:var(--green);cursor:pointer;"
+            oninput="AudioControls.setRxVol(parseInt(this.value))">
+        </div>
+      </div>
+
+      <!-- Dynamiczne slidery z dump_caps (RadioFunctions module) -->
+      <div class="rf-section" id="rig-dynamic-sliders" style="display:none;">
+        <div class="rf-section-title">RADIO</div>
+        <!-- wypelniane przez radiofunctions.js -->
+      </div>
+
+    </div><!-- /tile-left -->
+
+    <!-- ═══════════════════════════════ VFO ════════════════════════════════════ -->
+    <div class="tile tile-vfo" id="vfo-box">
+
+      <!-- Badges: SPLIT, RX/TX, tryb, pasmo (VFO A/B usuniete — sa w rf-buttons-row) -->
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border);background:var(--panel2);">
+        <!-- Ukryte elementy zachowane dla JS (updateVFOBadges) -->
+        <span id="badge-vfoa" style="display:none;"></span>
+        <span id="badge-vfob" style="display:none;"></span>
+        <span id="badge-split" style="display:none;" class="vfo-badge" style="border-color:rgba(212,168,87,0.4);color:var(--amber);cursor:pointer;" onclick="UI.toggleSplit()">SPLIT</span>
+        <span id="badge-rx" class="vfo-badge" style="border-color:rgba(184,201,143,0.3);background:rgba(184,201,143,0.1);color:var(--green);">RX</span>
+        <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(217,119,106,0.4);background:rgba(217,119,106,0.15);color:var(--red);">TX</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">LATENCY</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" title="Kliknij aby odswiezyd polaczenie z serwerem" style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
+        <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(212,168,87,0.15);border:1px solid rgba(212,168,87,0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
+        <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(184,201,143,0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
+      </div>
+
+      <!-- Cyfry VFO A -->
+      <div class="vfo-display">
+        <div style="display:flex;align-items:baseline;gap:6px;">
+          <div id="vfo-digits" style="display:flex;align-items:center;gap:1px;font-family:var(--display);font-size:44px;font-weight:900;color:var(--green);text-shadow:0 0 25px rgba(184,201,143,0.4);cursor:default;user-select:none;letter-spacing:-1px;"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">MHz</span>
+        </div>
+        <!-- Kroki strojenia -->
+        <div class="tuning-steps" data-perm="freq">
+          <button class="step-btn" onclick="VFO.updateStep(1)">1</button>
+          <button class="step-btn" onclick="VFO.updateStep(10)">10</button>
+          <button class="step-btn" onclick="VFO.updateStep(100)">100</button>
+          <button class="step-btn" onclick="VFO.updateStep(1000)">1k</button>
+          <button class="step-btn" onclick="VFO.updateStep(5000)">5k</button>
+          <button class="step-btn" onclick="VFO.updateStep(10000)">10k</button>
+          <button class="step-btn" onclick="VFO.updateStep(100000)">100k</button>
+          <button class="step-btn" onclick="VFO.updateStep(1000000)">1M</button>
+          <!-- VFO-B (przeniesione tutaj z wiersza ponizej) -->
+          <span id="vfo-b-row" onclick="UI.vfoSelect('B')"
+            oncontextmenu="event.preventDefault(); UI.editVfoB();"
+            onwheel="UI.wheelVfoB(event)"
+            title="Klik: przełącz na VFO-B | Prawy klik: wpisz częstotliwość | Scroll: zmieniaj co 1kHz"
+            style="margin-left:auto;display:flex;align-items:baseline;gap:5px;cursor:pointer;user-select:none;">
+            <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">VFO-B</span>
+            <span id="freq-b-display" style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--dim);">14.200.000</span>
+            <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">MHz</span>
+            <span id="vfo-b-split-label" style="display:none;font-family:var(--mono);font-size:9px;color:var(--amber);background:rgba(212,168,87,0.1);border:1px solid rgba(212,168,87,0.3);padding:1px 5px;border-radius:2px;">TX</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- S-meter + PTT -->
+      <div class="smeter-wrap">
+        <div class="smeter-scale">
+          <span>1</span><span>3</span><span>5</span><span>7</span><span>9</span>
+          <span style="color:var(--amber)">+20</span>
+          <span style="color:var(--amber)">+40</span>
+          <span style="color:var(--red)">+60</span>
+        </div>
+        <div class="smeter-bar-wrap"><div class="smeter-fill" id="smeter-fill"></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+          <span id="smeter-value" class="smeter-value">S 0</span>
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:8px;">
+          <button id="ptt-btn" class="ptt-btn" data-perm="ptt"
+            onmousedown="UI.setPTT(true)" onmouseup="UI.setPTT(false)"
+            ontouchstart="UI.setPTT(true)" ontouchend="UI.setPTT(false)">PTT</button>
+        </div>
+
+        <!-- TRX meter — bargraf kompaktowy, jeden wiersz: NAZWA + pasek + wartosc,
+             plus podzialka pod paskiem (dopasowana do realnego zakresu odczytu
+             z radia, inna dla kazdej funkcji — patrz UI._renderTxMeter()).
+             Wybor funkcji (ALC/PWR/SWR/VOLT) jest TYLKO w lewej kolumnie
+             (sekcja TRX FUNKCJE pod PASMO) — patrz UI.setTxMeter(). -->
+        <div class="txmeter-wrap">
+          <span id="txmeter-label" class="txmeter-label-name">ALC</span>
+          <div class="txmeter-bar-col">
+            <div class="txmeter-bar-wrap">
+              <div class="txmeter-fill" id="txmeter-fill"></div>
+            </div>
+            <div class="txmeter-scale" id="txmeter-scale"></div>
+          </div>
+          <span id="txmeter-value" class="txmeter-value">--</span>
+        </div>
+      </div>
+
+
+    </div><!-- /tile-vfo -->
+
+    <!-- ═══════════════════════════════ PANEL FUNKCJI RADIA ════════════════════ -->
+    <!-- Jeden wiersz przyciskow (VFO A/B, Zasilanie, funkcje NB/NR/ANF/VOX...)
+         miedzy PTT i waterfallem. Bez naglowka — kompaktowy pasek. -->
+    <div class="tile tile-rigfeatures" id="rig-features-panel">
+      <!-- SZYBKIE LOGOWANIE QSO — jeden wiersz, zawsze widoczny -->
+      <div id="quick-log-bar" style="display:flex;align-items:center;gap:8px;
+        padding:5px 10px;border-bottom:1px solid var(--border);background:var(--panel2);">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);
+          letter-spacing:1px;flex-shrink:0;">LOG QSO</span>
+        <input type="text" id="qlog-call" placeholder="CALL"
+          style="font-family:var(--mono);font-size:12px;text-transform:uppercase;
+          width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
+          border:1px solid var(--border2);border-radius:3px;color:var(--text);"
+          onkeydown="if(event.key==='Enter')QSOLog.quickLog()">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">RST</span>
+        <input type="text" id="qlog-rst-s" placeholder="599" maxlength="3"
+          style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
+          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          border-radius:3px;color:var(--text);text-align:center;" value="599">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">/</span>
+        <input type="text" id="qlog-rst-r" placeholder="599" maxlength="3"
+          style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
+          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          border-radius:3px;color:var(--text);text-align:center;" value="599">
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">GRID</span>
+        <input type="text" id="qlog-grid" placeholder="KO02" maxlength="8"
+          style="font-family:var(--mono);font-size:12px;width:62px;flex-shrink:0;
+          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          border-radius:3px;color:var(--text);text-transform:uppercase;"
+          onkeydown="if(event.key==='Enter')QSOLog.quickLog()">
+        <button onclick="QSOLog.quickLog()"
+          style="font-family:var(--mono);font-size:11px;letter-spacing:1px;
+          padding:4px 16px;background:rgba(76,219,106,0.12);border:1px solid var(--green2);
+          border-radius:3px;color:var(--green);cursor:pointer;flex-shrink:0;">LOG</button>
+        <span id="qlog-status" style="font-family:var(--mono);font-size:10px;
+          color:var(--dim);flex:1;text-align:right;"></span>
+      </div>
+      <div class="rf-buttons-row">
+        <!-- A<->B / A->B / SPLIT — przeniesione z wiersza krokow strojenia,
+             zawsze widoczne (CI-V 07 B0/A0/0F, patrz UI.vfoSwap/vfoCopy/toggleSplit) -->
+        <button class="rf-btn" onclick="UI.vfoSwap()" data-perm="freq" title="Zamien VFO A i B (CI-V 07 B0)">A↔B</button>
+        <button class="rf-btn" onclick="UI.vfoCopy()" data-perm="freq" title="Skopiuj A do B (CI-V 07 A0)">A→B</button>
+        <button class="rf-btn" id="split-btn" onclick="UI.toggleSplit()" data-perm="freq" title="Split VFO A/B (CI-V 0F)">SPLIT</button>
+        <span style="width:1px;height:16px;background:var(--border2);margin:0 2px;"></span>
+        <!-- TUNER (toggle ON/OFF, CI-V 1C 01 00/01) i AUTOTUNE (jednorazowy
+             cykl dopasowania, CI-V 1C 01 02 — generuje krotki TX) -->
+        <button class="rf-btn" id="tuner-btn" onclick="UI.toggleTuner()" data-perm="freq" title="Antenna Tuner ON/OFF (CI-V 1C 01)">TUNER</button>
+        <button class="rf-btn" onclick="UI.startAutotune()" data-perm="ptt" title="Autotune — cykl dopasowania (CI-V 1C 01 02, generuje TX)">AUTOTUNE</button>
+      </div>
+      <div id="rig-features-buttons" class="rf-buttons-row" style="display:none;">
+        <!-- przyciski generowane dynamicznie przez radiofunctions.js -->
+      </div>
+      <div id="relay-buttons" class="rf-buttons-row" style="display:none;flex-wrap:wrap;gap:4px;padding-top:4px;">
+        <!-- przyciski przekaznikow generowane przez relay_ui.js -->
+      </div>
+    </div><!-- /tile-rigfeatures -->
+
+    <!-- ═══════════════════════════════ WATERFALL ══════════════════════════════ -->
+    <div class="tile tile-wf">
+      <div class="wf-header">
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">WATERFALL</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:4px;">
+            SPAN:
+            <select id="wf-span-select" onchange="Waterfall.setSpan(parseInt(this.value,10))"
+              style="font-family:var(--mono);font-size:9px;padding:1px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;cursor:pointer;">
+              <option value="2500">±2.5kHz</option>
+              <option value="5000">±5kHz</option>
+              <option value="10000">±10kHz</option>
+              <option value="25000" selected>±25kHz</option>
+              <option value="50000">±50kHz</option>
+              <option value="100000">±100kHz</option>
+              <option value="250000">±250kHz</option>
+              <option value="500000">±500kHz</option>
+            </select>
+          </label>
+          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Peak-hold: pokazuje najwyższą wartość w każdym paśmie">
+            <input type="checkbox" id="wf-peak-toggle" checked
+              onchange="Waterfall.setPeakHold(this.checked)"
+              style="width:11px;height:11px;">
+            PEAK
+          </label>
+          <span id="wf-source-badge" style="font-family:var(--mono);font-size:9px;color:rgba(200,200,200,0.3);">● SIM</span>
+          <span id="smeter-text" style="font-family:var(--mono);font-size:10px;color:var(--green)">S0</span>
+          <button onclick="Waterfall.toggleFullscreen()" title="Fullscreen (F11 alternate)"
+            style="font-family:var(--mono);font-size:9px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;">⛶</button>
+        </div>
+      </div>
+      <canvas id="wf-spectrum"  style="width:100%;height:80px;display:block;background:#060806;border-bottom:1px solid var(--border);"></canvas>
+      <canvas id="wf-waterfall" style="width:100%;flex:1;min-height:160px;max-height:350px;display:block;background:#060806;"></canvas>
+      <canvas id="wf-axis" style="width:100%;height:27px;display:block;background:#0a0c0a;border-top:1px solid var(--border);flex-shrink:0;"></canvas>
+    </div><!-- /tile-wf -->
+
+    <!-- ═══════════════════════════════ ROTATOR ════════════════════════════════ -->
+    <div class="tile tile-rotator" id="rot-side-panel" data-perm="rotator" style="display:flex;flex-direction:column;">
+
+      <div class="tile-header">
+        <span>ROTATOR</span>
+        <span id="rot-status-badge" style="font-family:var(--mono);font-size:9px;color:var(--dim);">● brak</span>
+      </div>
+
+      <div class="rotator-inner">
+        <div style="position:relative;width:205px;height:205px;margin:0 auto 8px;">
+          <canvas id="rot-compass" width="205" height="205" style="display:block;border-radius:50%;width:205px;height:205px;"></canvas>
+          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
+            <span id="rot-az-display" class="rot-az-display">---</span>
+            <span style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:1px;">° AZ</span>
+          </div>
+        </div>
+
+        <div id="rot-name-label" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-bottom:6px;"></div>
+
+        <div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;">CEL (stopnie lub lokator)</div>
+          <input id="rot-target-inp" type="text" class="rot-target-inp" placeholder="272 lub KO02"
+            style="text-transform:uppercase;"
+            onkeydown="if(event.key==='Enter')RotW.go()"
+            oninput="RotW.onInput()">
+          <div id="rot-target-preview" style="font-family:var(--mono);font-size:9px;color:var(--green);margin-top:3px;min-height:13px;"></div>
+        </div>
+
+        <div class="rot-btns" style="margin-top:6px;">
+          <button class="rot-go-btn" onclick="RotW.go()">▶ START</button>
+          <button class="rot-stop-btn" onclick="RotW.stop()">■ STOP</button>
+        </div>
+      </div>
+
+    </div><!-- /tile-rotator -->
+
+    <!-- ═══════════════════════════════ CW KEYER ═══════════════════════════════ -->
+    <div class="tile tile-cw" id="cw-inline" data-perm="cw" style="display:flex;flex-direction:column;">
+      <div class="tile-header" style="flex-wrap:wrap;gap:4px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="white-space:nowrap;">CW KEYER</span>
+          <span id="cw-method-badge" style="font-family:var(--mono);font-size:9px;color:var(--dim);background:rgba(200,200,200,0.07);padding:1px 6px;border-radius:2px;border:1px solid var(--border);">AUTO</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;flex-shrink:0;">
+          <input type="range" min="6" max="48" step="1" value="18" id="cw-wpm-slider"
+            style="width:42px;-webkit-appearance:none;height:3px;background:var(--panel3);border-radius:2px;outline:none;cursor:pointer;"
+            oninput="CW.setWPM(this.value)">
+          <span id="cw-wpm-val" style="font-family:var(--mono);font-size:11px;color:var(--green);width:18px;text-align:right;">18</span>
+          <!-- Dekoder CW (DeepCW) — otwiera plywajace okno z dekodowanym
+               tekstem. Dekoder chodzi TYLKO gdy okno otwarte (zero CPU po
+               zamknieciu). -->
+          <button onclick="DeepCW.openModal()" title="Dekoder CW (DeepCW)"
+            style="background:rgba(76,204,255,0.1);border:1px solid rgba(76,204,255,0.4);
+            border-radius:3px;color:#4cf;font-family:var(--mono);font-size:10px;
+            padding:2px 7px;cursor:pointer;">◈ RX</button>
+          <button onclick="CW.stopCW()" title="STOP" data-perm-disable="ptt"
+            style="background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 7px;cursor:pointer;">■</button>
+        </div>
+      </div>
+      <div id="cw-macros-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:6px 8px;flex-shrink:0;">
+        <!-- F1 -->
+        <div class="cw-macro-card" id="cwm-1" title="" onclick="CW.sendMacro(1)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-1">CQ</span><span class="cw-macro-num">F1</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(1);event.stopPropagation()" title="Edytuj makro F1">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-1">CQ DE {MYCALL} K</div>
+          </div>
+        <!-- F2 -->
+        <div class="cw-macro-card" id="cwm-2" title="" onclick="CW.sendMacro(2)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-2">RST</span><span class="cw-macro-num">F2</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(2);event.stopPropagation()" title="Edytuj makro F2">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-2">UR 599 {NR} BK</div>
+          </div>
+        <!-- F3 -->
+        <div class="cw-macro-card" id="cwm-3" title="" onclick="CW.sendMacro(3)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-3">73</span><span class="cw-macro-num">F3</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(3);event.stopPropagation()" title="Edytuj makro F3">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-3">73 DE {MYCALL} SK</div>
+          </div>
+        <!-- F4 -->
+        <div class="cw-macro-card" id="cwm-4" title="" onclick="CW.sendMacro(4)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-4">QRZ?</span><span class="cw-macro-num">F4</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(4);event.stopPropagation()" title="Edytuj makro F4">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-4">QRZ? DE {MYCALL}</div>
+          </div>
+        <!-- F5 -->
+        <div class="cw-macro-card" id="cwm-5" title="" onclick="CW.sendMacro(5)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-5">AGN?</span><span class="cw-macro-num">F5</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(5);event.stopPropagation()" title="Edytuj makro F5">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-5">PSE AGN?</div>
+          </div>
+        <!-- F6 -->
+        <div class="cw-macro-card" id="cwm-6" title="" onclick="CW.sendMacro(6)">
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-6">QSL</span><span class="cw-macro-num">F6</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(6);event.stopPropagation()" title="Edytuj makro F6">✎</button></div>
+          <div class="cw-macro-text" id="cwm-txt-6">TU QSL 73</div>
+          </div>
+      </div>
+      <div style="display:flex;gap:4px;padding:0 8px 8px;">
+        <input type="text" id="cw-custom-input" placeholder="Wpisz tekst CW…"
+          style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;padding:5px 8px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
+          onkeydown="if(event.key==='Enter')CW.sendCustom()">
+        <button onclick="CW.sendCustom()" data-perm-disable="ptt"
+          style="background:rgba(184,201,143,0.12);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;cursor:pointer;">TX</button>
+      </div>
+
+      <div class="tile-divider"></div>
+
+      <!-- OPERATORZY ONLINE — lista + TRX lock -->
+      <div style="display:flex;flex-direction:column;">
+        <div class="tile-header" style="font-size:9px;letter-spacing:2px;">
+          OPERATORZY
+          <span id="op-online-count" style="font-family:var(--mono);font-size:9px;color:var(--green);">0</span>
+        </div>
+
+        <!-- Lista zalogowanych -->
+        <div id="op-list" style="overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:3px;max-height:200px;">
+          <!-- wypełniane przez RadioLock._renderOpPanel() -->
+        </div>
+
+        <!-- Przyciski TRX -->
+        <div style="padding:6px 8px;display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--border);">
+          <div id="op-lock-status" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;padding:2px 0;">
+            🔓 RADIO WOLNE
+          </div>
+          <div style="display:flex;gap:4px;">
+            <button id="op-btn-take" onclick="RadioLock.lockRadio()"
+              style="flex:1;background:rgba(184,201,143,0.1);border:1px solid var(--green2);
+              border-radius:3px;color:var(--green);font-family:var(--mono);font-size:10px;
+              padding:5px;cursor:pointer;letter-spacing:1px;">
+              ▶ PRZEJMIJ TRX
+            </button>
+            <button id="op-btn-release" onclick="RadioLock.releaseRadio()"
+              style="flex:1;display:none;background:rgba(217,119,106,0.08);
+              border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);
+              font-family:var(--mono);font-size:10px;padding:5px;cursor:pointer;">
+              ✕ ODDAJ TRX
+            </button>
+          </div>
+          <button id="op-btn-request" onclick="RadioLock.requestRadio()"
+            style="display:none;background:rgba(212,168,87,0.08);border:1px solid rgba(212,168,87,0.3);
+            border-radius:3px;color:var(--amber);font-family:var(--mono);font-size:10px;
+            padding:5px;cursor:pointer;letter-spacing:1px;">
+            🙋 POPROŚ O TRX
+          </button>
+          <!-- Tylko admin -->
+          <button id="op-btn-force" onclick="RadioLock.forceRelease()"
+            style="display:none;background:none;border:1px solid var(--border);
+            border-radius:3px;color:var(--dim);font-family:var(--mono);font-size:9px;
+            padding:3px;cursor:pointer;">
+            ⚡ WYMUŚ (admin)
+          </button>
+        </div>
+      </div>
+    </div><!-- /tile-cw -->
+
+  </div><!-- /tile-grid -->
+
+</div><!-- /page-radio -->
+
+<!-- ─── PAGE: WSJT-X ────────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-wsjtx">
+<div class="wsjtx-layout">
+
+  <!-- ── GÓRNY PASEK STATUSU ── -->
+  <div class="wsjtx-topbar">
+    <div class="wsjtx-freq" id="wj-freq">14.074.000</div>
+    <div class="wj-mode-switch" id="wj-mode-switch" title="Tryb dekodowania">
+      <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
+      <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
+    </div>
+    <select id="wj-band-select" class="wj-band-select" title="Wybierz pasmo i przestrój radio na standardowa czestotliwosc"
+            onchange="WSJTX.tuneToBand(this.value)">
+      <option value="">-- pasmo --</option>
+    </select>
+    <label class="wj-topbar-check" title="Pokazuj tylko wywolania CQ w Band Activity">
+      <input type="checkbox" id="wj-cq-only-toggle" onchange="WSJTX.toggleCqOnly()"> CQ
+    </label>
+    <label class="wj-topbar-check" title="Fox/Hound DXpedition mode — wpisz znak Foxa w polu DX"
+      style="color:#f90;border:1px solid rgba(255,140,0,0.3);border-radius:2px;padding:1px 6px;">
+      <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"
+        style="accent-color:#f90;"> HOUND
+    </label>
+    <div class="wj-period-switch" id="wj-period-switch" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
+      <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
+      <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
+    </div>
+    <div class="wsjtx-clock-wrap">
+      <canvas id="wj-clock" width="36" height="36"></canvas>
+      <div id="wj-clock-s" style="font-family:var(--mono);font-size:18px;color:#fff;min-width:22px;text-align:right;">0</div>
+    </div>
+    <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
+    <div style="flex:1"></div>
+    <span id="wj-de-call" style="font-family:var(--mono);font-size:12px;color:#8be;">DE: --</span>
+    <span id="wj-de-grid" style="font-family:var(--mono);font-size:11px;color:rgba(136,187,238,0.6);">--</span>
+    <div style="display:flex;gap:6px;margin-left:12px;">
+      <input type="number" id="wsjtx-udp-port" value="2238"
+        style="width:64px;font-family:var(--mono);font-size:11px;padding:3px 6px;background:#111;border:1px solid #333;color:#ccc;border-radius:2px;">
+      <button onclick="WSJTX.startWsjtx()" class="wj-btn wj-btn-green">▶ START</button>
+      <button onclick="WSJTX.stopWsjtx()"  class="wj-btn wj-btn-red">■ STOP</button>
+      <button onclick="WSJTX.haltTx()"     class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
+      <span id="wj-tx-watchdog" style="display:none;font-family:var(--mono);font-size:10px;padding:3px 8px;background:rgba(217,119,106,0.15);border:1px solid var(--red);color:var(--red);border-radius:3px;letter-spacing:1px;">⏱ AUTO-OFF: <span id="wj-tx-watchdog-time">30</span>s</span>
+      <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
+      <button onclick="WSJTX.quickLogQso()" class="wj-btn wj-btn-green" id="wj-quicklog-btn" title="Szybko zapisz QSO — używa danych z formularza Log (DX call, RST, grid)">📝 LOG QSO</button>
+      <button onclick="WSJTX.bestSP()" class="wj-btn" id="wj-best-sp-btn" title="Wybierz najsilniejszą stację CQ z ostatnich 5 minut (Search & Pounce). Auto-select najsilniejszej CQ dla contestowego S&P.">⭐ BEST S&P</button>
+      <button onclick="WSJTX.clearDecodes()" class="wj-btn">WYCZYŚĆ</button>
+      <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" title="Ukryj stacje już zaliczone w logu QSO">
+        <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)"
+          style="accent-color:var(--amber);cursor:pointer;">
+        HIDE WORKED
+      </label>
+      <span style="width:1px;background:#333;margin:2px 4px;"></span>
+      <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="wj-btn" title="Wlasny dekoder FT8 (audio z radia, bez zewnetrznego WSJT-X)">▶ START (własny RX)</button>
+    </div>
+  </div>
+
+  <!-- Wrapper: lewa(scope+decodes+bottombar) | prawa kolumna -->
+  <div style="display:flex;flex-direction:row;flex:1;overflow:hidden;min-height:0;">
+  <div style="display:flex;flex-direction:column;flex:1;overflow:hidden;min-width:0;min-height:0;">
+
+  <!-- ── WODOSPAD / SCOPE ── -->
+  <div class="wsjtx-scope-wrap">
+    <div class="wsjtx-scope-toolbar">
+      <span class="wj-freq-field" style="color:#f55;">
+        TX:
+        <input type="number" id="wj-tx-freq-input" class="wj-freq-input" step="1"
+               onchange="WSJTX.setTxFreqManual(this.value)">Hz
+      </span>
+      <button id="wj-rx-eq-tx-btn" onclick="WSJTX.rxEqTx()" class="wj-btn" title="Ustaw znacznik RX na biezaca czestotliwosc TX" style="margin-left:6px;">RX=TX</button>
+      <span class="wj-freq-field" style="color:#5c5; margin-left:10px;">
+        RX:
+        <input type="number" id="wj-rx-freq-input" class="wj-freq-input" step="1"
+               onchange="WSJTX.setRxFreqManual(this.value)">Hz
+      </span>
+      <div style="flex:1"></div>
+      <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
+
+      <!-- Kontrolki palety w stylu WSJT-X (Reference/Zero/Gain) -->
+      <div style="display:flex;align-items:center;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">
+        <label title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
+          <input type="range" id="wj-palette-ref" min="0" max="100" value="15" step="1"
+            oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value"
+            style="width:60px;accent-color:var(--green);vertical-align:middle;">
+          <span id="wj-palette-ref-val" style="width:22px;display:inline-block;text-align:right;">15</span>
+        </label>
+        <label title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
+          <input type="range" id="wj-palette-zero" min="0" max="60" value="0" step="1"
+            oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value"
+            style="width:60px;accent-color:var(--amber);vertical-align:middle;">
+          <span id="wj-palette-zero-val" style="width:22px;display:inline-block;text-align:right;">0</span>
+        </label>
+        <label title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
+          <input type="range" id="wj-palette-gain" min="30" max="300" value="100" step="5"
+            oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)"
+            style="width:60px;accent-color:var(--red);vertical-align:middle;">
+          <span id="wj-palette-gain-val" style="width:24px;display:inline-block;text-align:right;">1.0</span>
+        </label>
+        <button onclick="WSJTX.resetPaletteAdjust()" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
+      </div>
+    </div>
+    <div id="wj-scope-axis" class="wsjtx-scope-axis"></div>
+    <div style="position:relative;width:100%;">
+      <canvas id="wj-scope-canvas" class="wsjtx-scope-canvas" height="160"></canvas>
+      <!-- Overlay UTC time labels co 1 min - pozycjonowany absolutnie nad waterfallem -->
+      <div id="wj-scope-time-overlay" style="position:absolute;left:0;top:0;bottom:0;width:38px;pointer-events:none;font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.5);"></div>
+    </div>
+  </div>
+
+  <!-- ── ŚRODEK: DEKODOWANIA + TX PANEL ── -->
+  <div class="wsjtx-main" style="display:flex;flex-direction:row;flex:1;overflow:hidden;min-height:0;">
+
+    <!-- LEWA: tabela dekodowań (Band Activity) + Rx Frequency, obok siebie, podzial regulowany -->
+    <div class="wsjtx-decodes-wrap" id="wj-decodes-wrap">
+      <div class="wj-split-pane" id="wj-pane-activity" style="flex-basis:50%;">
+        <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
+          BAND ACTIVITY
+          <div style="flex:1"></div>
+          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearDecodes()" title="Wyczysc Band Activity">🗑</button>
+        </div>
+        <div class="wsjtx-decode-header">
+          <span class="wjh">UTC</span>
+          <span class="wjh wjh-r">dB</span>
+          <span class="wjh wjh-r">DT</span>
+          <span class="wjh wjh-r">Freq</span>
+          <span class="wjh" style="flex:1;">Wiadomość</span>
+          <span class="wjh">Siatka</span>
+          <span class="wjh">Kraj</span>
+        </div>
+        <div id="wj-decodes" class="wsjtx-decode-list">
+          <div class="wj-empty">Brak dekodowań — uruchom WSJT-X i kliknij ▶ START</div>
+        </div>
+      </div>
+
+      <div class="wj-split-resizer" id="wj-split-resizer" title="Przeciagnij aby zmienic proporcje"></div>
+
+      <div class="wj-split-pane" id="wj-pane-rxfreq" style="flex-basis:50%;">
+        <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
+          RX FREQUENCY
+          <div style="flex:1"></div>
+          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearRxFreqPanel()" title="Wyczysc Rx Frequency">🗑</button>
+        </div>
+        <div class="wsjtx-decode-header">
+          <span class="wjh">UTC</span>
+          <span class="wjh wjh-r">dB</span>
+          <span class="wjh wjh-r">DT</span>
+          <span class="wjh wjh-r">Freq</span>
+          <span class="wjh" style="flex:1;">Wiadomość</span>
+          <span class="wjh">Siatka</span>
+          <span class="wjh">Kraj</span>
+        </div>
+        <div id="wj-rx-freq-row" class="wsjtx-decode-list">
+          <div class="wj-empty">Brak sygnału na czestotliwosci RX</div>
+        </div>
+      </div>
+    </div>
+
+
+  </div><!-- /wsjtx-main -->
+
+  <!-- ── DOLNY PASEK: RX/TX DF + PASEK AKTYWNOŚCI ── -->
+  <div class="wsjtx-bottombar">
+    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">RX DF:</span>
+    <span id="wj-rx-df" style="font-family:var(--mono);font-size:11px;color:#8be;">--</span>
+    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;">TX DF:</span>
+    <span id="wj-tx-df" style="font-family:var(--mono);font-size:11px;color:#f80;">--</span>
+    <div style="flex:1"></div>
+    <canvas id="wj-timeline" width="180" height="20" title="Histogram dekodowań w ostatnich 30 min (1 pasek = 1 min)"
+      style="background:rgba(0,0,0,0.3);border:1px solid rgba(184,201,143,0.15);border-radius:2px;cursor:help;margin-right:10px;"></canvas>
+    <span id="wj-signal-stats" style="font-family:var(--mono);font-size:10px;color:rgba(184,201,143,0.7);margin-right:12px;" title="Statystyki sygnału w ostatnich 5 minutach">
+      SNR: <span id="wj-stats-snr">—</span> • <span id="wj-stats-dpm">0</span>/min • <span id="wj-stats-unique">0</span> stacji
+    </span>
+    <span id="wj-decode-count" style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">0 dekodowań</span>
+    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;" id="wj-version"></span>
+  </div>
+
+  </div><!-- /lewa-kolumna -->
+
+  <!-- PRAWA KOLUMNA od gornej linii waterfalla -->
+  <!-- PRAWA: panel TX + log -->
+  <div class="wsjtx-right" style="width:320px;flex-shrink:0;display:flex;flex-direction:column;background:#0e0e0e;border-left:1px solid #2a2a2a;overflow-y:auto;">
+
+    <!-- AUTOMATYKA QSO — ZAWSZE AKTYWNA. Klik na makro = ręczne wymuszenie -->
+    <div class="wsjtx-tx-panel" id="wj-autoqso-panel">
+      <div class="wj-panel-title" style="display:flex;align-items:center;">
+        AUTOMATYKA QSO
+        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(184,201,143,0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości.">● AUTO</span>
+        <div style="flex:1"></div>
+        <label style="font-family:var(--mono);font-size:10px;"><input type="checkbox" id="wj-call1st-toggle" onchange="WSJTX.toggleCall1st()"> Call 1st</label>
+      </div>
+      <div id="wj-autoqso-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
+      <div id="wj-autoqso-queue-wrap" style="display:none;">
+        <div style="font-size:9px;color:#666;text-transform:uppercase;margin-bottom:3px;">Kolejka (Call 1st):</div>
+        <div id="wj-autoqso-queue"></div>
+      </div>
+    </div>
+
+    <!-- Ukryty checkbox dla kompatybilnosci JS (auto-seq zawsze true) -->
+    <input type="checkbox" id="wj-auto-seq-toggle" checked style="display:none;">
+
+    <!-- FOX / HOUND — jeden wiersz, bez rozwijania -->
+    <!-- Ukryte elementy Hound dla JS -->
+    <div id="wj-hound-status" style="display:none;"></div>
+    <div id="wj-hound-seq" style="display:none;"></div>
+    <div id="wj-hound-step-1" style="display:none;"><span id="wj-hound-step-1-status"></span></div>
+    <div id="wj-hound-step-2" style="display:none;"><span id="wj-hound-step-2-status"></span></div>
+    <div id="wj-hound-step-3" style="display:none;"><span id="wj-hound-step-3-status"></span></div>
+    <div id="wj-hound-step-4" style="display:none;"><span id="wj-hound-step-4-status"></span></div>
+    <span id="wj-hound-fox-call" style="display:none;"></span>
+    <span id="wj-hound-tx-freq" style="display:none;"></span>
+    <span id="wj-hound-attempts" style="display:none;"></span>
+    <div id="wj-hound-active-badge" style="display:none;"></div>
+    <div id="wj-hound-desc" style="display:none;"></div>
+    <div id="wj-hound-status-inline" style="display:none;"></div>
+    <button id="wj-hound-stop-btn" style="display:none;" onclick="WSJTX.houndStop()"></button>
+
+    <!-- NADAWANIE TX -->
+    <div class="wsjtx-tx-panel">
+      <div class="wj-panel-title" style="display:flex;align-items:center;">
+        NADAWANIE TX
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">TIMER:</span>
+          <span id="ft8-timer-display" style="font-family:var(--mono);font-size:11px;
+            color:var(--green);min-width:42px;text-align:right;">--:--</span>
+          <button id="ft8-timer-confirm" onclick="FT8Timer.confirm()"
+            style="display:none;font-family:var(--mono);font-size:9px;padding:2px 8px;
+            background:rgba(255,140,0,0.2);border:1px solid #f90;border-radius:2px;
+            color:#f90;cursor:pointer;animation:wj-tx-pulse 0.5s ease infinite alternate;">
+            POTWIERDŹ ▶
+          </button>
+        </div>
+      </div>
+      <div class="wsjtx-tx-grid">
+        <button class="wj-tx-btn" id="wj-tx1" onclick="WSJTX.sendTx(1)">
+          <span class="wj-tx-num">F1</span>
+          <span class="wj-tx-text" id="wj-tx1-text">CQ {MYCALL} {GRID}</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx2" onclick="WSJTX.sendTx(2)">
+          <span class="wj-tx-num">F2</span>
+          <span class="wj-tx-text" id="wj-tx2-text">{DXCALL} {MYCALL} {GRID}</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx3" onclick="WSJTX.sendTx(3)">
+          <span class="wj-tx-num">F3</span>
+          <span class="wj-tx-text" id="wj-tx3-text">{DXCALL} {MYCALL} R{REPORT}</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx4" onclick="WSJTX.sendTx(4)">
+          <span class="wj-tx-num">F4</span>
+          <span class="wj-tx-text" id="wj-tx4-text">{DXCALL} {MYCALL} RRR</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx5" onclick="WSJTX.sendTx(5)">
+          <span class="wj-tx-num">F5</span>
+          <span class="wj-tx-text" id="wj-tx5-text">{DXCALL} {MYCALL} 73</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx6" onclick="WSJTX.sendTx(6)">
+          <span class="wj-tx-num">F6</span>
+          <span class="wj-tx-text" id="wj-tx6-text">{DXCALL} RR73</span>
+        </button>
+        <button class="wj-tx-btn" id="wj-tx7" onclick="WSJTX.sendTx(7)">
+          <span class="wj-tx-num">F7</span>
+          <span class="wj-tx-text" id="wj-tx7-text">CQ {MYCALL} {GRID}</span>
+        </button>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
+        <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">DX:</span>
+        <input id="wj-dx-call" type="text" placeholder="-- KLIKNIJ WIERSZ --"
+          style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;
+          background:#0a0a0a;border:1px solid #333;color:#8be;padding:3px 6px;border-radius:2px;">
+        <input id="wj-dx-grid" type="text" placeholder="Grid"
+          style="width:48px;font-family:var(--mono);font-size:12px;text-transform:uppercase;
+          background:#0a0a0a;border:1px solid #333;color:#8be;padding:3px 5px;border-radius:2px;">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
+        <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">SNR:</span>
+        <span id="wj-dx-snr" style="font-family:var(--mono);font-size:12px;color:#8f8;min-width:40px;">--</span>
+        <div id="wj-tx-indicator" style="display:none;background:#c33;color:#fff;
+          font-family:var(--mono);font-size:10px;font-weight:bold;padding:2px 8px;
+          border-radius:2px;letter-spacing:1px;animation:wj-tx-pulse 0.5s ease infinite alternate;">
+          📡 TX
+        </div>
+      </div>
+    </div>
+
+    <!-- MÓJ LOG QSO -->
+    <div class="wsjtx-log-panel">
+      <div class="wj-panel-title">
+        SZYBKI ZAPIS QSO
+      </div>
+      <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
+          <input id="wj-log-call" type="text" placeholder="CALLSIGN DX *"
+            style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
+            background:#0a0a0a;border:1px solid #2a2a2a;color:#4cf;padding:3px 5px;border-radius:2px;">
+          <input id="wj-log-grid" type="text" placeholder="Grid DX"
+            style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
+            background:#0a0a0a;border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
+        </div>
+        <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
+             wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu) -->
+        <div id="wj-beam-row" style="display:none;font-family:var(--mono);
+             font-size:10px;color:#888;padding:2px 4px;margin-bottom:3px;
+             background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;">
+          <span style="color:#666;">ANTENA</span>
+          <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
+                margin:0 4px;">---°</span>
+          <span id="wj-beam-dist" style="color:#4cf;"></span>
+          <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
+          <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:3px;">
+          <select id="wj-log-mode"
+            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
+            border:1px solid #2a2a2a;color:#aaa;padding:3px 4px;border-radius:2px;">
+            <option>FT8</option><option>FT4</option>
+          </select>
+          <input id="wj-log-rst-sent" type="text" placeholder="RST Sent" value="+59"
+            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
+            border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
+          <input id="wj-log-rst-rcvd" type="text" placeholder="RST Rcvd"
+            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
+            border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
+        </div>
+        <input id="wj-log-comment" type="text" placeholder="Komentarz (opcjonalnie)"
+          style="width:100%;font-family:var(--mono);font-size:10px;background:#0a0a0a;
+          border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;margin-bottom:3px;">
+        <div style="display:flex;gap:4px;">
+          <button onclick="WSJTX.addLog()" class="wj-btn wj-btn-green" style="flex:1;padding:4px;">+ LOG QSO</button>
+          <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:4px 8px;" title="Eksport ADIF">⬇ ADIF</button>
+        </div>
+      </div>
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;color:#333;font-family:var(--mono);font-size:10px;padding:8px;text-align:center;">
+        QSO są automatycznie zapisywane do logu użytkownika.<br>
+        <span style="color:#4cf;cursor:pointer;text-decoration:underline;" onclick="document.querySelector('[data-tab=log]')?.click()">
+          → Przejdź do LOG QSO
+        </span>
+      </div>
+    </div>
+
+    <!-- KONFIGURACJA WSJT-X -->
+    <div class="wsjtx-config-panel">
+      <div class="wj-panel-title">KONFIGURACJA WSJT-X</div>
+      <div style="font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.35);line-height:2;">
+        Settings → Radio → Rig: <span style="color:#fa0">Hamlib NET rigctl</span><br>
+        Network Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">4532</span><br>
+        Settings → Reporting → UDP Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">2238</span><br>
+        ✓ Accept UDP requests<br>
+        <span style="color:rgba(255,100,100,0.7);font-size:8px;">⚠ Port 2237 jest zarezerwowany przez WSJT-X — używamy 2238</span>
+      </div>
+    </div>
+
+  </div><!-- /wsjtx-right -->
+
+  </div><!-- /ft8-wrapper -->
+
+</div>
+</div>
+
+
+<!-- ─── PAGE: ROTATORY (standalone) usunieta — rotator dostepny na ekranie RADIO ── -->
+
+<!-- ─── PAGE: LOG QSO ───────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-log">
+  <div class="page-col" style="max-width:100%;">
+
+    <!-- PASEK FILTRÓW I AKCJI -->
+    <div class="box">
+      <div class="box-header" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span>LOG QSO</span>
+        <span id="log-count" style="font-size:10px;color:var(--dim);">0 QSO</span>
+        <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="save-btn" style="padding:5px 14px;" onclick="QSOLog.openNew()">+ NOWE QSO</button>
+          <button class="save-btn" style="padding:5px 14px;" onclick="QSOLog.exportADI()">EXPORT ADIF</button>
+          <button class="save-btn" style="padding:5px 14px;" onclick="QSOLog.exportCSV()">EXPORT CSV</button>
+          <label class="save-btn" style="padding:5px 14px;cursor:pointer;text-align:center;display:block;" title="Importuj QSO z pliku ADIF (.adi/.adif)">
+            IMPORT ADIF
+            <input type="file" accept=".adi,.adif" style="display:none;" onchange="QSOLog.importADIF(this)">
+          </label>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.15);border-color:var(--red);color:var(--red);font-weight:bold;" onclick="QSOLog.deleteAll()">⚠ KASUJ CAŁY LOG</button>
+        </div>
+      </div>
+
+      <!-- FILTRY -->
+      <div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:flex-end;">
+        <!-- Filtr użytkownika — tylko admin -->
+        <div id="log-filter-user-wrap" style="display:none;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--amber);">UŻYTKOWNIK</label>
+          <select id="log-filter-user" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--amber);border-radius:3px;color:var(--text);">
+            <option value="">Wszyscy</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);">OD</label>
+          <input type="date" id="log-filter-from" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text);">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);">DO</label>
+          <input type="date" id="log-filter-to" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text);">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);">ZNAK</label>
+          <input type="text" id="log-filter-call" placeholder="np. SP3GSK" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text);width:100px;">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);">PASMO</label>
+          <select id="log-filter-band" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text);">
+            <option value="">Wszystkie</option>
+            <option>160m</option><option>80m</option><option>60m</option><option>40m</option>
+            <option>30m</option><option>20m</option><option>17m</option><option>15m</option>
+            <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
+            <option>2m</option><option>70cm</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);">TRYB</label>
+          <select id="log-filter-mode" style="font-family:var(--mono);font-size:11px;padding:4px 8px;background:var(--panel2);border:1px solid var(--border2);border-radius:3px;color:var(--text);">
+            <option value="">Wszystkie</option>
+            <option>SSB</option><option>CW</option><option>FT8</option><option>FT4</option>
+            <option>AM</option><option>FM</option><option>RTTY</option><option>PSK31</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:6px;align-items:flex-end;">
+          <button class="save-btn" style="padding:5px 14px;" onclick="QSOLog.load()">SZUKAJ</button>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.clearFilters()">WYCZYŚĆ</button>
+        </div>
+      </div>
+
+      <!-- TABELA QSO -->
+      <div style="overflow-x:auto;">
+        <table id="log-table" style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;">
+          <thead>
+            <tr style="background:var(--panel2);border-bottom:1px solid var(--border);">
+              <th class="log-th" style="width:28px;text-align:center;">
+                <input type="checkbox" onclick="QSOLog.selectAll(this)" title="Zaznacz wszystkie"
+                  style="width:13px;height:13px;cursor:pointer;accent-color:var(--red);">
+              </th>
+              <th class="log-th" onclick="QSOLog.sort('date')" style="cursor:pointer;" title="Sortuj po dacie">DATA ↕</th>
+              <th class="log-th">CZAS UTC</th>
+              <th class="log-th" onclick="QSOLog.sort('call')" style="cursor:pointer;" title="Sortuj po znaku">CALL ↕</th>
+              <th class="log-th">PASMO</th>
+              <th class="log-th">TRYB</th>
+              <th class="log-th">FREQ MHz</th>
+              <th class="log-th">RST S</th>
+              <th class="log-th">RST R</th>
+              <th class="log-th">LOKATOR</th>
+              <th class="log-th">KOMENTARZ</th>
+              <th class="log-th">AKCJE</th>
+            </tr>
+          </thead>
+          <tbody id="log-table-body">
+            <tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- PAGINACJA -->
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border);">
+        <button class="save-btn" style="padding:4px 12px;" onclick="QSOLog.prevPage()">◀ POPRZEDNIA</button>
+        <span id="log-page-info" style="font-family:var(--mono);font-size:11px;color:var(--dim);">Strona 1</span>
+        <button class="save-btn" style="padding:4px 12px;" onclick="QSOLog.nextPage()">NASTĘPNA ▶</button>
+        <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim);">
+          50 QSO na stronę
+        </span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal: Nowe/Edytuj QSO -->
+<div id="log-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:24px;width:500px;max-width:90vw;max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <span style="font-family:var(--mono);font-size:13px;letter-spacing:2px;color:var(--green);" id="log-modal-title">NOWE QSO</span>
+      <button onclick="QSOLog.closeModal()" style="background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;">✕</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div class="sg"><label>ZNAK *
+        <span id="qso-worked-badge" style="display:none;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px;letter-spacing:1px;"></span>
+      </label><input type="text" id="qso-call" placeholder="SP3GSK" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"
+        oninput="QSOLog?.checkWorkedBefore?.()"></div>
+      <div class="sg"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg"><label>DATA *</label><input type="date" id="qso-date" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>CZAS UTC *</label><input type="time" id="qso-time" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>PASMO *</label>
+        <select id="qso-band" style="font-family:var(--mono);font-size:12px;">
+          <option>160m</option><option>80m</option><option>60m</option><option>40m</option>
+          <option>30m</option><option selected>20m</option><option>17m</option><option>15m</option>
+          <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
+          <option>2m</option><option>70cm</option>
+        </select>
+      </div>
+      <div class="sg"><label>TRYB *</label>
+        <select id="qso-mode" style="font-family:var(--mono);font-size:12px;">
+          <option>SSB</option><option>CW</option><option>FT8</option><option>FT4</option>
+          <option>AM</option><option>FM</option><option>RTTY</option><option>PSK31</option>
+        </select>
+      </div>
+      <div class="sg"><label>FREQ MHz</label><input type="text" id="qso-freq" placeholder="14.215" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>PWR (W)</label><input type="number" id="qso-power" placeholder="100" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>RST SENT</label><input type="text" id="qso-rst-sent" placeholder="599" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>RST RCVD</label><input type="text" id="qso-rst-rcvd" placeholder="599" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="grid-column:1/-1;"><label>KOMENTARZ</label>
+        <input type="text" id="qso-comment" placeholder="73 de SP3GSK" style="font-family:var(--mono);font-size:12px;">
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;">
+      <button class="save-btn" style="flex:1;" onclick="QSOLog.saveQSO()">ZAPISZ QSO</button>
+      <button class="save-btn" style="flex:0 0 auto;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.closeModal()">ANULUJ</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── PAGE: PROFIL ──────────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-profile">
+  <div class="page-col" style="max-width:600px;">
+
+    <div class="box">
+      <div class="box-header">👤 MÓJ PROFIL</div>
+      <div class="box-body change-pwd-form">
+        <div class="field"><label>IMIĘ / NAZWA</label>
+          <input type="text" id="profile-name" placeholder="Imię i nazwisko" autocomplete="name"></div>
+        <div class="field"><label>ZNAK WYWOŁAWCZY</label>
+          <input type="text" id="profile-callsign" placeholder="SP0ABC"
+            style="text-transform:uppercase;font-family:var(--mono);font-size:14px;letter-spacing:2px;"
+            autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
+        <div class="field"><label>LOKATOR QTH (np. JO82)</label>
+          <input type="text" id="profile-locator" placeholder="JO82" maxlength="6"
+            style="text-transform:uppercase;font-family:var(--mono);"
+            autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
+        <div class="field"><label>E-MAIL</label>
+          <input type="email" id="profile-email" placeholder="user@example.com" autocomplete="email"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
+          <button class="save-btn" onclick="saveProfile()">💾 ZAPISZ PROFIL</button>
+          <span id="profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">🔑 ZMIANA HASŁA</div>
+      <div class="box-body change-pwd-form">
+        <div class="field"><label>STARE HASŁO</label>
+          <input type="password" id="profile-old-pwd" autocomplete="current-password"></div>
+        <div class="field"><label>NOWE HASŁO (min. 8 znaków)</label>
+          <input type="password" id="profile-new-pwd" autocomplete="new-password"></div>
+        <div class="field"><label>POWTÓRZ NOWE HASŁO</label>
+          <input type="password" id="profile-new-pwd2" autocomplete="new-password"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
+          <button class="save-btn" onclick="changeProfilePassword()">🔑 ZMIEŃ HASŁO</button>
+          <span id="profile-pwd-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">🔊 AUDIO — MOJE URZĄDZENIA (przeglądarka)</div>
+      <div class="box-body" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+          Wybierz gdzie słyszysz odbiór (RX) i skąd nadajesz głos (TX mikrofon).
+          Ustawienia zapisywane lokalnie w Twojej przeglądarce.
+        </div>
+        <div class="field">
+          <label>GŁOŚNIK RX (odbiór radia → Twoje słuchawki)</label>
+          <div style="display:flex;gap:6px;">
+            <select id="profile-audio-out" onchange="ProfileAudio.setOutput(this.value)"
+              style="flex:1;font-family:var(--mono);font-size:12px;padding:6px;">
+              <option value="">— ładowanie... —</option>
+            </select>
+            <button onclick="ProfileAudio.testOutput()" title="Odtwórz ton testowy"
+              style="font-family:var(--mono);font-size:10px;padding:6px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;white-space:nowrap;">
+              🔉 TEST
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label>MIKROFON TX (Twój głos → radio)</label>
+          <div style="display:flex;gap:6px;">
+            <select id="profile-audio-in" onchange="ProfileAudio.setInput(this.value)"
+              style="flex:1;font-family:var(--mono);font-size:12px;padding:6px;">
+              <option value="">— ładowanie... —</option>
+            </select>
+            <button onclick="ProfileAudio.testInput()" title="Zmierz poziom mikrofonu (5s)"
+              style="font-family:var(--mono);font-size:10px;padding:6px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;white-space:nowrap;">
+              🎤 TEST
+            </button>
+          </div>
+        </div>
+        <div id="profile-audio-meter" style="display:none;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">POZIOM MIKROFONU:</div>
+          <div style="height:14px;background:var(--panel3);border:1px solid var(--border);border-radius:3px;overflow:hidden;">
+            <div id="profile-audio-level" style="height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--amber),var(--red));transition:width 0.05s;"></div>
+          </div>
+          <div id="profile-audio-hint" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:3px;"></div>
+        </div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;padding-top:4px;border-top:1px solid var(--border);">
+          💡 Unikaj urządzeń "CABLE"/"Virtual" — to wirtualne kable dla programów (WSJT-X), nie Twój sprzęt.
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">🎨 WYGLĄD (motyw kolorów)</div>
+      <div class="box-body" style="display:flex;flex-direction:column;gap:8px;">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+          Motyw zmienia kolory akcentów w interfejsie. Zapisywany lokalnie w przeglądarce.
+        </div>
+        <div class="field">
+          <label>MOTYW</label>
+          <select id="profile-theme" onchange="UI.setTheme(this.value)"
+            style="font-family:var(--mono);font-size:12px;padding:6px;width:100%;">
+            <option value="default">Zielony + bursztyn (klasyczny IC-7300)</option>
+            <option value="blue">Niebieski (nowoczesny)</option>
+            <option value="mono">Monochromatyczny (dyskretny)</option>
+            <option value="amber-classic">Bursztyn klasyczny (retro CRT)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">🎤 TX MIKROFON — KOREKCJA AUDIO (EQ)</div>
+      <div class="box-body" style="display:flex;flex-direction:column;gap:10px;">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+          Korekcja audio dopasowuje sygnał mikrofonu do pasma SSB (300-2700 Hz).
+          Wybierz preset pasujący do Twojego głosu i sprawdź odsłuchem
+          jak będzie brzmieć w eterze. Ustawienia zapisują się lokalnie w przeglądarce.
+        </div>
+
+        <div class="field">
+          <label>PRESET EQ</label>
+          <select id="profile-eq-preset" onchange="TxEq.applyPreset(this.value)"
+            style="font-family:var(--mono);font-size:12px;padding:6px;width:100%;">
+            <option value="default">Standardowy (zbalansowany)</option>
+            <option value="dark">Ciemny głos (męski/gruby) — więcej klarowności</option>
+            <option value="bright">Jasny głos (kobiecy/dziecięcy) — mniej wysokich</option>
+            <option value="dx">DX/Contest — maksymalny punch</option>
+            <option value="ragchew">Ragchew — naturalny, mniej agresywny</option>
+            <option value="flat">Flat (bez EQ, tylko limiter)</option>
+            <option value="custom">Custom (ręcznie)</option>
+          </select>
+        </div>
+
+        <div id="profile-eq-custom" style="display:none;flex-direction:column;gap:6px;border:1px solid var(--panel3);padding:8px;border-radius:4px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--amber);">CUSTOM EQ — ręczna regulacja</div>
+          <div class="field">
+            <label style="font-size:10px;">BAS (200 Hz): <span id="eq-bass-val">-3</span> dB</label>
+            <input type="range" id="eq-bass" min="-10" max="6" step="1" value="-3"
+              oninput="TxEq.setBand('bass', parseFloat(this.value))" style="width:100%;">
+          </div>
+          <div class="field">
+            <label style="font-size:10px;">MUD (700 Hz): <span id="eq-mud-val">-5</span> dB</label>
+            <input type="range" id="eq-mud" min="-10" max="0" step="1" value="-5"
+              oninput="TxEq.setBand('mud', parseFloat(this.value))" style="width:100%;">
+          </div>
+          <div class="field">
+            <label style="font-size:10px;">KLAROWNOŚĆ (1800 Hz): <span id="eq-clarity-val">6</span> dB</label>
+            <input type="range" id="eq-clarity" min="0" max="12" step="1" value="6"
+              oninput="TxEq.setBand('clarity', parseFloat(this.value))" style="width:100%;">
+          </div>
+          <div class="field">
+            <label style="font-size:10px;">PUNCH (2400 Hz): <span id="eq-punch-val">8</span> dB</label>
+            <input type="range" id="eq-punch" min="0" max="12" step="1" value="8"
+              oninput="TxEq.setBand('punch', parseFloat(this.value))" style="width:100%;">
+          </div>
+          <div class="field">
+            <label style="font-size:10px;">POWIETRZE (2700 Hz): <span id="eq-air-val">3</span> dB</label>
+            <input type="range" id="eq-air" min="0" max="8" step="1" value="3"
+              oninput="TxEq.setBand('air', parseFloat(this.value))" style="width:100%;">
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--green2);padding:8px;border-radius:4px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--green);">🎧 ODSŁUCH (Monitor) — usłysz jak EQ zmienia Twój głos</div>
+          <div style="display:flex;gap:8px;">
+            <button id="eq-monitor-btn" onclick="TxEq.toggleMonitor()"
+              style="flex:1;font-family:var(--mono);font-size:11px;padding:8px;background:var(--panel3);
+              border:1px solid var(--green2);color:var(--green);cursor:pointer;border-radius:4px;">
+              ▶ START ODSŁUCH
+            </button>
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);">
+            Odsłuch przepuszcza mikrofon przez EQ i odtwarza w słuchawkach lokalnie
+            (nie nadaje przez radio). Używaj słuchawek żeby uniknąć sprzężenia!
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;">
+            <span>Głośność:</span>
+            <input type="range" id="eq-monitor-vol" min="0" max="1" step="0.05" value="0.3"
+              oninput="TxEq.setMonitorVol(parseFloat(this.value))" style="flex:1;">
+            <span id="eq-monitor-vol-val" style="width:40px;text-align:right;">0.30</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─── PAGE: USTAWIENIA ─────────────────────────────────────────────────────── -->
+<!-- ─── PAGE: KONFIGURACJA ───────────────────────────────────────────────────── -->
+<div class="page-content" id="page-config">
+  <div class="page-col">
+
+    <!-- AUDIO RADIA - przeniesione z Ustawien - konfigurowane raz na start -->
+    <div class="box">
+      <div class="box-header">
+        <span>🎙 AUDIO RADIA — AUTO-DETEKCJA</span>
+        <span id="audio-detect-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;margin-left:8px;color:var(--dim);background:var(--panel3);">— ładowanie —</span>
+      </div>
+      <div style="padding:10px 12px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.6;margin-bottom:10px;">
+          Serwer automatycznie wykrywa kartę audio radia (IC-7300, IC-705, FT-991 itp.) po nazwie.<br>
+          Standardowo nie musisz nic konfigurować — po podłączeniu radia przez USB karta zostanie znaleziona.
+        </div>
+        <div id="audio-detect-info" style="font-family:var(--mono);font-size:11px;padding:8px 10px;background:var(--panel3);border-radius:3px;border-left:3px solid var(--green2);margin-bottom:10px;">
+          <div style="color:var(--dim);">Ładowanie…</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button onclick="AudioAutoDetect.rescan()"
+            style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+            🔍 SKANUJ PONOWNIE
+          </button>
+          <button onclick="AudioAutoDetect.toggleExpert()"
+            style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:none;border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+            ⚙ TRYB EKSPERT (ręczny wybór karty)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEKCJA RĘCZNEGO WYBORU KART - domyślnie ukryta, tylko dla ekspertów -->
+    <div class="box" id="audio-manual-config" style="display:none;">
+      <div class="box-header">⚙ KARTY DŹWIĘKOWE — RĘCZNIE (tryb ekspert)</div>
+      <div style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);border-bottom:1px solid var(--border);">
+        ⚠ Zwykle nie potrzebujesz tego dotykać. Używaj gdy auto-detekcja nie znajduje karty lub masz kilka radi.
+      </div>
+      <div class="settings-inner">
+        <div class="sg"><label>Karta RX (radio → serwer)</label>
+          <select id="cfg-audio-rx" style="flex:1;font-family:var(--mono);font-size:11px;">
+            <option value="">— domyślna —</option>
+          </select>
+        </div>
+        <div class="sg"><label>Karta TX (serwer → radio)</label>
+          <select id="cfg-audio-tx" style="flex:1;font-family:var(--mono);font-size:11px;">
+            <option value="">— domyślna —</option>
+          </select>
+        </div>
+        <div class="sg"><label>Bitrate Opus</label>
+          <select id="cfg-audio-bitrate" style="width:120px;font-family:var(--mono);font-size:11px;">
+            <option value="12000">12 kbps</option>
+            <option value="16000">16 kbps</option>
+            <option value="24000" selected>24 kbps</option>
+            <option value="32000">32 kbps</option>
+            <option value="48000">48 kbps</option>
+          </select>
+        </div>
+        <div class="sg"><label>Status</label>
+          <span id="cfg-audio-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);">—</span>
+        </div>
+        <div class="sg" style="grid-column:1/-1;"><label>TX Volume serwer (mnożnik audio serwer → radio)
+          <span style="color:var(--dim);font-size:9px;">(używane też przez FT8/FT4 encoder)</span></label>
+          <div style="display:flex;align-items:center;gap:8px;flex:1">
+            <input type="range" id="cfg-tx-volume" min="1" max="16" step="0.5" value="4"
+              style="flex:1;accent-color:var(--red)"
+              oninput="document.getElementById('cfg-tx-volume-val').textContent=this.value+'x'">
+            <span id="cfg-tx-volume-val" style="width:35px;font-size:11px">4x</span>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="save-btn" onclick="_audioDeviceSave()">💾 ZAPISZ I ZASTOSUJ (karty + TX Volume)</button>
+        <button class="save-btn" style="background:rgba(76,160,219,0.1);border-color:#4aa;"
+          onclick="_audioDeviceRefresh()">↺ ODŚWIEŻ KARTY</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">
+        <span>KONFIGURACJA RADIA</span>
+        <button id="btn-add-rig" onclick="Settings.addRig()"
+          style="background:none;border:1px solid var(--green2);border-radius:4px;
+          color:var(--green);font-family:var(--mono);font-size:10px;
+          padding:3px 10px;cursor:pointer;letter-spacing:1px;">+ DODAJ RADIO</button>
+      </div>
+      <div id="rigs-settings-container"></div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span>KONFIGURACJA ROTATORÓW</span><button class="admin-btn" onclick="Admin.addRotator()">+ DODAJ</button></div>
+      <!-- Lokator STACJI — miejsce gdzie stoi antena. Od niego liczony jest
+           azymut na korespondenta (ten sam dla wszystkich operatorow). -->
+      <div style="padding:12px 12px 0;display:flex;align-items:center;gap:10px;
+           flex-wrap:wrap;border-bottom:1px solid #1a1a1a;padding-bottom:12px;">
+        <span style="font-size:11px;color:var(--dim);letter-spacing:1px;">
+          LOKATOR STACJI</span>
+        <input id="cfg-station-locator" type="text" placeholder="np. JO72"
+          maxlength="6" style="font-family:var(--mono);font-size:12px;
+          text-transform:uppercase;background:#0a0a0a;border:1px solid #2a2a2a;
+          color:#fa0;padding:4px 8px;border-radius:2px;width:90px;">
+        <button class="admin-btn" onclick="Admin.saveStationLocator()">ZAPISZ</button>
+        <span id="cfg-station-locator-msg" style="font-size:10px;color:var(--dim);"></span>
+        <div style="flex-basis:100%;font-size:10px;color:#666;">
+          Pozycja anteny — od niej liczony jest kierunek na korespondenta
+          (widoczny w logu QSO po wpisaniu znaku). Wspólny dla wszystkich
+          operatorów, niezależnie skąd się łączą.
+        </div>
+      </div>
+      <div style="padding:12px;" id="rotator-config-list">Ładowanie...</div>
+      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRotatorConfig()">ZAPISZ I ZRESTARTUJ ROTATORY</button></div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span>DEKODER CW — MODEL DEEPCW</span></div>
+      <div style="padding:12px;font-size:11px;color:var(--dim);">
+        Sieciowy dekoder CW (~15 MB). Pobierany raz, zapisywany w katalogu
+        danych — przetrwa aktualizacje programu. Dekoder pracuje tylko gdy
+        okno dekodera jest otwarte.
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
+          <button class="admin-btn" onclick="Admin.deepcwDownload()">POBIERZ / AKTUALIZUJ MODEL</button>
+          <button class="admin-btn" onclick="Admin.deepcwStatus()">SPRAWDŹ STAN</button>
+          <span id="deepcw-admin-status" style="font-size:10px;color:var(--dim);"></span>
+        </div>
+        <div id="deepcw-admin-bar" style="display:none;margin-top:8px;height:4px;
+             background:#1a1a1a;border-radius:2px;overflow:hidden;">
+          <div class="deepcw-bar-fill" style="height:100%;width:0;background:var(--green);
+               transition:width .3s;"></div>
+        </div>
+        <div id="deepcw-admin-log" style="margin-top:6px;font-family:var(--mono);
+             font-size:10px;color:#666;"></div>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span>FUNKCJE RADIA — DOSTĘP DLA UŻYTKOWNIKÓW</span></div>
+      <div style="padding:12px;font-size:11px;color:var(--dim);">
+        Zaznacz funkcje dostępne dla zwykłych użytkowników (operator/viewer).
+        Funkcje wyszarzone nie są wspierane przez aktualnie podłączone radio.
+      </div>
+      <div style="padding:0 12px 12px;" id="rig-features-config-list">Ładowanie...</div>
+      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRigFeatures()">ZAPISZ FUNKCJE RADIA</button></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         COM BRIDGE — sekcja informacyjna (2 stale porty CI-V dla kazdego)
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="box" id="com-bridge-config-section">
+      <div class="box-header">
+        <span>🔌 COM BRIDGE — zdalny dostęp CAT (CW Skimmer, HRD, Logger32)</span>
+        <span id="cb-client-status" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);margin-left:8px;">— brak podłączonego klienta —</span>
+      </div>
+      <div style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;">
+        Aplikacja <b style="color:var(--fg);">HAM RADIO CTRL</b> (klient Windows) tworzy wirtualne porty COM na Twoim
+        komputerze i łączy je ze zdalnym radiem przez internet. Programy jak
+        <b>CW Skimmer</b>, <b>Ham Radio Deluxe</b> czy <b>Logger32</b> widzą radio tak jakby było podłączone lokalnie.
+      </div>
+
+      <div class="box-body">
+        <!-- 2 dostepne porty -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+          <div style="padding:12px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;">PORT 1 — pierwsza aplikacja</div>
+            <div style="font-family:var(--mono);font-size:18px;color:var(--fg);font-weight:bold;">COM11</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;line-height:1.5;">
+              Icom IC-7300 · CI-V <b>0x94</b><br>19200 baud · 8N1
+            </div>
+          </div>
+          <div style="padding:12px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;">PORT 2 — druga aplikacja</div>
+            <div style="font-family:var(--mono);font-size:18px;color:var(--fg);font-weight:bold;">COM21</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;line-height:1.5;">
+              Icom IC-7300 · CI-V <b>0x94</b><br>19200 baud · 8N1
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:10px 12px;background:rgba(184,201,143,0.06);border-left:3px solid var(--green2);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
+          <b style="color:var(--fg);">Masz 2 niezależne porty</b> — możesz uruchomić dwie aplikacje jednocześnie
+          (np. CW Skimmer na COM11 i HRD na COM21). Nie kolidują ze sobą ani z serwerem.<br>
+          <span style="color:var(--amber);">Uwaga:</span> numery COM na Twoim komputerze mogą się różnić —
+          sprawdź w oknie aplikacji HAM RADIO CTRL (kolumna „COM dla apki").
+        </div>
+
+        <!-- Krok po kroku -->
+        <details style="margin-bottom:12px;">
+          <summary style="cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--green);padding:6px 0;">📖 Jak skonfigurować (kliknij)</summary>
+          <div style="padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.8;">
+            <b style="color:var(--fg);">1.</b> Pobierz i uruchom <b>Most COM</b> (przycisk poniżej)<br>
+            <b style="color:var(--fg);">2.</b> Wpisz adres serwera, swój login i hasło → <b>POŁĄCZ</b><br>
+            <b style="color:var(--fg);">3.</b> Aplikacja utworzy porty COM (przy pierwszym razie zezwól na UAC)<br>
+            <b style="color:var(--fg);">4.</b> W CW Skimmer / HRD wybierz <b>Icom IC-7300</b>, CI-V adres <b>94</b>, <b>19200</b> baud<br>
+            <b style="color:var(--fg);">5.</b> Wpisz numer COM z okna aplikacji (kolumna „COM dla apki")<br>
+            <b style="color:var(--fg);">6.</b> Connect — radio działa jakby było lokalne!
+          </div>
+        </details>
+
+        <!-- Link do pobrania EXE -->
+        <a href="/download/com-bridge" download
+           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
+          ⬇️ POBIERZ MOST COM (Windows .exe)
+        </a>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
+          Wymaga Windows 10/11 · ~25 MB · zawiera sterownik com0com
+        </div>
+      </div>
+    </div>
+
+    <!-- Statystyki dla admin - lista podlaczonych klientow -->
+    <div class="box adminonly" id="cb-admin-stats-box" style="display:none;">
+      <div class="box-header">
+        <span>📊 COM BRIDGE — podłączeni klienci (ADMIN)</span>
+        <button onclick="ComBridge.loadStats()" style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border2);border-radius:3px;color:var(--dim);cursor:pointer;">🔍 ODŚWIEŻ</button>
+      </div>
+      <div class="box-body">
+        <div id="cb-stats-list" style="font-family:var(--mono);font-size:11px;color:var(--dim);">
+          <span style="color:var(--dim);">Kliknij ODŚWIEŻ żeby zobaczyć podłączonych klientów.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PASMA — WYBÓR DOSTĘPNYCH -->
+    <div class="box">
+      <div class="box-header">PASMA — WIDOCZNE W UI</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
+        Wybierz które pasma będą widoczne użytkownikom w siatce PASMO.<br>
+        Zmiana obowiązuje natychmiast dla wszystkich połączonych klientów.
+      </div>
+      <div style="padding:12px;" id="admin-bands-container">
+        <div class="tw-widget" id="bands-transfer">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;">PASMA</div>
+          <div class="tw-body">
+            <div class="tw-col">
+              <div class="tw-col-header">Widoczne <span class="tw-count" id="bands-transfer-sel-count">0</span></div>
+              <div class="tw-list" id="bands-transfer-selected" data-side="selected"></div>
+              <div class="tw-hint">Kliknij dwukrotnie aby usunąć</div>
+            </div>
+            <div class="tw-buttons">
+              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','selected')">«« Wszystkie</button>
+              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','selected')">« Dodaj</button>
+              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','available')">Usuń »</button>
+              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','available')">Wszystkie »»</button>
+              <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+                <button class="tw-btn" onclick="_twMoveUp('bands-transfer')">▲ Wyżej</button>
+                <button class="tw-btn" onclick="_twMoveDown('bands-transfer')">▼ Niżej</button>
+              </div>
+            </div>
+            <div class="tw-col">
+              <div class="tw-col-header">Dostępne <span class="tw-count" id="bands-transfer-avl-count">0</span></div>
+              <div class="tw-list" id="bands-transfer-available" data-side="available"></div>
+              <div class="tw-hint">Kliknij dwukrotnie aby dodać</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;">
+        <button class="save-btn" onclick="AdminBands.save()">ZAPISZ PASMA</button>
+      </div>
+    </div>
+
+    <!-- TRYBY — WYBÓR DOSTĘPNYCH + FILTR DLA USB-D -->
+    <div class="box">
+      <div class="box-header">TRYBY PRACY — WIDOCZNE W UI + FILTRY</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
+        Wybierz tryby widoczne w siatce TRYB. USB-D/LSB-D = tryby cyfrowe (DATA) — można przypisać domyślny filtr.
+      </div>
+      <div style="padding:12px;">
+        <div class="tw-widget" id="modes-transfer">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;">TRYBY</div>
+          <div class="tw-body">
+            <div class="tw-col">
+              <div class="tw-col-header">Widoczne <span class="tw-count" id="modes-transfer-sel-count">0</span></div>
+              <div class="tw-list" id="modes-transfer-selected" data-side="selected"></div>
+              <div class="tw-hint">Kliknij dwukrotnie aby usunąć</div>
+            </div>
+            <div class="tw-buttons">
+              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','selected')">«« Wszystkie</button>
+              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','selected')">« Dodaj</button>
+              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','available')">Usuń »</button>
+              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','available')">Wszystkie »»</button>
+              <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+                <button class="tw-btn" onclick="_twMoveUp('modes-transfer')">▲ Wyżej</button>
+                <button class="tw-btn" onclick="_twMoveDown('modes-transfer')">▼ Niżej</button>
+              </div>
+            </div>
+            <div class="tw-col">
+              <div class="tw-col-header">Dostępne <span class="tw-count" id="modes-transfer-avl-count">0</span></div>
+              <div class="tw-list" id="modes-transfer-available" data-side="available"></div>
+              <div class="tw-hint">Kliknij dwukrotnie aby dodać</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Przypisanie filtrów do trybów cyfrowych -->
+        <div style="margin-top:14px;border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:2px;margin-bottom:10px;">
+            DOMYŚLNY FILTR DLA TRYBU
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:8px;line-height:1.8;">
+            Gdy użytkownik przełączy tryb, serwer automatycznie ustawi wybrany filtr.<br>
+            Puste = brak automatycznej zmiany filtra.
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;" id="mode-filter-grid">
+            <!-- Wypełniane przez AdminBands.load() -->
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;">
+        <button class="save-btn" onclick="AdminBands.saveModes()">ZAPISZ TRYBY I FILTRY</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="page-content" id="page-settings">
+  <div class="page-col">
+
+    <!-- COM BRIDGE — zdalny dostep CAT (info + download dla wszystkich userow) -->
+    <div class="box" id="com-bridge-settings-card">
+      <div class="box-header">🔌 ZDALNY DOSTĘP CAT — CW Skimmer, HRD, Logger32</div>
+      <div class="settings-inner">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
+          Pobierz aplikację <b style="color:var(--fg);">HAM RADIO CTRL</b> i używaj zdalnego radia
+          w programach CAT tak jakby było podłączone lokalnie. Masz <b style="color:var(--green);">2 niezależne porty</b> —
+          np. CW Skimmer i HRD jednocześnie.
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+          <div style="padding:10px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;text-align:center;">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;">PORT 1</div>
+            <div style="font-family:var(--mono);font-size:16px;color:var(--fg);font-weight:bold;">COM11</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;">IC-7300 · CI-V 94 · 19200</div>
+          </div>
+          <div style="padding:10px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;text-align:center;">
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;">PORT 2</div>
+            <div style="font-family:var(--mono);font-size:16px;color:var(--fg);font-weight:bold;">COM21</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;">IC-7300 · CI-V 94 · 19200</div>
+          </div>
+        </div>
+
+        <div style="padding:8px 10px;background:rgba(217,180,106,0.08);border-left:3px solid var(--amber);border-radius:4px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:12px;">
+          <b style="color:var(--amber);">Uwaga:</b> zmiana częstotliwości/trybu przez CAT wymaga przejęcia radia (blokady).
+          Bez blokady możesz tylko <b>odczytywać</b> stan radia (podgląd freq w programie).
+          Numery COM na Twoim PC mogą się różnić — sprawdź w oknie aplikacji.
+        </div>
+
+        <a href="/download/com-bridge" download
+           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
+          ⬇️ POBIERZ MOST COM (Windows)
+        </a>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
+          Windows 10/11 · ~25 MB · zawiera com0com
+        </div>
+      </div>
+    </div>
+
+    <!-- CLOUDLOG / WAVELOG -->
+    <div class="box">
+      <div class="box-header" style="display:flex;align-items:center;gap:8px;">
+        <span>CLOUDLOG / WAVELOG</span>
+        <span id="cloudlog-status" title="Status polaczenia z CloudLog/WaveLog"
+          style="width:10px;height:10px;border-radius:50%;background:var(--dim);
+          display:inline-block;flex-shrink:0;box-shadow:0 0 0 0 transparent;
+          transition:background 0.3s,box-shadow 0.3s;cursor:pointer;"
+          onclick="CloudLog.test()" title="Kliknij aby przetestowac polaczenie"></span>
+        <span id="cloudlog-status-text" style="font-family:var(--mono);font-size:9px;
+          color:var(--dim);">nie sprawdzono</span>
+      </div>
+      <div class="settings-inner">
+
+        <div class="sg">
+          <label>Adres serwera</label>
+          <input type="text" id="cl-url" placeholder="https://cloudlog.example.com"
+            style="flex:1;font-family:var(--mono);font-size:11px;">
+        </div>
+
+        <div class="sg">
+          <label>API Key — logowanie QSO</label>
+          <div style="display:flex;gap:6px;flex:1;">
+            <input type="text" id="cl-api-key-qso" placeholder="klucz API dla QSO"
+              style="flex:1;font-family:var(--mono);font-size:11px;">
+            <input type="number" id="cl-station-id" placeholder="ID stacji" min="1"
+              style="width:80px;font-family:var(--mono);font-size:11px;">
+          </div>
+        </div>
+
+        <div class="sg">
+          <label>API Key — częstotliwość live</label>
+          <input type="text" id="cl-api-key-radio" placeholder="klucz API dla live freq/mode"
+            style="flex:1;font-family:var(--mono);font-size:11px;">
+        </div>
+
+        <div class="sg">
+          <label>Live freq/mode</label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;">
+            <input type="checkbox" id="cl-live-enabled" onchange="CloudLog.setLive(this.checked)">
+            Wysyłaj freq+mode automatycznie (co 5s)
+          </label>
+        </div>
+
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;">
+        <button class="save-btn" style="flex:1;" onclick="CloudLog.save()">ZAPISZ</button>
+        <button class="save-btn" style="flex:0 0 auto;background:rgba(76,219,106,0.08);"
+          onclick="CloudLog.test()">TEST POŁĄCZENIA</button>
+      </div>
+    </div>
+
+    <!-- WIRTUALNE RADIO — emulacja rigctld dla zewnętrznych programów -->
+    <div class="box">
+      <div class="box-header">WIRTUALNE RADIO — ZEWNĘTRZNE PROGRAMY</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:2;">
+        Emulacja <b>Hamlib NET rigctl</b> (rigctld) — 3 niezależne serwery TCP.<br>
+        Każdy port to osobne "wirtualne radio" do którego podłączasz zewnętrzny program.<br>
+        <span style="color:var(--green);">WSJT-X / Log4OM / N1MM / CW Skimmer / DXKeeper / HRD:</span>
+        Rig → <b>Hamlib NET rigctl</b> → host: <b>&lt;IP serwera&gt;</b> → port: <b>4532</b>
+      </div>
+
+      <div id="hamlib-slots" style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+        <!-- Wypełniane przez JS -->
+        <div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Ładowanie...</div>
+      </div>
+
+      <div style="padding:0 12px 12px;display:flex;gap:8px;align-items:center;">
+        <button class="save-btn" onclick="HamlibUI.save()">ZAPISZ KONFIGURACJĘ</button>
+        <button class="save-btn" style="background:none;border-color:var(--border);color:var(--dim);"
+          onclick="HamlibUI.load()">↻ ODŚWIEŻ STATUS</button>
+        <span id="hamlib-msg" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
+      </div>
+
+      <div style="padding:0 12px 12px;border-top:1px solid var(--border);">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:2;margin-top:8px;">
+          <b style="color:var(--text);">Jak podłączyć program zewnętrzny:</b><br>
+          WSJT-X: <span style="color:var(--amber)">Settings → Radio → Rig: Hamlib NET rigctl → Network server: &lt;IP&gt; Port: 4532</span><br>
+          Log4OM: <span style="color:var(--amber)">Settings → Rig → Hamlib NET rigctl → host: &lt;IP&gt; : 4533</span><br>
+          N1MM+:  <span style="color:var(--amber)">Config → Configurer → Hamlib → NET rigctl → host:port</span><br>
+          CW Skimmer: <span style="color:var(--amber)">Settings → Rig → Hamlib NET → host: &lt;IP&gt; : 4534</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─── PAGE: INTERNET ───────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-internet">
+  <div class="page-col">
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         KARTA #1 — STATUS (wszystko w jednym miejscu)
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="box">
+      <div class="box-header">
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span id="tn-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--dim);display:inline-block;"></span>
+          STATUS DOSTĘPU ZDALNEGO
+        </span>
+        <span id="tn-status-badge" style="font-family:var(--mono);font-size:11px;color:var(--dim);">○ WYŁĄCZONY</span>
+      </div>
+      <div class="box-body">
+        <!-- Adres publiczny (do udostępniania operatorom) -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <div style="flex:1;min-width:0;">
+            <div class="form-label" style="margin-bottom:2px;">ADRES DO UDOSTĘPNIENIA</div>
+            <div id="tn-public-url" style="font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</div>
+          </div>
+          <button onclick="Tunnel.copyPublic()" title="Kopiuj do schowka"
+            style="font-family:var(--mono);font-size:10px;padding:6px 10px;background:var(--panel3);border:1px solid var(--border);border-radius:3px;color:var(--dim);cursor:pointer;white-space:nowrap;">
+            📋 KOPIUJ
+          </button>
+        </div>
+
+        <!-- Podsumowanie stanu jako pill'e (widoczne tylko gdy tryb wymaga dodatkowego stanu) -->
+        <div id="tn-detail-row" style="display:flex;gap:8px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;">
+          <span id="tn-detail-cert"    style="display:none;padding:3px 8px;background:var(--panel3);border-radius:3px;border:1px solid var(--border);">
+            🔒 CERT: <span id="tn-cert-days" style="color:var(--green);">—</span>
+          </span>
+          <span id="tn-detail-tunnel"  style="display:none;padding:3px 8px;background:var(--panel3);border-radius:3px;border:1px solid var(--border);">
+            🌐 TUNEL: <span id="tn-duck-tunnel-status" style="color:var(--dim);">—</span>
+          </span>
+          <span id="tn-detail-local" style="padding:3px 8px;background:var(--panel3);border-radius:3px;border:1px solid var(--border);color:var(--dim);">
+            🏠 LAN: <span id="tn-local-url">—</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         KARTA #2 — TRYB DOSTĘPU (wybór + konfiguracja)
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="box">
+      <div class="box-header">
+        <span>TRYB DOSTĘPU</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">zmiany zapisują się automatycznie</span>
+      </div>
+      <div class="box-body" style="display:flex;flex-direction:column;gap:12px;">
+        <input type="hidden" id="tn-mode" value="off">
+
+        <!-- Tryby podstawowe (3 najczęściej używane) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+
+          <button class="tn-mode-btn" data-mode="off" onclick="Tunnel.modeChanged('off')"
+            style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+            <div style="font-size:18px;margin-bottom:4px;">🏠</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">TYLKO W DOMU</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+              LAN. Nie wymaga konfiguracji.
+            </div>
+          </button>
+
+          <button class="tn-mode-btn" data-mode="quick" onclick="Tunnel.modeChanged('quick')"
+            style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+            <div style="font-size:18px;margin-bottom:4px;">⚡</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">SZYBKI TUNEL</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+              Cloudflare bez rejestracji.
+              <span style="color:var(--amber);">Adres zmienny.</span>
+            </div>
+          </button>
+
+          <button class="tn-mode-btn" data-mode="duckdns" onclick="Tunnel.modeChanged('duckdns')"
+            style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+            <div style="font-size:18px;margin-bottom:4px;">🦆</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">DUCKDNS + HTTPS</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+              Darmowa subdomena.
+              <span style="color:var(--green);">Stały adres.</span>
+            </div>
+          </button>
+        </div>
+
+        <!-- Tryby zaawansowane (collapse — domyślnie ukryte) -->
+        <details style="border-top:1px dashed var(--border);padding-top:8px;">
+          <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:1px;padding:4px 0;list-style:none;">
+            ▸ TRYBY ZAAWANSOWANE (własna domena, stałe IP)
+          </summary>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+
+            <button class="tn-mode-btn" data-mode="named" onclick="Tunnel.modeChanged('named')"
+              style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+              <div style="font-size:18px;margin-bottom:4px;">🌐</div>
+              <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">CLOUDFLARE + DOMENA</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+                Nazwana subdomena własnej domeny.
+              </div>
+            </button>
+
+            <button class="tn-mode-btn" data-mode="staticip" onclick="Tunnel.modeChanged('staticip')"
+              style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+              <div style="font-size:18px;margin-bottom:4px;">🔒</div>
+              <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">STAŁE IP + HTTPS</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+                Publiczne stałe IP + self-signed cert.
+              </div>
+            </button>
+          </div>
+        </details>
+
+        <!-- POLA — Cloudflare named -->
+        <div id="tn-named-fields" style="display:none;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-bottom:8px;">
+            📋 dash.cloudflare.com → Zero Trust → Tunnels → Create tunnel → skopiuj token
+          </div>
+          <div class="form-label" style="margin-bottom:4px;">TWOJA DOMENA</div>
+          <input type="text" id="tn-hostname" placeholder="radio.twojadomena.pl" oninput="Tunnel.saveTunnelConfig(false)" style="margin-bottom:8px;">
+          <div class="form-label" style="margin-bottom:4px;">TOKEN CLOUDFLARE</div>
+          <input type="password" id="tn-token" placeholder="eyJhbGci…" autocomplete="off" oninput="Tunnel.saveTunnelConfig(false)">
+        </div>
+
+        <!-- POLA — DuckDNS -->
+        <div id="tn-duckdns-fields" style="display:none;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-bottom:8px;">
+            📋 <a href="https://www.duckdns.org" target="_blank" style="color:var(--green);">duckdns.org</a> → zaloguj się → utwórz subdomenę → skopiuj token
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">SUBDOMENA</div>
+              <input type="text" id="tn-duck-domain" placeholder="mojradio" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">TOKEN</div>
+              <input type="password" id="tn-duck-token" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:10px;">
+            Twój adres: <span id="tn-duck-preview" style="color:var(--green);">mojradio.duckdns.org</span>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button onclick="Tunnel.installCertbot()"
+              style="flex:1;font-family:var(--mono);font-size:10px;padding:6px 10px;
+              background:rgba(184,201,143,0.08);border:1px solid var(--green2);
+              border-radius:4px;color:var(--green);cursor:pointer;">
+              ⬇ INSTALUJ CERTBOT
+            </button>
+            <button onclick="Tunnel.genCert()"
+              style="flex:1;font-family:var(--mono);font-size:10px;padding:6px 10px;
+              background:rgba(184,201,143,0.08);border:1px solid var(--green2);
+              border-radius:4px;color:var(--green);cursor:pointer;">
+              🔒 GENERUJ CERTYFIKAT
+            </button>
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;">
+            Cert Let's Encrypt (90 dni, auto-renew). Wymaga otwartego portu 80 lub 443.
+          </div>
+        </div>
+
+        <!-- POLA — Stałe IP -->
+        <div id="tn-staticip-fields" style="display:none;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;">
+          <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;">
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">TWOJE STAŁE IP</div>
+              <input type="text" id="tn-static-ip" placeholder="85.123.45.67" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">PORT</div>
+              <input type="text" id="tn-static-port" placeholder="8001" value="8001" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;">
+            Cert SSL self-signed generowany automatycznie. Przeglądarka ostrzeże raz — kliknij "Zaawansowane → Przejdź dalej".
+          </div>
+        </div>
+
+        <!-- Diagnostyka cloudflared - pokazywana tylko gdy tryb Cloudflare -->
+        <div id="tn-cf-status" style="display:none;padding:6px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);align-items:center;gap:10px;flex-wrap:wrap;">
+          <span id="tn-cf-version">cloudflared: sprawdzam...</span>
+          <span id="tn-cf-stale" style="color:var(--amber);display:none;"></span>
+          <span id="tn-cf-svc" style="color:var(--amber);display:none;">⚠ Usługa Windows aktywna</span>
+          <button onclick="Tunnel.cleanup()" style="margin-left:auto;font-family:var(--mono);font-size:10px;
+            padding:3px 12px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
+            border-radius:3px;color:var(--red);cursor:pointer;">🗑 WYCZYŚĆ</button>
+          <button onclick="Tunnel.checkCF()" style="font-family:var(--mono);font-size:10px;
+            padding:3px 12px;background:var(--panel3);border:1px solid var(--border2);
+            border-radius:3px;color:var(--dim);cursor:pointer;">🔍 SPRAWDŹ</button>
+        </div>
+
+        <!-- Akcja i autostart w jednym rzędzie -->
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="tn-start-btn" onclick="Tunnel.startTunnel()"
+            style="flex:1;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:5px;color:var(--green);font-family:var(--mono);font-size:12px;padding:12px;cursor:pointer;letter-spacing:1px;font-weight:bold;">
+            ▶ URUCHOM
+          </button>
+          <button onclick="Tunnel.stopTunnel()"
+            style="background:rgba(217,119,106,0.08);border:1px solid rgba(217,119,106,0.3);border-radius:5px;color:var(--red);font-family:var(--mono);font-size:12px;padding:12px 20px;cursor:pointer;">
+            ■ ZATRZYMAJ
+          </button>
+          <label style="display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:10px;color:var(--dim);cursor:pointer;white-space:nowrap;">
+            <input type="checkbox" id="tn-autostart" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green);" onchange="Tunnel.saveTunnelConfig(false)">
+            Auto-start
+          </label>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ─── PAGE: ADMIN ──────────────────────────────────────────────────────────── -->
+<!-- ─── PAGE: DX CLUSTER ─────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-dxcluster" style="height:100%;">
+  <div class="page-col" style="max-width:100%;height:100%;display:flex;flex-direction:column;gap:6px;overflow:hidden;">
+
+    <!-- PASEK GÓRNY: status + filtry + akcje (jeden wiersz) -->
+    <div class="box" style="flex-shrink:0;">
+      <div style="padding:6px 10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <span style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:1px;">📡 DX CLUSTER</span>
+        <span id="dx-status-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);">○ ROZŁĄCZONY</span>
+
+        <span style="width:1px;height:16px;background:var(--border);margin:0 4px;"></span>
+
+        <button id="dx-connect-btn" onclick="DXCluster.connect()"
+          style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+          ▶ POŁĄCZ
+        </button>
+        <button id="dx-disconnect-btn" onclick="DXCluster.disconnect()" style="display:none;
+          font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);color:var(--red);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+          ✕ ROZŁĄCZ
+        </button>
+        <button onclick="DXCluster.toggleConfig()" title="Pokaż/ukryj konfigurację"
+          style="font-family:var(--mono);font-size:10px;padding:3px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;">
+          ⚙ KONFIG
+        </button>
+        <button id="dx-spot-btn" onclick="DXCluster.openSpotDialog()" title="Wyślij spota na klaster (wypełni aktualną częstotliwość i tryb)"
+          style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(212,153,34,0.12);border:1px solid rgba(212,153,34,0.45);color:var(--amber);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+          📤 WYŚLIJ SPOT
+        </button>
+
+        <span style="width:1px;height:16px;background:var(--border);margin:0 4px;"></span>
+
+        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);">PASMO:</label>
+        <select id="dx-filter-band" onchange="DXCluster.renderSpots()"
+          style="font-family:var(--mono);font-size:10px;padding:2px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          <option value="">wszystkie</option>
+          <option value="160m">160m</option><option value="80m">80m</option>
+          <option value="60m">60m</option><option value="40m">40m</option>
+          <option value="30m">30m</option><option value="20m">20m</option>
+          <option value="17m">17m</option><option value="15m">15m</option>
+          <option value="12m">12m</option><option value="10m">10m</option>
+          <option value="6m">6m</option><option value="2m">2m</option>
+          <option value="70cm">70cm</option>
+        </select>
+        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);">TRYB:</label>
+        <select id="dx-filter-mode" onchange="DXCluster.renderSpots()"
+          style="font-family:var(--mono);font-size:10px;padding:2px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          <option value="">wszystkie</option>
+          <option value="SSB">SSB</option><option value="CW">CW</option>
+          <option value="FT8">FT8</option><option value="FT4">FT4</option>
+          <option value="RTTY">RTTY</option><option value="DIGI">DIGI</option>
+        </select>
+        <input type="text" id="dx-filter-call" oninput="DXCluster.renderSpots()"
+          placeholder="szukaj (call/spotter)"
+          style="font-family:var(--mono);font-size:10px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;width:150px;">
+
+        <span style="margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--dim);">
+          Spoty: <span id="dx-spot-count" style="color:var(--green);">0</span>
+        </span>
+        <button onclick="DXCluster.clearSpots()" title="Wyczyść listę"
+          style="font-family:var(--mono);font-size:10px;padding:2px 8px;background:none;border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;">
+          🗑
+        </button>
+      </div>
+
+      <!-- KONFIGURACJA (zwijana - domyslnie schowana) -->
+      <div id="dx-config-panel" style="display:none;border-top:1px solid var(--border);padding:8px 10px;background:var(--panel2);">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;margin-bottom:6px;">
+          Adres serwera Telnet (np. <code>dxcluster.sq3mzm.ovh:7300</code>). Login = znak. Hasło opcjonalne.
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 80px 1fr 1fr auto;gap:6px;align-items:end;">
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">ADRES</label>
+            <input type="text" id="dx-host" placeholder="dxcluster.sq3mzm.ovh"
+              style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">PORT</label>
+            <input type="number" id="dx-port" value="7300" min="1" max="65535"
+              style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">LOGIN</label>
+            <input type="text" id="dx-login" placeholder="SP3GSK" maxlength="12"
+              style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          </div>
+          <div>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">HASŁO</label>
+            <input type="password" id="dx-password" placeholder="opcjonalne" autocomplete="new-password"
+              style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+          </div>
+          <button onclick="DXCluster.save()" class="save-btn"
+            style="font-family:var(--mono);font-size:10px;padding:5px 12px;letter-spacing:1px;">💾 ZAPISZ</button>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+          <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="dx-auto-connect" style="width:12px;height:12px;">
+            Auto-łącz przy logowaniu
+          </label>
+          <span id="dx-save-status" style="font-family:var(--mono);font-size:9px;color:var(--dim);"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- LISTA SPOTÓW - flex:1 zajmuje cala pozostala przestrzen -->
+    <div class="box" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div style="flex:1;overflow-y:auto;">
+        <table class="admin-table" style="width:100%;">
+          <thead style="position:sticky;top:0;background:var(--panel);z-index:1;">
+            <tr>
+              <th style="width:60px;font-size:9px;">UTC</th>
+              <th style="width:90px;font-size:9px;">MHz</th>
+              <th style="width:110px;font-size:9px;">CALL (DX)</th>
+              <th style="width:50px;font-size:9px;">BAND</th>
+              <th style="width:50px;font-size:9px;">TRYB</th>
+              <th style="font-size:9px;">KOMENTARZ</th>
+              <th style="width:100px;font-size:9px;">SPOTTER</th>
+              <th style="width:50px;font-size:9px;">QSY</th>
+            </tr>
+          </thead>
+          <tbody id="dx-spot-list">
+            <tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim);font-family:var(--mono);font-size:10px;">
+              Brak spotów. Kliknij <strong>⚙ KONFIG</strong> żeby wpisać adres serwera, potem <strong>▶ POŁĄCZ</strong>.
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- CLI - kompaktowy pasek na dole -->
+      <div style="flex-shrink:0;border-top:1px solid var(--border);padding:4px 8px;display:flex;gap:6px;align-items:center;background:var(--panel2);">
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">CMD:</span>
+        <input type="text" id="dx-cmd" placeholder="sh/dx 20m, set/qth JO72..."
+          onkeydown="if(event.key==='Enter')DXCluster.sendCommand()"
+          style="flex:1;font-family:var(--mono);font-size:10px;padding:3px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
+        <button onclick="DXCluster.sendCommand()"
+          style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;cursor:pointer;">▶</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── PAGE: ADMIN ─────────────────────────────────────────────────────────── -->
+<div class="page-content" id="page-admin">
+  <div class="page-col">
+    <!-- STATUS SERWERA + DIAGNOSTYKA -->
+    <div class="box">
+      <div class="box-header"><span>📊 STATUS SERWERA</span>
+        <button class="admin-btn" onclick="AdminStatus.refresh()">↻ ODŚWIEŻ</button>
+      </div>
+      <div id="admin-status-body" style="padding:10px 12px;font-family:var(--mono);font-size:11px;">
+        <div style="color:var(--dim);text-align:center;padding:10px;">Ładowanie statusu...</div>
+      </div>
+      <div style="padding:0 12px 10px;display:flex;gap:8px;">
+        <button onclick="AdminStatus.testCiv()"
+          style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">
+          🔌 TEST CI-V
+        </button>
+        <span id="admin-civ-test-result" style="font-family:var(--mono);font-size:10px;color:var(--dim);align-self:center;"></span>
+      </div>
+    </div>
+
+    <!-- BACKUP / RESTORE -->
+    <div class="box">
+      <div class="box-header">💾 BACKUP / RESTORE KONFIGURACJI</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.5;border-bottom:1px solid var(--border);">
+        Backup zawiera <b>config.json</b> (radia, pasma, przekaźniki, SMTP) oraz <b>users.json</b> (konta, uprawnienia, hasła).<br>
+        Trzymaj plik w bezpiecznym miejscu — zawiera hasła. Po restore zrestartuj serwer.
+      </div>
+      <div style="padding:10px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button onclick="AdminStatus.downloadBackup()" class="save-btn"
+          style="font-family:var(--mono);font-size:11px;padding:6px 14px;">⬇ POBIERZ BACKUP</button>
+        <label style="font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">
+          ⬆ WCZYTAJ BACKUP
+          <input type="file" accept=".json" style="display:none;" onchange="AdminStatus.uploadBackup(this)">
+        </label>
+        <span id="admin-backup-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span>UŻYTKOWNICY SYSTEMU</span><button class="admin-btn" onclick="Admin.showAddUser()">+ NOWY UŻYTKOWNIK</button></div>
+      <div style="overflow:auto;">
+        <table class="admin-table">
+          <thead><tr><th>LOGIN / IMIĘ</th><th>ROLA</th><th>ZNAK</th><th>UPRAWNIENIA</th><th>STATUS</th><th>AKCJE</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <!-- TIMER FT8 — ustawienia per user (tylko admin) -->
+    <div class="box">
+      <div class="box-header">TIMER BEZPIECZEŃSTWA FT8/HOUND — GLOBALNY</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);
+        border-bottom:1px solid var(--border);line-height:1.8;">
+        Maksymalny czas ciągłego nadawania FT8/FT4/Hound bez potwierdzenia operatora.<br>
+        Po upływie czasu — TX zostaje automatycznie zatrzymany. Dotyczy wszystkich użytkowników. Zakres: 1–60 min.
+      </div>
+      <div style="padding:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);">CZAS TIMERA:</span>
+        <input type="number" min="1" max="60" value="6" id="ft8t-global-dur"
+          style="width:60px;font-family:var(--mono);font-size:13px;padding:4px 8px;
+          background:var(--panel3);border:1px solid var(--border2);border-radius:3px;
+          color:var(--green);text-align:center;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);">minut</span>
+        <button onclick="Admin.saveGlobalFt8Timer()"
+          style="font-family:var(--mono);font-size:11px;padding:5px 16px;
+          background:rgba(76,219,106,0.1);border:1px solid var(--green2);
+          border-radius:3px;color:var(--green);cursor:pointer;">ZAPISZ</button>
+        <span id="ft8t-global-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">MÓJ PROFIL</div>
+      <div class="box-body change-pwd-form">
+        <div class="field"><label>IMIĘ / NAZWA</label>
+          <input type="text" id="profile-name" placeholder="Imię i nazwisko" autocomplete="name"></div>
+        <div class="field"><label>ZNAK WYWOŁAWCZY</label>
+          <input type="text" id="profile-callsign" placeholder="SP0ABC" style="text-transform:uppercase;" autocomplete="off"></div>
+        <div class="field"><label>LOKATOR QTH (np. JO82)</label>
+          <input type="text" id="profile-locator" placeholder="JO82" maxlength="6" style="text-transform:uppercase;" autocomplete="off"></div>
+        <div class="field"><label>E-MAIL</label>
+          <input type="email" id="profile-email" placeholder="user@example.com" autocomplete="email"></div>
+        <button class="save-btn" onclick="saveProfile()">ZAPISZ PROFIL</button>
+        <span id="profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:10px;"></span>
+      </div>
+    </div>
+
+    <div class="box">
+      <div class="box-header">ZMIANA WŁASNEGO HASŁA</div>
+      <div class="box-body change-pwd-form">
+        <div class="field"><label>STARE HASŁO</label><input type="password" id="old-pwd" autocomplete="current-password"></div>
+        <div class="field"><label>NOWE HASŁO (min. 8 znaków)</label><input type="password" id="new-pwd" autocomplete="new-password"></div>
+        <div class="field"><label>POWTÓRZ NOWE HASŁO</label><input type="password" id="new-pwd2" autocomplete="new-password"></div>
+        <button class="save-btn" onclick="changeOwnPassword()">ZMIEŃ HASŁO</button>
+      </div>
+    </div>
+
+    <!-- RADIO LOCK SETTINGS -->
+    </div>
+    <div class="box">
+      <div class="box-header">BLOKADA RADIA — USTAWIENIA</div>
+      <div class="box-body">
+        <div class="sg" style="margin-bottom:12px;">
+          <label>TIMEOUT BEZCZYNNOŚCI (minuty)</label>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <input type="range" id="lock-timeout" min="1" max="480" step="1" value="20"
+              style="flex:1;accent-color:var(--green);"
+              oninput="document.getElementById('lock-timeout-val').textContent=this.value+' min'">
+            <span id="lock-timeout-val" style="font-family:var(--mono);font-size:12px;color:var(--green);width:60px;">20 min</span>
+          </div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.8;">
+            Jeśli aktywny operator nie wykona żadnej akcji przez ten czas, radio zostaje zwolnione automatycznie.
+          </div>
+        </div>
+        <button class="save-btn" onclick="
+          RadioLock.setTimeout_(parseInt(document.getElementById('lock-timeout').value))
+            .then(() => UI.showToast('✓ Timeout zapisany'))">
+          ZAPISZ TIMEOUT
+        </button>
+        <button class="save-btn" style="margin-left:8px;background:rgba(217,119,106,0.08);border-color:rgba(217,119,106,0.3);color:var(--red);"
+          onclick="RadioLock.forceRelease()">
+          ⚡ WYMUŚ ZWOLNIENIE RADIA
+        </button>
+      </div>
+    </div>
+
+    <!-- PRZEKAŹNIKI ARDUINO -->
+    <div class="box">
+      <div class="box-header">🔌 PRZEKAŹNIKI ARDUINO (SP5IOU SDR220)
+        <span id="relay-status-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);margin-left:8px;">--</span>
+      </div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;border-bottom:1px solid var(--border);">
+        Sterowanie przekaźnikami przez Arduino z firmware SP5IOU (protokół SDR220).<br>
+        Każdy z 8 przekaźników można ustawić jako "manual" (toggle on/off) lub "momentary" (impuls z ustawianym czasem 0.1-10s).<br>
+        Uprawnienia dostępu (kto ma widoczne przyciski) przydzielasz w sekcji <em>Użytkownicy</em> checkboxami "Przekaźnik 0..7".
+      </div>
+      <div class="settings-inner">
+        <div class="sg" style="grid-column:1/-1;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="relay-enabled" style="width:14px;height:14px;">
+            <span>Włączony (podłączony do Arduino)</span>
+          </label>
+        </div>
+        <div class="sg">
+          <label>PORT SZEREGOWY</label>
+          <select id="relay-port"><option value="">(wybierz port)</option></select>
+        </div>
+        <div class="sg">
+          <label>BAUDRATE</label>
+          <select id="relay-baudrate">
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+            <option value="115200">115200</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:1px;">
+        KONFIGURACJA 8 PRZEKAŹNIKÓW
+      </div>
+      <div id="relay-list" style="padding:4px 12px 12px;display:flex;flex-direction:column;gap:6px;">
+        <!-- generowane przez Admin.renderRelays() -->
+      </div>
+
+      <div style="padding:8px 12px;display:flex;gap:8px;">
+        <button class="save-btn" onclick="Admin.saveRelayConfig()">💾 ZAPISZ KONFIGURACJĘ</button>
+        <span id="relay-save-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);align-self:center;"></span>
+      </div>
+    </div>
+
+    <!-- SMTP CONFIG -->
+    <div class="box">
+      <div class="box-header">EMAIL — KONFIGURACJA SMTP</div>
+      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.9;border-bottom:1px solid var(--border);">
+        Wymagane do działania funkcji "Zapomniałem hasła". Obsługiwany STARTTLS (port 587) i SSL (port 465).<br>
+        Przykład dla Gmail: host=smtp.gmail.com, port=587, user=twoj@gmail.com, hasło = App Password z Google.
+      </div>
+      <div class="settings-inner">
+        <div class="sg"><label>SERWER SMTP (host)</label><input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
+        <div class="sg"><label>PORT</label><input type="number" id="smtp-port" value="587" min="1" max="65535"></div>
+        <div class="sg"><label>UŻYTKOWNIK (login SMTP)</label><input type="text" id="smtp-user" placeholder="twoj@gmail.com" autocomplete="off"></div>
+        <div class="sg"><label>HASŁO SMTP</label><input type="password" id="smtp-pass" placeholder="••••••••" autocomplete="new-password"></div>
+        <div class="sg"><label>ADRES NADAWCY (From)</label><input type="text" id="smtp-from" placeholder="noreply@twoja-domena.pl"></div>
+        <div class="sg"><label>SZYFROWANIE</label>
+          <select id="smtp-tls">
+            <option value="1">STARTTLS (port 587, zalecane)</option>
+            <option value="0">SSL/TLS (port 465)</option>
+          </select>
+        </div>
+        <div class="sg"><label>EMAIL TESTOWY — WYŚLIJ NA</label>
+          <div style="display:flex;gap:6px;">
+            <input type="email" id="smtp-test-email" placeholder="test@gmail.com" style="flex:1;">
+            <button class="admin-btn" onclick="AdminSmtp.test()">WYŚLIJ TEST</button>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;">
+        <button class="save-btn" onclick="AdminSmtp.save()">ZAPISZ SMTP</button>
+      </div>
+      <div id="smtp-msg" style="padding:0 12px 12px;font-family:var(--mono);font-size:10px;min-height:20px;"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODAL: Nowy/edytuj użytkownik -->
+<!-- ── MODAL: wyslij spota na DX Cluster ────────────────────────────────────── -->
+<div class="modal-overlay" id="dx-spot-modal" onclick="if(event.target===this)DXCluster.closeSpotDialog()">
+  <div class="modal-box" style="max-width:440px;">
+    <div class="modal-header">
+      <span>📤 WYŚLIJ SPOT NA KLASTER</span>
+      <button class="modal-close" onclick="DXCluster.closeSpotDialog()">✕</button>
+    </div>
+
+    <div style="padding:0 4px 8px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;">
+      Spot zostanie wysłany pod Twoim znakiem (loginem klastra) i będzie
+      widoczny dla wszystkich operatorów na świecie.
+    </div>
+
+    <div class="modal-grid">
+      <div class="sg">
+        <label>ZNAK STACJI *</label>
+        <input type="text" id="dx-spot-call" placeholder="SP1ABC" maxlength="16"
+               style="text-transform:uppercase;font-family:var(--mono);letter-spacing:1px;"
+               oninput="this.value=this.value.toUpperCase()">
+      </div>
+      <div class="sg">
+        <label>CZĘSTOTLIWOŚĆ (kHz) *</label>
+        <input type="text" id="dx-spot-freq" placeholder="14074.0"
+               style="font-family:var(--mono);">
+      </div>
+    </div>
+
+    <div class="sg" style="margin-top:6px;">
+      <label>KOMENTARZ (max 30 znaków)</label>
+      <input type="text" id="dx-spot-comment" maxlength="30"
+             placeholder="np. FT8 CQ DX / 599 TNX QSO"
+             style="font-family:var(--mono);">
+    </div>
+
+    <!-- Podglad komendy jaka poleci na klaster -->
+    <div style="margin-top:10px;padding:8px 10px;background:var(--panel3);
+                border:1px solid var(--border);border-radius:3px;">
+      <div style="font-family:var(--mono);font-size:9px;color:var(--dim);
+                  letter-spacing:1px;margin-bottom:4px;">PODGLĄD KOMENDY:</div>
+      <div id="dx-spot-preview" style="font-family:var(--mono);font-size:11px;
+                  color:var(--green);word-break:break-all;">DX 14074.0 SP1ABC</div>
+    </div>
+
+    <div id="dx-spot-error" style="display:none;margin-top:8px;padding:6px 10px;
+         background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);
+         border-radius:3px;font-family:var(--mono);font-size:10px;color:var(--red);"></div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+      <button onclick="DXCluster.closeSpotDialog()"
+        style="font-family:var(--mono);font-size:10px;padding:6px 14px;background:var(--panel3);
+               border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;
+               letter-spacing:1px;">ANULUJ</button>
+      <button id="dx-spot-send-btn" onclick="DXCluster.sendSpot()"
+        style="font-family:var(--mono);font-size:10px;padding:6px 16px;background:rgba(184,201,143,0.12);
+               border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;
+               letter-spacing:1px;font-weight:600;">📤 WYŚLIJ SPOT</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="user-modal" onclick="if(event.target===this)Admin.closeModal()">
+  <div class="modal-box" style="max-width:560px;">
+    <div class="modal-header"><span id="modal-title">NOWY UŻYTKOWNIK</span><button class="modal-close" onclick="Admin.closeModal()">✕</button></div>
+    <input type="hidden" id="user-id">
+
+    <!-- Dane podstawowe -->
+    <div class="modal-grid">
+      <div class="sg"><label>LOGIN *</label><input type="text" id="uname" placeholder="jan_sp2abc"></div>
+      <div class="sg"><label>ROLA *</label>
+        <select id="urole" onchange="Admin._updatePermsByRole(this.value)">
+          <option value="viewer">VIEWER</option>
+          <option value="operator" selected>OPERATOR</option>
+          <option value="admin">ADMIN</option>
+        </select>
+      </div>
+      <div class="sg" id="upass-row"><label>HASŁO *</label><input type="password" id="upass" placeholder="min. 8 znaków" autocomplete="new-password"></div>
+      <div class="sg"><label>ZNAK WYWOŁAWCZY</label><input type="text" id="ucallsign" placeholder="SP2ABC" style="text-transform:uppercase"></div>
+      <div class="sg"><label>LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="6" style="text-transform:uppercase"></div>
+      <div class="sg full-row"><label>IMIĘ I NAZWISKO</label><input type="text" id="uname-full" placeholder="Jan Kowalski"></div>
+      <div class="sg full-row"><label>EMAIL</label><input type="email" id="uemail" placeholder="jan@example.com"></div>
+    </div>
+
+    <!-- Uprawnienia granularne -->
+    <div style="margin-top:16px;border:1px solid var(--border);border-radius:5px;overflow:hidden;">
+      <div style="background:var(--panel2);padding:6px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;border-bottom:1px solid var(--border);">
+        UPRAWNIENIA GRANULARNE
+      </div>
+      <div style="padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:0;">
+
+        <!-- RADIO -->
+        <div style="padding-right:10px;border-right:1px solid var(--border);">
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">RADIO</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-ptt" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">PTT — nadawanie</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-rfPower" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">RF Power — moc TX</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-rfGain" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">RF/AF Gain, SQL</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-mode" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Zmiana trybu (USB/CW…)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-band" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Zmiana pasma</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-freq" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Strojenie częstotliwości</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
+            <input type="checkbox" id="perm-cw" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">CW Keyer — wysyłanie</span>
+          </label>
+        </div>
+
+        <!-- SPRZĘT + LOG + SYSTEM -->
+        <div style="padding-left:10px;">
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">SPRZĘT</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-rotator" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Rotator — sterowanie</span>
+          </label>
+
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);">SYSTEM</div>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-log" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Log QSO — zapis</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
+            <input type="checkbox" id="perm-settings" style="width:14px;height:14px;accent-color:var(--amber);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Ustawienia serwera</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
+            <input type="checkbox" id="perm-admin" style="width:14px;height:14px;accent-color:var(--amber);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Panel administratora</span>
+          </label>
+
+          <!-- PRZEKAŹNIKI - generowane dynamicznie z konfiguracji (relay_0..7) -->
+          <div id="perm-relay-section" style="display:none;">
+            <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);">PRZEKAŹNIKI</div>
+            <div id="perm-relay-list"><!-- checkboxy relay wstawiane przez admin.js --></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="margin-top:16px;display:flex;gap:10px;">
+      <button class="save-btn" onclick="Admin.saveUser()">ZAPISZ</button>
+      <button class="save-btn" style="background:transparent;border-color:var(--border);" onclick="Admin.closeModal()">ANULUJ</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Edycja makra CW -->
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
+<script src="js/auth.js?v=202606260002"></script>
+<script src="js/state.js?v=202606180504"></script>
+<script src="js/ws.js?v=202606270010"></script>
+<script src="js/radiofunctions.js?v=202606180504"></script>
+<script src="js/ui.js?v=202606270001"></script>
+<script src="js/settings.js?v=202606180504"></script>
+<script src="js/tx_eq.js?v=202606300001"></script>
+<script src="js/relay_ui.js?v=202606300001"></script>
+<script src="js/dxcluster.js?v=202606300001"></script>
+<script src="js/audio_autodetect.js?v=202608090001"></script>
+<script src="js/com_bridge.js?v=202607040001"></script>
+<script src="js/rotator.js?v=202606180504"></script>
+<script src="js/rotormini.js?v=202606180504"></script>
+<script src="js/admin.js?v=202606180504"></script>
+<script src="js/admin_status.js?v=202607020001"></script>
+<script src="js/profile_audio.js?v=202607020001"></script>
+<script src="js/relay_admin.js?v=202606300002"></script>
+<script src="js/tunnel.js?v=202606260001"></script>
+<script src="js/dxcc.js?v=202607030001"></script>
+<script src="js/grid_math.js?v=202607030001"></script>
+<script src="js/beamheading.js?v=202607230001"></script>
+<script src="js/wsjtx.js?v=202606250001"></script>
+<script src="js/wsjtx_scope.js?v=202606250002"></script>
+<script src="js/chat.js?v=202606220002"></script>
+<script src="js/vfo.js?v=202606250005"></script>
+<script src="js/waterfall.js?v=202606250001"></script>
+<div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
+  <div class="modal" style="min-width:280px;max-width:360px;">
+    <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
+      <input type="hidden" id="cw-edit-id">
+      <div>
+        <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">ETYKIETA</label>
+        <input type="text" id="cw-edit-label" placeholder="np. CQ, RST, 73..." maxlength="12"
+          style="width:100%;font-family:var(--mono);font-size:12px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:3px;">
+      </div>
+      <div>
+        <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">TEKST CW</label>
+        <input type="text" id="cw-edit-text" style="width:100%;font-family:var(--mono);font-size:13px;text-transform:uppercase;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:3px;"
+          onkeydown="if(event.key==='Enter')CW.saveEditMacro()">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="save-btn" onclick="CW.saveEditMacro()">ZAPISZ</button>
+        <button class="save-btn" style="background:transparent;border-color:var(--border);" onclick="CW.closeEdit()">ANULUJ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/cw.js?v=202606250001"></script>
+<script src="js/cloudlog.js?v=202606250001"></script>
+<script src="js/qsolog.js?v=202606260003"></script>
+
+<script>
+// ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────
+window.HamlibUI = {
+  _data: [],
+
+  async load() {
+    try {
+      const r = await fetch('/api/hamlib/status');
+      const d = await r.json();
+      this._data = d.servers || [];
+      this._render();
+    } catch(e) { console.warn('[hamlib] load error', e); }
+  },
+
+  _render() {
+    const el = document.getElementById('hamlib-slots');
+    if (!el) return;
+    if (!this._data.length) {
+      el.innerHTML = '<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Brak danych</div>';
+      return;
+    }
+    el.innerHTML = this._data.map((s, i) => `
+      <div style="background:var(--panel2);border:1px solid var(--border);
+        border-radius:4px;padding:10px 12px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <!-- Dot statusu -->
+          <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;
+            background:${s.running ? 'var(--green)' : 'var(--dim)'}"></span>
+          <span style="font-family:var(--mono);font-size:10px;color:${s.running ? 'var(--green)' : 'var(--dim)'};
+            letter-spacing:1px;">${s.running ? '● AKTYWNY' : '○ ZATRZYMANY'}</span>
+          ${s.clients > 0
+            ? `<span style="font-family:var(--mono);font-size:9px;color:var(--amber);
+                background:rgba(212,168,87,0.1);padding:1px 6px;border-radius:10px;">
+                ${s.clients} klient${s.clients > 1 ? 'ów' : ''} połączony</span>`
+            : ''}
+          <span style="flex:1"></span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="hamlib-enabled-${i}"
+              ${s.enabled ? 'checked' : ''}
+              style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
+            <span style="font-family:var(--mono);font-size:10px;color:var(--dim);">Włączone</span>
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">
+              NAZWA / OPIS
+            </div>
+            <input type="text" id="hamlib-label-${i}" value="${s.label || ''}"
+              placeholder="np. WSJT-X, Log4OM, CW Skimmer"
+              style="width:100%;font-family:var(--mono);font-size:11px;
+              background:var(--panel3);border:1px solid var(--border);
+              color:var(--text);border-radius:3px;padding:4px 7px;">
+          </div>
+          <div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">
+              PORT TCP
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <input type="number" id="hamlib-port-${i}" value="${s.port || 4532+i}"
+                min="1024" max="65535"
+                style="width:80px;font-family:var(--mono);font-size:12px;
+                background:var(--panel3);border:1px solid var(--border);
+                color:var(--green);border-radius:3px;padding:4px 7px;">
+              <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">
+                host: <b>${location.hostname}</b>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  },
+
+  async save() {
+    const servers = this._data.map((s, i) => ({
+      port:    parseInt(document.getElementById(`hamlib-port-${i}`)?.value || 4532+i),
+      enabled: document.getElementById(`hamlib-enabled-${i}`)?.checked ?? false,
+      label:   document.getElementById(`hamlib-label-${i}`)?.value || `Radio ${i+1}`,
+    }));
+    const msg = document.getElementById('hamlib-msg');
+    try {
+      const r = await fetch('/api/hamlib/config', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({servers})
+      });
+      const d = await r.json();
+      if (msg) {
+        msg.textContent = d.message || (d.ok ? '✓ Zapisano' : '✗ Błąd');
+        msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+      }
+      if (d.ok) {
+        this._data = servers.map((s,i) => ({...s, slot:i, running:false, clients:0}));
+        this._render();
+      }
+    } catch(e) {
+      if (msg) { msg.textContent='✗ Błąd: '+e.message; msg.style.color='var(--red)'; }
+    }
+  },
+};
+
+// ── AdminBands — zarządzanie pasmami i trybami ────────────────────────────────
+// Stub — prawdziwa implementacja w admin.js (laduje sie pozniej)
+function _attachTransferEvents(id) {
+  if (typeof window._adminAttachTransferEvents === 'function') {
+    window._adminAttachTransferEvents(id);
+  } else {
+    setTimeout(() => window._adminAttachTransferEvents?.(id), 200);
+  }
+}
+function _twUpdateCounts(id) {
+  if (typeof window._adminTwUpdateCounts === 'function') {
+    window._adminTwUpdateCounts(id);
+  }
+}
+
+window.AdminBands = {
+
+  async load() {
+    await Promise.all([this._loadBands(), this._loadModes()]);
+  },
+
+  async _loadBands() {
+    try {
+      const r = await fetch('/api/config/bands');
+      const d = await r.json();
+      const allBands     = Object.keys(d.allBands || {});
+      const enabledBands = d.enabledBands && d.enabledBands.length
+        ? d.enabledBands : allBands;
+
+      const selList = document.getElementById('bands-transfer-selected');
+      const avlList = document.getElementById('bands-transfer-available');
+      if (!selList || !avlList) return;
+      selList.innerHTML = '';
+      avlList.innerHTML = '';
+
+      // Zachowaj kolejność z enabledBands, potem reszta
+      const enabledSet = new Set(enabledBands);
+      // Enabled — w kolejności z config
+      enabledBands.forEach(b => {
+        if (allBands.includes(b)) selList.appendChild(this._bandItem(b, 'selected'));
+      });
+      // Disabled
+      allBands.forEach(b => {
+        if (!enabledSet.has(b)) avlList.appendChild(this._bandItem(b, 'available'));
+      });
+      setTimeout(() => { _attachTransferEvents?.('bands-transfer'); _twUpdateCounts?.('bands-transfer'); }, 0);
+    } catch(e) { console.warn('[admin] bands load error', e); }
+  },
+
+  _bandItem(name, side) {
+    const el = document.createElement('div');
+    el.className = 'tw-item';
+    el.dataset.band = name;
+    el.dataset.side = side;
+    el.draggable = true;
+    el.innerHTML = `${name}<span class="tw-sub">${this._bandFreq(name)}</span>`;
+    return el;
+  },
+
+  _bandFreq(name) {
+    const map = {
+      '160m':'1.8 MHz','80m':'3.5 MHz','60m':'5.35 MHz','40m':'7 MHz',
+      '30m':'10.1 MHz','20m':'14 MHz','17m':'18 MHz','15m':'21 MHz',
+      '12m':'24.9 MHz','10m':'28 MHz','6m':'50 MHz','4m':'70 MHz',
+      '2m':'144 MHz','70cm':'432 MHz',
+    };
+    return map[name] || '';
+  },
+
+  async save() {
+    const selList = document.getElementById('bands-transfer-selected');
+    const enabledBands = [...(selList?.querySelectorAll('.tw-item') || [])]
+      .map(el => el.dataset.band);
+    try {
+      const r = await fetch('/api/config/bands', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({enabledBands})
+      });
+      const d = await r.json();
+      if (d.ok) {
+        window.UI?.showToast(`✓ Pasma zaktualizowane (${enabledBands.length} aktywnych)`);
+        // Zaktualizuj AppState lokalnie
+        if (window.AppState) window.AppState.enabledBands = enabledBands;
+        window.UI?.buildBandGrid?.();
+      }
+    } catch(e) { window.UI?.showToast('✗ Błąd zapisu pasm', 'error'); }
+  },
+
+  async _loadModes() {
+    try {
+      const r = await fetch('/api/config/modes');
+      const d = await r.json();
+      const allModes     = d.allModes || [];
+      const enabledModes = d.enabledModes && d.enabledModes.length
+        ? d.enabledModes : allModes;
+      const modeFilters  = d.modeFilters || {};
+
+      const selList = document.getElementById('modes-transfer-selected');
+      const avlList = document.getElementById('modes-transfer-available');
+      if (!selList || !avlList) return;
+      selList.innerHTML = '';
+      avlList.innerHTML = '';
+
+      const enabledSet = new Set(enabledModes);
+      enabledModes.forEach(m => {
+        if (allModes.includes(m)) selList.appendChild(this._modeItem(m, 'selected'));
+      });
+      allModes.forEach(m => {
+        if (!enabledSet.has(m)) avlList.appendChild(this._modeItem(m, 'available'));
+      });
+      setTimeout(() => { _attachTransferEvents?.('modes-transfer'); _twUpdateCounts?.('modes-transfer'); }, 0);
+
+      // Wypełnij grid filtrów
+      this._renderFilterGrid(allModes, modeFilters);
+    } catch(e) { console.warn('[admin] modes load error', e); }
+  },
+
+  _modeItem(name, side) {
+    const el = document.createElement('div');
+    el.className = 'tw-item';
+    el.dataset.mode = name;
+    el.dataset.side = side;
+    el.draggable = true;
+    const isDigital = ['USB-D','LSB-D','PKTUSB','PKTLSB'].includes(name);
+    el.innerHTML = `<span style="${isDigital?'color:var(--amber)':''}">${name}</span>`;
+    return el;
+  },
+
+  _renderFilterGrid(allModes, modeFilters) {
+    const grid = document.getElementById('mode-filter-grid');
+    if (!grid) return;
+    // Pokaż tylko tryby dla których filtr ma sens
+    const modesWithFilter = allModes.filter(m =>
+      !['WFM','DV'].includes(m)
+    );
+    grid.innerHTML = modesWithFilter.map(m => {
+      const val = modeFilters[m] || '';
+      const isDigital = ['USB-D','LSB-D','PKTUSB','PKTLSB'].includes(m);
+      return `<div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-family:var(--mono);font-size:10px;min-width:60px;
+          color:${isDigital?'var(--amber)':'var(--dim)'};">${m}</span>
+        <select data-mode-filter="${m}"
+          style="flex:1;font-family:var(--mono);font-size:10px;
+          background:var(--panel2);border:1px solid var(--border);
+          color:var(--text);border-radius:3px;padding:3px 5px;">
+          <option value="">— brak —</option>
+          <option value="1" ${val==='1'?'selected':''}>FIL1 (szeroki)</option>
+          <option value="2" ${val==='2'?'selected':''}>FIL2 (średni)</option>
+          <option value="3" ${val==='3'?'selected':''}>FIL3 (wąski)</option>
+        </select>
+      </div>`;
+    }).join('');
+  },
+
+  async saveModes() {
+    const selList = document.getElementById('modes-transfer-selected');
+    const enabledModes = [...(selList?.querySelectorAll('.tw-item') || [])]
+      .map(el => el.dataset.mode);
+    // Zbierz filtry
+    const modeFilters = {};
+    document.querySelectorAll('[data-mode-filter]').forEach(sel => {
+      if (sel.value) modeFilters[sel.dataset.modeFilter] = sel.value;
+    });
+    try {
+      const r = await fetch('/api/config/modes', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({enabledModes, modeFilters})
+      });
+      const d = await r.json();
+      if (d.ok) {
+        window.UI?.showToast(`✓ Tryby zaktualizowane (${enabledModes.length} aktywnych)`);
+        if (window.AppState) {
+          window.AppState.enabledModes = enabledModes;
+          window.AppState.modeFilters  = modeFilters;
+        }
+        window.UI?.buildModeGrid?.();
+      }
+    } catch(e) { window.UI?.showToast('✗ Błąd zapisu trybów', 'error'); }
+  },
+};
+
+// ── AdminSmtp — konfiguracja SMTP dla resetu hasla ───────────────────────────
+window.AdminSmtp = {
+  async load() {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+      const r = await fetch('/api/smtp/config', {headers:{'Authorization':`Bearer ${token}`}});
+      const d = await r.json();
+      document.getElementById('smtp-host').value = d.host || '';
+      document.getElementById('smtp-port').value = d.port || 587;
+      document.getElementById('smtp-user').value = d.user || '';
+      document.getElementById('smtp-from').value = d.from || '';
+      document.getElementById('smtp-tls').value  = d.use_tls ? '1' : '0';
+      // Nie wczytuj hasla — pokazujemy placeholder jesli ustawione
+      if (d.has_password) document.getElementById('smtp-pass').placeholder = '●●●●●● (ustawione)';
+    } catch(e) {}
+  },
+  async save() {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    const body = {
+      host:     document.getElementById('smtp-host').value.trim(),
+      port:     parseInt(document.getElementById('smtp-port').value),
+      user:     document.getElementById('smtp-user').value.trim(),
+      from:     document.getElementById('smtp-from').value.trim(),
+      use_tls:  document.getElementById('smtp-tls').value === '1',
+      password: document.getElementById('smtp-pass').value,
+    };
+    const r = await fetch('/api/smtp/config', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    const msg = document.getElementById('smtp-msg');
+    msg.textContent = d.ok ? '✓ Konfiguracja SMTP zapisana' : '✗ ' + (d.error||'Błąd');
+    msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+    if (d.ok) document.getElementById('smtp-pass').value = '';
+  },
+  async test() {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    const email = document.getElementById('smtp-test-email').value.trim();
+    const msg   = document.getElementById('smtp-msg');
+    if (!email) {
+      msg.textContent = '✗ Wpisz adres email w polu "EMAIL TESTOWY"';
+      msg.style.color = 'var(--red)';
+      return;
+    }
+    msg.textContent = '⏳ Wysyłam email testowy…';
+    msg.style.color = 'var(--dim)';
+    try {
+      const r = await fetch('/api/smtp/test', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'Authorization': `Bearer ${token}`},
+        body: JSON.stringify({ email, base_url: location.origin })
+      });
+      const d = await r.json();
+      msg.textContent = d.message || (d.ok ? '✓ Wysłano' : '✗ Błąd');
+      msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+    } catch(e) {
+      msg.textContent = '✗ Błąd połączenia: ' + e.message;
+      msg.style.color = 'var(--red)';
+    }
+  }
+};
+
+// ── RadioLock — blokada radia (jeden operator naraz) ──────────────────────────
+window.RadioLock = (function() {
+'use strict';
+
+let _state = { locked: false, user_id: null, username: null, callsign: null,
+               timeout_min: 20, requests: [], online: [] };
+const S = window.AppState;
+
+// ── Pobierz/przetwórz stan z WS lub API ──────────────────────────────────────
+function handleWS(msg) {
+  if (msg.locked !== undefined)  _state.locked      = msg.locked;
+  if (msg.user_id !== undefined) _state.user_id     = msg.user_id;
+  if (msg.username !== undefined) _state.username   = msg.username;
+  if (msg.callsign !== undefined) _state.callsign   = msg.callsign;
+  if (msg.timeout_min !== undefined) _state.timeout_min = msg.timeout_min;
+  if (msg.requests)  _state.requests  = msg.requests || [];
+  if (msg.online)    _state.online    = msg.online   || [];
+  _render();
+}
+
+// ── Powiadomienie o prośbie o radio ──────────────────────────────────────────
+function handleRequest(msg) {
+  const myUid    = window.AppState?.my_uid || window.CurrentUser?.id;
+  const isHolder = _state.locked && _state.user_id === myUid;
+  if (!isHolder) return;
+
+  const callsign = msg.from_cs || msg.from_uid || '?';
+
+  // Pokaż nieblokowalny toast z przyciskami zamiast confirm()
+  _showRequestToast(callsign, msg.from_uid);
+}
+
+function _showRequestToast(callsign, fromUid) {
+  // Usuń poprzednie powiadomienie jeśli istnieje
+  document.getElementById('radio-request-toast')?.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'radio-request-toast';
+  toast.style.cssText = `
+    position:fixed; top:70px; right:20px; z-index:9999;
+    background:var(--panel); border:1px solid var(--amber);
+    border-radius:6px; padding:16px 20px; min-width:280px;
+    font-family:var(--mono); box-shadow:0 4px 20px rgba(0,0,0,0.5);
+  `;
+  toast.innerHTML = `
+    <div style="color:var(--amber);font-size:12px;margin-bottom:8px;letter-spacing:1px;">
+      📻 PROŚBA O RADIO
+    </div>
+    <div style="color:var(--text);font-size:13px;margin-bottom:14px;">
+      <b>${callsign}</b> prosi o dostęp do TRX
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button onclick="window.OpPanel.releaseRadio();document.getElementById('radio-request-toast')?.remove();"
+        style="flex:1;padding:8px;background:rgba(184,201,143,0.15);border:1px solid var(--green2);
+        border-radius:4px;color:var(--green);font-family:var(--mono);font-size:11px;cursor:pointer;">
+        ✓ ODDAJ RADIO
+      </button>
+      <button onclick="document.getElementById('radio-request-toast')?.remove();"
+        style="flex:1;padding:8px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
+        border-radius:4px;color:var(--red);font-family:var(--mono);font-size:11px;cursor:pointer;">
+        ✗ ODRZUĆ
+      </button>
+    </div>
+  `;
+  document.body.appendChild(toast);
+
+  // Auto-zamknij po 30s
+  setTimeout(() => toast.remove(), 30000);
+}
+
+// ── Akcje ─────────────────────────────────────────────────────────────────────
+async function lockRadio() {
+  try {
+    const r = await _api('/api/radio/lock', 'POST', {});
+    if (!r.ok) { window.UI?.showToast('✗ ' + r.error, 'error'); }
+  } catch(e) { window.UI?.showToast('✗ Błąd blokady radia', 'error'); }
+}
+
+async function releaseRadio() {
+  try {
+    const r = await _api('/api/radio/release', 'POST', {});
+    if (!r.ok) { window.UI?.showToast('✗ ' + r.error, 'error'); }
+  } catch(e) { window.UI?.showToast('✗ Błąd zwalniania radia', 'error'); }
+}
+
+async function requestRadio() {
+  const btn = document.getElementById('op-btn-request');
+  if (btn) { btn.disabled = true; btn.textContent = '✋ Wysyłanie…'; }
+  try {
+    const r = await _api('/api/radio/request', 'POST', {});
+    if (r.granted) {
+      window.UI?.showToast('✓ Masz teraz dostęp do TRX!');
+    } else {
+      window.UI?.showToast('✋ Prośba wysłana — operator zostanie powiadomiony');
+      // Po 10s odblokuj przycisk — user może wysłać ponownie jeśli odrzucono
+      setTimeout(() => {
+        if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ PONOWNIE'; }
+      }, 10000);
+    }
+  } catch(e) {
+    window.UI?.showToast('✗ Błąd wysyłania prośby', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ O TRX'; }
+  }
+}
+
+async function forceRelease() {
+  if (!confirm('Wymusić zwolnienie radia? Aktywny operator straci dostęp.')) return;
+  await _api('/api/radio/force-release', 'POST', {});
+}
+
+async function setTimeout_(minutes) {
+  await _api('/api/radio/timeout', 'POST', { minutes });
+}
+
+// ── Render UI ─────────────────────────────────────────────────────────────────
+function _render() {
+  _renderOpPanel();
+}
+
+function _renderOpPanel() {
+  const myUid   = window.AppState?.my_uid || window.CurrentUser?.id;
+  const isAdmin  = window.CurrentUser?.role === 'admin';
+  const isHolder = _state.locked && _state.user_id === myUid;
+  const isFree   = !_state.locked;
+  const hasReq   = _state.requests?.some(r => r.user_id === myUid);
+
+  // Lista operatorów online
+  const list = document.getElementById('op-list');
+  const count = document.getElementById('op-online-count');
+  if (list) {
+    list.innerHTML = _state.online.map(u => {
+      const isMe     = u.user_id === myUid;
+      const isActive = u.user_id === _state.user_id;
+      return `<div style="display:flex;align-items:center;gap:5px;padding:3px 4px;
+        border-radius:3px;background:${isActive ? 'rgba(184,201,143,0.08)' : 'transparent'};
+        border:1px solid ${isActive ? 'var(--border2)' : 'transparent'};">
+        <span style="font-size:14px;">${isActive ? '🎙' : '👤'}</span>
+        <span style="font-family:var(--mono);font-size:10px;color:${isMe ? 'var(--green)' : 'var(--text)'};flex:1;">
+          ${u.callsign || u.username}${isMe ? ' ◀' : ''}
+        </span>
+        ${isActive ? `<span style="font-family:var(--mono);font-size:8px;color:var(--green);letter-spacing:1px;">TRX</span>` : ''}
+      </div>`;
+    }).join('') || `<div style="font-family:var(--mono);font-size:9px;color:var(--dim);padding:8px;text-align:center;">Brak połączeń</div>`;
+  }
+  if (count) count.textContent = _state.online.length;
+
+  // Status lock
+  const status = document.getElementById('op-lock-status');
+  if (status) {
+    if (isFree) {
+      status.innerHTML = '<span style="color:var(--green)">🔓 RADIO WOLNE</span>';
+    } else if (isHolder) {
+      status.innerHTML = '<span style="color:var(--green)">🎙 MASZ TRX</span>';
+    } else {
+      status.innerHTML = `<span style="color:var(--amber)">🔒 ${_state.callsign || _state.username || '?'}</span>`;
+    }
+  }
+
+  // Przyciski — pokaż właściwy zestaw
+  const btnTake    = document.getElementById('op-btn-take');
+  const btnRelease = document.getElementById('op-btn-release');
+  const btnRequest = document.getElementById('op-btn-request');
+  const btnForce   = document.getElementById('op-btn-force');
+
+  if (btnTake)    btnTake.style.display    = isFree ? '' : 'none';
+  if (btnRelease) btnRelease.style.display = isHolder ? '' : 'none';
+  if (btnRequest) {
+    btnRequest.style.display = (!isFree && !isHolder) ? '' : 'none';
+    btnRequest.textContent   = hasReq ? '✋ Prośba wysłana…' : '🙋 POPROŚ O TRX';
+    btnRequest.disabled      = hasReq;
+  }
+  if (btnForce)   btnForce.style.display   = (isAdmin && _state.locked && !isHolder) ? '' : 'none';
+
+  // Blokada UI gdy ktoś inny ma radio
+  _setUILocked(_state.locked && !isHolder);
+}
+
+function _setUILocked(locked) {
+  // Nakładka "read-only" — szare przyciski i zablokowane slidery
+  const controls = document.querySelectorAll(
+    '.ptt-btn, .step-btn, .mode-btn, .band-btn, .go-btn, ' +
+    '.btn-func-toggle, .btn-vfo-select, .btn-power-toggle, .rf-btn, ' +
+    '.rf-range, #bw-select, #preamp-select, #att-select, #tuner-btn'
+  );
+  controls.forEach(el => {
+    el.disabled = locked;
+    el.style.opacity = locked ? '0.4' : '';
+    el.style.cursor  = locked ? 'not-allowed' : '';
+  });
+}
+
+// ── HTTP helper ───────────────────────────────────────────────────────────────
+async function _api(path, method, body) {
+  const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+  const r = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json',
+               ...(token ? {'Authorization': `Bearer ${token}`} : {}) },
+    body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+window.OpPanel = { handleWS, handleRequest, lockRadio, releaseRadio, requestRadio, forceRelease };
+return window.OpPanel;
+})();
+
+// ── setPage — jeden punkt wywołania ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Oblicz dostepna wysokosc dla wsjtx-layout w jednostkach referencyjnych (#app-scale)
+  function _setWsjtxH() {
+    const appScale = document.getElementById('app-scale');
+    const topbar   = document.querySelector('.topbar');
+    if (!appScale || !topbar) return;
+    // Pobierz aktualny scale z transform
+    const transform = appScale.style.transform || '';
+    const match     = transform.match(/scale\(([\d.]+)\)/);
+    const scale     = match ? parseFloat(match[1]) : 1;
+    if (scale < 0.01) return;
+    // Oblicz dostepna wysokosc w px referencyjnych
+    const availPx   = window.innerHeight / scale;
+    const topbarRef = topbar.getBoundingClientRect().height / scale;
+    const wsjtxH    = Math.floor(availPx - topbarRef);
+    document.documentElement.style.setProperty('--wsjtx-h', wsjtxH + 'px');
+  }
+  _setWsjtxH();
+  window.addEventListener('resize', _setWsjtxH);
+  // Ponow po zaladowaniu scale
+  setTimeout(_setWsjtxH, 300);
+
+
+  if (typeof RotorMini !== 'undefined') setTimeout(() => RotorMini.init(), 2000);
+
+  const origFn = UI.setPage.bind(UI);
+  let _lastPage = '';
+  UI.setPage = function(name) {
+    origFn(name);
+    if (name === _lastPage) return;
+    _lastPage = name;
+    if (name === 'internet') { Tunnel.load(); Tunnel.checkCF(); }
+    if (name === 'admin')    { Admin.loadUsers(); Admin.loadFt8Timers?.(); AdminSmtp.load(); }
+    if (name === 'log')     { window.QSOLog?.load(); }
+    // Odswiez stan radia przy kazdej zmianie strony
+    fetch('/api/radio/state').then(r=>r.json()).then(msg=>window.OpPanel?.handleWS(msg)).catch(()=>{});
+    if (name === 'wsjtx')   { window.FT8Timer?.init?.(); }
+    if (name === 'config')   { Admin.loadRotatorConfig?.(); Admin.loadRigFeatures?.(); AdminBands?.load?.(); }
+    if (name === 'settings') { setTimeout(() => { window.Settings?._initCwStatus?.(); window.HamlibUI?.load?.(); }, 500); }
+    if (name === 'wsjtx')    {
+      // Ustaw wysokosc wsjtx-layout i zainicjuj po renderze
+      setTimeout(() => {
+        if (typeof _setWsjtxH === 'function') _setWsjtxH();
+        window.WSJTX?.init?.();
+      }, 50);
+    }
+  };
+});
+
+// ── Zmiana własnego hasła ─────────────────────────────────────────────────────
+async function loadProfile() {
+  try {
+    const r = await fetch('/api/auth/me');
+    const d = await r.json();
+    const u = d.user || d;
+    const _s = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    _s('profile-name',     u.name || '');
+    _s('profile-callsign', u.callsign || '');
+    _s('profile-locator',  u.locator || '');
+    _s('profile-email',    u.email || '');
+    const st = document.getElementById('profile-status');
+    if (st) { st.textContent = `Zalogowany jako: ${u.username} (${u.role})`; st.style.color='var(--dim)'; }
+  } catch(e) {}
+}
+
+async function saveProfile() {
+  const _g = id => document.getElementById(id)?.value?.trim() || '';
+  const data = {
+    name:     _g('profile-name'),
+    callsign: _g('profile-callsign').toUpperCase(),
+    locator:  _g('profile-locator').toUpperCase(),
+    email:    _g('profile-email'),
+  };
+  const st = document.getElementById('profile-status');
+  try {
+    const r = await fetch('/api/user/profile', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data),
+    });
+    const res = await r.json();
+    if (res.ok) {
+      if (st) { st.textContent = '✓ Profil zapisany'; st.style.color='var(--green)'; }
+      window.UI?.showToast('✓ Profil zapisany');
+      if (data.callsign) {
+        const el = document.getElementById('callsign-display');
+        if (el) el.textContent = data.callsign;
+        if (window.CurrentUser) window.CurrentUser.callsign = data.callsign;
+        if (window.AppState)    window.AppState.callsign    = data.callsign;
+      }
+    } else {
+      if (st) { st.textContent = '✗ ' + (res.error||'Błąd'); st.style.color='var(--red)'; }
+    }
+  } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
+}
+
+async function changeProfilePassword() {
+  const old  = document.getElementById('profile-old-pwd')?.value;
+  const np   = document.getElementById('profile-new-pwd')?.value;
+  const np2  = document.getElementById('profile-new-pwd2')?.value;
+  const st   = document.getElementById('profile-pwd-status');
+  if (!old || !np) { if(st){st.textContent='Uzupełnij pola';st.style.color='var(--red)';} return; }
+  if (np !== np2)  { if(st){st.textContent='Hasła nie pasują';st.style.color='var(--red)';} return; }
+  if (np.length < 8){ if(st){st.textContent='Min. 8 znaków';st.style.color='var(--red)';} return; }
+  try {
+    const r = await fetch('/api/auth/change-password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({old_password: old, new_password: np}),
+    });
+    const res = await r.json();
+    if (res.ok) {
+      // Backend zwraca nowy token (stare uniewaznione przez pw_ver).
+      // Zapisz go, inaczej biezaca sesja przestanie dzialac.
+      if (res.token) {
+        localStorage.setItem('token', res.token);
+        sessionStorage.setItem('ham_token', res.token);
+      }
+      if(st){st.textContent='✓ Hasło zmienione';st.style.color='var(--green)';}
+      ['profile-old-pwd','profile-new-pwd','profile-new-pwd2'].forEach(id=>{
+        const el=document.getElementById(id); if(el) el.value='';
+      });
+      window.UI?.showToast('✓ Hasło zmienione (inne urządzenia wylogowane)');
+    } else {
+      if(st){st.textContent='✗ '+(res.error||'Błąd');st.style.color='var(--red)';}
+    }
+  } catch(e) { window.UI?.showToast('✗ '+e.message,'error'); }
+}
+
+async function changeOwnPassword() {
+  const old = document.getElementById('old-pwd')?.value;
+  const n1  = document.getElementById('new-pwd')?.value;
+  const n2  = document.getElementById('new-pwd2')?.value;
+  if (!old || !n1) { UI.showToast('Wypełnij wszystkie pola', 'error'); return; }
+  if (n1 !== n2)   { UI.showToast('Nowe hasła nie są identyczne', 'error'); return; }
+  if (n1.length < 8) { UI.showToast('Min. 8 znaków', 'error'); return; }
+  const r = await fetch('/api/auth/change-password', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ old_password: old, new_password: n1 }),
+  });
+  const res = await r.json();
+  if (res.ok) { UI.showToast('✓ Hasło zmienione — zaloguj się ponownie'); setTimeout(() => Auth.logout(), 2000); }
+  else UI.showToast('✗ ' + (res.error || 'Błąd'), 'error');
+}
+
+// ── Debounce dla tunelu ───────────────────────────────────────────────────────
+let _tnSaveTimer = null;
+function debounceSave() {
+  clearTimeout(_tnSaveTimer);
+  _tnSaveTimer = setTimeout(() => typeof Tunnel !== 'undefined' && Tunnel.saveTunnelConfig(false), 1500);
+}
+
+// ── CW: wymuszenie siatki 2×3 (max 6 makr widocznych) ────────────────────────
+// ── #app-scale: skalowanie calej strony do viewportu ─────────────────────────
+// Referencyjna szerokosc projektu (1440px) — wszystkie elementy zachowuja
+// identyczne proporcje/pozycje wzgledem tej szerokosci, niezaleznie od
+// faktycznej rozdzielczosci ekranu. transform:scale() jest jednolite (ten
+// sam wspolczynnik dla X i Y, liczony z szerokosci), wiec wysokosc elementow
+// skaluje sie proporcjonalnie razem z szerokoscia — zachowuje wzgledne
+// pozycje "px-perfect" w obu osiach.
+//
+// Strony dluzsze niz REF_H (1080px) w skali 1:1 po przeskalowaniu nadal
+// przewijaja sie wertykalnie — liczymy naturalna (nieskalowana) wysokosc
+// #app-scale (scrollHeight) i ustawiamy body.height = scrollHeight*scale,
+// zeby scrollbar mial wlasciwy zakres.
+(function () {
+  // REF_W=1440 (nie 1920): layout byl projektowany dla ~1400-1600px
+  // szerokosci (typowy laptop). Przy REF_W=1920 na typowych ekranach
+  // (1366-1600px) scale<1, wiec wszystko (fonty, ikony, slidery) wydawalo
+  // sie zbyt male/nieczytelne. Z REF_W=1440: na 1920px monitorze scale≈1.33
+  // (wieksze, czytelne), na 1366px laptopie scale≈0.95 (blisko 1:1, jak w
+  // oryginalnym projekcie). Proporcje/pozycje wzgledne pozostaja identyczne
+  // na kazdym ekranie — zmienia sie tylko OGOLNY rozmiar (skala).
+  const REF_W = 1440;
+  const REF_H = 1080;
+  const el = document.getElementById('app-scale');
+  if (!el) return;
+
+  function updateScale() {
+    // clientWidth (nie innerWidth) — wylacza szerokosc pionowego scrollbara
+    // z obliczenia. Gdy strona jest wyzsza niz viewport (np. zakladka
+    // USTAWIENIA), pojawia sie scrollbar (~15-17px), ktory zabiera miejsce
+    // z viewportu — przy innerWidth scale wychodzil odrobinę za duzy i
+    // prawa kolumna (rotator/CW) byla lekko obcinana poza widoczny obszar.
+    const vw = document.documentElement.clientWidth;
+    // Skalujemy WYLACZNIE wg szerokosci. Wczesniejsze ograniczanie przez
+    // vh/REF_H (1080) bylo bledne: typowe okno przegladarki ma vh znacznie
+    // mniejsze niz 1080px (belki przegladarki, taskbar), wiec heightScale
+    // dominowal i scieskal caly layout do ~0.6-0.7x — odwrotny efekt od
+    // zamierzonego. Strona moze byc wyzsza niz viewport — wtedy po prostu
+    // przewija sie wertykalnie (body.height ustawiane nizej), co jest
+    // normalne i oczekiwane.
+    const scale = vw / REF_W;
+
+    el.style.transform = `scale(${scale})`;
+
+    // Naturalna (nieskalowana) wysokosc zawartosci #app-scale (scrollHeight
+    // nie jest wplywany przez transform).
+    const contentH = Math.max(el.scrollHeight, REF_H);
+
+    document.body.style.width  = (REF_W * scale) + 'px';
+    document.body.style.height = (contentH * scale) + 'px';
+  }
+
+  window.addEventListener('resize', updateScale);
+  window.addEventListener('orientationchange', updateScale);
+  // Re-mierz przy zmianie zakladki (page-content active/hidden) — to
+  // jedyny przypadek gdy calkowita wysokosc strony realnie sie zmienia.
+  // NIE obserwujemy calego #app-scale (subtree) — telemetria (VFO, S-meter,
+  // log) mutuje DOM co ~0.3s i wywolalaby reflow (scrollHeight) bez potrzeby.
+  let _raf = null;
+  const scheduleUpdate = () => {
+    if (_raf) return;
+    _raf = requestAnimationFrame(() => { _raf = null; updateScale(); });
+  };
+  document.querySelectorAll('.page-content').forEach(p => {
+    new MutationObserver(scheduleUpdate).observe(p, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  updateScale();
+})();
+</script>
+
+</div><!-- /app-scale -->
+
+
+<!-- ─── AUDIO DEVICE MANAGEMENT ──────────────────────────────────────────────── -->
+<script>
+async function _audioDeviceRefresh() {
+  const st = document.getElementById('cfg-audio-status');
+  if (st) st.textContent = 'Ładowanie kart...';
+  try {
+    const r = await fetch('/api/audio/enumerate');
+    const d = await r.json();
+    const rx = document.getElementById('cfg-audio-rx');
+    const tx = document.getElementById('cfg-audio-tx');
+    if (!rx || !tx) return;
+
+    const curRx = rx.value, curTx = tx.value;
+    rx.innerHTML = '<option value="">— domyślna —</option>';
+    tx.innerHTML = '<option value="">— domyślna —</option>';
+
+    (d.devices?.rx || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = o.textContent = name;
+      if (name === curRx) o.selected = true;
+      rx.appendChild(o);
+    });
+    (d.devices?.tx || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = o.textContent = name;
+      if (name === curTx) o.selected = true;
+      tx.appendChild(o);
+    });
+
+    if (st) st.textContent = `${d.source} — ${(d.devices?.rx||[]).length} RX, ${(d.devices?.tx||[]).length} TX`;
+  } catch(e) {
+    if (st) st.textContent = '✗ ' + e.message;
+  }
+}
+
+async function _audioDeviceLoad() {
+  // Załaduj listę kart najpierw
+  await _audioDeviceRefresh();
+  // Zaznacz zapisane urządzenia z audio/status
+  try {
+    const r = await fetch('/api/audio/status');
+    const d = await r.json();
+    const rx = document.getElementById('cfg-audio-rx');
+    const tx = document.getElementById('cfg-audio-tx');
+    const br = document.getElementById('cfg-audio-bitrate');
+    if (rx && d.rx_device) rx.value = d.rx_device;
+    if (tx && d.tx_device) tx.value = d.tx_device;
+    if (br && d.opus_bitrate) br.value = d.opus_bitrate;
+    // ZALADUJ txVolume z zapisanej konfiguracji (backend zwraca go w statusie).
+    // Bez tego suwak zawsze pokazywal HTML-owy default value="4" -> "po
+    // przelogowaniu wraca 4x". Teraz ustawiamy suwak na zapisana wartosc.
+    const tvEl = document.getElementById('cfg-tx-volume');
+    const tvVal = document.getElementById('cfg-tx-volume-val');
+    if (tvEl && d.txVolume !== undefined && d.txVolume !== null) {
+      tvEl.value = d.txVolume;
+      if (tvVal) tvVal.textContent = d.txVolume + 'x';
+    }
+  } catch(e) {}
+}
+
+async function _audioDeviceSave() {
+  const rx = document.getElementById('cfg-audio-rx')?.value || '';
+  const tx = document.getElementById('cfg-audio-tx')?.value || '';
+  const br = parseInt(document.getElementById('cfg-audio-bitrate')?.value || '24000');
+  const tvEl = document.getElementById('cfg-tx-volume');
+  const tv = tvEl ? parseFloat(tvEl.value) : null;
+  const st = document.getElementById('cfg-audio-status');
+  if (st) st.textContent = 'Zapisywanie...';
+  try {
+    const payload = {rxDevice: rx, txDevice: tx, bitrate: br};
+    if (tv !== null && !isNaN(tv)) payload.txVolume = tv;
+    const r = await fetch('/api/audio/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (st) st.textContent = d.ok ? '✓ Zapisano i zastosowano' : '✗ ' + d.error;
+    if (d.ok) UI.showToast('Karta audio + TX Volume zapisane — Rust RX zrestartuje się');
+  } catch(e) {
+    if (st) st.textContent = '✗ ' + e.message;
+  }
+}
+
+// Załaduj przy wejściu na zakładkę USTAWIENIA
+const _origSetPage = window.UI?.setPage;
+document.addEventListener('DOMContentLoaded', () => {
+  const origBtn = document.querySelector('[onclick="UI.setPage(\'settings\')"]');
+  if (origBtn) {
+    const orig = origBtn.getAttribute('onclick');
+    origBtn.setAttribute('onclick', orig + '; _audioDeviceLoad()');
+  }
+});
+</script>
+
+<!-- ── DeepCW — plywajace okno dekodera CW ─────────────────────────────────── -->
+<div id="deepcw-modal" style="display:none;position:fixed;right:20px;bottom:20px;
+     width:420px;z-index:900;background:#0d0d0d;border:1px solid #2a2a2a;
+     border-radius:4px;box-shadow:0 6px 24px rgba(0,0,0,.6);font-family:var(--mono);">
+  <div id="deepcw-drag-bar" style="display:flex;align-items:center;justify-content:space-between;
+       padding:6px 10px;background:#141414;border-bottom:1px solid #2a2a2a;
+       cursor:move;user-select:none;">
+    <span style="font-size:11px;color:#4cf;letter-spacing:1px;">◈ DEKODER CW</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button onclick="DeepCW.capture()" title="Nagraj 15 s audio tak, jak slyszy je model (diagnostyka)"
+        style="background:none;border:1px solid #333;border-radius:2px;color:#888;
+        font-family:var(--mono);font-size:9px;padding:1px 6px;cursor:pointer;">REC</button>
+      <button onclick="DeepCW.clearOutput()" title="Wyczysc"
+        style="background:none;border:1px solid #333;border-radius:2px;color:#888;
+        font-family:var(--mono);font-size:9px;padding:1px 6px;cursor:pointer;">CLR</button>
+      <button onclick="DeepCW.closeModal()" title="Zamknij (zatrzymuje dekoder)"
+        style="background:none;border:1px solid #333;border-radius:2px;color:#888;
+        font-family:var(--mono);font-size:11px;padding:0 6px;cursor:pointer;">×</button>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;
+       border-bottom:1px solid #1a1a1a;">
+    <select id="deepcw-source" style="background:#0a0a0a;border:1px solid #2a2a2a;
+      color:var(--green);font-family:var(--mono);font-size:10px;padding:3px 6px;
+      border-radius:2px;">
+      <option value="radio">Radio (audio RX)</option>
+      <option value="mic">Mikrofon</option>
+    </select>
+    <button id="deepcw-start-btn" onclick="DeepCW.toggleStart()"
+      style="background:none;border:1px solid var(--green2);border-radius:3px;
+      color:var(--green);font-family:var(--mono);font-size:10px;padding:3px 10px;
+      cursor:pointer;letter-spacing:1px;">▶ START</button>
+    <canvas id="deepcw-vu" width="60" height="8"
+      style="border:1px solid #222;border-radius:2px;background:#080808;"></canvas>
+  </div>
+
+  <div id="deepcw-output" style="height:150px;overflow-y:auto;padding:8px 10px;
+       font-size:12px;line-height:1.55;letter-spacing:.5px;word-break:break-word;
+       background:#080808;"></div>
+
+  <!-- Linia podgladu — to, co model slyszy TERAZ, jeszcze bez potwierdzenia
+       glosowaniem. Wyprzedza zapis powyzej o ok. 2 s. Tresc przesuwa sie przez
+       nia i osiada w oknie glownym, gdy konsensus ja potwierdzi. -->
+  <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;
+       border-top:1px solid #1a1a1a;background:#0a0a0a;">
+    <span style="font-size:9px;color:#444;letter-spacing:1px;flex-shrink:0;">NA ŻYWO</span>
+    <span id="deepcw-preview" style="font-size:12px;color:#888;font-style:italic;
+          letter-spacing:.5px;white-space:nowrap;overflow:hidden;
+          text-overflow:ellipsis;flex:1;min-width:0;"></span>
+  </div>
+
+  <div id="deepcw-log" style="padding:4px 10px;font-size:9px;color:#666;
+       border-top:1px solid #1a1a1a;">Kliknij START zeby zaczac dekodowanie</div>
+</div>
+
+<script src="js/deepcw.js?v=202607230001"></script>
+
+</body>
+</html>

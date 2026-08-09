@@ -1,0 +1,1249 @@
+/* style.css — Ham Radio Control UI v3.0 (kafelkowy layout + wysuwany panel RF) */
+
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* ── Paleta "natural sage" — cieple oliwkowe tla, akcent szalwiowy,
+     czarne obwodki na przyciskach/sliderach dla kontrastu i czytelnosci.
+     Poprzednia jaskrawo-zielona paleta CRT przy duzej liczbie elementow
+     (slidery, przyciski funkcji) robila sie nieczytelna — sage jest
+     spokojniejszy i lepiej skaluje sie na wielu elementach naraz. ── */
+  --bg:      #1a1c19;
+  --panel:   #20231e;
+  --panel2:  #262a23;
+  --panel3:  #2e332b;
+  --border:  rgba(184,201,143,0.14);
+  --border2: rgba(184,201,143,0.30);
+  --green:   #b8c98f;
+  --green2:  #7a8f5a;
+  --amber:   #d4a857;
+  --red:     #d9776a;
+  --dim:     rgba(220,224,206,0.42);
+  --text:    #d6ddc8;
+  /* Czarny tekst/obwodka dla wypelnionych (solid) elementow — przyciski
+     aktywne, kciuki sliderow, znaczniki — zapewnia kontrast na jasnym
+     tle akcentu (--green/--amber). */
+  --on-accent: #14160f;
+  --mono:    'Share Tech Mono', monospace;
+  --display: 'Orbitron', sans-serif;
+  --ui:      'Inter', sans-serif;
+}
+
+html {
+  /* body.width jest ustawiane przez JS (updateScale) na scale*REF_W.
+     Wysokosc NIE jest sztywno ograniczana — strony dluzsze niz 1080px
+     (np. USTAWIENIA z wieloma sekcjami, CZAT z dluga historia) moga
+     przewijac sie wertykalnie (scroll na html/body), przy zachowanym
+     skalowaniu X/Y. Tlo (--bg) wypelnia pillarbox gdy proporcje viewportu
+     odbiegaja od 16:9.
+     scrollbar-gutter: stable — rezerwuje miejsce na pionowy scrollbar
+     ZAWSZE (nawet gdy strona nie przewija sie), zeby clientWidth (uzywane
+     w updateScale) bylo stale i nie zmienialo sie przy przelaczaniu
+     zakladek krotszych/dluzszych niz viewport — zapobiega "skakaniu"
+     calego layoutu o szerokosc scrollbara. */
+  background: #0d0f0e;
+  scrollbar-gutter: stable;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+  /* width ustawiane dynamicznie przez JS (updateAppScale) na scale*REF_W —
+     dopasowane do #app-scale po transformacji. Wysokosc auto: pozwala na
+     scroll gdy zawartosc strony przekracza REF_H. */
+}
+
+/* ── #app-scale: caly UI w referencyjnym rozmiarze 1440px szerokosci ──
+   Wszystkie elementy wewnatrz zachowuja absolutnie identyczne proporcje
+   i pozycje wzgledem siebie na kazdym ekranie — JS aplikuje
+   transform:scale() (patrz <script> na koncu index.html) tak, aby
+   szerokosc #app-scale (1440px) zmiescila sie w viewporcie. Wysokosc
+   min 1080px, ale moze rosnac (strony z duza iloscia tresci) — w takim
+   przypadku strona przewija sie wertykalnie. */
+#app-scale {
+  width: 1440px;
+  min-height: 1080px;
+  transform-origin: top left;
+  position: relative;
+}
+
+/* Linie skanowania — efekt CRT */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px);
+  pointer-events: none; z-index: 9999;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border2);
+  padding: 10px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000; gap: 12px;
+}
+
+body { padding-top: 52px; }
+
+/* Presence bar usunieta — funkcje przeniesione do panelu OPERATORZY w tile-cw */
+
+.logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); }
+.logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(184,201,143,0.4); }
+.nav-tabs { display: flex; gap: 3px; }
+.tab-btn {
+  background: none; border: none; padding: 6px 14px; border-radius: 4px;
+  color: var(--dim); font-family: var(--mono); font-size: 12px; cursor: pointer;
+  letter-spacing: 1px; transition: all 0.2s;
+}
+.tab-btn:hover  { color: var(--text); background: var(--panel2); }
+.tab-btn.active { color: var(--green); background: rgba(184,201,143,0.08); border: 1px solid var(--border2); }
+.status-row { display: flex; align-items: center; gap: 12px; }
+.indicator  { display: flex; align-items: center; gap: 5px; }
+.dot        { width:8px; height:8px; border-radius:50%; background:var(--dim); }
+.dot.green  { background:var(--green); box-shadow:0 0 8px rgba(184,201,143,0.7); animation:blink 2s ease-in-out infinite; }
+.dot.red    { background:var(--red);   box-shadow:0 0 8px rgba(217,119,106,0.7); }
+.dot.amber  { background:var(--amber); box-shadow:0 0 8px rgba(212,168,87,0.7); animation:blink 0.5s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
+.logout-btn {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 5px 10px;
+  cursor: pointer; transition: all 0.2s;
+}
+.logout-btn:hover { border-color: var(--red); color: var(--red); }
+
+/* ── RADIO PAGE WRAPPER ── */
+#page-radio { padding: 0; position: relative; }
+
+/* Sekcje (TX/RX/FILTR/AUDIO/RADIO) — uzywane w tile-left po przeniesieniu
+   z usunietego wysuwanego panelu RF/AF. */
+.rf-section { padding: 8px 10px 4px; }
+.rf-section-title {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--border2);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 5px;
+}
+.rf-divider { height: 1px; background: var(--border); margin: 4px 10px; }
+
+input[type="range"].rf-range {
+  -webkit-appearance: none; width: 100%; height: 3px;
+  background: var(--panel3); border-radius: 2px; outline: none; cursor: pointer; min-width: 0;
+}
+input[type="range"].rf-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--green); cursor: pointer; box-shadow: 0 0 4px rgba(184,201,143,0.4);
+}
+
+/* ── Kompaktowe kafelki sliderow (dynamiczne, RadioFunctions) ── */
+/* Pojedyncza kolumna — kazdy slider w swoim wierszu, jeden pod drugim. */
+#rig-dynamic-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rf-slider-tile {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.rf-slider-tile-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+}
+.rf-slider-tile-left {
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 11px; color: var(--dim); letter-spacing: 0.5px;
+  overflow: hidden; white-space: nowrap;
+}
+.rf-slider-tile-left .ti { font-size: 13px; flex-shrink: 0; }
+.rf-slider-tile-lbl { overflow: hidden; text-overflow: ellipsis; }
+.rf-slider-tile-val {
+  font-family: var(--mono); font-size: 12px; color: var(--green);
+  flex-shrink: 0; margin-left: 6px;
+}
+
+/* Select BW i przyciski audio (przeniesione do tile-left) */
+.rf-sub-lbl { font-family: var(--mono); font-size: 10px; color: var(--dim); letter-spacing: 1px; display: block; margin-bottom: 3px; }
+.rf-section select {
+  width: 100%;
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
+  color: var(--green); font-family: var(--mono); font-size: 11px; padding: 5px 7px;
+  outline: none;
+}
+.audio-toggle-btn {
+  width: 100%; margin-top: 4px; padding: 7px;
+  background: rgba(184,201,143,0.06); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--dim); font-family: var(--mono); font-size: 11px; cursor: pointer; letter-spacing: 1px;
+  transition: all 0.15s;
+}
+.audio-toggle-btn:hover { color: var(--green); border-color: var(--green2); }
+
+/* ── Czarne obwodki na przyciskach/sliderach ──
+   Paleta sage jest spokojna/naturalna — czarna obwodka 1px na elementach
+   interaktywnych (przyciski, select, range input) daje wyrazna definicje
+   krawedzi bez dodawania jaskrawego koloru. Kolorowy border (--border2 itp.)
+   pozostaje przez box-shadow inset, wiec stan hover/active (zmiana
+   border-color na --green/--amber) wciaz jest widoczny jako wewnetrzny
+   pasek koloru, a zewnetrzna czarna linia daje kontrast wzgledem tla. */
+button, select, input[type="range"].rf-range,
+.step-btn, .mode-btn, .band-btn, .go-btn, .ptt-btn,
+.btn-vfo-select, .btn-func-toggle, .btn-power-toggle,
+.audio-toggle-btn, .tab-btn, .memory-del {
+  border-color: #000 !important;
+  box-shadow: inset 0 0 0 1px var(--border2);
+}
+button:hover, .step-btn:hover, .mode-btn:hover, .band-btn:hover,
+.go-btn:hover, .ptt-btn:hover, .btn-vfo-select:hover, .btn-func-toggle:hover,
+.btn-power-toggle:hover, .audio-toggle-btn:hover, .tab-btn:hover {
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+.mode-btn.active, .band-btn.active, .step-btn.active, .tab-btn.active,
+.btn-vfo-select.active, .btn-func-toggle.active, .btn-power-toggle.active {
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+input[type="range"].rf-range::-webkit-slider-thumb {
+  border: 1px solid #000;
+}
+
+/* ── KAFELKOWY GRID ── */
+.tile-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 250px 1fr 1fr 250px;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 1px;
+  background: var(--border);
+  height: calc(1080px - 52px);
+}
+
+/* Pozycje kafelków */
+.tile-left       { grid-column: 1; grid-row: 1 / 5; }
+.tile-vfo        { grid-column: 2 / 4; grid-row: 1; }
+.tile-rigfeatures{ grid-column: 2 / 4; grid-row: 2; }
+.tile-wf         { grid-column: 2 / 4; grid-row: 3 / 5; }
+.tile-rotator    { grid-column: 4; grid-row: 1 / 3; font-size: 125%; background: var(--bg); }
+.tile-cw         { grid-column: 4; grid-row: 3 / 5; font-size: 125%; }
+
+/* Wspólne style kafelka */
+.tile {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── BOX / HEADER (zachowane ze starego CSS) ── */
+.box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.box-header {
+  padding: 7px 12px; background: var(--panel2); border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 12px; letter-spacing: 2px; color: var(--dim);
+  text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;
+}
+.box-body { padding: 12px; }
+
+/* Nagłówek kafelka (bez ramki box) */
+.tile-header {
+  background: var(--panel2);
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tile-header-val { color: var(--green); font-size: 10px; }
+.tile-divider { height: 1px; background: var(--border); flex-shrink: 0; }
+
+/* ── LEWA KOLUMNA ── */
+.tile-left { background: var(--bg); overflow-y: auto; min-height: 0; font-size: 125%; }
+
+/* Siatka Tryb / Pasmo — identyczny rozmiar */
+.mode-band-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  padding: 7px 8px;
+}
+.mode-btn, .band-btn {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 7px 4px;
+  cursor: pointer; text-align: center; letter-spacing: 0.5px; transition: all 0.15s;
+}
+.mode-btn:hover  { border-color: var(--border2); color: var(--text); }
+.band-btn:hover  { border-color: var(--border2); color: var(--text); }
+.mode-btn.active { background: rgba(184,201,143,0.12); border-color: var(--green); color: var(--green); }
+.band-btn.active { background: rgba(212,168,87,0.10); border-color: var(--amber); color: var(--amber); }
+
+/* Szybki Log QSO */
+.qso-form {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+.form-label { font-family: var(--mono); font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-bottom: 2px; }
+.form-row { display: flex; gap: 5px; }
+.form-row input { flex: 1; }
+.log-btn {
+  width: 100%; margin-top: auto;
+  background: rgba(184,201,143,0.12); border: 1px solid var(--green2); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+  padding: 8px; cursor: pointer; transition: all 0.15s;
+}
+.log-btn:hover { background: rgba(184,201,143,0.2); }
+
+/* ── VFO ── */
+.vfo-display {
+  text-align: left;
+  padding: 10px 14px 6px;
+  background: #090c09;
+  border-bottom: 1px solid var(--border);
+}
+.vfo-label { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--dim); margin-bottom: 5px; }
+.vfo-badges { display: flex; gap: 4px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+.vfo-badge {
+  font-family: var(--mono); font-size: 8px; padding: 2px 6px;
+  border-radius: 3px; border: 1px solid; cursor: default;
+}
+.freq-big {
+  font-family: var(--display); font-size: 44px; font-weight: 900;
+  color: var(--green); letter-spacing: -1px; line-height: 1;
+  text-shadow: 0 0 20px rgba(184,201,143,0.5), 0 0 40px rgba(184,201,143,0.2);
+  cursor: pointer; user-select: none;
+}
+.freq-big:hover { text-shadow: 0 0 30px rgba(184,201,143,0.8), 0 0 60px rgba(184,201,143,0.3); }
+.freq-unit { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+
+/* Kroki strojenia */
+.tuning-steps { display: flex; gap: 2px; padding: 5px 0; flex-wrap: wrap; }
+.step-btn {
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
+  color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 4px 8px;
+  cursor: pointer; transition: all 0.15s;
+}
+.step-btn:hover  { background: var(--panel3); border-color: var(--green); color: var(--green); }
+.step-btn:active { transform: scale(0.95); }
+.step-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.1); }
+
+.go-btn {
+  background: rgba(184,201,143,0.1); border: 1px solid var(--green2); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 14px; padding: 6px 13px;
+  cursor: pointer; flex-shrink: 0; transition: all 0.15s;
+}
+.go-btn:hover { background: rgba(184,201,143,0.2); }
+
+/* ── S-METER ── */
+.smeter-wrap { padding: 8px 14px 9px; }
+.smeter-scale {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 4px; padding: 0 2px;
+}
+.smeter-bar-wrap {
+  position: relative; height: 25px; background: #060806;
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+}
+.smeter-fill {
+  height: 100%; width: 100%; border-radius: 2px;
+  background: linear-gradient(90deg,#7a8f5a 0%,#7a8f5a 55%,#d4a857 55%,#d4a857 75%,#d9776a 75%,#d9776a 100%);
+  clip-path: inset(0 100% 0 0); transition: clip-path 0.1s ease;
+}
+.smeter-value {
+  font-family: var(--display); font-size: 13px; font-weight: 700;
+  color: var(--green); margin-top: 3px;
+  text-shadow: 0 0 8px rgba(184,201,143,0.3);
+}
+
+/* ── TX Meter (ALC/PWR/SWR/VOLT) — bargraf kompaktowy pod S-metrem ──
+   Jeden wiersz: nazwa funkcji | pasek | wartosc. Wybor funkcji jest TYLKO
+   w lewej kolumnie (sekcja TRX FUNKCJE pod PASMO) — patrz UI.setTxMeter(). */
+/* ── TX Meter (ALC/PWR/SWR/VOLT) — bargraf kompaktowy pod S-metrem ──
+   Jeden wiersz: nazwa funkcji | pasek+podzialka | wartosc. Wybor funkcji
+   jest TYLKO w lewej kolumnie (sekcja TRX FUNKCJE pod PASMO) — patrz
+   UI.setTxMeter(). Podzialka pod paskiem dopasowana do realnego zakresu
+   odczytu z radia, inna dla kazdej funkcji (patrz UI._renderTxMeter()). */
+.txmeter-wrap {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.txmeter-label-name {
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: var(--dim); letter-spacing: 1px; flex-shrink: 0;
+  min-width: 28px;
+}
+.txmeter-bar-col { flex: 0 0 50%; display: flex; flex-direction: column; gap: 1px; }
+.txmeter-bar-wrap {
+  position: relative; height: 12px; background: #060806;
+  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+}
+.txmeter-fill {
+  height: 100%; width: 0%;
+  border-radius: 2px; transition: width 0.12s ease;
+  background: linear-gradient(90deg, #7a8f5a 0%, #d4a857 60%, #d9776a 85%);
+}
+/* Kolor bargrafów wg metra */
+.txmeter-fill.alc  { background: linear-gradient(90deg, #4a7a9a 0%, #d4a857 70%, #d9776a 90%); }
+.txmeter-fill.pwr  { background: linear-gradient(90deg, #7a8f5a 0%, #b8c98f 55%, #d4a857 75%, #d9776a 90%); }
+.txmeter-fill.swr  { background: linear-gradient(90deg, #7a8f5a 0%, #7a8f5a 40%, #d4a857 60%, #d9776a 80%); }
+.txmeter-fill.volt { background: linear-gradient(90deg, #d9776a 0%, #d4a857 40%, #7a8f5a 70%); }
+/* Podzialka pod paskiem — pozycjonowanie absolutne (left:%), bo punkty SWR
+   (1.0/1.5/2.0/3.0) NIE sa rownomiernie rozstawione w skali procentowej
+   (patrz civ.py: pct = min(1.0, swr_raw/120), nieliniowe wzgledem wartosci). */
+.txmeter-scale {
+  position: relative; height: 9px;
+  font-family: var(--mono); font-size: 8px; color: var(--dim);
+}
+.txmeter-scale span {
+  position: absolute; transform: translateX(-50%);
+}
+.txmeter-scale span:first-child  { transform: translateX(0); }
+.txmeter-scale span:last-child   { transform: translateX(-100%); }
+.txmeter-value {
+  font-family: var(--mono); font-size: 11px; color: var(--amber);
+  font-weight: 700; letter-spacing: 0.5px; flex-shrink: 0; min-width: 38px; text-align: right;
+}
+
+/* ── PTT ── */
+.ptt-btn {
+  padding: 9px 112px; border-radius: 4px; border: 2px solid var(--border2);
+  background: var(--panel2); color: var(--text); font-family: var(--display);
+  font-size: 16px; font-weight: 700; letter-spacing: 3px; cursor: pointer; transition: all 0.1s;
+}
+.ptt-btn:hover  { border-color: var(--green); color: var(--green); }
+.ptt-btn.active {
+  background: rgba(217,119,106,0.2); border-color: var(--red); color: var(--red);
+  box-shadow: 0 0 20px rgba(217,119,106,0.3); animation: ptt-pulse 0.8s ease-in-out infinite;
+}
+.ptt-btn.crossband-blocked,
+.ptt-btn:disabled {
+  background: rgba(217,119,106,0.05); border-color: rgba(217,119,106,0.35);
+  color: rgba(217,119,106,0.55); cursor: not-allowed;
+  box-shadow: none; animation: none;
+}
+.ptt-btn.crossband-blocked:hover,
+.ptt-btn:disabled:hover {
+  border-color: rgba(217,119,106,0.35); color: rgba(217,119,106,0.55);
+}
+
+/* Radio readonly mode — user nie ma TRX lock, moze tylko ogladac.
+ * Wyszarzamy wszystkie interaktywne kontrolki (przyciski, suwaki, pola input)
+ * poza panelem OPERATORZY (bo tam jest przycisk PRZEJMIJ TRX). Waterfall,
+ * S-meter, VFO display pozostaja pelnokolorowe (readonly nie ukrywa
+ * odczytow z radia, tylko blokuje ZMIANY). */
+.radio-readonly button:not(.op-btn-take):not(.op-btn-request):not(.op-btn-release):not(.op-btn-force):not(#tab-radio):not(.tab-btn):not(.vfo-badge):not([id*="chat"]):not([id*="op-"]),
+.radio-readonly input[type="range"],
+.radio-readonly input[type="number"]:not([id*="chat"]),
+.radio-readonly select:not([id*="chat"]) {
+  opacity: 0.4;
+  pointer-events: none;
+  filter: grayscale(0.6);
+}
+.radio-readonly .ptt-btn {
+  opacity: 0.35;
+  pointer-events: none;
+  filter: grayscale(0.8);
+  border-color: var(--dim) !important;
+  color: var(--dim) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  animation: none !important;
+}
+/* Wyraznie oznaczmy panel OPERATORZY zeby user wiedzial gdzie kliknac PRZEJMIJ */
+.radio-readonly #op-list {
+  border: 1px solid var(--amber);
+  background: rgba(212,168,87,0.05);
+  animation: readonly-highlight 2.5s ease-in-out infinite;
+}
+@keyframes readonly-highlight {
+  0%,100% { box-shadow: 0 0 0 rgba(212,168,87,0); }
+  50%     { box-shadow: 0 0 12px rgba(212,168,87,0.35); }
+}
+/* Odblokuj przyciski PRZEJMIJ/POPROŚ/ODDAJ zeby user mogl przejac radio */
+.radio-readonly #op-btn-take,
+.radio-readonly #op-btn-request,
+.radio-readonly #op-btn-release,
+.radio-readonly #op-btn-force {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  filter: none !important;
+}
+
+/* ── Waterfall fullscreen ── */
+.tile-wf.wf-fullscreen {
+  position: fixed !important;
+  top: 0 !important; left: 0 !important;
+  width: 100vw !important; height: 100vh !important;
+  z-index: 9999 !important;
+  padding: 20px !important;
+  background: #000 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.tile-wf.wf-fullscreen canvas#wf-waterfall { max-height: none !important; flex: 1 !important; }
+.tile-wf.wf-fullscreen canvas#wf-spectrum { height: 120px !important; }
+
+/* ── Motywy kolorów (data-theme na <html>) ── */
+/* Domyślny: green-amber (IC-7300 feel) — juz w :root */
+html[data-theme="blue"] {
+  --green:  #6db4e5;
+  --green2: rgba(109,180,229,0.4);
+  --amber:  #f0b429;
+}
+html[data-theme="mono"] {
+  --green:  #e0e0e0;
+  --green2: rgba(224,224,224,0.4);
+  --amber:  #c0c0c0;
+  --red:    #ff8080;
+}
+html[data-theme="amber-classic"] {
+  --green:  #ffb84d;
+  --green2: rgba(255,184,77,0.4);
+  --amber:  #ff8c42;
+  --fg:     #ffb84d;
+  --text:   #ffdba0;
+}
+@keyframes ptt-pulse { 0%,100%{box-shadow:0 0 20px rgba(217,119,106,0.3)} 50%{box-shadow:0 0 35px rgba(217,119,106,0.6)} }
+
+/* Watchdog TX countdown - pulsuje ostatnich 10s */
+@keyframes wj-tx-watchdog-pulse {
+  0%, 100% { background: rgba(217,119,106,0.15); }
+  50%      { background: rgba(217,119,106,0.45); box-shadow: 0 0 12px rgba(217,119,106,0.6); }
+}
+
+/* ── PANEL FUNKCJI RADIA (VFO A/B, func toggle) ── */
+.tile-rigfeatures { padding: 0; }
+/* Jeden zwarty wiersz przyciskow (VFO A/B, Zasilanie, funkcje) miedzy PTT
+   i waterfallem. Nie zawija sie — w razie nadmiaru elementow przewija
+   horyzontalnie (scrollbar maskowany, widoczny tylko na hover/drag). */
+.rf-buttons-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+}
+/* Wszystkie grupy/przyciski trzymaja sie jednego wiersza (scroll-x w razie
+   przepelnienia) — nie kurcza sie i nie zawijaja. */
+.rf-buttons-row .rig-action-group,
+.rf-buttons-row .btn-vfo-select,
+.rf-buttons-row .btn-power-toggle,
+.rf-buttons-row .btn-func-toggle { flex-shrink: 0; white-space: nowrap; }
+
+/* Zunifikowany przycisk dla rf-buttons-row — jeden rozmiar dla wszystkich */
+.rf-btn {
+  padding: 6px 15px; border-radius: 4px; border: 1px solid var(--border2);
+  background: var(--panel2); color: var(--dim); font-family: var(--mono);
+  font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.1s;
+  white-space: nowrap; flex-shrink: 0;
+}
+.rf-btn:hover { border-color: var(--green); color: var(--green); background: var(--panel3); }
+.rf-btn.active {
+  background: rgba(110,231,150,0.15); border-color: var(--green); color: var(--green);
+}
+.rf-btn-power { color: var(--green); }
+.rf-btn-power:hover { border-color: var(--red); color: var(--red); }
+.rf-btn-power.active {
+  background: rgba(217,119,106,0.15); border-color: var(--red); color: var(--red);
+}
+/* Zachowane dla kompatybilnosci wstecznej */
+.btn-vfo-select, .btn-func-toggle, .btn-power-toggle { padding: 6px 15px; border-radius: 4px; border: 1px solid var(--border2); background: var(--panel2); color: var(--dim); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.1s; }
+.btn-vfo-select:hover, .btn-func-toggle:hover { border-color: var(--green); color: var(--green); }
+.btn-vfo-select.active, .btn-func-toggle.active { background: rgba(110,231,150,0.15); border-color: var(--green); color: var(--green); }
+.btn-power-toggle { color: var(--green); }
+.btn-power-toggle:hover { border-color: var(--red); }
+.btn-power-toggle.active { background: rgba(217,119,106,0.15); border-color: var(--red); color: var(--red); }
+
+/* ── WATERFALL ── */
+.wf-header {
+  background: var(--panel2); padding: 3px 10px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+#wf-spectrum  { width: 100%; height: 60px; display: block; background: #060806; border-bottom: 1px solid var(--border); }
+#wf-waterfall { width: 100%; display: block; background: #060806; flex: 1; min-height: 80px; }
+
+/* ── ROTATOR ── */
+.rotator-inner { padding: 8px 10px; }
+#rot-compass { width: 205px !important; height: 205px !important; }
+.rot-az-display { font-family: var(--display); font-size: 45px; font-weight: 900; color: var(--green); text-align: center; line-height: 1; }
+.rot-unit-label { font-family: var(--mono); font-size: 9px; color: var(--dim); text-align: center; margin-bottom: 6px; }
+.rot-target-inp {
+  width: 100%; margin-bottom: 5px;
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
+  color: var(--text); font-family: var(--mono); font-size: 11px; padding: 5px 8px; outline: none;
+}
+.rot-btns { display: flex; gap: 4px; }
+.rot-go-btn {
+  flex: 1; background: rgba(184,201,143,0.1); border: 1px solid var(--green2);
+  border-radius: 3px; color: var(--green); font-family: var(--mono); font-size: 12px;
+  padding: 9px; cursor: pointer; letter-spacing: 1px; transition: all 0.15s;
+}
+.rot-stop-btn {
+  flex: 1; background: rgba(217,119,106,0.08); border: 1px solid rgba(217,119,106,0.3);
+  border-radius: 3px; color: var(--red); font-family: var(--mono); font-size: 10px;
+  padding: 7px; cursor: pointer; letter-spacing: 1px; transition: all 0.15s;
+}
+
+/* ── CW KEYER ── */
+.cw-macros-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 3px;
+  padding: 6px 8px;
+}
+.cw-macro-card {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 3px;
+  padding: 5px 7px; cursor: pointer; transition: all 0.12s;
+  min-height: 38px; max-height: 52px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 2px; position: relative;
+}
+.cw-macro-card:hover { border-color: var(--green2); background: rgba(184,201,143,0.06); }
+.cw-macro-card.empty { border-style: dashed; opacity: 0.5; }
+.cw-macro-card.empty:hover { opacity: 0.8; }
+.cw-macro-header {
+  display: flex; align-items: center; gap: 4px;
+}
+.cw-macro-label {
+  font-family: var(--mono); font-size: 8px; color: var(--amber);
+  letter-spacing: 0.5px; display: block; text-transform: uppercase;
+}
+.cw-macro-text {
+  font-family: var(--mono); font-size: 8px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; display: block;
+}
+.cw-macro-num { font-family: var(--mono); font-size: 8px; color: var(--dim); }
+.cw-macro-edit-btn {
+  display: none; margin-left: auto;
+  background: transparent; border: 1px solid var(--border2); border-radius: 2px;
+  color: var(--dim); font-size: 9px; line-height: 1; padding: 0px 3px; cursor: pointer;
+}
+.cw-macro-edit-btn:hover { color: var(--amber); border-color: var(--amber); }
+.cw-macro-card:hover .cw-macro-edit-btn { display: inline-block; }
+
+/* ── TX VU METER + AUDIO SLIDERS ── */
+#tx-vu-bar {
+  flex: 1; height: 6px; background: var(--panel3);
+  border-radius: 3px; overflow: hidden; position: relative;
+}
+#tx-vu-fill {
+  height: 100%; width: 0%; background: var(--green);
+  border-radius: 3px; transition: width 0.05s;
+}
+#tx-gain-slider, #rx-vol-slider {
+  width: 100%; cursor: pointer; height: 3px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--panel3); border-radius: 2px; outline: none;
+}
+#tx-gain-slider::-webkit-slider-thumb,
+#rx-vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--green); cursor: pointer;
+  border: 1px solid #000;
+}
+#tx-gain-slider::-moz-range-thumb,
+#rx-vol-slider::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--green); cursor: pointer;
+  border: 1px solid #000;
+}
+
+/* ── FOX / HOUND MODE ── */
+.wj-hound-step {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 6px; border-radius: 2px;
+  font-family: var(--mono); font-size: 9px;
+  color: #555; border: 1px solid transparent;
+  transition: all 0.2s;
+}
+.wj-hound-step.active {
+  color: #f90; border-color: rgba(255,140,0,0.3);
+  background: rgba(255,140,0,0.08);
+}
+.wj-hound-step.done {
+  color: #4c8; border-color: rgba(76,200,140,0.2);
+  background: rgba(76,200,140,0.06);
+}
+.wj-hound-step.failed {
+  color: #f66; border-color: rgba(255,80,80,0.3);
+  background: rgba(255,80,80,0.06);
+}
+.wj-hound-step-num {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #222; border: 1px solid #444;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; flex-shrink: 0;
+}
+.wj-hound-step.active .wj-hound-step-num { background: #f90; border-color: #f90; color: #000; }
+.wj-hound-step.done   .wj-hound-step-num { background: #4c8; border-color: #4c8; color: #000; }
+.wj-hound-step.failed .wj-hound-step-num { background: #f44; border-color: #f44; color: #fff; }
+.wj-hound-step-label  { flex: 1; }
+.wj-hound-step-status { font-size: 9px; color: #888; }
+
+/* ── LOG QSO ── */
+.log-th {
+  padding: 7px 10px; text-align: left; font-family: var(--mono);
+  font-size: 10px; color: var(--dim); letter-spacing: 1px;
+  border-right: 1px solid var(--border); white-space: nowrap;
+}
+.log-th:last-child { border-right: none; }
+.log-th:hover { color: var(--green); }
+#log-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+#log-table tbody tr:hover { background: var(--panel2); }
+#log-table tbody td {
+  padding: 6px 10px; font-family: var(--mono); font-size: 11px;
+  color: var(--text); border-right: 1px solid var(--border); white-space: nowrap;
+}
+#log-table tbody td:last-child { border-right: none; }
+.log-call { color: var(--green); font-weight: bold; }
+.log-mode-cw  { color: var(--amber); }
+.log-mode-ft8 { color: #7ec8e3; }
+.log-mode-ft4 { color: #5bb8d4; }
+.log-action-btn {
+  background: none; border: 1px solid var(--border2); border-radius: 3px;
+  color: var(--dim); font-family: var(--mono); font-size: 9px;
+  padding: 2px 6px; cursor: pointer; transition: all 0.1s;
+}
+.log-action-btn:hover { border-color: var(--green); color: var(--green); }
+.log-action-btn.del:hover { border-color: var(--red); color: var(--red); }
+
+/* ── FORMY globalne (zachowane) ── */
+input[type="text"], input[type="number"], input[type="password"], input[type="email"], select {
+  background: var(--panel2); border: 1px solid var(--border2); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 12px; padding: 7px 10px;
+  outline: none; width: 100%; transition: border-color 0.2s;
+}
+input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 4px rgba(184,201,143,0.15); }
+input::placeholder { color: var(--dim); }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-20px);
+  background: var(--panel); border: 1px solid var(--green2); border-radius: 8px;
+  padding: 14px 28px; font-family: var(--mono); font-size: 14px; color: var(--green);
+  z-index: 99999; opacity: 0; transition: all 0.25s; pointer-events: none;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6); white-space: nowrap; max-width: 90vw;
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.error { border-color: var(--red); color: var(--red); }
+.toast.warning { border-color: var(--amber); color: var(--amber); }
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+/* ── PAGES ── */
+.page-content { display: none; padding: 14px; }
+.page-content.active { display: block; }
+#page-wsjtx { padding: 0; }
+#page-wsjtx.active { display: flex; flex-direction: column; height: var(--wsjtx-h, 1028px); overflow: hidden; }
+body.page-wsjtx-active { overflow: hidden; }
+#page-radio { padding: 0; }
+
+/* DX Cluster — pelna wysokosc, bez scrolla strony. Lista spotow scrolluje
+   wewnetrznie, reszta (pasek gorny, config, CLI) jest staticzna. */
+#page-dxcluster { padding: 8px; }
+#page-dxcluster.active { display: flex; flex-direction: column; height: calc(100vh - 90px); overflow: hidden; }
+#page-dxcluster .page-col { max-width: 100%; padding-bottom: 0; gap: 6px; }
+
+/* ── LOG TABLE ── */
+.log-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.log-table th { padding: 6px 8px; text-align: left; color: var(--dim); font-weight: 400; border-bottom: 1px solid var(--border); font-size: 10px; letter-spacing: 1px; }
+.log-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--text); }
+.log-table tr:hover td { background: var(--panel2); }
+.log-table .call { color: var(--green); font-weight: bold; }
+.log-table .freq { color: var(--amber); }
+.del-btn { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 13px; transition: color 0.1s; }
+.del-btn:hover { color: var(--red); }
+
+/* ── SETTINGS ── */
+.settings-layout { display: flex; flex-direction: column; gap: 18px; padding: 0 0 25px; }
+/* Jednolity wrapper dla stron admin/settings/internet — jedna kolumna, max-width */
+.page-col {
+  display: flex; flex-direction: column; gap: 18px;
+  max-width: 1075px; padding-bottom: 30px;
+}
+.page-col .box { width: 100%; }
+.page-col .box-header { font-size: 15px; padding: 9px 15px; letter-spacing: 2px; }
+.page-col .box-body   { padding: 15px; font-size: 13px; }
+.page-col input[type="text"],
+.page-col input[type="number"],
+.page-col input[type="password"],
+.page-col input[type="email"],
+.page-col select,
+.page-col textarea {
+  font-size: 13px; padding: 7px 10px;
+}
+.settings-inner  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 13px 15px; }
+.sg { display: flex; flex-direction: column; gap: 5px; }
+.sg label { font-family: var(--mono); font-size: 13px; color: var(--dim); letter-spacing: 1px; }
+.save-btn {
+  background: rgba(184,201,143,0.12); border: 1px solid var(--green2); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 14px; letter-spacing: 1.5px;
+  padding: 11px; cursor: pointer; width: 100%; transition: all 0.15s;
+}
+.save-btn:hover { background: rgba(184,201,143,0.2); }
+
+/* ── ADMIN ── */
+.admin-btn {
+  background: rgba(184,201,143,0.1); border: 1px solid var(--green2); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 10px; padding: 4px 10px; cursor: pointer;
+}
+.admin-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.admin-table th { padding: 7px 10px; text-align: left; color: var(--dim); font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border); font-weight: 400; }
+.admin-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.admin-table tr:hover td { background: var(--panel2); }
+
+/* ── Transfer Widget (wybor przyciskow / sliderow) ── */
+.tw-widget { background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: 12px; }
+.tw-body { display: grid; grid-template-columns: 1fr 90px 1fr; gap: 8px; align-items: start; }
+.tw-col { display: flex; flex-direction: column; gap: 4px; }
+.tw-col-header {
+  font-family: var(--mono); font-size: 9px; color: var(--dim); letter-spacing: 1px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 3px 0; border-bottom: 1px solid var(--border); margin-bottom: 2px;
+}
+.tw-count {
+  background: var(--panel3); color: var(--green); font-size: 9px;
+  padding: 1px 5px; border-radius: 8px; font-family: var(--mono);
+}
+.tw-list {
+  min-height: 160px; max-height: 240px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px;
+}
+.tw-list.tw-drag-over { border-color: var(--green); background: rgba(184,201,143,0.05); }
+.tw-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px; font-family: var(--mono); font-size: 10px; color: var(--text);
+  border-radius: 2px; cursor: pointer; user-select: none; gap: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.tw-item:last-child { border-bottom: none; }
+.tw-item:hover { background: var(--panel2); }
+.tw-item.tw-selected { background: rgba(184,201,143,0.12); color: var(--green); border-color: rgba(184,201,143,0.2); }
+.tw-item[draggable="true"]:active { opacity: 0.5; }
+.tw-sub { font-size: 8px; color: var(--dim); letter-spacing: 0.5px; flex-shrink: 0; }
+.tw-buttons {
+  display: flex; flex-direction: column; gap: 4px;
+  padding-top: 20px; /* wyrownaj z lista */
+}
+.tw-btn {
+  background: var(--panel3); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--dim); font-family: var(--mono); font-size: 9px; padding: 5px 4px;
+  cursor: pointer; text-align: center; letter-spacing: 0.5px; white-space: nowrap;
+  transition: all 0.1s;
+}
+.tw-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.06); }
+.tw-hint { font-family: var(--mono); font-size: 8px; color: var(--dim); text-align: center; padding-top: 2px; }
+
+
+/* ── MODAL ── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 1000; align-items: center; justify-content: center;
+}
+.modal-overlay.active,
+.modal-overlay[style*="flex"] { display: flex; }
+.modal-box {
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
+  padding: 20px; max-width: 480px; width: 90%; max-height: 90vh; overflow-y: auto;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; font-family: var(--mono); font-size: 12px; color: var(--text); letter-spacing: 2px;
+}
+.modal-close {
+  background: none; border: none; color: var(--dim); cursor: pointer; font-size: 16px; transition: color 0.2s;
+}
+.modal-close:hover { color: var(--red); }
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.full-row { grid-column: 1 / -1; }
+.change-pwd-form { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.change-pwd-form .field { display: flex; flex-direction: column; gap: 4px; }
+.change-pwd-form label { font-family: var(--mono); font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+.role-badge {
+  font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 3px;
+  border: 1px solid var(--border); color: var(--dim); background: var(--panel2);
+}
+
+/* ── VFO CYFRY (zachowane z oryginalnego) ── */
+.vfo-digit { display: inline-block; min-width: 30px; text-align: center; border-radius: 4px; padding: 0 2px; transition: background 0.12s, color 0.15s; }
+.vfo-digit.active { cursor: ns-resize; }
+.vfo-digit.active:hover { background: rgba(184,201,143,0.12); text-shadow: 0 0 20px rgba(184,201,143,1); }
+.vfo-digit.selected { background: rgba(184,201,143,0.18); outline: 1px solid rgba(184,201,143,0.5); text-shadow: 0 0 25px rgba(184,201,143,1); }
+.vfo-sep { color: rgba(184,201,143,0.3); padding: 0 2px; font-size: 36px; line-height: 1; }
+.vfo-sep.sep-mhz { color: rgba(184,201,143,0.5); font-size: 40px; }
+
+/* ── CHAT ── */
+.chat-msg { font-family: var(--mono); font-size: 12px; line-height: 1.6; }
+.chat-msg .chat-who { color: var(--green); }
+.chat-msg .chat-ts  { color: var(--dim); font-size: 10px; }
+
+/* ── RESPONSIVE ── */
+/* RESPONSYWNOSC: brak @media breakpoints — caly layout jest renderowany w
+   stalym rozmiarze referencyjnym 1440x1080 (#app-scale) i skalowany
+   jednolicie (transform:scale) wg viewportu w index.html. Reflow przez
+   @media kolidowalby z tym podejsciem (zmienialby pozycje elementow przy
+   przeskalowanym, ale wciaz "logicznie 1440px" widoku). */
+
+/* Selektor radia */
+#rig-selector-row select {
+  width: 100%; font-family: var(--mono); font-size: 11px;
+  background: var(--panel2); border: 1px solid var(--border);
+  color: var(--green); border-radius: 4px; padding: 6px 8px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   WSJT-X PAGE — ciemny motyw zbliżony do oryginału WSJT-X
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Layout */
+.wsjtx-layout {
+  display: flex; flex-direction: column;
+  flex: 1; height: 100%;
+  background: #0d0d0d; color: #ccc; overflow: hidden;
+}
+
+/* Górny pasek */
+.wsjtx-topbar {
+  display: flex; align-items: center; gap: 10px;
+  background: #111; border-bottom: 1px solid #2a2a2a;
+  padding: 5px 12px; flex-shrink: 0; flex-wrap: wrap;
+}
+.wsjtx-freq {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 20px; font-weight: 700; color: #4cf; letter-spacing: 1px;
+  min-width: 110px;
+}
+.wsjtx-mode-badge {
+  font-family: 'Share Tech Mono', monospace; font-size: 12px;
+  color: #fff; background: #1a3a1a; border: 1px solid #2a6a2a;
+  padding: 2px 8px; border-radius: 2px; letter-spacing: 1px;
+}
+.wj-mode-switch {
+  display: flex; border: 1px solid #2a6a2a; border-radius: 2px; overflow: hidden;
+}
+.wj-mode-btn {
+  font-family: 'Share Tech Mono', monospace; font-size: 12px;
+  letter-spacing: 1px; color: #6a8; background: #0d0d0d; border: none;
+  padding: 3px 10px; cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.wj-mode-btn:hover { background: #142214; }
+.wj-mode-btn.active {
+  background: #1a3a1a; color: #fff;
+}
+.wj-band-select {
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  background: #0d0d0d; border: 1px solid #333; color: #ccc;
+  padding: 4px 6px; border-radius: 2px;
+}
+.wj-topbar-check {
+  font-size: 11px; color: #aaa; display: flex; align-items: center;
+  gap: 4px; cursor: pointer;
+}
+.wj-period-switch {
+  display: flex; border: 1px solid #336; border-radius: 2px; overflow: hidden;
+}
+.wj-period-switch .wj-mode-btn.active {
+  background: #1a1a3a; color: #fff;
+}
+.wsjtx-clock-wrap {
+  display: flex; align-items: center; gap: 4px;
+  background: #0a0a0a; border: 1px solid #222;
+  padding: 2px 6px; border-radius: 2px;
+}
+.wsjtx-status-pill {
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  padding: 2px 10px; border-radius: 2px;
+  border: 1px solid #333; color: #666;
+}
+.wsjtx-status-pill.online  { color: #4f4; border-color: #2a4a2a; background: #0a1a0a; }
+.wsjtx-status-pill.tx      { color: #f44; border-color: #4a1a1a; background: #1a0a0a; }
+.wsjtx-status-pill.decoding{ color: #fa0; border-color: #3a2a0a; background: #0a0a00; }
+
+/* Przyciski topbar */
+.wj-btn {
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  padding: 4px 10px; cursor: pointer; border-radius: 2px;
+  border: 1px solid #333; background: #1a1a1a; color: #aaa;
+  letter-spacing: 0.5px; transition: all 0.1s;
+}
+.wj-btn:hover { border-color: #555; color: #fff; }
+.wj-btn-green { border-color: #2a5a2a; color: #4f4; background: #0a1a0a; }
+.wj-btn-green:hover { border-color: #4a8a4a; background: #0f2a0f; }
+.wj-btn-red   { border-color: #5a1a1a; color: #f44; background: #1a0a0a; }
+.wj-btn-red:hover { border-color: #8a2a2a; background: #2a0f0f; }
+
+/* Wodospad / scope */
+.wsjtx-scope-wrap {
+  flex-shrink: 0; border-bottom: 1px solid #1a1a1a; background: #050505;
+  width: 100%; min-width: 0;
+}
+.wsjtx-scope-toolbar {
+  display: flex; align-items: center; gap: 0; padding: 3px 8px;
+  background: #161616; border-bottom: 1px solid #2a2a2a;
+}
+.wsjtx-scope-canvas {
+  display: block; width: 100%; height: 160px; cursor: crosshair;
+  background: #000;
+}
+.wsjtx-scope-axis {
+  position: relative; height: 18px; background: #0d0d0d;
+  border-bottom: 1px solid #2a2a2a; overflow: hidden;
+  font-family: var(--mono); font-size: 10px; color: #999;
+}
+.wsjtx-scope-axis .wj-axis-tick {
+  position: absolute; top: 2px; transform: translateX(-50%);
+  white-space: nowrap;
+}
+#wj-tx-freeze-btn.active { border-color: #2a6a8a; color: #4cf; background: #05202a; }
+
+/* Środkowy obszar */
+.wsjtx-main {
+  display: flex; flex-direction: row; flex: 1;
+  overflow: hidden; gap: 0; min-height: 0; align-items: stretch;
+}
+
+/* Tabela dekodowań */
+.wsjtx-decodes-wrap {
+  flex: 1; display: flex; flex-direction: row;
+  border-right: 1px solid #1a1a1a; overflow: hidden;
+  min-height: 0; min-width: 0;
+}
+
+/* Panele regulowane (Band Activity / RX Frequency), obok siebie, z
+   przeciaganym pionowym splitterem miedzy nimi */
+.wj-split-pane {
+  display: flex; flex-direction: column; overflow: hidden;
+  min-width: 120px; flex-grow: 0; flex-shrink: 0; min-height: 0;
+}
+.wj-split-resizer {
+  flex: 0 0 6px; cursor: col-resize; background: #161616;
+  border-left: 1px solid #2a2a2a; border-right: 1px solid #2a2a2a;
+  position: relative;
+}
+.wj-split-resizer:hover, .wj-split-resizer.dragging { background: #2a2a2a; }
+.wj-split-resizer::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%); width: 2px; height: 30px;
+  background: #555; border-radius: 1px;
+}
+.wj-btn-xs {
+  font-size: 10px; padding: 1px 5px; line-height: 1.4;
+}
+
+.wsjtx-decode-header {
+  display: flex; gap: 0; align-items: center;
+  background: #161616; border-bottom: 1px solid #2a2a2a;
+  padding: 3px 6px; flex-shrink: 0;
+}
+.wjh {
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  color: #aaa; padding: 0 4px; white-space: nowrap; user-select: none;
+  min-width: 52px;
+}
+.wjh-r { text-align: right; min-width: 42px; }
+
+.wsjtx-decode-list {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+}
+.wsjtx-decode-list::-webkit-scrollbar { width: 5px; }
+.wsjtx-decode-list::-webkit-scrollbar-track { background: #0a0a0a; }
+.wsjtx-decode-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+/* Edytowalne pola czestotliwosci RX/TX w toolbarze scope'a */
+.wj-freq-field {
+  font-family: var(--mono); font-size: 11px;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.wj-freq-input {
+  width: 60px; background: #0a0a0a; border: 1px solid #333;
+  color: inherit; font-family: var(--mono); font-size: 11px;
+  padding: 2px 4px; border-radius: 3px; text-align: right;
+}
+.wj-freq-input:focus { outline: none; border-color: #666; }
+/* Ukryj strzalki spinner w number input dla czystszego wygladu */
+.wj-freq-input::-webkit-inner-spin-button,
+.wj-freq-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.wj-freq-input[type=number] { -moz-appearance: textfield; }
+
+.wj-decode-row {
+  display: flex; align-items: center; padding: 1px 6px;
+  cursor: pointer; gap: 0; border-bottom: 1px solid #111;
+  font-family: 'Share Tech Mono', monospace; font-size: 12px;
+  color: #ddd;
+  transition: background 0.05s;
+}
+.wj-decode-row:hover { background: #1a1a2a; }
+.wj-decode-row.wj-cq     { color: #4cf; }   /* CQ — jasny niebieski jak w WSJT-X */
+.wj-decode-row.wj-mycall  { color: #ff0; background: #1a1a00; }  /* własny callsign — żółty */
+.wj-decode-row.wj-dx      { color: #4f4; }  /* odpowiedź do DX — zielony */
+.wj-decode-row.wj-73      { color: #fa0; }  /* 73/RR73 — pomarańczowy */
+.wj-decode-row.wj-worked  { color: #556; text-decoration: line-through; opacity: 0.6; } /* juz w logu — szary przekreślony */
+.wj-decode-row.wj-tx-own  { color: #ff0; background: #1a1a00; opacity: 0.85; }  /* nasz TX — żółty */
+.wj-decode-row.selected   { background: #0a2a1a !important; outline: 1px solid #2a6a3a; }
+
+.wj-period-sep {
+  border-top: 1px dashed #888; margin: 3px 6px; opacity: 0.9;
+}
+
+.wj-d-time { min-width: 60px; color: #666; font-size: 11px; }
+.wj-d-snr  { min-width: 42px; text-align: right; }
+.wj-d-dt   { min-width: 42px; text-align: right; color: #888; }
+.wj-d-freq { min-width: 48px; text-align: right; color: #888; }
+.wj-d-msg  { flex: 1; padding-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wj-d-grid { min-width: 52px; color: #666; font-size: 10px; }
+.wj-d-country { min-width: 60px; color: #555; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+
+.wj-empty {
+  padding: 20px; text-align: center;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #333;
+}
+
+/* Prawa kolumna */
+.wsjtx-right {
+  width: 320px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  background: #0e0e0e;
+  border-left: 1px solid #2a2a2a;
+  overflow-y: auto;
+  /* Kolumna zaczyna sie od linii waterfalla —
+     wsjtx-main jest flex-row i zaczyna sie po topbarze+scope */
+}
+.wj-panel-title {
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  color: #888; letter-spacing: 2px; padding: 5px 8px 3px;
+  border-bottom: 1px solid #1a1a1a; text-transform: uppercase;
+}
+
+/* Automatyka QSO */
+.wj-panel-title label {
+  font-size: 10px; color: #aaa; display: flex; align-items: center;
+  gap: 4px; cursor: pointer; font-weight: normal; text-transform: none;
+  letter-spacing: normal;
+}
+#wj-autoqso-status {
+  font-family: var(--mono); font-size: 11px; padding: 6px 8px; color: #bbb;
+  transition: color 0.2s;
+  white-space: normal; overflow: hidden;
+}
+#wj-autoqso-status.active { color: #8be; }
+#wj-autoqso-status.done { color: #8f8; }
+#wj-autoqso-status.error { color: #f88; }
+#wj-autoqso-queue-wrap {
+  padding: 0 8px 6px;
+  max-height: 54px; overflow-y: auto;
+}
+#wj-autoqso-queue {
+  font-family: var(--mono); font-size: 11px; color: #aaa;
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.wj-queue-chip {
+  background: #1a1a1a; border: 1px solid #333; border-radius: 3px;
+  padding: 1px 6px; font-size: 10px;
+}
+.wj-queue-chip.first { border-color: #8be; color: #8be; }
+
+/* TX panel */
+.wsjtx-tx-panel {
+  padding: 4px 8px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0;
+}
+.wsjtx-tx-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-bottom: 6px;
+}
+.wj-tx-btn {
+  display: flex; align-items: flex-start; gap: 5px;
+  background: #131313; border: 1px solid #2a2a2a; border-radius: 2px;
+  padding: 3px 6px; cursor: pointer; text-align: left;
+  font-family: 'Share Tech Mono', monospace; color: #aaa;
+  transition: all 0.1s;
+}
+.wj-tx-btn:hover { border-color: #3a3a3a; background: #1a1a1a; color: #fff; }
+.wj-tx-btn.active { border-color: #c33; background: #1a0a0a; color: #f88; }
+.wj-tx-num  { font-size: 9px; color: #555; flex-shrink: 0; margin-top: 1px; }
+.wj-tx-text { font-size: 10px; line-height: 1.3; word-break: break-word; }
+
+/* Log QSO */
+.wsjtx-log-panel {
+  flex: 1; display: flex; flex-direction: column;
+  border-bottom: 1px solid #1a1a1a; overflow: hidden;
+  min-height: 80px;
+}
+
+/* Config panel */
+.wsjtx-config-panel {
+  padding: 6px 8px; flex-shrink: 0;
+}
+
+/* Dolny pasek */
+.wsjtx-bottombar {
+  display: flex; align-items: center; gap: 8px;
+  background: #111; border-top: 1px solid #1a1a1a;
+  padding: 3px 12px; flex-shrink: 0;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+/* TX pulse animation */
+@keyframes wj-tx-pulse {
+  from { opacity: 1; } to { opacity: 0.5; }
+}
+
+/* Podswietlenie pola "callsign DX" w formularzu logowania, gdy automatyka
+   QSO konczy polaczenie i czeka na zatwierdzenie przez uzytkownika */
+@keyframes wj-pending-log-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(140, 190, 255, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(140, 190, 255, 0.5); }
+}
+.wj-pending-log-highlight {
+  animation: wj-pending-log-pulse 0.6s ease-in-out 3;
+  border-color: #8be !important;
+}
+
+/* Page layout override dla WSJTX — pełna wysokość */
+
+
+/* ── Log QSO w zakładce WSJT-X ── */
+.wj-log-row {
+  border-bottom: 1px solid #111;
+  transition: background 0.05s;
+}
+.wj-log-row:hover { background: #141414; }
+.wj-log-row td    { padding: 2px 4px; color: #888; white-space: nowrap; }
+.wj-log-call      { color: #4cf !important; font-weight: bold; }
+.wj-log-empty     {
+  padding: 16px; text-align: center;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: #333;
+}
+
+/* Tryby cyfrowe (USB-D, LSB-D, PKTUSB, PKTLSB) — wyróżnienie */
+.mode-btn-digital {
+  border-color: rgba(212,168,87,0.4) !important;
+  color: var(--amber) !important;
+}
+.mode-btn-digital.active {
+  background: rgba(212,168,87,0.15) !important;
+  border-color: var(--amber) !important;
+  color: var(--amber) !important;
+}

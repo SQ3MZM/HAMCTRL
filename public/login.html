@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ham Radio Control — Logowanie</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #1a1c19;
+  --panel:   #20231e;
+  --panel2:  #262a23;
+  --border:  rgba(184,201,143,0.14);
+  --border2: rgba(184,201,143,0.30);
+  --green:   #b8c98f;
+  --green2:  #7a8f5a;
+  --dim:     rgba(220,224,206,0.42);
+  --red:     #d9776a;
+  --text:    #d6ddc8;
+  --amber:   #d4a857;
+  --mono:    'Share Tech Mono', monospace;
+  --display: 'Orbitron', sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(184,201,143,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184,201,143,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+}
+
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px);
+  pointer-events: none;
+}
+
+.container {
+  width: 100%;
+  max-width: 400px;
+  padding: 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.logo-area {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.logo-img {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  margin-bottom: 14px;
+  display: inline-block;
+}
+
+.logo {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: var(--text);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.logo span { color: var(--green); }
+
+.logo-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 3px;
+}
+
+.on-air {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--green);
+  margin-top: 10px;
+  opacity: 0.7;
+}
+
+.on-air-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(184,201,143,0.7);
+  animation: blink 2s ease-in-out infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 32px;
+  position: relative;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--green2), transparent);
+  opacity: 0.6;
+}
+
+.card-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.field { margin-bottom: 16px; }
+
+.field label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--dim);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.field input {
+  width: 100%;
+  background: var(--panel2);
+  border: 1px solid #000;
+  box-shadow: inset 0 0 0 1px var(--border2);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  padding: 10px 14px;
+  outline: none;
+  transition: box-shadow 0.2s;
+}
+
+.field input:focus {
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+
+.field input::placeholder { color: var(--dim); }
+
+.submit-btn {
+  width: 100%;
+  padding: 12px;
+  background: rgba(184,201,143,0.10);
+  border: 1px solid #000;
+  box-shadow: inset 0 0 0 1px var(--green2);
+  border-radius: 4px;
+  color: var(--green);
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 8px;
+  text-transform: uppercase;
+}
+
+.submit-btn:hover {
+  background: rgba(184,201,143,0.18);
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+.submit-btn:active { transform: scale(0.98); }
+.submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.submit-btn.loading { position: relative; color: transparent; }
+.submit-btn.loading::after {
+  content: '...';
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--green);
+  font-family: var(--mono);
+}
+
+.error-msg {
+  background: rgba(217,119,106,0.08);
+  border: 1px solid rgba(217,119,106,0.25);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--red);
+  margin-top: 14px;
+  display: none;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.error-msg.show { display: block; }
+
+.reset-link {
+  display: block;
+  text-align: center;
+  margin-top: 18px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  text-decoration: none;
+  opacity: 0.7;
+  transition: color 0.2s, opacity 0.2s;
+}
+.reset-link:hover { color: var(--green); opacity: 1; }
+
+.version {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--dim);
+  margin-top: 20px;
+  letter-spacing: 1px;
+  opacity: 0.4;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="logo-area">
+    <img src="/logo.png" alt="HAMCTRL" class="logo-img">
+    <span class="logo">HAM RADIO <span>CTRL</span></span>
+    <span class="logo-sub">REMOTE CONTROL SYSTEM</span>
+    <div>
+      <span class="on-air"><span class="on-air-dot"></span>SYSTEM ONLINE</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title" id="card-title">Autoryzacja dostępu</div>
+
+    <form id="login-form" onsubmit="doLogin(event)">
+      <div class="field">
+        <label>Login</label>
+        <input type="text" id="username" autocomplete="username"
+               placeholder="admin" required autofocus>
+      </div>
+      <div class="field">
+        <label>Hasło</label>
+        <input type="password" id="password" autocomplete="current-password"
+               placeholder="••••••••" required
+               onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin(event)}">
+      </div>
+      <button type="submit" class="submit-btn" id="submit-btn">ZALOGUJ</button>
+    </form>
+
+    <!-- Kreator pierwszego uruchomienia: wymuszenie zmiany domyslnego hasla
+         admina. Pokazywany gdy backend zwroci must_change_password=true
+         (admin loguje sie wciaz haslem Admin1234!). Konto admin jest
+         techniczne - nie wymaga znaku ani locatora; operatorzy zakladaja
+         wlasne konta ze swoimi znakami pozniej. -->
+    <form id="setup-form" onsubmit="doChangePassword(event)" style="display:none;">
+      <div style="font-size:12px;color:var(--dim,#888);margin-bottom:14px;line-height:1.5;">
+        Pierwsze uruchomienie. Ustaw własne hasło administratora —
+        domyślne <code>Admin1234!</code> nie może zostać.
+      </div>
+      <div class="field">
+        <label>Nowe hasło (min. 8 znaków)</label>
+        <input type="password" id="new-password" autocomplete="new-password"
+               placeholder="••••••••" minlength="8">
+      </div>
+      <div class="field">
+        <label>Powtórz nowe hasło</label>
+        <input type="password" id="new-password2" autocomplete="new-password"
+               placeholder="••••••••" minlength="8"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();doChangePassword(event)}">
+      </div>
+      <button type="submit" class="submit-btn" id="setup-btn">USTAW HASŁO I PRZEJDŹ DALEJ</button>
+    </form>
+
+    <div class="error-msg" id="error-msg"></div>
+
+    <a href="/reset.html" class="reset-link" id="reset-link">Zapomniałem hasła</a>
+  </div>
+
+  <div class="version">HAM RADIO CTRL · Franek (Claude.ai) &amp; SQ3MZM Tom</div>
+</div>
+
+<script>
+// UWAGA: auth.js NIE jest ładowany na tej stronie — celowo.
+// Sprawdzenie istniejącej sesji jest minimalne i nie przekierowuje pętlowo.
+(function() {
+  // Jeśli mamy token — sprawdź czy nadal ważny (cicho, bez pętli)
+  const tok = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+  if (tok) {
+    fetch('/api/auth/me', {
+      headers: { 'Authorization': 'Bearer ' + tok }
+    }).then(r => {
+      if (r.ok) location.replace('/');
+    }).catch(() => {});
+  }
+})();
+
+async function doLogin(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn  = document.getElementById('submit-btn');
+  const err  = document.getElementById('error-msg');
+  const user = document.getElementById('username').value.trim();
+  const pass = document.getElementById('password').value;
+
+  if (!user || !pass) return;
+
+  btn.disabled = true;
+  btn.classList.add('loading');
+  err.classList.remove('show');
+
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    const res = await r.json();
+
+    if (res.ok && res.token) {
+      // Zapisz token — auth.js w index.html szuka go w localStorage
+      localStorage.setItem('token', res.token);
+      sessionStorage.setItem('ham_token', res.token);
+      // Pierwsze uruchomienie: admin loguje sie domyslnym haslem -> zamiast
+      // wpuscic do aplikacji, pokaz ekran zmiany hasla (kreator).
+      if (res.must_change_password) {
+        showSetupForm();
+      } else {
+        location.replace('/');
+      }
+    } else {
+      showError(res.error || 'Błędny login lub hasło');
+    }
+  } catch(ex) {
+    showError('Błąd połączenia z serwerem (' + ex.message + ')');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+  }
+}
+
+// Przelacz widok na formularz zmiany hasla (kreator pierwszego uruchomienia)
+function showSetupForm() {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('reset-link').style.display = 'none';
+  document.getElementById('setup-form').style.display = 'block';
+  document.getElementById('card-title').textContent = 'Konfiguracja — zmiana hasła';
+  document.getElementById('error-msg').classList.remove('show');
+  document.getElementById('new-password').focus();
+}
+
+// Zmiana hasla admina przy pierwszym uruchomieniu. Token jest juz zapisany
+// (z doLogin), wiec change-password dziala na zalogowanej sesji.
+async function doChangePassword(ev) {
+  if (ev) ev.preventDefault();
+  const p1 = document.getElementById('new-password').value;
+  const p2 = document.getElementById('new-password2').value;
+  const btn = document.getElementById('setup-btn');
+
+  if (p1.length < 8) { showError('Hasło musi mieć minimum 8 znaków'); return; }
+  if (p1 !== p2)     { showError('Hasła nie są identyczne'); return; }
+  if (p1 === 'Admin1234!') { showError('Nowe hasło nie może być domyślnym'); return; }
+
+  btn.disabled = true;
+  btn.classList.add('loading');
+  try {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    const r = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ old_password: 'Admin1234!', new_password: p1 }),
+    });
+    const res = await r.json();
+    if (res.ok && res.token) {
+      // Nowy token po zmianie hasla (stary uniewazniony przez pw_ver)
+      localStorage.setItem('token', res.token);
+      sessionStorage.setItem('ham_token', res.token);
+      location.replace('/');
+    } else {
+      showError(res.error || 'Nie udało się zmienić hasła');
+    }
+  } catch(ex) {
+    showError('Błąd połączenia z serwerem (' + ex.message + ')');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.classList.add('show');
+  document.getElementById('password').value = '';
+  document.getElementById('password').focus();
+}
+</script>
+</body>
+</html>

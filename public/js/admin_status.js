@@ -1,0 +1,160 @@
+/*
+ * admin_status.js — Panel statusu serwera + backup/restore (zakladka Admin).
+ */
+window.AdminStatus = (function() {
+
+  function _fmtUptime(s) {
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const parts = [];
+    if (d) parts.push(`${d}d`);
+    if (h || d) parts.push(`${h}h`);
+    parts.push(`${m}m`);
+    return parts.join(' ');
+  }
+
+  function _dot(ok, labelOk, labelBad) {
+    const color = ok ? 'var(--green)' : 'var(--red)';
+    const label = ok ? labelOk : labelBad;
+    return `<span style="color:${color};">● ${label}</span>`;
+  }
+
+  async function refresh() {
+    const body = document.getElementById('admin-status-body');
+    if (!body) return;
+    try {
+      const r = await fetch('/api/status', { credentials: 'include' });
+      if (!r.ok) {
+        body.innerHTML = `<div style="color:var(--red);">Błąd: HTTP ${r.status}</div>`;
+        return;
+      }
+      const d = await r.json();
+      if (!d.ok) return;
+
+      const rig = d.rig || {};
+      const audio = d.audio || {};
+      const sys = d.system || {};
+
+      // Zbuduj grid statusu
+      const rows = [
+        ['Wersja', `${d.version} (Python ${d.python}, ${d.platform})`],
+        ['Uptime', _fmtUptime(d.uptime_s)],
+        ['Online', `${d.online_count} użytkowników`],
+        ['Radio', rig.sim
+          ? _dot(false, '', 'SYMULACJA')
+          : _dot(rig.connected, `CI-V połączone (${rig.backend})`, 'ROZŁĄCZONE')],
+        ['Model / Port', `${rig.model || '?'} @ ${rig.port || '?'}`
+          + (rig.speed && rig.speed !== '?' ? ` (${rig.speed} bd)` : '')],
+        ['Częstotliwość', rig.freq ? `${(rig.freq/1e6).toFixed(3)} MHz` : '—'],
+        ['Audio', _dot(true, `${audio.backend}${audio.rust ? ' (Rust)' : ''}`, '')],
+        ['DX Cluster', _dot(d.dxcluster?.available, 'dostępny', 'niedostępny')],
+        ['Przekaźniki', d.relay?.available
+          ? _dot(d.relay.connected, 'podłączone', 'skonfigurowane (offline)')
+          : '<span style="color:var(--dim);">— brak modułu</span>'],
+      ];
+
+      // CPU/RAM jesli dostepne
+      if (sys.cpu_pct !== null && sys.cpu_pct !== undefined) {
+        const cpuColor = sys.cpu_pct > 80 ? 'var(--red)' : sys.cpu_pct > 50 ? 'var(--amber)' : 'var(--green)';
+        rows.push(['CPU', `<span style="color:${cpuColor};">${sys.cpu_pct.toFixed(0)}%</span>`]);
+      }
+      if (sys.ram_pct !== null && sys.ram_pct !== undefined) {
+        const ramColor = sys.ram_pct > 85 ? 'var(--red)' : sys.ram_pct > 65 ? 'var(--amber)' : 'var(--green)';
+        rows.push(['RAM', `<span style="color:${ramColor};">${sys.ram_pct.toFixed(0)}% (${sys.ram_used_mb} MB)</span>`]);
+      }
+
+      body.innerHTML = `
+        <div style="display:grid;grid-template-columns:140px 1fr;gap:4px 12px;">
+          ${rows.map(([k,v]) => `
+            <div style="color:var(--dim);">${k}:</div>
+            <div style="color:var(--fg);">${v}</div>
+          `).join('')}
+        </div>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+          <a href="/perf" target="_blank" rel="noopener"
+             style="color:var(--green);text-decoration:none;font-size:12px;">
+            📊 Otwórz szczegółową diagnostykę wydajności (/perf) →
+          </a>
+        </div>`;
+    } catch(e) {
+      body.innerHTML = `<div style="color:var(--red);">Błąd: ${e.message}</div>`;
+    }
+  }
+
+  async function testCiv() {
+    const res = document.getElementById('admin-civ-test-result');
+    if (res) { res.textContent = '⏳ Testowanie...'; res.style.color = 'var(--dim)'; }
+    try {
+      const r = await fetch('/api/status/test_civ', { method: 'POST', credentials: 'include' });
+      const d = await r.json();
+      if (res) {
+        res.textContent = (d.ok ? '✓ ' : '✕ ') + (d.message || '');
+        res.style.color = d.ok ? 'var(--green)' : 'var(--red)';
+      }
+    } catch(e) {
+      if (res) { res.textContent = '✕ ' + e.message; res.style.color = 'var(--red)'; }
+    }
+  }
+
+  async function downloadBackup() {
+    const status = document.getElementById('admin-backup-status');
+    if (status) { status.textContent = '⏳ Generowanie...'; status.style.color = 'var(--dim)'; }
+    try {
+      const r = await fetch('/api/backup', { credentials: 'include' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      // Pobierz jako plik
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
+      a.href = url;
+      a.download = `sp3gsk-backup-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      if (status) { status.textContent = '✓ Pobrano'; status.style.color = 'var(--green)'; }
+    } catch(e) {
+      if (status) { status.textContent = '✕ ' + e.message; status.style.color = 'var(--red)'; }
+    }
+  }
+
+  async function uploadBackup(input) {
+    const status = document.getElementById('admin-backup-status');
+    const file = input.files?.[0];
+    if (!file) return;
+    if (!confirm(`Przywrócić konfigurację z pliku "${file.name}"?\n\nTo NADPISZE obecną konfigurację i wszystkich użytkowników. Po restore zrestartuj serwer.`)) {
+      input.value = '';
+      return;
+    }
+    if (status) { status.textContent = '⏳ Wczytywanie...'; status.style.color = 'var(--dim)'; }
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      const r = await fetch('/api/restore', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backup }),
+      });
+      const d = await r.json();
+      if (r.ok && d.ok) {
+        if (status) {
+          status.textContent = `✓ Przywrócono: ${d.restored.join(', ')}. Zrestartuj serwer!`;
+          status.style.color = 'var(--green)';
+        }
+        window.UI?.showToast?.('✓ Backup przywrócony — zrestartuj serwer', 'info');
+      } else {
+        if (status) { status.textContent = '✕ ' + (d.error || 'Błąd'); status.style.color = 'var(--red)'; }
+      }
+    } catch(e) {
+      if (status) { status.textContent = '✕ ' + e.message; status.style.color = 'var(--red)'; }
+    } finally {
+      input.value = '';
+    }
+  }
+
+  return { refresh, testCiv, downloadBackup, uploadBackup };
+})();

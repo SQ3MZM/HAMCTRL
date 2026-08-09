@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ham Radio Control — Reset hasła</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
+<style>
+:root {
+  --bg:     #1a1c19; --panel: #20231e; --panel2: #262a23;
+  --border: rgba(184,201,143,0.14); --border2: rgba(184,201,143,0.30);
+  --green:  #b8c98f; --green2: #7a8f5a; --dim: rgba(220,224,206,0.42);
+  --text:   #d6ddc8; --red: #d9776a; --amber: #d4a857;
+  --mono: 'Share Tech Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; background: var(--bg); color: var(--text);
+  font-family: var(--mono); display: flex; align-items: center; justify-content: center;
+}
+.card {
+  background: var(--panel); border: 1px solid var(--border2); border-radius: 8px;
+  padding: 36px 40px; width: 100%; max-width: 400px; text-align: center;
+}
+.logo { font-size: 12px; color: var(--dim); letter-spacing: 3px; margin-bottom: 24px; }
+.logo-accent { color: var(--green); }
+h2 { font-size: 16px; color: var(--text); letter-spacing: 2px; margin-bottom: 8px; font-weight: 400; }
+.sub { font-size: 10px; color: var(--dim); line-height: 1.8; margin-bottom: 24px; }
+.field { margin-bottom: 14px; text-align: left; }
+.field label { display: block; font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-bottom: 5px; }
+.field input {
+  width: 100%; background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 4px; color: var(--text); font-family: var(--mono);
+  font-size: 13px; padding: 10px 12px; outline: none;
+}
+.field input:focus { border-color: var(--green); }
+.btn {
+  width: 100%; background: rgba(184,201,143,0.12); border: 1px solid var(--green2);
+  border-radius: 5px; color: var(--green); font-family: var(--mono); font-size: 12px;
+  padding: 13px; cursor: pointer; letter-spacing: 1px; margin-top: 6px;
+  transition: all 0.15s;
+}
+.btn:hover { background: rgba(184,201,143,0.22); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.msg { font-size: 11px; margin-top: 14px; padding: 10px; border-radius: 4px;
+       min-height: 36px; line-height: 1.7; }
+.msg.ok  { color: var(--green); background: rgba(184,201,143,0.08); border: 1px solid var(--border); }
+.msg.err { color: var(--red);   background: rgba(217,119,106,0.08); border: 1px solid rgba(217,119,106,0.25); }
+.link { font-size: 10px; color: var(--dim); margin-top: 20px; }
+.link a { color: var(--green); text-decoration: none; }
+.link a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">HAM RADIO <span class="logo-accent">CTRL</span></div>
+
+  <!-- KROK 1: prośba o reset (gdy brak tokenu w URL) -->
+  <div id="step-request">
+    <h2>RESET HASŁA</h2>
+    <div class="sub">Wpisz swój email lub nazwę użytkownika.<br>Wyślemy link resetujący ważny przez 1 godzinę.</div>
+    <div class="field">
+      <label>EMAIL LUB NAZWA UŻYTKOWNIKA</label>
+      <input type="text" id="req-email" placeholder="twoj@email.com" autocomplete="email"
+             onkeydown="if(event.key==='Enter') sendRequest()">
+    </div>
+    <button class="btn" id="req-btn" onclick="sendRequest()">WYŚLIJ LINK RESETUJĄCY</button>
+    <div id="req-msg" class="msg" style="display:none;"></div>
+    <div class="link"><a href="/login.html">← Wróć do logowania</a></div>
+  </div>
+
+  <!-- KROK 2: ustawienie nowego hasła (gdy token w URL) -->
+  <div id="step-confirm" style="display:none;">
+    <h2>NOWE HASŁO</h2>
+    <div class="sub">Wpisz i potwierdź nowe hasło.<br>Minimum 6 znaków.</div>
+    <div class="field">
+      <label>NOWE HASŁO</label>
+      <input type="password" id="new-pw" placeholder="••••••••" autocomplete="new-password"
+             onkeydown="if(event.key==='Enter') confirmReset()">
+    </div>
+    <div class="field">
+      <label>POWTÓRZ HASŁO</label>
+      <input type="password" id="new-pw2" placeholder="••••••••" autocomplete="new-password"
+             onkeydown="if(event.key==='Enter') confirmReset()">
+    </div>
+    <button class="btn" id="conf-btn" onclick="confirmReset()">ZAPISZ NOWE HASŁO</button>
+    <div id="conf-msg" class="msg" style="display:none;"></div>
+    <div class="link"><a href="/login.html">← Wróć do logowania</a></div>
+  </div>
+
+  <!-- KROK 3: sukces -->
+  <div id="step-done" style="display:none;">
+    <h2>✓ HASŁO ZMIENIONE</h2>
+    <div class="sub" style="margin-top:12px;">
+      Twoje hasło zostało zmienione.<br>Możesz teraz się zalogować.
+    </div>
+    <a href="/login.html"><button class="btn" style="margin-top:20px;">ZALOGUJ SIĘ</button></a>
+  </div>
+</div>
+
+<script>
+// Sprawdź czy mamy token w URL → krok 2
+const _token = new URLSearchParams(location.search).get('token');
+if (_token) {
+  document.getElementById('step-request').style.display = 'none';
+  document.getElementById('step-confirm').style.display = '';
+}
+
+function _msg(elId, text, type) {
+  const el = document.getElementById(elId);
+  el.style.display = '';
+  el.textContent   = text;
+  el.className     = 'msg ' + type;
+}
+
+// ── Krok 1: wyślij prośbę ────────────────────────────────────────────────────
+async function sendRequest() {
+  const email = document.getElementById('req-email').value.trim();
+  if (!email) { _msg('req-msg', 'Wpisz email lub nazwę użytkownika', 'err'); return; }
+  const btn = document.getElementById('req-btn');
+  btn.disabled = true;
+  btn.textContent = 'Wysyłam…';
+  try {
+    const r = await fetch('/api/auth/reset-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        base_url: location.origin,
+      }),
+    });
+    const data = await r.json();
+    _msg('req-msg',
+      '✓ Jeśli konto istnieje i ma przypisany email — link resetujący został wysłany. ' +
+      'Sprawdź skrzynkę (i folder SPAM).',
+      'ok');
+  } catch(e) {
+    _msg('req-msg', '✗ Błąd serwera — spróbuj ponownie', 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = 'WYŚLIJ LINK RESETUJĄCY';
+}
+
+// ── Krok 2: ustaw nowe hasło ─────────────────────────────────────────────────
+async function confirmReset() {
+  const pw  = document.getElementById('new-pw').value;
+  const pw2 = document.getElementById('new-pw2').value;
+  if (!pw || pw.length < 6) {
+    _msg('conf-msg', 'Hasło musi mieć minimum 6 znaków', 'err'); return;
+  }
+  if (pw !== pw2) {
+    _msg('conf-msg', 'Hasła nie są identyczne', 'err'); return;
+  }
+  const btn = document.getElementById('conf-btn');
+  btn.disabled = true;
+  btn.textContent = 'Zapisuję…';
+  try {
+    const r = await fetch('/api/auth/reset-confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: _token, password: pw }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      document.getElementById('step-confirm').style.display = 'none';
+      document.getElementById('step-done').style.display = '';
+    } else {
+      _msg('conf-msg', '✗ ' + (data.error || 'Błąd'), 'err');
+      btn.disabled = false;
+      btn.textContent = 'ZAPISZ NOWE HASŁO';
+    }
+  } catch(e) {
+    _msg('conf-msg', '✗ Błąd serwera', 'err');
+    btn.disabled = false;
+    btn.textContent = 'ZAPISZ NOWE HASŁO';
+  }
+}
+</script>
+</body>
+</html>

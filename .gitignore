@@ -1,0 +1,74 @@
+# ─── HAMCTRL .gitignore ───────────────────────────────────────────────────────
+# Nothing secret or machine-specific should ever reach the public repo.
+
+# Secrets & per-install data ---------------------------------------------------
+.env
+*.env
+env.txt
+users.json
+config.json
+*.db
+*.db-wal
+*.db-shm
+qso.db*
+# TLS / certificates / keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+letsencrypt/
+cert/
+certs/
+# Cloudflare tunnel credentials
+cloudflared/
+*.json.cf
+tunnel-*.json
+
+# Build output ----------------------------------------------------------------
+build/
+dist/
+Output/
+*.spec.bak
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Rust build ------------------------------------------------------------------
+target/
+Cargo.lock
+
+# Bundled binaries (shipped via Releases, not the repo) ------------------------
+*.exe
+*.dll
+
+# Test recordings & captures (large, private) ---------------------------------
+*.wav
+*.m4a
+*.mp3
+*.flac
+# Keep WSJT-X reference decode lists out too (contain live callsigns)
+ft8.TXT
+ft4.TXT
+
+# Logs & scratch --------------------------------------------------------------
+*.log
+log.txt
+lista.txt
+meta.json
+*.tmp
+*.bak
+*.old
+
+# Editor / OS -----------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local zips ------------------------------------------------------------------
+*.zip
