@@ -4978,6 +4978,56 @@ class App:
                                        "bandwidth": self.rig.bw,
                                        "filterNum": self.rig.filter_num}, skip=ws)
 
+        elif t == "ft8_qsy":
+            # Przestrojenie na pasmo FT8/FT4 z listy w panelu WSJT-X (wj-band-
+            # select -> tuneToBand() w wsjtx.js). NAPRAWA: front od dawna
+            # wysylal ten typ wiadomosci ("jedna atomowa komenda ft8_qsy"),
+            # ale backend nigdy nie mial dla niej handlera — wiec wybor pasma
+            # z listy nic nie robil, czestotliwosc sie nie przelaczala.
+            # Ustawiamy tryb+filtr PRZED czestotliwoscia (sekwencyjnie na tym
+            # samym polaczeniu CI-V), tak jak opisuje komentarz w wsjtx.js —
+            # zapobiega wyscigowi freq/mode wysylanych osobno.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not (self._feature_allowed("freq_set", role)
+                    and self._feature_allowed("mode_set", role)):
+                return
+            hz = int(msg.get("freq", self.rig.freq))
+            # Pasmo docelowe musi byc dozwolone (jak przy CQ/TX) — sprawdzamy
+            # PRZED zmiana stanu radia, inaczej lista pasm FT8 obchodzilaby
+            # blokade admina, ktora normalny selektor pasm respektuje.
+            enabled = self.cfg.get("enabledBands")
+            if enabled and self._get_band_for_freq(hz) not in enabled:
+                await ws.send_json({"type": "toast",
+                                     "msg": "⛔ QSY zablokowany — pasmo niedozwolone przez admina",
+                                     "level": "error"})
+                return
+            # Tryb cyfrowy FT8/FT4 na IC-7300: zawsze USB-D + FIL1 (konwencja
+            # calego projektu, niezaleznie od tego co przyszlo w wiadomosci).
+            self.rig.mode = msg.get("mode") or "USB-D"
+            self.rig.filter_num = 1
+            if not self.rig.sim:
+                try:
+                    await self.rig.set_mode(self.rig.mode, self.rig.bw, self.rig.filter_num)
+                except Exception as e:
+                    print(f"[ft8] ft8_qsy set_mode blad: {e!r}")
+            self.rig.freq = hz
+            if not self.rig.sim:
+                try:
+                    await self.rig.set_freq(hz)
+                except Exception as e:
+                    print(f"[ft8] ft8_qsy set_freq blad: {e!r}")
+            print(f"[ft8] QSY: {hz/1e6:.6f} MHz {self.rig.mode} FIL{self.rig.filter_num}")
+            # Bez skip=ws: w przeciwienstwie do zwyklych handlerow freq/mode,
+            # tuneToBand() we froncie NIE aktualizuje lokalnie S.freq/S.mode —
+            # klient ktory kliknal pasmo tez polega na tym broadcascie.
+            await self.hub.broadcast({"type": "mode", "mode": self.rig.mode,
+                                       "bandwidth": self.rig.bw,
+                                       "filterNum": self.rig.filter_num})
+            await self.hub.broadcast({"type": "freq", "freq": hz})
+
         elif t == "ptt":
             if not self._feature_allowed("ptt", role):
                 return
