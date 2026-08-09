@@ -1258,7 +1258,7 @@
         <div class="sg" style="grid-column:1/-1;"><label>TX Volume serwer (mnożnik audio serwer → radio)
           <span style="color:var(--dim);font-size:9px;">(używane też przez FT8/FT4 encoder)</span></label>
           <div style="display:flex;align-items:center;gap:8px;flex:1">
-            <input type="range" id="cfg-tx-volume" min="1" max="16" step="0.5" value="4"
+            <input type="range" id="cfg-tx-volume" min="0.1" max="16" step="0.1" value="4"
               style="flex:1;accent-color:var(--red)"
               oninput="document.getElementById('cfg-tx-volume-val').textContent=this.value+'x'">
             <span id="cfg-tx-volume-val" style="width:35px;font-size:11px">4x</span>
@@ -2376,7 +2376,7 @@
 <script src="js/tx_eq.js?v=202606300001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
-<script src="js/audio_autodetect.js?v=202608090001"></script>
+<script src="js/audio_autodetect.js?v=202606300001"></script>
 <script src="js/com_bridge.js?v=202607040001"></script>
 <script src="js/rotator.js?v=202606180504"></script>
 <script src="js/rotormini.js?v=202606180504"></script>
@@ -3245,15 +3245,6 @@ async function _audioDeviceLoad() {
     if (rx && d.rx_device) rx.value = d.rx_device;
     if (tx && d.tx_device) tx.value = d.tx_device;
     if (br && d.opus_bitrate) br.value = d.opus_bitrate;
-    // ZALADUJ txVolume z zapisanej konfiguracji (backend zwraca go w statusie).
-    // Bez tego suwak zawsze pokazywal HTML-owy default value="4" -> "po
-    // przelogowaniu wraca 4x". Teraz ustawiamy suwak na zapisana wartosc.
-    const tvEl = document.getElementById('cfg-tx-volume');
-    const tvVal = document.getElementById('cfg-tx-volume-val');
-    if (tvEl && d.txVolume !== undefined && d.txVolume !== null) {
-      tvEl.value = d.txVolume;
-      if (tvVal) tvVal.textContent = d.txVolume + 'x';
-    }
   } catch(e) {}
 }
 
