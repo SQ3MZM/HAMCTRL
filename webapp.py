@@ -5927,6 +5927,22 @@ class App:
             await self.hub.broadcast({"type": "ptt", "ptt": True})
             print(f"[ft8] TX START: '{call_to} {call_de} {report}' ({duration:.2f}s) DT={_pos:.2f}s")
 
+            # Wlasna transmisja jako wpis 'wsjtx_decode' (is_tx=True) — bez tego
+            # okno RX (Band Activity) nigdy nie widzialo NASZYCH wiadomosci
+            # przeplecionych z odebranymi w kolejnosci czasowej podczas QSO,
+            # tylko odbierane dekody z Rust (ktore nie wiedza nic o naszym TX).
+            await self.hub.broadcast({
+                "type": "wsjtx_decode",
+                "timeStr": _ttt.strftime("%H%M%S", _ttt.gmtime(_t0)),
+                "snr": 0, "deltaTime": 0.0,
+                "deltaFreq": int(self._ft8_tx_freq_hz),
+                "message": display_text,
+                "call_to": call_to, "call_de": call_de,
+                "report_or_grid": display_report,
+                "mode": self._ft8_decode_mode,
+                "is_tx": True,
+            })
+
             # DIAGNOSTYKA TX: sprawdz stan audio przed wyslaniem
             print(f"[ft8] TX audio state: tx_active={self.audio.tx_active} "
                   f"tx_stream={self.audio._tx_stream is not None} "
