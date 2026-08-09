@@ -1164,6 +1164,10 @@ body.page-wsjtx-active { overflow: hidden; }
   padding: 1px 6px; font-size: 10px;
 }
 .wj-queue-chip.first { border-color: #8be; color: #8be; }
+.wj-queue-chip-x {
+  margin-left: 5px; color: #666; cursor: pointer;
+}
+.wj-queue-chip-x:hover { color: #f88; }
 
 /* TX panel */
 .wsjtx-tx-panel {

@@ -503,6 +503,20 @@ function _onAutoQsoQueue(msg) {
   _renderAutoQsoPanel();
 }
 
+// Usuwa pojedyncza stacje z kolejki "Call 1st" (✕ na chipie).
+function removeFromQueue(call) {
+  window.WS?.send({ type: 'ft8_queue_remove', call });
+}
+
+// Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w naglowku panelu) —
+// bez tego stare zgloszenia (stacje ktore odpowiedzialy na CQ dawno temu i
+// moga juz nie sluchac) nie mialy zadnego sposobu opuszczenia kolejki poza
+// usuwaniem pojedynczo, wiec po dluzszej sesji rosla i Call 1st w koncu
+// wywolywal stary, nieaktualny znak.
+function clearAutoQsoQueue() {
+  window.WS?.send({ type: 'ft8_queue_clear' });
+}
+
 function _renderAutoQsoPanel() {
   const seqCb = document.getElementById('wj-auto-seq-toggle');
   if (seqCb) seqCb.checked = _autoSeqEnabled;
@@ -538,7 +552,8 @@ function _renderAutoQsoPanel() {
     if (_autoQsoQueue.length > 0) {
       queueWrap.style.display = '';
       queueEl.innerHTML = _autoQsoQueue.map((call, i) =>
-        `<span class="wj-queue-chip${i===0?' first':''}">${_esc(call)}</span>`
+        `<span class="wj-queue-chip${i===0?' first':''}">${_esc(call)}` +
+        `<span class="wj-queue-chip-x" title="Usuń ${_esc(call)} z kolejki" onclick="WSJTX.removeFromQueue('${_esc(call)}')">✕</span></span>`
       ).join('');
     } else {
       queueWrap.style.display = 'none';
@@ -1525,6 +1540,7 @@ window.WSJTX = {
   setTxFreqManual, setRxFreqManual, rxEqTx,
   _selectRow, addLog, deleteLog, exportAdif, loadMore, loadLog,
   toggleHound, houndStop, houndConfirm,
+  removeFromQueue, clearAutoQsoQueue,
 };
 
 })();

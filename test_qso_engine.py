@@ -290,6 +290,13 @@ def test_queue():
     ok = eng.remove_from_queue("SP2BBB")
     check(ok and "SP2BBB" not in eng.queue, "Remove: usuwa z kolejki")
 
+    eng.enqueue_caller("SP3CCC")
+    eng.enqueue_caller("SP4DDD")
+    eng.clear_queue()
+    check(eng.queue == [], "Clear: oproznia cala kolejke")
+    eng.enqueue_caller("SP3CCC")  # po clear stacja moze wrocic (nie jest "widziana")
+    check(eng.queue == ["SP3CCC"], "Clear: resetuje tez dedup (_queue_seen)")
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # 9. RESET STANU miedzy QSO

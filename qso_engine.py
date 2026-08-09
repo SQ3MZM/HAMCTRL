@@ -392,6 +392,15 @@ class QsoEngine:
         self._queue_seen.discard(callsign)
         return True
 
+    def clear_queue(self):
+        """Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w UI).
+        Bez tego stare, dawno nieaktualne zgloszenia (stacje ktore odpowiedzialy
+        na CQ minuty/godziny wczesniej i moga juz nie sluchac) nie mialy zadnego
+        sposobu opuszczenia kolejki poza reczym ✕ na kazdej z osobna — po dluzszej
+        sesji kolejka rosla i Call 1st w koncu "wyplowal" stary, nieaktualny znak."""
+        self.queue = []
+        self._queue_seen = set()
+
     # ── Przetwarzanie odebranych wiadomosci ──────────────────────────────────
 
     def on_decode(self, parsed: dict):

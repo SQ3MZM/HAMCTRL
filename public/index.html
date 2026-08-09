@@ -687,7 +687,11 @@
       </div>
       <div id="wj-autoqso-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
       <div id="wj-autoqso-queue-wrap" style="display:none;">
-        <div style="font-size:9px;color:#666;text-transform:uppercase;margin-bottom:3px;">Kolejka (Call 1st):</div>
+        <div style="display:flex;align-items:center;margin-bottom:3px;">
+          <div style="font-size:9px;color:#666;text-transform:uppercase;">Kolejka (Call 1st):</div>
+          <div style="flex:1"></div>
+          <span id="wj-autoqso-queue-clear" style="font-family:var(--mono);font-size:9px;color:#888;cursor:pointer;text-decoration:underline;" title="Usuń wszystkie stacje z kolejki" onclick="WSJTX.clearAutoQsoQueue()">wyczyść</span>
+        </div>
         <div id="wj-autoqso-queue"></div>
       </div>
     </div>

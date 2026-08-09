@@ -5592,6 +5592,14 @@ class App:
                 await self.hub.broadcast({"type": "auto_qso_queue",
                                            "queue": list(self._qso_engine.queue)})
 
+        elif t == "ft8_queue_clear":
+            # Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w UI).
+            _n = len(self._qso_engine.queue)
+            self._qso_engine.clear_queue()
+            print(f"[autoqso] Wyczyszczono kolejke ({_n} stacji)")
+            await self.hub.broadcast({"type": "auto_qso_queue",
+                                       "queue": list(self._qso_engine.queue)})
+
         elif t == "ft8_abort_auto_qso":
             print(f"[autoqso] Reczne przerwanie QSO z {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
