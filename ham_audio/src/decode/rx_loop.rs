@@ -1,0 +1,143 @@
+/// FT8/FT4 RX decode loop.
+/// Wakes at period boundaries, decodes audio, sends JSON results via TCP to Python.
+
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
+
+use super::buffer::Ft8Buffer;
+use super::{decode_ft8, decode_ft4};
+use crate::config::Config;
+
+pub type SharedConfig = Arc<RwLock<Config>>;
+
+pub async fn run_decode_loop(
+    buffer:       Ft8Buffer,
+    cfg:          SharedConfig,
+    decode_port:  u16,
+) {
+    // Connect to Python decode results receiver with retry
+    let addr = format!("127.0.0.1:{}", decode_port);
+    println!("[ft8dec] Decode loop start, port={}", decode_port);
+    loop {
+        println!("[ft8dec] Laczenie z {}", addr);
+        match TcpStream::connect(&addr).await {
+            Ok(stream) => {
+                println!("[ft8dec] Connected to Python decoder receiver at {}", addr);
+                info!("[ft8dec] Connected to Python decoder receiver at {}", addr);
+                run_loop(buffer.clone(), cfg.clone(), stream).await;
+                warn!("[ft8dec] Python receiver disconnected, retrying in 3s...");
+                println!("[ft8dec] Rozlaczono, retry za 3s...");
+            }
+            Err(e) => {
+                println!("[ft8dec] Blad polaczenia: {}", e);
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    }
+}
+
+async fn run_loop(
+    buffer: Ft8Buffer,
+    cfg:    SharedConfig,
+    mut stream: TcpStream,
+) {
+    // Align to the FT8/FT4 UTC grid. We wake shortly AFTER each window
+    // boundary, then decode the window that just completed using an aligned
+    // snapshot. Previously the loop woke 0.6s before the boundary and grabbed
+    // "the last 16s", which was misaligned from the transmission and lost most
+    // stations (measured: 4 decodes vs 18 on a busy band).
+    let lead_s = 0.5f64;   // let a signal starting slightly early through
+
+    loop {
+        let (decode_mode, rx_enabled) = {
+            let c = cfg.read().await;
+            (c.ft8_decode_mode.clone(), c.ft8_rx_enabled)
+        };
+        let is_ft4 = decode_mode == "FT4";
+        let (window_s, min_s) = if is_ft4 {
+            (7.5f64, 4.5f64)
+        } else {
+            (15.0f64, 12.5f64)
+        };
+
+        // Wake shortly after the window boundary so the just-completed window
+        // is fully in the buffer, then decode it from an aligned snapshot.
+        let pos = current_pos_in_window(window_s);   // 0..window_s
+        let settle = 0.3f64;                          // wait past boundary a touch
+        let wait = (window_s - pos) + settle;
+        tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait.max(0.0))).await;
+
+        if !rx_enabled {
+            // RX off — heartbeat to keep the TCP link alive.
+            let hb = b"{\"type\":\"heartbeat\"}\n";
+            if stream.write_all(hb).await.is_err() { return; }
+            continue;
+        }
+
+        let available = buffer.available_seconds() as f64;
+        if available < min_s {
+            println!("[ft8dec] skip: only {:.1}s buffered (need {:.1}s)", available, min_s);
+            continue;   // not enough audio yet
+        }
+
+        let audio = buffer.snapshot_aligned(window_s, lead_s);
+        match &audio {
+            None => println!("[ft8dec] snapshot_aligned returned None (available={:.1}s)", available),
+            Some(s) => println!("[ft8dec] decoding window: {} samples ({:.1}s)", s.len(), s.len() as f64 / 12000.0),
+        }
+        if let Some(samples) = audio {
+            let t0 = std::time::Instant::now();
+            let mode_str = decode_mode.clone();
+
+            let results = tokio::task::spawn_blocking(move || {
+                if is_ft4 { decode_ft4(&samples) } else { decode_ft8(&samples) }
+            }).await.unwrap_or_default();
+
+            let elapsed = t0.elapsed().as_secs_f32();
+            println!("[ft8dec] decoded {} messages in {:.2}s", results.len(), elapsed);
+
+            let time_str = utc_time_str();
+            for r in &results {
+                let json = serde_json::json!({
+                    "type":           "wsjtx_decode",
+                    "timeStr":        time_str,
+                    "snr":            r.snr_db.round() as i32,
+                    "deltaTime":      ((r.time_offset_s - 0.5) * 10.0).round() / 10.0,
+                    "deltaFreq":      r.freq_hz.round() as i32,
+                    "message":        r.message,
+                    "call_to":        r.call_to,
+                    "call_de":        r.call_de,
+                    "report_or_grid": r.report_or_grid,
+                    "mode":           mode_str,
+                });
+                let line = format!("{}\n", json);
+                if stream.write_all(line.as_bytes()).await.is_err() {
+                    return; // Connection lost
+                }
+            }
+        }
+    }
+}
+
+fn current_pos_in_window(window_s: f64) -> f64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    now % window_s
+}
+
+fn utc_time_str() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let h = (now / 3600) % 24;
+    let m = (now / 60) % 60;
+    let s = now % 60;
+    format!("{:02}{:02}{:02}", h, m, s)
+}
