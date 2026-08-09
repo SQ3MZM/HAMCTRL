@@ -4041,6 +4041,20 @@ class App:
                 "online": self._online_users_state(),
                 "my_uid": uid,
             }))
+            # Stan automatyki FT8/FT4 (silnik QSO) — bez tego swiezo polaczony
+            # klient (nowa karta, odswiezenie strony, powrot po reconnect) nie
+            # znal aktualnego stanu backendu i pokazywal domyslne "IDLE" mimo
+            # ze automatyka realnie prowadzila juz QSO z kims innym — panel
+            # pokazywal nierealne informacje o tym co i z kim nadajemy, dopoki
+            # nie nadeszlo kolejne dekodowanie i nie wywolalo broadcastu.
+            await ws.send_str(json.dumps({
+                "type": "auto_seq_status",
+                "enabled": self._auto_seq_enabled,
+                "call1st": self._auto_call_1st,
+                "state": self._qso_engine.state,
+                "partner": self._qso_engine.partner_call,
+                "queue": list(self._qso_engine.queue),
+            }))
             _audio_sub = False
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
