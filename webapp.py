@@ -6037,7 +6037,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-PERIOD-FROM-RECV-EPOCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-WINDOW-MARGIN-BY-DURATION, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6071,66 +6071,42 @@ class App:
             # Wyznacz poczatek kolejnego okna naszego okresu (1 lub 2)
             # Okres 1: okna 0, 2, 4... (okna parzyste) — xx:00/30 dla FT8
             # Okres 2: okna 1, 3, 5... (okna nieparzyste) — xx:15/45 dla FT8
-            if not auto_respond:
-                # Reczne TX — czekaj na poczatek wlasciwego okresu
-                full_period_s = window_s * 2
-                offset = 0.0 if self._ft8_tx_period == 1 else window_s
-                # Czas od początku cyklu 2-okienkowego
-                pos_in_full = now % full_period_s
-                if pos_in_full < offset:
-                    wait_s = offset - pos_in_full
-                elif pos_in_full < offset + window_s:
-                    # Jestesmy w naszym oknie
-                    remaining = offset + window_s - pos_in_full
-                    if remaining < 1.5:
-                        # Za blisko konca — czekaj na nastepne okno
-                        wait_s = remaining + full_period_s - window_s
-                    elif pos_in_window > 0.5:
-                        # Za pozno zeby nadac na czas — czekaj na nastepne
-                        wait_s = remaining + full_period_s - window_s
-                    else:
-                        wait_s = 0.0  # Nadaj teraz
+            # WSPOLNA logika (reczne TX i automatyka): jesli "teraz" wypada
+            # WEWNATRZ naszego wlasnego okna (self._ft8_tx_period), nadaj
+            # NATYCHMIAST — niezaleznie od tego ile sekund w to okno juz
+            # wpadlismy — o ile w oknie zostalo dosc czasu na CALA
+            # transmisje (duration, ~12.64s FT8 / ~4.5s FT4). Tylko jesli
+            # NIE ma juz na to miejsca (albo jestesmy w ogole w oknie
+            # partnera), czekamy na nastepne wystapienie naszej parzystosci.
+            #
+            # WCZESNIEJSZA WERSJA odrzucala okno juz po stalym progu 1.5s od
+            # jego poczatku (bez wzgledu na to ile faktycznie zostalo czasu)
+            # i wtedy czekala CALY DODATKOWY OKRES (do 30s) — w praktyce
+            # klikniecie stacji 1-2s "za pozno" (a wciaz z ~13-14s zapasu w
+            # oknie!) wywalalo reczny start QSO na ponad pol minuty czekania,
+            # mimo ze samo okno bylo jeszcze w pelni uzywalne. Prawidlowe
+            # kryterium to fizyczne "czy transmisja sie zmiesci", nie
+            # dowolny staly prog czasu reakcji.
+            full_period_s = window_s * 2
+            offset = 0.0 if self._ft8_tx_period == 1 else window_s
+            pos_in_full = now % full_period_s
+            if pos_in_full < offset:
+                # Jestesmy w oknie partnera, PRZED poczatkiem naszego
+                wait_s = offset - pos_in_full
+            elif pos_in_full < offset + window_s:
+                # Jestesmy w NASZYM oknie — nadaj jesli zostalo dosc czasu
+                # na cala transmisje, inaczej czekaj na nastepne wystapienie
+                remaining = offset + window_s - pos_in_full
+                if remaining < duration:
+                    wait_s = remaining + full_period_s - window_s
                 else:
-                    wait_s = full_period_s - pos_in_full + offset
-                print(f"[ft8] Reczne TX period={self._ft8_tx_period}, pozycja={pos_in_window:.1f}s, czekam {wait_s:.2f}s")
+                    wait_s = 0.0
             else:
-                # Auto TX (automatyczna odpowiedz LUB reczny klik stacji,
-                # ktory startuje/kontynuuje auto-QSO) — UZYWA TEGO SAMEGO
-                # mechanizmu co reczne TX powyzej: liczy z ZABLOKOWANEGO
-                # self._ft8_tx_period (patrz _send_auto_tx / _period_from_epoch,
-                # ktore ustalaja go RAZ na QSO na podstawie znacznika czasu
-                # DEKODU partnera), a NIE z zalozenia "pozycja ~0s w biezacym
-                # oknie = poczatek naszego okna". To drugie zalozenie dzialalo
-                # tylko dla niemal natychmiastowej automatyki — przy recznym
-                # kliknieciu stacji przez czlowieka (naturalna reakcja to
-                # kilka-kilkanascie sekund) czesto bylo juz nieprawdziwe:
-                # kod myslal ze jest na poczatku "naszego" okna, a realnie
-                # bylo to okno PARTNERA -> transmisja kolidowala z jego
-                # slotem i QSO "nie startowalo" mimo klikniecia (objaw:
-                # operator mial realnie tylko 2-3s na reakcje).
-                full_period_s = window_s * 2
-                offset = 0.0 if self._ft8_tx_period == 1 else window_s
-                pos_in_full = now % full_period_s
-                _max_start = 1.5 if window_s >= 15.0 else 1.0  # FT8 / FT4
-                if pos_in_full < offset:
-                    # Jestesmy w oknie partnera, PRZED poczatkiem naszego
-                    wait_s = offset - pos_in_full
-                elif pos_in_full < offset + window_s:
-                    # Jestesmy w NASZYM oknie
-                    remaining = offset + window_s - pos_in_full
-                    if remaining < 1.5 or pos_in_window > _max_start:
-                        # Za pozno na akceptowalne DT w tym oknie — czekaj
-                        # PELEN dodatkowy okres do NASTEPNEGO naszej parzystosci
-                        # (nie do najblizszej granicy — to byloby okno partnera)
-                        wait_s = remaining + full_period_s - window_s
-                    else:
-                        wait_s = 0.0  # Nadaj teraz (DT akceptowalne)
-                else:
-                    # Jestesmy juz w oknie partnera PO naszym — czekaj do
-                    # nastepnego wystapienia naszej parzystosci
-                    wait_s = full_period_s - pos_in_full + offset
-                print(f"[ft8] Auto TX period={self._ft8_tx_period}, "
-                      f"pozycja={pos_in_window:.1f}s, czekam {wait_s:.2f}s")
+                # Jestesmy juz w oknie partnera PO naszym — czekaj do
+                # nastepnego wystapienia naszej parzystosci
+                wait_s = full_period_s - pos_in_full + offset
+            print(f"[ft8] TX period={self._ft8_tx_period} auto={auto_respond}, "
+                  f"pozycja={pos_in_window:.1f}s, dur={duration:.1f}s, czekam {wait_s:.2f}s")
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "waiting",
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
