@@ -6020,7 +6020,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-AUTOQSO-SKIP-BTN, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-TXWINDOW-PARITY-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6078,24 +6078,34 @@ class App:
                 print(f"[ft8] Reczne TX period={self._ft8_tx_period}, pozycja={pos_in_window:.1f}s, czekam {wait_s:.2f}s")
             else:
                 # Auto TX — dekod partnera przychodzi NATURALNIE pod koniec
-                # JEGO okna (dekoder potrzebuje calego okna), wiec najblizsza
-                # granica okna = poczatek NASZEGO okna odpowiedzi.
-                #  - pozycja <= prog: auto_seq zdazyl na poczatek naszego okna
-                #    -> nadaj natychmiast (DT ~0)
-                #  - pozycja > prog: koniec okna partnera -> czekaj do
-                #    najblizszej granicy (window - pos) i nadaj w naszym oknie.
+                # JEGO okna (dekoder potrzebuje calego okna), wiec pozycja
+                # ~0s w biezacym oknie = poczatek NASZEGO okna odpowiedzi.
+                #  - pozycja <= prog: auto_seq (lub szybki reczny klik) zdazyl
+                #    na poczatek naszego okna -> nadaj natychmiast (DT ~0)
+                #  - pozycja > prog: jestesmy JUZ W SRODKU naszego okna (za
+                #    pozno na akceptowalne DT), ALE to oczywiscie WCIAZ nasze
+                #    okno (nasza parzystosc) az do konca window_s. Kolejna
+                #    granica ({window_s}s dalej) to okno PARTNERA (przeciwna
+                #    parzystosc) - nadanie tam kolidowaloby z jego slotem.
+                #    Trzeba czekac PELEN dodatkowy okres (2x window_s) do
+                #    NASTEPNEGO okna naszej wlasnej parzystosci.
                 # UWAGA: wczesniejsza wersja dodawala tu +window_s ("nastepne
-                # nasze okno") - blad: odpowiadalismy OKNO ZA POZNO, partner
-                # nie widzial odpowiedzi, powtarzal, sekwencja QSO sie
-                # rozjezdzala ("automat zglupial", RRR w kolko).
+                # nasze okno") do wait_s liczonego OD GRANICY OKNA PARTNERA -
+                # blad: odpowiadalismy OKNO ZA POZNO. To NIE to samo co ten
+                # blad — TU liczymy od pozycji WEWNATRZ WLASNEGO okna, wiec
+                # trzeba dodac pelen okres zeby trafic w SWOJA parzystosc,
+                # a nie w cudza. Bez tego reczne klikniecie stacji spoznione
+                # >{_max_start}s od pojawienia sie dekodu ladowalo w oknie
+                # partnera — QSO "nie startowalo" mimo klikniecia (dawalo
+                # operatorowi zludzenie ze na klikniecie ma tylko 2-3s).
                 _max_start = 1.5 if window_s >= 15.0 else 1.0  # FT8 / FT4
                 if pos_in_window <= _max_start:
                     wait_s = 0.0
                     print(f"[ft8] Auto TX natychmiast (pozycja {pos_in_window:.1f}s w oknie {window_s}s)")
                 else:
-                    wait_s = window_s - pos_in_window
-                    print(f"[ft8] Auto TX na granicy okna (pozycja {pos_in_window:.1f}s) "
-                          f"— czekam {wait_s:.1f}s do POCZATKU naszego okna")
+                    wait_s = (2 * window_s) - pos_in_window
+                    print(f"[ft8] Auto TX spozniony (pozycja {pos_in_window:.1f}s) — "
+                          f"czekam {wait_s:.1f}s do NASTEPNEGO okna naszej parzystosci")
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "waiting",
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
