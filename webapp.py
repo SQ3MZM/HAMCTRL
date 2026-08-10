@@ -5642,11 +5642,26 @@ class App:
                 except Exception as _e:
                     print(f"[autoqso] nie moge sparsowac '{_msg}': {_e}")
                     _initial = None
-            self._qso_engine.start_qso(call_de, initial_decode=_initial)
+            # partner_decode do zablokowania okresu (period) na podstawie
+            # WLASNEGO znacznika czasu KLIKNIETEGO dekodu (patrz
+            # _period_from_time_str) - a nie zegara "teraz" w momencie
+            # przetworzenia kliku. Dzieki temu cala dalsza czesc QSO trafia
+            # w prawidlowe okna niezaleznie od tego jak dlugo operator
+            # zwlekal z klikinieciem stacji na liscie.
+            _time_str = (msg.get("timeStr") or "").strip()
+            _partner_decode = ({"timeStr": _time_str, "snr": msg.get("snr", 0)}
+                                if _time_str else None)
+            start_result = self._qso_engine.start_qso(call_de, initial_decode=_initial)
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
                                        "partner": self._qso_engine.partner_call})
-            asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action()))
+            if start_result and start_result.get("action") == "reply":
+                # Klikniety dekod byl juz odpowiedzia partnera (nie CQ) -
+                # engine przeskoczyl Tx1, wysylamy od razu wlasciwy krok.
+                await self._dispatch_auto_reply(start_result, _partner_decode or {})
+            else:
+                asyncio.create_task(self._send_auto_tx(
+                    self._qso_engine.next_tx_action(), partner_decode=_partner_decode))
 
         elif t == "ft8_queue_remove":
             # Usun stacje z kolejki "Call 1st" (przycisk ✕ na chipie w UI).
@@ -6020,7 +6035,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-TXWINDOW-PARITY-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-PERIOD-FROM-DECODE-TIME, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6077,35 +6092,43 @@ class App:
                     wait_s = full_period_s - pos_in_full + offset
                 print(f"[ft8] Reczne TX period={self._ft8_tx_period}, pozycja={pos_in_window:.1f}s, czekam {wait_s:.2f}s")
             else:
-                # Auto TX — dekod partnera przychodzi NATURALNIE pod koniec
-                # JEGO okna (dekoder potrzebuje calego okna), wiec pozycja
-                # ~0s w biezacym oknie = poczatek NASZEGO okna odpowiedzi.
-                #  - pozycja <= prog: auto_seq (lub szybki reczny klik) zdazyl
-                #    na poczatek naszego okna -> nadaj natychmiast (DT ~0)
-                #  - pozycja > prog: jestesmy JUZ W SRODKU naszego okna (za
-                #    pozno na akceptowalne DT), ALE to oczywiscie WCIAZ nasze
-                #    okno (nasza parzystosc) az do konca window_s. Kolejna
-                #    granica ({window_s}s dalej) to okno PARTNERA (przeciwna
-                #    parzystosc) - nadanie tam kolidowaloby z jego slotem.
-                #    Trzeba czekac PELEN dodatkowy okres (2x window_s) do
-                #    NASTEPNEGO okna naszej wlasnej parzystosci.
-                # UWAGA: wczesniejsza wersja dodawala tu +window_s ("nastepne
-                # nasze okno") do wait_s liczonego OD GRANICY OKNA PARTNERA -
-                # blad: odpowiadalismy OKNO ZA POZNO. To NIE to samo co ten
-                # blad — TU liczymy od pozycji WEWNATRZ WLASNEGO okna, wiec
-                # trzeba dodac pelen okres zeby trafic w SWOJA parzystosc,
-                # a nie w cudza. Bez tego reczne klikniecie stacji spoznione
-                # >{_max_start}s od pojawienia sie dekodu ladowalo w oknie
-                # partnera — QSO "nie startowalo" mimo klikniecia (dawalo
-                # operatorowi zludzenie ze na klikniecie ma tylko 2-3s).
+                # Auto TX (automatyczna odpowiedz LUB reczny klik stacji,
+                # ktory startuje/kontynuuje auto-QSO) — UZYWA TEGO SAMEGO
+                # mechanizmu co reczne TX powyzej: liczy z ZABLOKOWANEGO
+                # self._ft8_tx_period (patrz _send_auto_tx / _period_from_time_str,
+                # ktore ustalaja go RAZ na QSO na podstawie znacznika czasu
+                # DEKODU partnera), a NIE z zalozenia "pozycja ~0s w biezacym
+                # oknie = poczatek naszego okna". To drugie zalozenie dzialalo
+                # tylko dla niemal natychmiastowej automatyki — przy recznym
+                # kliknieciu stacji przez czlowieka (naturalna reakcja to
+                # kilka-kilkanascie sekund) czesto bylo juz nieprawdziwe:
+                # kod myslal ze jest na poczatku "naszego" okna, a realnie
+                # bylo to okno PARTNERA -> transmisja kolidowala z jego
+                # slotem i QSO "nie startowalo" mimo klikniecia (objaw:
+                # operator mial realnie tylko 2-3s na reakcje).
+                full_period_s = window_s * 2
+                offset = 0.0 if self._ft8_tx_period == 1 else window_s
+                pos_in_full = now % full_period_s
                 _max_start = 1.5 if window_s >= 15.0 else 1.0  # FT8 / FT4
-                if pos_in_window <= _max_start:
-                    wait_s = 0.0
-                    print(f"[ft8] Auto TX natychmiast (pozycja {pos_in_window:.1f}s w oknie {window_s}s)")
+                if pos_in_full < offset:
+                    # Jestesmy w oknie partnera, PRZED poczatkiem naszego
+                    wait_s = offset - pos_in_full
+                elif pos_in_full < offset + window_s:
+                    # Jestesmy w NASZYM oknie
+                    remaining = offset + window_s - pos_in_full
+                    if remaining < 1.5 or pos_in_window > _max_start:
+                        # Za pozno na akceptowalne DT w tym oknie — czekaj
+                        # PELEN dodatkowy okres do NASTEPNEGO naszej parzystosci
+                        # (nie do najblizszej granicy — to byloby okno partnera)
+                        wait_s = remaining + full_period_s - window_s
+                    else:
+                        wait_s = 0.0  # Nadaj teraz (DT akceptowalne)
                 else:
-                    wait_s = (2 * window_s) - pos_in_window
-                    print(f"[ft8] Auto TX spozniony (pozycja {pos_in_window:.1f}s) — "
-                          f"czekam {wait_s:.1f}s do NASTEPNEGO okna naszej parzystosci")
+                    # Jestesmy juz w oknie partnera PO naszym — czekaj do
+                    # nastepnego wystapienia naszej parzystosci
+                    wait_s = full_period_s - pos_in_full + offset
+                print(f"[ft8] Auto TX period={self._ft8_tx_period}, "
+                      f"pozycja={pos_in_window:.1f}s, czekam {wait_s:.2f}s")
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "waiting",
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
@@ -6458,6 +6481,23 @@ class App:
             self._qso_engine.record_sent_report(result["report_or_grid"])
         await self._send_auto_tx(result, partner_decode=m)
 
+    def _period_from_time_str(self, time_str: str, window_s: float):
+        """Wylicza period (1 lub 2) okna w ktorym padl dekod, na podstawie
+        JEGO WLASNEGO znacznika czasu (HHMMSS UTC, ustawianego przez Rust w
+        chwili dekodowania) — NIE zegara "teraz". Dzieki temu wynik jest
+        staly niezaleznie od tego kiedy ten kod faktycznie sie wykona
+        (natychmiastowa automatyka vs reczny klik czlowieka kilka-kilkanascie
+        sekund pozniej). Zwraca None jesli time_str jest puste/niepoprawne."""
+        if not time_str or len(time_str) < 6:
+            return None
+        try:
+            hh, mm, ss = int(time_str[0:2]), int(time_str[2:4]), int(time_str[4:6])
+        except ValueError:
+            return None
+        total_s = hh * 3600 + mm * 60 + ss
+        window_idx = int(total_s / window_s)
+        return 1 if (window_idx % 2 == 0) else 2
+
     async def _send_auto_tx(self, action: dict, partner_decode: dict = None):
         """Uruchamia wyslanie wiadomosci wygenerowanej przez automatyke QSO,
         uzywajac DOKLADNIE tej samej sciezki co reczne TX (_ft8_tx_sequence) —
@@ -6470,27 +6510,34 @@ class App:
             return
 
         # Detect the partner's TX window and set the opposite period.
+        #
+        # KRYTYCZNE (czas reakcji operatora): okres MUSI byc wyliczony z
+        # WLASNEGO znacznika czasu dekodu (partner_decode['timeStr'], ustawiany
+        # przez Rust w momencie odebrania), NIE z zegara "teraz" w tym miejscu
+        # kodu. Wczesniejsza wersja liczyla "teraz" — dzialalo to poprawnie
+        # TYLKO gdy ta funkcja byla wywolana ulamek sekundy po dekodzie
+        # (automatyczna odpowiedz). Przy recznym kliknieciu stacji przez
+        # czlowieka (naturalna reakcja to kilka-kilkanascie sekund) "teraz"
+        # moglo juz wypasc w INNYM oknie 15s niz dekod partnera — silnik
+        # losowo wybieral zla parzystosc, wiadomosc ladowala w slocie
+        # partnera i QSO "nie startowalo" mimo klikniecia. Znacznik czasu
+        # dekodu jest STALY (nie zalezy od czasu reakcji), wiec liczenie z
+        # niego daje poprawna parzystosc niezaleznie od tego czy operator
+        # kliknie natychmiast czy po 10 sekundach — dokladnie tak jak w
+        # WSJT-X/JTDX (tam Tx period tez jest ustalany raz, z chwili
+        # odebrania wiadomosci, a nie przeliczany na biezaco).
         if partner_decode and not getattr(self, '_qso_period_locked', False):
-            import time as _time
             window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
-            now = _time.time()
-            # The partner transmitted in the window that just completed, NOT the
-            # one we're in now. Decodes arrive at the end of / just after the RX
-            # window, so `now` is already one window past the partner's TX. Using
-            # `now` directly computed the wrong parity and told us to transmit in
-            # the same window we received in (the "will TX in A instead of B"
-            # bug). Anchor to the last window boundary, then step back one window
-            # to the partner's actual TX window.
-            last_boundary = (now // window_s) * window_s
-            partner_tx_start = last_boundary - window_s
-            partner_window_idx = int(partner_tx_start / window_s)
-            partner_period = 1 if (partner_window_idx % 2 == 0) else 2
-            my_period = 2 if partner_period == 1 else 1
-            if self._ft8_tx_period != my_period:
-                self._ft8_tx_period = my_period
-                print(f"[autoqso] Auto-period: partner={partner_period} -> my_period={my_period}")
-                await self.hub.broadcast({"type": "ft8_tx_period", "period": my_period})
-            self._qso_period_locked = True  # hold the period for the whole QSO
+            partner_period = self._period_from_time_str(
+                partner_decode.get('timeStr', ''), window_s)
+            if partner_period is not None:
+                my_period = 2 if partner_period == 1 else 1
+                if self._ft8_tx_period != my_period:
+                    self._ft8_tx_period = my_period
+                    print(f"[autoqso] Auto-period (dekod {partner_decode.get('timeStr')}): "
+                          f"partner={partner_period} -> my_period={my_period}")
+                    await self.hub.broadcast({"type": "ft8_tx_period", "period": my_period})
+                self._qso_period_locked = True  # hold the period for the whole QSO
 
         print(f"[autoqso] Planuje TX: {action['call_to']} {action['call_de']} "
               f"{action['report_or_grid']} (r_flag={action.get('r_flag', False)})")

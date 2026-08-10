@@ -882,7 +882,14 @@ function _selectRow(el, idx) {
   // jest prawdziwy callsign partnera i nie powinno startowac automatyki.
   const isCq = (d.message||'').toUpperCase().startsWith('CQ ');
   if (isCq && _autoSeqEnabled && call && call !== 'CQ') {
-    window.WS?.send({ type: 'ft8_start_auto_qso', callDe: call });
+    // timeStr (znacznik czasu TEGO dekodu, nie "teraz") jest kluczowy —
+    // backend liczy z niego ktore okno 15s/7.5s nalezy do partnera, zeby
+    // odpowiedziec w PRZECIWNYM. Bez tego poprawny wybor okna dzialal
+    // tylko gdy klikniesz w ulamek sekundy po pojawieniu sie dekodu —
+    // reczna reakcja czlowieka (kilka-kilkanascie sekund) ladowala
+    // transmisje w oknie partnera (kolizja, QSO "nie startowalo").
+    window.WS?.send({ type: 'ft8_start_auto_qso', callDe: call,
+                       message: d.message, timeStr: d.timeStr, snr: d.snr });
   }
 }
 
