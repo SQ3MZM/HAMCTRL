@@ -705,6 +705,10 @@ function _addDecode(d) {
   // Przy MSG_CLEAR WSJT-X czyści tabelę; my robimy to samo w handleWS('wsjtx_clear')
   _decodes.push(d);
   if (_decodes.length > MAX_DECODES) _decodes.shift();
+  // Nowa aktywnosc odblokowuje panel RX FREQUENCY po recznym "wyczysc" (🗑) —
+  // to mialo byc tymczasowe odgracenie widoku, nie trwale wylaczenie panelu
+  // az do przeladowania strony.
+  _rxFreqPanelCleared = false;
   _renderDecodes();
   _updateCount();
   _renderRxFreqPanel();
@@ -788,36 +792,24 @@ function _renderDecodes() {
   }).join('');
 }
 
-// Rx Frequency panel: pokazuje TYLKO dekodowania ktorych czestotliwosc
-// (deltaFreq) jest blisko aktualnego znacznika RX (tolerancja +/- kilka Hz,
-// zeby uwzglednic naturalny dryf/niedokladnosc dekodowania). Aktualizowane
-// przy kazdym nowym dekodowaniu ORAZ przy kazdej zmianie pozycji znacznika RX.
+// Rx Frequency panel: KOLEJKA (nie pojedynczy wiersz) dekodowan ktorych
+// czestotliwosc (deltaFreq) jest blisko aktualnego znacznika RX (tolerancja
+// +/- kilka Hz, zeby uwzglednic naturalny dryf/niedokladnosc dekodowania).
+// Pokazuje jedno pod drugim, chronologicznie, zarowno to co ODEBRALISMY jak
+// i to co SAMI NADALISMY (wpisy is_tx sa oznaczone "▶ TX" i innym tlem w
+// _decodeRowHtml) — bez tego panel nadpisywal sie przy kazdym kolejnym
+// dekodzie i nie dalo sie prosledzic co dokladnie dzieje sie na tej
+// czestotliwosci (dostajemy vs nadajemy). Max RX_FREQ_QUEUE_MAX pozycji,
+// najstarsze znikaja pierwsze (FIFO). Wlasna transmisja pojawia sie w tej
+// kolejce naturalnie — backend broadcastuje ja jako wsjtx_decode (is_tx=true)
+// juz w chwili PTT ON (_addDecode wywoluje ten render przy kazdym dekodzie),
+// wiec nie trzeba osobnego "live preview" wiersza.
 const RX_FREQ_TOLERANCE_HZ = 8;
+const RX_FREQ_QUEUE_MAX = 20;
 
 function _renderRxFreqPanel() {
   const el = document.getElementById('wj-rx-freq-row');
   if (!el) return;
-
-  // PRIORYTET 1: wlasna transmisja w toku — pokazuje sie ZAWSZE podczas
-  // nadawania, niezaleznie od pozycji znacznika RX (to "co aktualnie
-  // wysylam na fale", nie zalezy od tego gdzie aktualnie nasluchujemy).
-  if (_ownTx.active) {
-    _rxFreqPanelCleared = false; // nowa, realna tresc - reset recznego czyszczenia
-    const txFreq = window.WSJTXScope?.getTxFreq?.() ?? '--';
-    const now = new Date();
-    const hh = String(now.getUTCHours()).padStart(2,'0');
-    const mm = String(now.getUTCMinutes()).padStart(2,'0');
-    const ss = String(now.getUTCSeconds()).padStart(2,'0');
-    el.innerHTML = _decodeRowHtml({
-      timeStr: `${hh}${mm}${ss}`,
-      snr: 0,
-      deltaTime: 0,
-      deltaFreq: Math.round(txFreq),
-      message: _ownTx.text,
-      mode: 'TX',
-    }, -1);
-    return;
-  }
 
   if (_rxFreqPanelCleared) {
     el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
@@ -829,15 +821,17 @@ function _renderRxFreqPanel() {
     el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
     return;
   }
-  // Znajdz NAJNOWSZE dekodowanie w tolerancji wokol rxFreq (przeszukaj od konca)
-  for (let i = _decodes.length - 1; i >= 0; i--) {
-    const d = _decodes[i];
-    if (d.deltaFreq !== undefined && Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ) {
-      el.innerHTML = _decodeRowHtml(d, i);
-      return;
-    }
+  const matches = _decodes.filter(d =>
+    d.deltaFreq !== undefined && Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ);
+  if (!matches.length) {
+    el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+    return;
   }
-  el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+  const queued = matches.slice(-RX_FREQ_QUEUE_MAX);
+  el.innerHTML = [...queued].reverse().map((d) => {
+    const idx = _decodes.indexOf(d);
+    return _decodeRowHtml(d, idx);
+  }).join('');
 }
 
 function _selectRow(el, idx) {
@@ -978,11 +972,6 @@ function sendTx(n) {
   });
 }
 
-// Stan wlasnej transmisji w toku — uzywany do pokazania "co nadajemy" w
-// panelu RX Frequency, ZAWSZE podczas nadawania (niezaleznie od pozycji
-// znacznika RX), bo to dokladnie "co aktualnie wysylam na fale".
-let _ownTx = { active: false, text: '' };
-
 // Reaguj na statusy nadawania z backendu (PTT/audio sequence)
 // Rozpoznaje ktory numer makra (1-5) odpowiada faktycznie wysylanej tresci
 // `text` (np. "SP3GSK DL1ABC RRR"), na podstawie ostatniego "slowa"
@@ -1019,20 +1008,14 @@ function _onFt8TxStatus(d) {
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'starting') {
     window.UI?.showToast(`Nadaje: ${d.text}`);
-    _ownTx = { active: true, text: d.text || '' };
     const n = _macroNumberForText(d.text);
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
-    _renderRxFreqPanel();
   } else if (d.status === 'error') {
     window.UI?.showToast(`Blad TX FT8: ${d.error}`);
     btns.forEach(b=>b.classList.remove('active'));
-    _ownTx = { active: false, text: '' };
-    _renderRxFreqPanel();
   } else if (d.status === 'done') {
     btns.forEach(b=>b.classList.remove('active'));
-    _ownTx = { active: false, text: '' };
-    _renderRxFreqPanel();
   }
 }
 

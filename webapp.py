@@ -6037,7 +6037,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-WINDOW-MARGIN-BY-DURATION, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-ABSOLUTE-WAIT-DEADLINE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6111,16 +6111,27 @@ class App:
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
             print(f"[ft8] Czekam {wait_s:.2f}s na okno 15s UTC...")
-            # Spij w krotkich kawalkach, zeby abort dzialal tez w trakcie oczekiwania
-            waited = 0.0
-            while waited < wait_s:
+            # Spij w krotkich kawalkach, zeby abort dzialal tez w trakcie oczekiwania.
+            # KRYTYCZNE: cel liczony jako ABSOLUTNY znacznik zegara (_time.time()
+            # + wait_s), NIE jako suma nominalnych krokow (waited += step).
+            # asyncio.sleep(0.1) gwarantuje co najmniej 0.1s, ale pod obciazonym
+            # event loopem (w tle leci jednoczesnie playback audio TX, txmeter
+            # co ~100ms) realnie smiga zawsze troche dluzej. Przy dziesiatkach
+            # iteracji (np. 147 dla 14.69s oczekiwania) ten drobny naddatek na
+            # iteracje kumulowal sie do ~1s dryfu — mierzone na zywo: DT
+            # wolania CQ wychodzilo +1.0s zamiast bliskiego 0. Liczenie wzgledem
+            # STALEGO celu samo sie koryguje (kazda iteracja mierzy realny
+            # dystans do celu), wiec dryf sie nie kumuluje.
+            target_time = _time.time() + wait_s
+            while True:
+                remaining = target_time - _time.time()
+                if remaining <= 0:
+                    break
                 if self._ft8_tx_abort:
                     print("[ft8] TX przerwane (abort) podczas oczekiwania na okno")
                     await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                     return
-                step = min(0.1, wait_s - waited)
-                await asyncio.sleep(step)
-                waited += step
+                await asyncio.sleep(min(0.1, remaining))
 
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "starting",
                                        "text": display_text})
