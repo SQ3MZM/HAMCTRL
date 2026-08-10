@@ -5643,14 +5643,16 @@ class App:
                     print(f"[autoqso] nie moge sparsowac '{_msg}': {_e}")
                     _initial = None
             # partner_decode do zablokowania okresu (period) na podstawie
-            # WLASNEGO znacznika czasu KLIKNIETEGO dekodu (patrz
-            # _period_from_time_str) - a nie zegara "teraz" w momencie
-            # przetworzenia kliku. Dzieki temu cala dalsza czesc QSO trafia
-            # w prawidlowe okna niezaleznie od tego jak dlugo operator
-            # zwlekal z klikinieciem stacji na liscie.
-            _time_str = (msg.get("timeStr") or "").strip()
-            _partner_decode = ({"timeStr": _time_str, "snr": msg.get("snr", 0)}
-                                if _time_str else None)
+            # DOKLADNEGO znacznika czasu ODBIORU klikanego dekodu (recvEpoch,
+            # patrz _period_from_epoch) - front go dostal razem z tym
+            # dekodem przy pierwotnym broadcascie i odsyla NIEZMIENIONY,
+            # wiec liczy sie tu z chwili odbioru, a NIE zegara "teraz" w
+            # momencie przetworzenia kliku. Dzieki temu cala dalsza czesc
+            # QSO trafia w prawidlowe okna niezaleznie od tego jak dlugo
+            # operator zwlekal z klikinieciem stacji na liscie.
+            _recv_epoch = msg.get("recvEpoch")
+            _partner_decode = ({"recvEpoch": _recv_epoch, "snr": msg.get("snr", 0)}
+                                if _recv_epoch is not None else None)
             start_result = self._qso_engine.start_qso(call_de, initial_decode=_initial)
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
@@ -6035,7 +6037,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-PERIOD-FROM-DECODE-TIME, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-PERIOD-FROM-RECV-EPOCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6095,7 +6097,7 @@ class App:
                 # Auto TX (automatyczna odpowiedz LUB reczny klik stacji,
                 # ktory startuje/kontynuuje auto-QSO) — UZYWA TEGO SAMEGO
                 # mechanizmu co reczne TX powyzej: liczy z ZABLOKOWANEGO
-                # self._ft8_tx_period (patrz _send_auto_tx / _period_from_time_str,
+                # self._ft8_tx_period (patrz _send_auto_tx / _period_from_epoch,
                 # ktore ustalaja go RAZ na QSO na podstawie znacznika czasu
                 # DEKODU partnera), a NIE z zalozenia "pozycja ~0s w biezacym
                 # oknie = poczatek naszego okna". To drugie zalozenie dzialalo
@@ -6481,21 +6483,35 @@ class App:
             self._qso_engine.record_sent_report(result["report_or_grid"])
         await self._send_auto_tx(result, partner_decode=m)
 
-    def _period_from_time_str(self, time_str: str, window_s: float):
-        """Wylicza period (1 lub 2) okna w ktorym padl dekod, na podstawie
-        JEGO WLASNEGO znacznika czasu (HHMMSS UTC, ustawianego przez Rust w
-        chwili dekodowania) — NIE zegara "teraz". Dzieki temu wynik jest
-        staly niezaleznie od tego kiedy ten kod faktycznie sie wykona
-        (natychmiastowa automatyka vs reczny klik czlowieka kilka-kilkanascie
-        sekund pozniej). Zwraca None jesli time_str jest puste/niepoprawne."""
-        if not time_str or len(time_str) < 6:
+    def _period_from_epoch(self, recv_epoch, window_s: float):
+        """Wylicza NASZ period (1 lub 2) TX na podstawie dokladnego
+        (ulamkowego) znacznika czasu ODBIORU dekodu (recvEpoch, ustawianego
+        RAZ w _ft8_rx_loop w chwili odebrania wyniku od Rusta).
+
+        WAZNE - to NIE jest okres partnera odwrocony. Rust wysyla wynik
+        dekodowania DOPIERO PO zakonczeniu calego okna audio + obliczen
+        (patrz rx_loop.rs: settle=0.3s + czas dekodowania), wiec w chwili
+        odbioru jestesmy JUZ w kolejnym oknie 15s/7.5s wzgledem tego, w
+        ktorym partner faktycznie nadawal — a to kolejne okno jest z
+        definicji NASZYM oknem odpowiedzi. Nie trzeba wiec liczyc "okresu
+        partnera" i go odwracac (to byl blad poprzedniej wersji: uzywala
+        napisu timeStr z rozdzielczoscia calej sekundy, ustawianego PO
+        dekodowaniu, wiec regularnie wskazywala okno JUZ PO partnerze —
+        liczenie z niego "period partnera" i branie przeciwienstwa
+        wracalo z powrotem do okna partnera, o jedno za duzo).
+
+        recvEpoch jest ustawiany RAZ przy odbiorze, wiec wynik jest staly
+        niezaleznie od tego kiedy pozniej ten kod sie wykona (natychmiastowa
+        automatyka vs reczny klik czlowieka kilka-kilkanascie sekund
+        pozniej) — dokladnie jak Tx period w WSJT-X/JTDX.
+
+        Zwraca None jesli recv_epoch jest brakujacy/niepoprawny."""
+        if recv_epoch is None:
             return None
         try:
-            hh, mm, ss = int(time_str[0:2]), int(time_str[2:4]), int(time_str[4:6])
-        except ValueError:
+            window_idx = int(float(recv_epoch) // window_s)
+        except (TypeError, ValueError):
             return None
-        total_s = hh * 3600 + mm * 60 + ss
-        window_idx = int(total_s / window_s)
         return 1 if (window_idx % 2 == 0) else 2
 
     async def _send_auto_tx(self, action: dict, partner_decode: dict = None):
@@ -6509,33 +6525,21 @@ class App:
         if not action:
             return
 
-        # Detect the partner's TX window and set the opposite period.
-        #
-        # KRYTYCZNE (czas reakcji operatora): okres MUSI byc wyliczony z
-        # WLASNEGO znacznika czasu dekodu (partner_decode['timeStr'], ustawiany
-        # przez Rust w momencie odebrania), NIE z zegara "teraz" w tym miejscu
-        # kodu. Wczesniejsza wersja liczyla "teraz" — dzialalo to poprawnie
-        # TYLKO gdy ta funkcja byla wywolana ulamek sekundy po dekodzie
-        # (automatyczna odpowiedz). Przy recznym kliknieciu stacji przez
-        # czlowieka (naturalna reakcja to kilka-kilkanascie sekund) "teraz"
-        # moglo juz wypasc w INNYM oknie 15s niz dekod partnera — silnik
-        # losowo wybieral zla parzystosc, wiadomosc ladowala w slocie
-        # partnera i QSO "nie startowalo" mimo klikniecia. Znacznik czasu
-        # dekodu jest STALY (nie zalezy od czasu reakcji), wiec liczenie z
-        # niego daje poprawna parzystosc niezaleznie od tego czy operator
-        # kliknie natychmiast czy po 10 sekundach — dokladnie tak jak w
-        # WSJT-X/JTDX (tam Tx period tez jest ustalany raz, z chwili
-        # odebrania wiadomosci, a nie przeliczany na biezaco).
+        # Ustal NASZ period TX z dokladnego znacznika czasu ODBIORU dekodu
+        # (recvEpoch) — patrz _period_from_epoch po wyjasnienie dlaczego to
+        # JUZ JEST nasze okno (nie trzeba odwracac "okresu partnera").
+        # Znacznik jest ustawiany RAZ w _ft8_rx_loop, wiec wynik jest staly
+        # niezaleznie od czasu reakcji operatora (natychmiastowa automatyka
+        # vs reczny klik czlowieka kilka-kilkanascie sekund pozniej) —
+        # dokladnie jak Tx period w WSJT-X/JTDX.
         if partner_decode and not getattr(self, '_qso_period_locked', False):
             window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
-            partner_period = self._period_from_time_str(
-                partner_decode.get('timeStr', ''), window_s)
-            if partner_period is not None:
-                my_period = 2 if partner_period == 1 else 1
+            my_period = self._period_from_epoch(partner_decode.get('recvEpoch'), window_s)
+            if my_period is not None:
                 if self._ft8_tx_period != my_period:
                     self._ft8_tx_period = my_period
-                    print(f"[autoqso] Auto-period (dekod {partner_decode.get('timeStr')}): "
-                          f"partner={partner_period} -> my_period={my_period}")
+                    print(f"[autoqso] Auto-period (recvEpoch={partner_decode.get('recvEpoch')}): "
+                          f"my_period={my_period}")
                     await self.hub.broadcast({"type": "ft8_tx_period", "period": my_period})
                 self._qso_period_locked = True  # hold the period for the whole QSO
 
@@ -6596,6 +6600,16 @@ class App:
 
                 if msg.get("type") != "wsjtx_decode":
                     continue
+
+                # Dokladny (ulamkowy) znacznik czasu ODBIORU tego dekodu od
+                # Rusta — uzywany PONIZEJ zamiast timeStr (string HHMMSS,
+                # rozdzielczosc calej sekundy, ustawiany przez Rust PO
+                # zakonczeniu dekodowania, wiec prawie zawsze wskazuje juz
+                # NASTEPNE okno wzgledem tego w ktorym partner faktycznie
+                # nadawal) do wyliczania okresu TX (patrz _period_from_epoch).
+                # Ustawiany RAZ, tutaj, wiec jest niezalezny od tego jak
+                # dlugo pozniej operator bedzie zwlekal z klikinieciem stacji.
+                msg["recvEpoch"] = time.time()
 
                 # Running total for internal use. The old per-message log was
                 # throttled (first 10, then every 20th), which looked like the
