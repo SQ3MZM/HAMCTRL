@@ -581,3 +581,14 @@ class QsoEngine:
 
     def is_active(self):
         return self.state not in (ST_IDLE, ST_DONE)
+
+    def is_stalled(self, timeout_s: float) -> bool:
+        """Czy aktywne QSO nie ma zadnej aktywnosci partnera dluzej niz
+        timeout_s sekund. Partner mogl zniknac (QSB, zaczal inne QSO,
+        wylaczyl automat) - bez tej kontroli silnik zostaje w stanie
+        aktywnym W NIESKONCZONOSC, co blokuje Call 1st dla kolejnych
+        stacji w kolejce (nowi wolajacy sa tylko cicho dopisywani do
+        kolejki, bo auto-start wymaga is_active()==False)."""
+        if not self.is_active() or self.last_activity_at is None:
+            return False
+        return (time.time() - self.last_activity_at) > timeout_s

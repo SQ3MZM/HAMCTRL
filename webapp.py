@@ -5665,13 +5665,23 @@ class App:
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_abort_auto_qso":
+            # Reczny "skip" — operator nie chce czekac na 60s stall-timeout
+            # (patrz is_stalled w qso_engine.py), tylko od razu porzuca
+            # biezaca stacje i przechodzi do nastepnej z kolejki Call 1st.
             print(f"[autoqso] Reczne przerwanie QSO z {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
             self._ft8_tx_abort = True
+            # _qso_period_locked=False NIE ustawia zlego okresu na sztywno —
+            # okres dla nastepnej stacji i tak zostanie na nowo wykryty z jej
+            # PIERWSZEJ realnej odpowiedzi (_dispatch_auto_reply przekazuje
+            # swiezy partner_decode do _send_auto_tx), wiec cala kolejna
+            # lacznosc trafi w prawidlowe okna, a nie w przypadkowo
+            # "zamrozony" okres po poprzedniej stacji.
             self._qso_period_locked = False
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
                                        "partner": None})
+            await self._advance_auto_qso_queue()
 
         elif t == "ft8_set_tx_period":
             period = int(msg.get("period", 1))
@@ -6010,7 +6020,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-FT8-QSY-FAKESPLIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-AUTOQSO-SKIP-BTN, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6253,6 +6263,23 @@ class App:
         except Exception as e:
             print(f"[ft8] BLAD auto-follow: {e}")
 
+    async def _advance_auto_qso_queue(self):
+        """Po zakonczeniu lub porzuceniu QSO: jesli Call 1st jest wlaczone
+        i kolejka nie jest pusta, startuje QSO z nastepna stacja. Wywolujacy
+        MUSI wczesniej ustawic silnik z powrotem w IDLE (abort_qso())."""
+        if self._auto_call_1st and self._qso_engine.queue:
+            next_call = self._qso_engine.pop_next_from_queue()
+            print(f"[autoqso] Nastepna stacja z kolejki: {next_call}")
+            # UWAGA: tu NIE mamy initial_decode (ta stacja odpowiedziala
+            # wczesniej, nie w tym samym cyklu) — startujemy normalnie
+            # od naszego Tx1 (grid), bo nie wiemy czy jej wczesniejsza
+            # wiadomosc nadal jest aktualna (mogla zmienic czestotliwosc/zniknac).
+            self._qso_engine.start_qso(next_call)
+            await self.hub.broadcast({"type": "auto_qso_status",
+                                       "state": self._qso_engine.state,
+                                       "partner": next_call})
+            asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action()))
+
     async def _process_auto_qso(self, m: dict):
         """
         Przetwarza POJEDYNCZE zdekodowane FT8 (m, z decode_window) przez
@@ -6288,18 +6315,29 @@ class App:
 
             result = self._qso_engine.on_decode(parsed)
             if result is None:
-                # Jesli silnik nie wie co zrobic (nieoczekiwana wiadomosc) ale
-                # QSO jest aktywne i minelo > 30s od ostatniej aktywnosci —
-                # retransmituj ostatnia wiadomosc (max 1 retransmisja)
-                if (self._qso_engine.is_active() and
-                        self._qso_engine.last_activity_at and
-                        time.time() - self._qso_engine.last_activity_at > 30.0):
-                    retx = self._qso_engine.next_tx_action() or \
-                           self._qso_engine._last_sent_action if hasattr(self._qso_engine, '_last_sent_action') else None
-                    if retx:
-                        print(f"[autoqso] Timeout — retransmit: {retx}")
-                        self._qso_engine.last_activity_at = time.time()
-                        asyncio.create_task(self._send_auto_tx(retx))
+                # Widocznosc w UI: on_decode() mogl cicho dopisac stacje do
+                # kolejki Call 1st (bo jestesmy w trakcie innego QSO, wiec
+                # zwrocil None zamiast akcji 'enqueue') — bez tego broadcastu
+                # operator nie widzial ze cokolwiek sie stalo, dopoki biezace
+                # QSO sie nie zakonczylo.
+                if parsed.get('call_to') == self._qso_engine.my_call:
+                    await self.hub.broadcast({"type": "auto_qso_queue",
+                                               "queue": list(self._qso_engine.queue),
+                                               "active": self._qso_engine.partner_call})
+                # Partner utkniętego QSO przestal odpowiadac (QSB, zaczal inne
+                # QSO, wylaczyl automat) — bez tej kontroli silnik zostawal w
+                # stanie aktywnym W NIESKONCZONOSC, blokujac Call 1st dla
+                # kolejnych stacji z kolejki (byly tylko cicho dopisywane,
+                # nigdy nie startowane — objaw "automat nie reaguje na
+                # kolejna stacje").
+                if self._qso_engine.is_stalled(60.0):
+                    print(f"[autoqso] {self._qso_engine.partner_call} nie "
+                          f"odpowiada >60s — porzucam QSO")
+                    self._qso_engine.abort_qso()
+                    self._qso_period_locked = False
+                    await self.hub.broadcast({"type": "auto_qso_status",
+                                               "state": "IDLE", "partner": None})
+                    await self._advance_auto_qso_queue()
                 return
 
             if result.get("action") == "enqueue":
@@ -6393,18 +6431,7 @@ class App:
                     # zanim ewentualnie podejmiemy kolejna stacje z kolejki.
                     self._qso_engine.abort_qso()  # wraca do IDLE, partner_call=None
                     self._qso_period_locked = False  # odblokuj period dla nastepnego QSO
-                    if self._auto_call_1st and self._qso_engine.queue:
-                        next_call = self._qso_engine.pop_next_from_queue()
-                        print(f"[autoqso] Nastepna stacja z kolejki: {next_call}")
-                        # UWAGA: tu NIE mamy initial_decode (ta stacja odpowiedziala
-                        # wczesniej, nie w tym samym cyklu) — startujemy normalnie
-                        # od naszego Tx1 (grid), bo nie wiemy czy jej wczesniejsza
-                        # wiadomosc nadal jest aktualna (mogla zmienic czestotliwosc/zniknac).
-                        self._qso_engine.start_qso(next_call)
-                        await self.hub.broadcast({"type": "auto_qso_status",
-                                                   "state": self._qso_engine.state,
-                                                   "partner": next_call})
-                        asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action()))
+                    await self._advance_auto_qso_queue()
                 else:
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,

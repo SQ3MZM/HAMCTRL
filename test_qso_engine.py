@@ -312,6 +312,27 @@ def test_reset_between_qso():
     check(eng.partner_report_sent is None, "Po abort: raport zresetowany")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# 10. STALL / GIVE-UP — partner przestaje odpowiadac w trakcie QSO
+# ════════════════════════════════════════════════════════════════════════════
+def test_stall_giveup():
+    section("Porzucenie utknietego QSO (is_stalled)")
+    eng = QsoEngine("SQ3MZM", "JO82")
+
+    check(eng.is_stalled(60.0) is False, "IDLE: nigdy nie jest 'stalled'")
+
+    eng.start_qso("HB9CNU", parse_message("SQ3MZM HB9CNU JN37"))
+    check(eng.state == ST_REPORT_SENT, "Po starcie z gridem partnera: REPORT_SENT")
+    check(eng.is_stalled(60.0) is False, "Zaraz po aktywnosci: jeszcze nie stalled")
+
+    eng.last_activity_at -= 61.0  # symuluj 61s ciszy od partnera
+    check(eng.is_stalled(60.0) is True, "Po >60s ciszy partnera: stalled")
+    check(eng.is_stalled(120.0) is False, "Wieksze okno tolerancji: jeszcze nie stalled")
+
+    eng.abort_qso()
+    check(eng.is_stalled(60.0) is False, "Po abort: znow IDLE, nie stalled")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -326,6 +347,7 @@ def main():
     test_partner_report_last_value()
     test_queue()
     test_reset_between_qso()
+    test_stall_giveup()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

@@ -517,11 +517,24 @@ function clearAutoQsoQueue() {
   window.WS?.send({ type: 'ft8_queue_clear' });
 }
 
+// Reczny "skip" biezacej stacji — porzuca aktywne QSO i od razu (bez
+// czekania na 60s stall-timeout w backendzie) przechodzi do nastepnej
+// stacji z kolejki Call 1st, jesli jakas czeka.
+function skipAutoQso() {
+  window.WS?.send({ type: 'ft8_abort_auto_qso' });
+}
+
 function _renderAutoQsoPanel() {
   const seqCb = document.getElementById('wj-auto-seq-toggle');
   if (seqCb) seqCb.checked = _autoSeqEnabled;
   const c1Cb = document.getElementById('wj-call1st-toggle');
   if (c1Cb) c1Cb.checked = _autoCall1st;
+
+  const skipBtn = document.getElementById('wj-autoqso-skip');
+  if (skipBtn) {
+    const qsoActive = _autoQsoPartner && _autoQsoState !== 'IDLE' && _autoQsoState !== 'DONE';
+    skipBtn.style.display = qsoActive ? '' : 'none';
+  }
 
   const statusEl = document.getElementById('wj-autoqso-status');
   if (statusEl) {
@@ -1540,7 +1553,7 @@ window.WSJTX = {
   setTxFreqManual, setRxFreqManual, rxEqTx,
   _selectRow, addLog, deleteLog, exportAdif, loadMore, loadLog,
   toggleHound, houndStop, houndConfirm,
-  removeFromQueue, clearAutoQsoQueue,
+  removeFromQueue, clearAutoQsoQueue, skipAutoQso,
 };
 
 })();
