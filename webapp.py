@@ -6037,7 +6037,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-BROADCAST-FROZEN-RST, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-RXFOLLOW-MYCALL-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6253,7 +6253,7 @@ class App:
         zerwalo sie.
 
         Logika:
-          - Wiadomosc jest ADRESOWANA DO NAS (call_to == CALLSIGN)? Tak/nie
+          - Wiadomosc jest ADRESOWANA DO NAS (call_to == self._qso_engine.my_call)? Tak/nie
           - Nowa freq rozni sie od aktualnej? Tak/nie
           - RX ZAWSZE przesuwane na nowa freq (RX freeze nie istnieje)
           - TX przesuwane TYLKO jesli nie ma "Hold TX" (self._ft8_tx_frozen)
@@ -6266,7 +6266,16 @@ class App:
         """
         try:
             parsed = qso_engine.parse_message(m["message"])
-            if parsed is None or parsed.get("call_to") != CALLSIGN:
+            # Compare against the operator's actual live callsign
+            # (self._qso_engine.my_call), not the static config CALLSIGN
+            # constant. my_call is updated dynamically on CQ start / station
+            # click; CALLSIGN stays the config default (placeholder/club
+            # call) for the whole process lifetime. Using the wrong one here
+            # meant this method's call_to match almost never fired for the
+            # operator's real callsign, so the RX/TX frequency markers never
+            # followed a correspondent even though QSO automation (which
+            # already used my_call) completed normally.
+            if parsed is None or parsed.get("call_to") != self._qso_engine.my_call:
                 return
             new_freq = float(m.get("freq_hz", m.get("deltaFreq", self._ft8_rx_freq_hz)))
 
