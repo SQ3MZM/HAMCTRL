@@ -6037,7 +6037,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-10-ABSOLUTE-WAIT-DEADLINE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-10-BROADCAST-FROZEN-RST, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6468,6 +6468,21 @@ class App:
             result = dict(result)  # nie mutuj oryginalnego dict z silnika
             result["report_or_grid"] = self._format_report(m.get("snr_db", m.get("snr", 0)))
             self._qso_engine.record_sent_report(result["report_or_grid"])
+        # Broadcast the currently frozen reports (single source of truth for
+        # every caller of this method) so clients update their macro-3
+        # preview and log fields to the value actually being transmitted.
+        # Without this, clients only learned the frozen report at QSO
+        # completion and displayed a stale/unrelated SNR during the QSO.
+        rst_sent = self._qso_engine.partner_report_sent or ""
+        if rst_sent.startswith("R"):
+            rst_sent = rst_sent[1:]
+        rst_rcvd = self._qso_engine.partner_report_recv or ""
+        if rst_rcvd.startswith("R"):
+            rst_rcvd = rst_rcvd[1:]
+        await self.hub.broadcast({"type": "auto_qso_status",
+                                   "state": self._qso_engine.state,
+                                   "partner": self._qso_engine.partner_call,
+                                   "rstSent": rst_sent, "rstRcvd": rst_rcvd})
         await self._send_auto_tx(result, partner_decode=m)
 
     def _period_from_epoch(self, recv_epoch, window_s: float):
