@@ -333,6 +333,43 @@ def test_stall_giveup():
     check(eng.is_stalled(60.0) is False, "Po abort: znow IDLE, nie stalled")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# 11. CALL 1ST: stacja odpowiada od razu raportem (pomija Tx1/grid)
+# ════════════════════════════════════════════════════════════════════════════
+def test_call1st_start_with_raw_report():
+    section("Call 1st: wolajacy pomija grid, od razu raport (np. 'SQ3MZM XX0XXX -10')")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    parsed = parse_message("SQ3MZM XX0XXX -10")
+    check(parsed is not None and parsed.get("report") == "-10",
+          "Parsowanie: wiadomosc z surowym raportem (bez R-prefix)")
+
+    # Krok 1 (webapp.py _process_auto_qso): silnik w IDLE, wiadomosc od NOWEJ
+    # stacji adresowana do nas -> sygnalizuje 'enqueue' (Call 1st moze
+    # natychmiast wywolac start_qso z tym samym dekodem).
+    result = eng.on_decode(parsed)
+    check(result is not None and result.get("action") == "enqueue",
+          "IDLE + obca stacja z raportem -> 'enqueue' (tak jak przy CQ-odpowiedzi)")
+    check(result.get("call_de") == "XX0XXX", "enqueue: poprawny call_de")
+
+    # Krok 2 (webapp.py: Call 1st wlaczone) -> natychmiast start_qso z TYM
+    # SAMYM dekodem jako initial_decode, zeby nie wysylac zbednego Tx1/grid
+    # (partner juz przeslal cos wiecej niz CQ).
+    start_result = eng.start_qso("XX0XXX", initial_decode=parsed)
+    check(start_result is not None and start_result.get("action") == "reply",
+          "start_qso(initial_decode=raport) -> od razu akcja 'reply' (pomija Tx1)")
+    check(start_result.get("needs_measured_report") is True,
+          "reply wymaga podstawienia ZMIERZONEGO SNR (nasz pomiar, nie ich)")
+    check(start_result.get("r_flag") is True,
+          "r_flag=True -> odpowiadamy z prefixem R (potwierdzenie + nasz raport)")
+    check(eng.state == ST_REPORT_SENT, "Po starcie z samym raportem: REPORT_SENT")
+    check(eng.partner_call == "XX0XXX", "partner_call ustawiony poprawnie")
+
+    # Automat powinien pociagnac QSO dalej normalnie az do konca.
+    act, rpt = _dispatch(eng, "SQ3MZM XX0XXX RR73", snr=5)
+    check(act is not None and rpt == "73", "RR73 partnera -> nasze 73")
+    check(eng.state == ST_DONE, "QSO zakonczone poprawnie mimo pominietego Tx1/grid")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -348,6 +385,7 @@ def main():
     test_queue()
     test_reset_between_qso()
     test_stall_giveup()
+    test_call1st_start_with_raw_report()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

@@ -456,6 +456,10 @@ function _onAutoQsoStatus(msg) {
     if (el) el.value = msg.rstRcvd;
   }
   _renderAutoQsoPanel();
+  // Odswiez podglad tekstu pod przyciskami makr (makro 3 uzywa
+  // _frozenRstSent) — bez tego przycisk pokazywal STARA wartosc az do
+  // recznego kliknieca wiersza dekodu, mimo ze backend juz zamrozil raport.
+  _updateMacroTexts();
 }
 
 // Po zakonczeniu automatycznego QSO (otrzymanie/wyslanie 73), wypelnia
@@ -484,6 +488,7 @@ function _onAutoQsoComplete(msg) {
   // do nastepnego QSO w lancuchu Call 1st.
   _frozenRstSent = null; // reset po QSO
   _frozenRstRcvd = null;
+  _updateMacroTexts(); // podglad makra 3 wraca do biezacego _lastDxSnr
   if (modeEl) modeEl.value = msg.mode || 'FT8';
   const commentEl = document.getElementById('wj-log-comment');
   if (commentEl) commentEl.value = '';
@@ -888,6 +893,25 @@ function _selectRow(el, idx) {
 }
 
 // ── TX makra ──────────────────────────────────────────────────────────────────
+// Raport dla makra 3 (R+raport): potwierdzam odbior + moj ZMIERZONY raport
+// sygnalu partnera (nie nasz grid!). JEDNO miejsce dla tej logiki, uzywane
+// zarowno przez _txMacroParts (co faktycznie leci w eter) jak i
+// _updateMacroTexts (podglad tekstu pod przyciskiem) — wczesniej to byly
+// DWIE osobne kopie i tylko jedna z nich zamrazala raport, wiec podglad pod
+// przyciskiem migotal/zmienial sie co dekod mimo ze faktyczna transmisja
+// poprawnie trzymala jedna, zamrozona wartosc przez cale QSO.
+// ZAMROZONY raport: gdy QSO aktywne i backend zamrozil raport, uzyj GO (nie
+// _lastDxSnr, ktory zmienia sie co dekod = "bzdury"). Spojnosc z eterem/
+// logiem. Poza QSO (reczne makro przed startem) — biezacy _lastDxSnr.
+function _macro3Report() {
+  if (_frozenRstSent && _autoQsoState && _autoQsoState !== 'IDLE') {
+    return _frozenRstSent;  // zamrozona wartosc (np. "+03")
+  }
+  const snr = _lastDxSnr != null ? _lastDxSnr : 0;
+  const sign = snr >= 0 ? '+' : '-';
+  return sign + String(Math.abs(snr)).padStart(2, '0');
+}
+
 // Strukturalna definicja makr F1-F7: [callTo, callDe, report].
 // callTo/callDe='CQ' oznacza specjalne slowo CQ (nie callsign).
 function _txMacroParts(n) {
@@ -897,22 +921,7 @@ function _txMacroParts(n) {
   switch (n) {
     case 1: case 7: return { callTo: 'CQ',   callDe: myCall, report: myGrid };
     case 2:         return { callTo: dxCall, callDe: myCall, report: myGrid };
-    case 3: {
-      // R+raport: potwierdzam odbior + moj ZMIERZONY raport sygnalu partnera
-      // (nie nasz grid!). r_flag=true dodaje prefix "R" przy enkodowaniu.
-      // ZAMROZONY raport: gdy QSO aktywne i backend zamrozil raport, uzyj GO
-      // (nie _lastDxSnr, ktory zmienia sie co dekod = "bzdury"). Spojnosc z
-      // eterem/logiem. Poza QSO (reczne makro przed startem) — _lastDxSnr.
-      let report;
-      if (_frozenRstSent && _autoQsoState && _autoQsoState !== 'IDLE') {
-        report = _frozenRstSent;  // zamrozona wartosc (np. "+03")
-      } else {
-        const snr = _lastDxSnr != null ? _lastDxSnr : 0;
-        const sign = snr >= 0 ? '+' : '-';
-        report = sign + String(Math.abs(snr)).padStart(2, '0');
-      }
-      return { callTo: dxCall, callDe: myCall, report, rFlag: true };
-    }
+    case 3:         return { callTo: dxCall, callDe: myCall, report: _macro3Report(), rFlag: true };
     case 4:         return { callTo: dxCall, callDe: myCall, report: 'RRR' };
     case 5:         return { callTo: dxCall, callDe: myCall, report: '73'  };
     case 6:         return { callTo: dxCall, callDe: myCall, report: 'RR73' };
@@ -924,12 +933,11 @@ function _updateMacroTexts() {
   const myCall = _myCall || '?';
   const myGrid = _myGrid || '??';
   const dxCall = document.getElementById('wj-dx-call')?.value || '?';
-  const snr    = _lastDxSnr != null ? (_lastDxSnr>=0?'+':'')+_lastDxSnr : '+00';
 
   const macros = {
     1: `CQ ${myCall} ${myGrid}`,
     2: `${dxCall} ${myCall} ${myGrid}`,
-    3: `${dxCall} ${myCall} R${snr}`,
+    3: `${dxCall} ${myCall} R${_macro3Report()}`,
     4: `${dxCall} ${myCall} RRR`,
     5: `${dxCall} ${myCall} 73`,
     6: `${dxCall} ${myCall} RR73`,
