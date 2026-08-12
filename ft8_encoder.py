@@ -257,6 +257,50 @@ def _packcall(call):
 
 _NBASE_CQ = 2
 _STD_CALL_OFFSET = 6257896
+_NTOKENS = 2_063_592
+_ALPHA38 = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/"
+_U64_MASK = (1 << 64) - 1
+
+
+def _ihashcall(call, m):
+    """22/12-bit callsign hash. Port of ihashcall() in
+    ham_audio/src/decode/unpack.rs (same algorithm WSJT-X uses to refer to
+    a non-standard callsign already announced elsewhere in the exchange,
+    without re-transmitting its full text). Must match that Rust
+    implementation bit-for-bit, including u64 wraparound arithmetic."""
+    padded = call.upper().ljust(11)[:11]
+    n8 = 0
+    for ch in padded:
+        j = _ALPHA38.find(ch)
+        if j < 0:
+            j = 0
+        n8 = (38 * n8 + j) & _U64_MASK
+    prod = (47_055_833_459 * n8) & _U64_MASK
+    return prod >> (64 - m)
+
+
+def _split_pr_suffix(call):
+    """Split into (base, suffix) where suffix is 'P', 'R', or None. Only
+    /P and /R map to the FT8 r1-bit mechanism (packjt77.f90); any other
+    suffix or prefix is handled as a non-standard callsign instead."""
+    call = call.strip().upper()
+    if call.endswith('/P'):
+        return call[:-2], 'P'
+    if call.endswith('/R'):
+        return call[:-2], 'R'
+    return call, None
+
+
+def _fits_standard(base_call):
+    """Whether base_call (/P /R already stripped) fits the 6-character
+    standard c28 field."""
+    if base_call in ("CQ", "DE", "QRZ"):
+        return True
+    try:
+        _packcall(base_call)
+        return True
+    except ValueError:
+        return False
 
 
 def _encode_c28(call):
@@ -267,7 +311,17 @@ def _encode_c28(call):
         return 0
     if call == "QRZ":
         return 1
-    return _STD_CALL_OFFSET + _packcall(call)
+    base, _suffix = _split_pr_suffix(call)
+    try:
+        return _STD_CALL_OFFSET + _packcall(base)
+    except ValueError:
+        # Compound/prefixed call (e.g. "WX/XX0XXX") or one too long for the
+        # 6-character field (e.g. "XX0XXXXX"): encode as a hash reference
+        # instead of raising. Round-trips only if the receiving station
+        # already has this exact text cached (from an earlier CQ or
+        # pack77_nonstandard message in this exchange) - the same
+        # convention real WSJT-X relies on.
+        return _NTOKENS + _ihashcall(call, 22)
 
 
 def _encode_g15(grid_or_report):
@@ -330,9 +384,78 @@ def _int_to_bits(x, nbits):
     return [(x >> (nbits - 1 - i)) & 1 for i in range(nbits)]
 
 
+def _pack_nonstandard_call(call):
+    """Packs a full callsign into 58 bits, 11 characters base-38 (MSB
+    first). Inverse of the decode loop in
+    ham_audio/src/decode/unpack.rs::unpack_nonstandard."""
+    call = call.strip().upper()
+    if len(call) > 11:
+        raise ValueError(f"callsign too long for nonstandard pack (max 11 chars): {call!r}")
+    n = 0
+    for ch in call.ljust(11):
+        j = _ALPHA38.find(ch)
+        if j < 0:
+            raise ValueError(f"bad character in callsign {call!r}: {ch!r}")
+        n = n * 38 + j
+    return n
+
+
+def pack77_nonstandard(call_to, call_de, report_or_grid):
+    """FT8 Type 4 (i3=4) message: carries ONE full non-standard callsign
+    (compound/prefixed, or too long for the 6-char standard field) as free
+    text, plus a 12-bit hash reference to the other callsign. Field layout
+    matches ham_audio/src/decode/unpack.rs::unpack_nonstandard exactly:
+        h12(12) | c58(58) | iflip(1) | nrpt(2) | icq(1) | i3(3) = 77 bits
+
+    Protocol limitation (not an implementation gap): report_or_grid here
+    can only be "" / "RRR" / "RR73" / "73" - this message type has no field
+    for an actual SNR report or grid. Exchanging a real report/grid with an
+    already-announced non-standard callsign goes through pack77() instead,
+    which hash-references it inside a standard (i3=1) message.
+    """
+    call_to_u = call_to.strip().upper()
+    call_de_u = call_de.strip().upper()
+    rg = (report_or_grid or "").strip().upper()
+    nrpt = {"": 0, "RRR": 1, "RR73": 2, "73": 3}.get(rg)
+    if nrpt is None:
+        raise ValueError(
+            f"nonstandard-call message cannot carry report/grid {report_or_grid!r} "
+            f"(only blank/RRR/RR73/73)")
+
+    icq = (call_to_u == "CQ")
+    if icq:
+        full_call, other_call, iflip = call_de_u, None, False
+    else:
+        to_base, _ = _split_pr_suffix(call_to_u)
+        de_base, _ = _split_pr_suffix(call_de_u)
+        to_std = _fits_standard(to_base)
+        de_std = _fits_standard(de_base)
+        if to_std and not de_std:
+            full_call, other_call, iflip = call_de_u, call_to_u, False
+        elif de_std and not to_std:
+            full_call, other_call, iflip = call_to_u, call_de_u, True
+        else:
+            raise ValueError(
+                "pack77_nonstandard needs exactly one non-standard callsign "
+                f"(call_to={call_to_u!r}, call_de={call_de_u!r})")
+
+    h12 = 0 if other_call is None else _ihashcall(other_call, 12)
+    c58 = _pack_nonstandard_call(full_call)
+
+    bits = []
+    bits += _int_to_bits(h12, 12)
+    bits += _int_to_bits(c58, 58)
+    bits += [1 if iflip else 0]
+    bits += _int_to_bits(nrpt, 2)
+    bits += [1 if icq else 0]
+    bits += _int_to_bits(4, 3)  # i3
+    assert len(bits) == 77
+    return bits
+
+
 def pack77(call_to, call_de, report_or_grid, r_flag=False):
     """
-    Standardowa wiadomosc FT8 Type 1: c28 r1 c28 r1 R1 g15 i3 = 77 bit.
+    Standardowa wiadomosc FT8 Type 1/2: c28 r1 c28 r1 R1 g15 i3 = 77 bit.
     UWAGA: i3 jest na KONCU (ostatnie 3 bity), NIE na poczatku!
     Zweryfikowane przeciwko prawdziwemu ft8code.exe (WSJT-X) dla
     "G0XYZ K1ABC FN43": real bits[74:77] = i3 = '001' (i3=1, Standard msg),
@@ -340,8 +463,34 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
     call_to: callsign odbiorcy (lub 'CQ')
     call_de: Twoj callsign (np. 'XX0XXX')
     report_or_grid: grid (np. 'KO02'), raport (-15/R-09), lub RRR/RR73/73
+
+    Non-standard callsigns (compound/prefixed like "WX/XX0XXX", or too long
+    for the 6-char field like "XX0XXXXX"): if report_or_grid is something
+    Type 4 can carry (blank/RRR/RR73/73), dispatches to
+    pack77_nonstandard() instead, which transmits the full callsign text.
+    Otherwise falls back to hash-referencing the non-standard callsign
+    inside this Type 1/2 message - see _encode_c28.
     """
-    i3 = 1
+    to_base, to_suffix = _split_pr_suffix(call_to)
+    de_base, de_suffix = _split_pr_suffix(call_de)
+    if not (_fits_standard(to_base) and _fits_standard(de_base)):
+        rg_check = (report_or_grid or "").strip().upper()
+        if call_to.strip().upper() == "CQ" and rg_check not in ("", "RRR", "RR73", "73"):
+            # A CQ from a non-standard callsign has no grid field at all in
+            # either message type - drop it rather than blocking the CQ.
+            print(f"[ft8] Ostrzezenie: CQ ze znakiem niestandardowym {call_de!r} "
+                  f"nie moze zawierac gridu — pomijam {report_or_grid!r}")
+            rg_check = ""
+        if rg_check in ("", "RRR", "RR73", "73"):
+            return pack77_nonstandard(call_to, call_de, rg_check)
+        # else: report/grid must go out - fall through to hash-referenced
+        # Type 1/2 below (works only if the callsign was already announced
+        # earlier in this exchange).
+
+    # /P and /R share ONE i3 value for the whole message (both r1 bits mean
+    # the same suffix) - mixing /P on one call and /R on the other in the
+    # same message isn't representable, same limitation real WSJT-X has.
+    i3 = 2 if (to_suffix == 'P' or de_suffix == 'P') else 1
     c28_1 = _encode_c28(call_to)
     c28_2 = _encode_c28(call_de)
     g15, r_flag_from_text = _encode_g15(report_or_grid)
@@ -352,9 +501,9 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
 
     bits = []
     bits += _int_to_bits(c28_1, 28)
-    bits += [0]  # r1 (flaga /R dla call_to) - nieobslugiwane
+    bits += [1 if to_suffix else 0]  # r1 for call_to (/P or /R, per i3 above)
     bits += _int_to_bits(c28_2, 28)
-    bits += [0]  # r1 (flaga /R dla call_de)
+    bits += [1 if de_suffix else 0]  # r1 for call_de
     bits += [1 if r_flag else 0]  # R1
     bits += _int_to_bits(g15, 15)
     bits += _int_to_bits(i3, 3)
