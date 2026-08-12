@@ -158,9 +158,9 @@ async function haltTx() {
 }
 
 function stopTx() {
-  // Lokalne wylaczenie TX — reset stanu
-  _txActive = false;
-  _ft8TxAbort = true;
+  // Local TX abort UI reset. The actual abort is handled server-side
+  // (ft8_tx_stop message -> self._ft8_tx_abort in webapp.py); this just
+  // clears the highlighted macro button.
   document.querySelectorAll('.wj-tx-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('wj-halt-tx-btn');
   if (btn) btn.style.background = '';
@@ -826,8 +826,16 @@ function _renderRxFreqPanel() {
     el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
     return;
   }
-  const matches = _decodes.filter(d =>
-    d.deltaFreq !== undefined && Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ);
+  // Hold TX (isTxFrozen) intentionally keeps the TX frequency apart from
+  // the RX marker (RX follows the correspondent, TX stays put) — so own
+  // transmissions always pass the filter while Hold TX is active, even
+  // when their deltaFreq is outside RX_FREQ_TOLERANCE_HZ of the RX marker.
+  const txHeld = window.WSJTXScope?.isTxFrozen?.();
+  const matches = _decodes.filter(d => {
+    if (d.deltaFreq === undefined) return false;
+    if (Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ) return true;
+    return d.is_tx && txHeld;
+  });
   if (!matches.length) {
     el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
     return;
@@ -900,12 +908,19 @@ function _selectRow(el, idx) {
 // DWIE osobne kopie i tylko jedna z nich zamrazala raport, wiec podglad pod
 // przyciskiem migotal/zmienial sie co dekod mimo ze faktyczna transmisja
 // poprawnie trzymala jedna, zamrozona wartosc przez cale QSO.
-// ZAMROZONY raport: gdy QSO aktywne i backend zamrozil raport, uzyj GO (nie
-// _lastDxSnr, ktory zmienia sie co dekod = "bzdury"). Spojnosc z eterem/
-// logiem. Poza QSO (reczne makro przed startem) — biezacy _lastDxSnr.
+// ZAMROZONY raport: gdy QSO aktywne, pokazuj WYLACZNIE potwierdzona przez
+// backend zamrozona wartosc (albo neutralny placeholder do czasu az sie
+// pojawi) - NIGDY _lastDxSnr w tej fazie. _lastDxSnr to SNR z OSTATNIO
+// KLIKNIETEGO wiersza dekodu, ktory podczas pelnej automatyki (Call 1st,
+// nikt nie klika recznie) jest zupelnie niepowiazany z biezacym partnerem
+// - dawalo to wiarygodnie wygladajaca, ale przypadkowa liczbe zanim
+// backend zdazyl zamrozic prawdziwy raport (np. w fazie wysylania
+// wlasnego Tx1/grida, przed otrzymaniem raportu od partnera). Poza
+// aktywnym QSO (reczne makro przed startem automatyki) — biezacy
+// _lastDxSnr nadal ma sens, bo to jedyne dostepne zrodlo.
 function _macro3Report() {
-  if (_frozenRstSent && _autoQsoState && _autoQsoState !== 'IDLE') {
-    return _frozenRstSent;  // zamrozona wartosc (np. "+03")
+  if (_autoQsoState && _autoQsoState !== 'IDLE') {
+    return _frozenRstSent || '+00';
   }
   const snr = _lastDxSnr != null ? _lastDxSnr : 0;
   const sign = snr >= 0 ? '+' : '-';
