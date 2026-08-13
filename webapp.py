@@ -471,6 +471,7 @@ class App:
         # zeby wiedziec kiedy zatrzymac.
         self._ft8_rx_owner_uid: str | None = None
         self._last_auto_tx_key = None
+        self._last_auto_tx_action = None  # dict ostatnio wyslanej wiadomosci auto-QSO, do retransmisji
         self._pre_pcm_cache = None  # (call_to, call_de, report, pcm_bytes, duration)  # dedup auto-TX: (call_to, report_or_grid)
         self._tx_watchdog_task = None  # asyncio Task auto-off PTT
         self._tune_stop = False  # przerywa Tune tone
@@ -5682,9 +5683,10 @@ class App:
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_abort_auto_qso":
-            # Reczny "skip" — operator nie chce czekac na 60s stall-timeout
-            # (patrz is_stalled w qso_engine.py), tylko od razu porzuca
-            # biezaca stacje i przechodzi do nastepnej z kolejki Call 1st.
+            # Reczny "skip" — operator nie chce czekac na automatyczne
+            # wyczerpanie limitu retransmisji (should_give_up w
+            # qso_engine.py), tylko od razu porzuca biezaca stacje i
+            # przechodzi do nastepnej z kolejki Call 1st.
             print(f"[autoqso] Reczne przerwanie QSO z {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
             self._ft8_tx_abort = True
@@ -6037,7 +6039,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-11-NONSTANDARD-CALLSIGN-TX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-11-RETRANSMIT-RETRY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6355,20 +6357,41 @@ class App:
                     await self.hub.broadcast({"type": "auto_qso_queue",
                                                "queue": list(self._qso_engine.queue),
                                                "active": self._qso_engine.partner_call})
-                # Partner utkniętego QSO przestal odpowiadac (QSB, zaczal inne
-                # QSO, wylaczyl automat) — bez tej kontroli silnik zostawal w
-                # stanie aktywnym W NIESKONCZONOSC, blokujac Call 1st dla
-                # kolejnych stacji z kolejki (byly tylko cicho dopisywane,
-                # nigdy nie startowane — objaw "automat nie reaguje na
-                # kolejna stacje").
-                if self._qso_engine.is_stalled(60.0):
-                    print(f"[autoqso] {self._qso_engine.partner_call} nie "
-                          f"odpowiada >60s — porzucam QSO")
-                    self._qso_engine.abort_qso()
-                    self._qso_period_locked = False
-                    await self.hub.broadcast({"type": "auto_qso_status",
-                                               "state": "IDLE", "partner": None})
-                    await self._advance_auto_qso_queue()
+                # Real WSJT-X/JTDX resend whatever message matches the
+                # current QSO state on EVERY TX period (process_Auto /
+                # genStdMsgs in mainwindow.cpp) - if the partner hasn't
+                # replied, the SAME message goes out again automatically,
+                # because the state didn't advance. Our engine is
+                # event-driven (reacts only to a new incoming decode), so
+                # it needs this explicit check instead: one lost
+                # transmission (routine under QSB) used to mean total
+                # silence until a 60s give-up. It now retransmits the last
+                # sent message and only gives up after a bounded retry
+                # count - JTDX has the same optional feature (default
+                # off, 3-5 tries when enabled); ours is always on because
+                # Call 1st runs unattended and must free up for the next
+                # queued station.
+                _retry_period_s = 2 * (ft4_encoder.FT4_SLOT_TIME
+                                        if self._ft8_decode_mode == "FT4" else 15.0)
+                _max_retries = 4
+                if self._qso_engine.should_retransmit(_retry_period_s):
+                    if self._qso_engine.should_give_up(_max_retries):
+                        print(f"[autoqso] {self._qso_engine.partner_call} nie "
+                              f"odpowiada po {_max_retries} probach — porzucam QSO")
+                        self._qso_engine.abort_qso()
+                        self._qso_period_locked = False
+                        await self.hub.broadcast({"type": "auto_qso_status",
+                                                   "state": "IDLE", "partner": None})
+                        await self._advance_auto_qso_queue()
+                    elif self._last_auto_tx_action:
+                        self._qso_engine.note_retry()
+                        print(f"[autoqso] Brak odpowiedzi od "
+                              f"{self._qso_engine.partner_call} — powtarzam "
+                              f"(proba {self._qso_engine.retry_count}/{_max_retries}): "
+                              f"{self._last_auto_tx_action['call_to']} "
+                              f"{self._last_auto_tx_action['call_de']} "
+                              f"{self._last_auto_tx_action.get('report_or_grid')}")
+                        asyncio.create_task(self._send_auto_tx(self._last_auto_tx_action))
                 return
 
             if result.get("action") == "enqueue":
@@ -6563,6 +6586,12 @@ class App:
             print(f"[autoqso] Duplikat TX {tx_key} — ignoruje")
             return
         self._last_auto_tx_key = tx_key
+
+        # Zapamietaj DOKLADNIE co wyslalismy i kiedy - _process_auto_qso
+        # uzywa tego do ewentualnej retransmisji (should_retransmit),
+        # jesli partner nie odpowie na czas.
+        self._last_auto_tx_action = dict(action)
+        self._qso_engine.record_tx_sent()
 
         # Wygeneruj PCM PRZED uruchomieniem TX task — eliminuje ~500ms opoznienia DT
         ct, cd, rg, rf = (action["call_to"], action["call_de"],

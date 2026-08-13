@@ -303,6 +303,8 @@ class QsoEngine:
         self.partner_report_recv = None   # raport KTORY MY otrzymalismy od partnera
         self.started_at = None
         self.last_activity_at = None
+        self.last_tx_at = None    # kiedy OSTATNI RAZ wyslalismy cokolwiek w tym QSO
+        self.retry_count = 0      # ile razy powtorzylismy ostatnia wiadomosc bez odpowiedzi
         self.queue = []   # lista callsignow oczekujacych w kolejce (FIFO), wypelniana CQ-odpowiedziami
         self._queue_seen = set()  # zapobiega duplikatom w kolejce
 
@@ -344,6 +346,8 @@ class QsoEngine:
         self.partner_report_recv = None
         self.started_at = time.time()
         self.last_activity_at = self.started_at
+        self.last_tx_at = None
+        self.retry_count = 0
         self._queue_seen.discard(self.partner_call)
         self.queue = [c for c in self.queue if c != self.partner_call]
         if initial_decode is not None:
@@ -358,6 +362,8 @@ class QsoEngine:
         self.partner_grid = None
         self.partner_report_sent = None
         self.partner_report_recv = None
+        self.last_tx_at = None
+        self.retry_count = 0
 
     def enqueue_caller(self, callsign: str):
         """Dodaje stacje do kolejki "Call 1st" (odpowiedziala na nasze CQ,
@@ -453,8 +459,12 @@ class QsoEngine:
                 return {'action': 'enqueue', 'call_de': call_de}
             return None  # w trakcie innego QSO — czeka w kolejce na pozniej
 
-        # Wiadomosc OD AKTUALNEGO PARTNERA QSO — przetworz wg maszyny stanow
+        # Wiadomosc OD AKTUALNEGO PARTNERA QSO — przetworz wg maszyny stanow.
+        # Partner faktycznie odpowiada, wiec zerujemy licznik powtorzen (patrz
+        # note_retry/should_give_up) — nastepna cisza z jego strony dostaje
+        # znowu pelna pule prob.
         self.last_activity_at = time.time()
+        self.retry_count = 0
 
         if parsed['is_73']:
             # Partner konczy QSO — wysylamy nasze 73 (jesli jeszcze nie bylo)
@@ -582,13 +592,44 @@ class QsoEngine:
     def is_active(self):
         return self.state not in (ST_IDLE, ST_DONE)
 
-    def is_stalled(self, timeout_s: float) -> bool:
-        """Czy aktywne QSO nie ma zadnej aktywnosci partnera dluzej niz
-        timeout_s sekund. Partner mogl zniknac (QSB, zaczal inne QSO,
-        wylaczyl automat) - bez tej kontroli silnik zostaje w stanie
-        aktywnym W NIESKONCZONOSC, co blokuje Call 1st dla kolejnych
-        stacji w kolejce (nowi wolajacy sa tylko cicho dopisywani do
-        kolejki, bo auto-start wymaga is_active()==False)."""
-        if not self.is_active() or self.last_activity_at is None:
+    def record_tx_sent(self):
+        """Wywolywane przez webapp.py zaraz po faktycznym zaplanowaniu
+        transmisji (pierwsze wyslanie LUB powtorka) - ustawia punkt
+        odniesienia dla should_retransmit()."""
+        self.last_tx_at = time.time()
+
+    def should_retransmit(self, period_s: float) -> bool:
+        """Czy minelo juz co najmniej jedno pelne okno TX (period_s) od
+        naszej ostatniej transmisji bez zadnej nowej odpowiedzi partnera w
+        miedzyczasie - czyli czy pora powtorzyc ostatnia wiadomosc.
+
+        Real WSJT-X/JTDX (patrz process_Auto/genStdMsgs w mainwindow.cpp)
+        NIE ma osobnego mechanizmu "powtorki" - po prostu wysyla wiadomosc
+        pasujaca do aktualnego stanu na KAZDYM swoim oknie TX, wiec jesli
+        stan sie nie zmienil (partner nie odpowiedzial), ta sama wiadomosc
+        wychodzi ponownie automatycznie. Nasz silnik jest zdarzeniowy
+        (reaguje tylko na nowy dekod), wiec potrzebuje tego jawnego
+        sprawdzenia zamiast bezwarunkowego okresowego nadawania - bez
+        niego jedna zgubiona transmisja (normalne przy QSB) konczyla sie
+        cisza zamiast powtorki, ktora prawdziwy WSJT-X/JTDX wysylaby
+        automatycznie."""
+        if not self.is_active() or self.last_tx_at is None:
             return False
-        return (time.time() - self.last_activity_at) > timeout_s
+        return (time.time() - self.last_tx_at) >= period_s
+
+    def note_retry(self):
+        """Wywolywane TUZ PRZED faktyczna retransmisja (nie przy pierwszym
+        wyslaniu) - zwieksza licznik prob dla should_give_up()."""
+        self.retry_count += 1
+
+    def should_give_up(self, max_retries: int) -> bool:
+        """Czy wyczerpalismy limit powtorzen bez odpowiedzi partnera.
+
+        JTDX ma analogiczny, ale DOMYSLNIE WYLACZONY licznik (np.
+        SeqSentRReportCounter, domyslna wartosc 3-5 prob, ale flaga
+        wlaczajaca go jest false) - bez recznego wlaczenia prawdziwy
+        WSJT-X/JTDX probuje w nieskonczonosc, bo operator patrzy na ekran
+        i moze sam zdecydowac kiedy przerwac. Nasz automat dziala bez
+        nadzoru (Call 1st ma przejsc do kolejnej stacji w kolejce), wiec
+        limit jest u nas WLACZONY na stale, w przeciwienstwie do JTDX."""
+        return self.retry_count >= max_retries

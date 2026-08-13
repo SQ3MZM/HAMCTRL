@@ -313,24 +313,37 @@ def test_reset_between_qso():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 10. STALL / GIVE-UP — partner przestaje odpowiadac w trakcie QSO
+# 10. RETRANSMISJA / GIVE-UP — partner przestaje odpowiadac w trakcie QSO
 # ════════════════════════════════════════════════════════════════════════════
-def test_stall_giveup():
-    section("Porzucenie utknietego QSO (is_stalled)")
+def test_retransmit_and_giveup():
+    section("Retransmisja ostatniej wiadomosci i porzucenie po limicie prob")
     eng = QsoEngine("SQ3MZM", "JO82")
 
-    check(eng.is_stalled(60.0) is False, "IDLE: nigdy nie jest 'stalled'")
+    check(eng.should_retransmit(30.0) is False, "IDLE: nigdy nie trzeba retransmitowac")
 
     eng.start_qso("HB9CNU", parse_message("SQ3MZM HB9CNU JN37"))
     check(eng.state == ST_REPORT_SENT, "Po starcie z gridem partnera: REPORT_SENT")
-    check(eng.is_stalled(60.0) is False, "Zaraz po aktywnosci: jeszcze nie stalled")
+    check(eng.should_retransmit(30.0) is False, "Przed pierwsza transmisja: nic do powtorzenia")
 
-    eng.last_activity_at -= 61.0  # symuluj 61s ciszy od partnera
-    check(eng.is_stalled(60.0) is True, "Po >60s ciszy partnera: stalled")
-    check(eng.is_stalled(120.0) is False, "Wieksze okno tolerancji: jeszcze nie stalled")
+    eng.record_tx_sent()
+    check(eng.should_retransmit(30.0) is False, "Zaraz po wyslaniu: za wczesnie na powtorke")
+
+    eng.last_tx_at -= 31.0  # symuluj 31s bez odpowiedzi partnera
+    check(eng.should_retransmit(30.0) is True, "Po pelnym okresie ciszy: pora powtorzyc")
+
+    check(eng.should_give_up(4) is False, "retry_count=0: jeszcze nie poddajemy sie")
+    for expected in (1, 2, 3, 4):
+        eng.note_retry()
+        check(eng.retry_count == expected, f"note_retry: licznik = {expected}")
+    check(eng.should_give_up(4) is True, "Po 4 probach (limit=4): poddajemy sie")
+
+    # Odpowiedz partnera zeruje licznik prob (dostal sygnal, warto sprobowac dalej)
+    _dispatch(eng, "SQ3MZM HB9CNU -12", snr=-8)
+    check(eng.retry_count == 0, "Odpowiedz partnera zeruje retry_count")
 
     eng.abort_qso()
-    check(eng.is_stalled(60.0) is False, "Po abort: znow IDLE, nie stalled")
+    check(eng.should_retransmit(30.0) is False, "Po abort: znow IDLE, nic do powtorzenia")
+    check(eng.retry_count == 0, "Po abort: licznik prob zresetowany")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -384,7 +397,7 @@ def main():
     test_partner_report_last_value()
     test_queue()
     test_reset_between_qso()
-    test_stall_giveup()
+    test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()
 
     print("\n" + "═" * 56)

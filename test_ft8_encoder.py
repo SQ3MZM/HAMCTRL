@@ -66,6 +66,28 @@ def test_pr_suffix():
           "/P na call_to (nie tylko call_de) dziala tak samo")
 
 
+def test_swaziland_guinea_workarounds():
+    section("Historyczne wyjatki pack28 (3DA0 Eswatini, 3X Gwinea)")
+    # Jednokierunkowe podstawienie z prawdziwego WSJT-X/JTDX - dzieki niemu
+    # znak pakuje sie jako standardowy (typ 1, z gridem) zamiast wpadac w
+    # wolniejsza sciezke niestandardowa (typ 4, bez gridu). Brak odwrocenia
+    # przy odbiorze to nie nasz blad - dokladnie tak samo dziala prawdziwy
+    # WSJT-X: "3DA0RS" jest odbierane jako "3D0RS" przez KAZDA stacje.
+    d = roundtrip("CQ", "3DA0RS", "JO72")
+    check(d["i3"] == 1, "3DA0RS: pakuje sie jako standardowy typ 1 (nie hash/typ 4)")
+    check(d["call_de"] == "3D0RS", "3DA0RS: podstawienie 3DA0->3D0 zgodne z WSJT-X")
+    check(d["report_or_grid"] == "JO72", "3DA0RS: grid przenoszony (typ 1 to umozliwia)")
+
+    d = roundtrip("CQ", "3XY1AB", "JO72")
+    check(d["i3"] == 1, "3XY1AB: pakuje sie jako standardowy typ 1")
+    check(d["call_de"] == "QY1AB", "3XY1AB: podstawienie 3X->Q zgodne z WSJT-X")
+
+    # 3X + cyfra (nie litera) na 3 pozycji juz normalnie pasuje do formatu
+    # standardowego - podstawienie NIE powinno sie tu zadzialac.
+    d = roundtrip("CQ", "3X2CD", "JO72")
+    check(d["call_de"] == "3X2CD", "3X2CD: bez modyfikacji, juz standardowy format")
+
+
 def test_nonstandard_prefix_call():
     section("Znak zlozony z prefiksem (WX/SQ3MZM) - typ i3=4")
     d = roundtrip("CQ", "WX/SQ3MZM", "")
@@ -130,6 +152,7 @@ def main():
 
     test_standard_baseline()
     test_pr_suffix()
+    test_swaziland_guinea_workarounds()
     test_nonstandard_prefix_call()
     test_nonstandard_long_call()
     test_mixed_qso_sequence()

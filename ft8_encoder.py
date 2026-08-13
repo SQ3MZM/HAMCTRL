@@ -233,6 +233,16 @@ def _charn_inv_suffix(ch):
 
 def _packcall(call):
     call = call.strip().upper()
+    # Historical WSJT-X pack28 work-arounds for two DXCC prefixes whose
+    # call-area digit falls outside the two positions this packing
+    # supports. One-way, not reversible on decode - matches real
+    # WSJT-X/JTDX exactly (no corresponding unpack-side reversal there
+    # either): once packed, "3DA0RS" is genuinely decoded as "3D0RS" by
+    # every receiving station, not just ours.
+    if call.startswith("3DA0"):
+        call = "3D0" + call[4:]
+    elif call.startswith("3X") and len(call) > 2 and call[2].isalpha():
+        call = "Q" + call[2:]
     if len(call) >= 2 and call[1].isdigit() and not (len(call) >= 3 and call[2].isdigit()):
         call = ' ' + call
     call = call.ljust(6)
