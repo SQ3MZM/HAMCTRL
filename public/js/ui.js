@@ -986,6 +986,7 @@ window.UI = {
   buildModeGrid, buildBandGrid, updateBandButtons,
   updateTxMeter, setTxMeter,
   initCanvases,
+  getBandName,
 };
 
 // Alias globalny

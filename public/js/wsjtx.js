@@ -11,21 +11,37 @@ const S = window.AppState;
 let _decodes     = [];
 let _allDecodes  = [];
 let _myCall      = '';
-let _workedCalls = new Set(); // znaki z logu QSO
+let _workedCalls = new Set(); // klucze CALL|BAND|MODE z logu QSO — kazde pasmo/tryb to osobna lacznosc
 let _hideWorked  = false;     // filtr — ukryj juz zaliczone
 
-// Zaladuj znaki z logu (co 60s i przy starcie)
+function _workedKey(call, band, mode) {
+  return `${(call||'').toUpperCase()}|${(band||'').toUpperCase()}|${(mode||'').toUpperCase()}`;
+}
+
+// Zaladuj znaki z logu (co 60s i przy starcie). Uzywa /api/qsolog/calls
+// (SELECT DISTINCT call+band+mode, bez capu na liczbe wpisow) zamiast
+// /api/qsolog, ktore ma twardy limit per<=200 po stronie backendu — przy
+// wiekszym logu starsze lacznosci znikaly z oznaczania jako zrobione.
+// Band+mode w kluczu, bo "kazde pasmo (i FT8 vs FT4) to nowa lacznosc":
+// stacja zrobiona na 40m nie powinna gasnac na 20m.
 async function _loadWorkedCalls() {
   try {
     const token = localStorage.getItem('token') || '';
-    const r = await fetch('/api/qsolog?per=9999&sort=date&dir=desc', {
+    const r = await fetch('/api/qsolog/calls', {
       headers: token ? {'Authorization': `Bearer ${token}`} : {}
     });
     const d = await r.json();
-    _workedCalls = new Set((d.qsos || []).map(q => (q.call||'').toUpperCase()));
+    _workedCalls = new Set((d.calls || []).map(q => _workedKey(q.call, q.band, q.mode)));
   } catch(e) {}
 }
 setInterval(_loadWorkedCalls, 60000);
+
+// Czy dany znak byl juz zrobiony na AKTUALNYM pasmie/trybie (nie globalnie).
+function _isWorkedHere(call) {
+  if (!call) return false;
+  const band = window.UI?.getBandName ? window.UI.getBandName(S.freq) : '';
+  return _workedCalls.has(_workedKey(call, band, _decodeMode));
+}
 let _myGrid      = '';
 let _status      = { running: false, transmit: false, decoding: false };
 let _clockTimer  = null;
@@ -666,16 +682,16 @@ function _classify(message) {
   if (/\bRR73\b|\b73\b/.test(m)) return 'wj-73';
   const dx = (document.getElementById('wj-dx-call')?.value||'').toUpperCase();
   if (dx && m.startsWith(dx)) return 'wj-dx';
-  // Sprawdz czy znak juz w logu
+  // Sprawdz czy znak juz zrobiony na TYM pasmie/trybie
   const call = _extractCall(m);
-  if (call && _workedCalls.has(call)) return 'wj-worked';
+  if (_isWorkedHere(call)) return 'wj-worked';
   return '';
 }
 
 function _isHidden(message) {
   if (!_hideWorked) return false;
   const call = _extractCall(message.toUpperCase());
-  return call && _workedCalls.has(call);
+  return _isWorkedHere(call);
 }
 
 function _extractGrid(msg) {

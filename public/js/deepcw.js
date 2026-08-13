@@ -166,7 +166,11 @@ function handleText(msg1, msg2) {
 // user ma swoj cluster). Znak z bazy kolorujemy PEWNIE; przepracowany innym
 // odcieniem — operator od razu widzi czy warto wolac.
 let _knownCalls  = new Set();
-let _workedCalls = new Set();
+let _workedCalls = new Set(); // klucze CALL|BAND — kazde pasmo to nowa lacznosc
+
+function _workedKeyCW(call, band) {
+  return `${(call||'').toUpperCase()}|${(band||'').toUpperCase()}`;
+}
 
 async function refreshKnownCalls() {
   try {
@@ -177,7 +181,12 @@ async function refreshKnownCalls() {
       fetch('/api/qsolog/calls',       {headers: hdr}).then(r => r.json()).catch(() => ({})),
     ]);
     if (k.calls) _knownCalls  = new Set(k.calls.map(c => c.toUpperCase()));
-    if (w.calls) _workedCalls = new Set(w.calls.map(c => c.toUpperCase()));
+    // w.calls to lista {call, mode, band} (patrz qso_db.py::worked_calls) —
+    // NIE lista stringow. c.toUpperCase() na obiekcie rzucalo TypeError,
+    // polykane przez catch(e){} ponizej, wiec _workedCalls nigdy sie nie
+    // wypelnial i szarzenie "juz w logu" bylo martwe. Band w kluczu, zeby
+    // stacja zrobiona na jednym pasmie nie gasla jako dupe na innym.
+    if (w.calls) _workedCalls = new Set(w.calls.map(c => _workedKeyCW(c.call, c.band)));
   } catch(e) {}
 }
 
@@ -237,7 +246,7 @@ function _colorize(text) {
     const color = COLORS[TU];
     if (color) {
       result += `<span style="color:${color};font-weight:bold;">${_esc(token)}</span>`;
-    } else if (_workedCalls.has(TU)) {
+    } else if (_workedCalls.has(_workedKeyCW(TU, window.UI?.getBandName?.(window.AppState?.freq)))) {
       // ZNAK JUZ PRZEPRACOWANY — szary, zeby nie kusil (dupe)
       result += `<span style="color:#888;font-weight:bold;" title="juz w logu">`
               + `${_esc(token)}</span>`;
