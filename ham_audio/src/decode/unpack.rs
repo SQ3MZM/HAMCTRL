@@ -76,8 +76,27 @@ fn unpack_c28(c28: u32) -> String {
     if c28 == 0 { return "DE".to_string(); }
     if c28 == 1 { return "QRZ".to_string(); }
     if c28 == NBASE_CQ { return "CQ".to_string(); }
-    if c28 >= 3 && c28 < 3 + 1_000_000 {
-        return format!("CQ_{}", c28 - 3);
+    // Two distinct CQ-suffix ranges (packjt77.f90 unpack28), not one raw
+    // number as previously coded here. Confirmed against real captured
+    // traffic: c28 values that fall in the second range decode a real word
+    // ("QRP", "POTA", "SOTA", ...), not a numeric id - the previous
+    // single-range version printed that word's numeric encoding instead of
+    // the word, e.g. "CQ_327404" instead of "CQ POTA".
+    if c28 >= 3 && c28 <= 1002 {
+        // 3-digit numeric CQ suffix (contest/exchange number), e.g. "CQ_042"
+        return format!("CQ_{:03}", c28 - 3);
+    }
+    if c28 >= 1003 && c28 <= 532443 {
+        // 4-character text modifier, base-27 (space + A-Z, no digits)
+        const ALPHA27: [u8; 27] = *b" ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let mut n = c28 - 1003;
+        let i1 = (n / (27 * 27 * 27)) as usize; n -= i1 as u32 * 27 * 27 * 27;
+        let i2 = (n / (27 * 27)) as usize;      n -= i2 as u32 * 27 * 27;
+        let i3 = (n / 27) as usize;             n -= i3 as u32 * 27;
+        let i4 = n as usize;
+        let modifier: String = [i1, i2, i3, i4].iter()
+            .map(|&i| ALPHA27[i] as char).collect();
+        return format!("CQ {}", modifier.trim());
     }
     if c28 >= NTOKENS && c28 < NTOKENS + 4_194_304 {
         let h = c28 - NTOKENS;
@@ -292,6 +311,40 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
         r_flag: false,
         message,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpack_c28;
+
+    // Regression test for a real bug found by comparing decode output
+    // against a WSJT-X reference on a captured band recording: c28 values
+    // in the alphanumeric CQ-modifier range (packjt77.f90 unpack28,
+    // 1003..=532443) were being printed as a raw decimal number
+    // ("CQ_327404") instead of decoded as the 4-character word it actually
+    // represents ("CQ POTA"). Values below cross-checked by hand against
+    // the base-27 (space+A-Z) encoding.
+    #[test]
+    fn cq_modifier_decodes_as_word_not_raw_number() {
+        assert_eq!(unpack_c28(1003 + 12895), "CQ QRP");
+        assert_eq!(unpack_c28(1003 + 326404), "CQ POTA");
+        assert_eq!(unpack_c28(1003 + 385453), "CQ SOTA");
+    }
+
+    #[test]
+    fn cq_numeric_suffix_still_decodes_as_number() {
+        // 3-digit numeric CQ suffix range (contest/exchange number) is
+        // unaffected by the modifier-range fix - still "CQ_NNN".
+        assert_eq!(unpack_c28(3), "CQ_000");
+        assert_eq!(unpack_c28(1002), "CQ_999");
+    }
+
+    #[test]
+    fn cq_special_tokens_unaffected() {
+        assert_eq!(unpack_c28(0), "DE");
+        assert_eq!(unpack_c28(1), "QRZ");
+        assert_eq!(unpack_c28(2), "CQ");
+    }
 }
 
 fn format_message(call_to: &str, call_de: &str, rg: &str) -> String {
