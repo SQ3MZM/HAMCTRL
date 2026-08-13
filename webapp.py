@@ -470,6 +470,7 @@ class App:
         # naraz moze dekodowac (backend jest global), ale musimy wiedziec KTO
         # zeby wiedziec kiedy zatrzymac.
         self._ft8_rx_owner_uid: str | None = None
+        self._autoqso_uid: str | None = None  # operator ktory zainicjowal biezace CQ/auto-QSO
         self._last_auto_tx_key = None
         self._last_auto_tx_action = None  # dict ostatnio wyslanej wiadomosci auto-QSO, do retransmisji
         self._pre_pcm_cache = None  # (call_to, call_de, report, pcm_bytes, duration)  # dedup auto-TX: (call_to, report_or_grid)
@@ -5300,6 +5301,26 @@ class App:
             if not call_to or not call_de or not report:
                 await ws.send_json({"type": "ft8_tx_error", "error": "Brak callTo/callDe/report"})
                 return
+            # Radio lock: tylko operator trzymajacy radio (lub admin) moze
+            # nadawac FT8 - ten sam warunek co dla recznego PTT (elif t ==
+            # "ptt" powyzej). Bez tego kazdy polaczony klient (nawet w
+            # trybie ogladania, bez locka) mogl wywolac realne TX poprzez
+            # WS, calkowicie omijajac system wlasnosci radia.
+            _sender = self.online_users.get(ws, {})
+            _sender_uid = _sender.get("user_id", "")
+            if self.radio_lock["user_id"] and not self._user_has_lock(_sender_uid) and role != "admin":
+                _holder = self.radio_lock["callsign"] or self.radio_lock["username"] or "?"
+                await self.hub.broadcast({"type": "toast", "msg": f"⛔ FT8 TX zablokowany — radio ma {_holder}", "level": "error"})
+                return
+            # Sledz KTO ostatnio inicjowal FT8 TX - potrzebne (a) do auto-zapisu
+            # zakonczonych QSO do wlasciwego dziennika, (b) jako siatka
+            # bezpieczenstwa w _ft8_tx_sequence_inner (kontynuacja automatyki
+            # ma sie zatrzymac jesli radio zostalo w miedzyczasie przejete
+            # przez kogos innego). Aktualizowane dla KAZDEGO wywolania, nie
+            # tylko CQ - wczesniej reczne wywolanie stacji (bez CQ) zostawialo
+            # to pole nietkniete/przestarzale.
+            if _sender_uid:
+                self._autoqso_uid = _sender_uid
             # Jesli podano audioFreq — nadpisz TX freq PRZED enkodowaniem.
             # Uzywane przez Hound mode ktory nadaje na roznych freq (CQ wolanie >1000Hz,
             # potem R+RPT w slocie Foxa 300-540 Hz). Nie respektujemy self._ft8_tx_frozen
@@ -5611,6 +5632,13 @@ class App:
             user_info = self.online_users.get(ws, {})
             user_call = user_info.get("callsign", "").strip().upper()
             user_uid  = user_info.get("user_id")
+            # Radio lock: tylko operator trzymajacy radio (lub admin) moze
+            # startowac automatyczne QSO - patrz identyczny warunek w
+            # "ft8_tx" powyzej.
+            if self.radio_lock["user_id"] and not self._user_has_lock(user_uid) and role != "admin":
+                _holder = self.radio_lock["callsign"] or self.radio_lock["username"] or "?"
+                await self.hub.broadcast({"type": "toast", "msg": f"⛔ FT8 TX zablokowany — radio ma {_holder}", "level": "error"})
+                return
             # Zapamietaj uid operatora - potrzebny do AUTO-ZAPISU QSO do jego
             # dziennika przy zakonczeniu (qso_complete).
             self._autoqso_uid = user_uid
@@ -5975,10 +6003,21 @@ class App:
         PTT ON -> stream audio (kawalki 20ms przez feed_tx_pcm) -> PTT OFF.
         Uruchamiane jako osobny task (asyncio.create_task), nie blokuje WS loopa.
         """
-        # Sprawdz blokade radia — tylko aktywny operator lub admin moze TX
-        if self.radio_lock["user_id"]:
-            # Znajdz sender_uid z aktualnego kontekstu — jesli FT8 nie ma uid, pomijamy
-            pass
+        # Radio lock, siatka bezpieczenstwa dla JUZ TRWAJACEJ automatyki
+        # (retransmisje, kontynuacja QSO, kolejka Call 1st) - te wywolania
+        # nie maja pojedynczego "nadawcy" WS do sprawdzenia, wiec porownujemy
+        # z zapamietanym _autoqso_uid (operator ktory faktycznie zainicjowal
+        # to QSO/CQ - patrz "ft8_tx"/"ft8_start_auto_qso" powyzej, gdzie
+        # rzeczywisty check "czy sender trzyma locka" juz zablokowal
+        # niepowolane ROZPOCZECIE transmisji). Jesli radio zostalo w
+        # miedzyczasie przejete przez KOGOS INNEGO (nie zwolnione - to jest
+        # w porzadku, zwykly brak locka nie blokuje), zatrzymaj automatyke
+        # zamiast nadawac bez nadzoru operatora ktory je zaczal.
+        if (self.radio_lock["user_id"] and self._autoqso_uid and
+                self.radio_lock["user_id"] != self._autoqso_uid):
+            print(f"[ft8] TX wstrzymany — radio przejal inny operator "
+                  f"({self.radio_lock.get('callsign') or self.radio_lock.get('username')})")
+            return
         # Blokada TX na niedozwolonym pasmie
         if not self._is_band_allowed():
             await self.hub.broadcast({"type": "toast", "msg": "⛔ FT8 TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})
@@ -6039,7 +6078,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-11-RETRANSMIT-RETRY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-11-FT8-RADIOLOCK-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
