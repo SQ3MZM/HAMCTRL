@@ -74,10 +74,20 @@ class Ft8RustReceiver:
                     msg = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if not self._enabled:
-                    continue
                 if msg.get("type") == "heartbeat":
                     continue  # ignoruj heartbeat
+                # Diagnostyczne typy (startup_stats/decode_stats/pass_stats)
+                # ida do kolejki NIEZALEZNIE od self._enabled - to tylko info
+                # do logu (rayon_threads, timing), nie wynik dekodowania.
+                # startup_stats leci RAZ, od razu po polaczeniu TCP - jesli
+                # w tym momencie self._enabled jeszcze nie zdazylo zostac
+                # ustawione na True (wyscig ze startem serwera), stary kod
+                # cicho gubil ta linie na zawsze (polaczenie jest jednorazowe
+                # per uruchomienie ham_audio.exe) - stąd "nic nie ma" mimo
+                # ze Rust na pewno ja wyslal.
+                is_diag = msg.get("type") in ("startup_stats", "decode_stats", "pass_stats")
+                if not self._enabled and not is_diag:
+                    continue
                 try:
                     self._queue.put_nowait(msg)
                 except asyncio.QueueFull:
