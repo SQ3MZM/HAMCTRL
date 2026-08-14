@@ -528,6 +528,8 @@
       <div id="wj-clock-s" style="font-family:var(--mono);font-size:18px;color:#fff;min-width:22px;text-align:right;">0</div>
     </div>
     <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
+    <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;"
+         title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
     <div style="flex:1"></div>
     <span id="wj-de-call" style="font-family:var(--mono);font-size:12px;color:#8be;">DE: --</span>
     <span id="wj-de-grid" style="font-family:var(--mono);font-size:11px;color:rgba(136,187,238,0.6);">--</span>
@@ -2398,8 +2400,8 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608130001"></script>
-<script src="js/wsjtx_scope.js?v=202606250002"></script>
+<script src="js/wsjtx.js?v=202608130003"></script>
+<script src="js/wsjtx_scope.js?v=202608130001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
 <script src="js/waterfall.js?v=202606250001"></script>

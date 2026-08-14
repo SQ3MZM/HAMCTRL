@@ -58,6 +58,16 @@ const DRAG_HIT_PX = 8; // promien (w px logicznych CSS, nie urzadzenia) wykrywan
 let _needsRender = false;
 let _rafStarted = false;
 
+// Palette Adjust (REF/ZERO/GAIN) — patrz komentarz przy uPaletteRef w
+// fragment shaderze. Wartosci domyslne = no-op wzgledem bazowej palety.
+let paletteRef  = 0.15;
+let paletteZero = 0.0;
+let paletteGain = 1.0;
+
+function setPaletteReference(v) { paletteRef  = v; _requestRender(); }
+function setPaletteZero(v)      { paletteZero = v; _requestRender(); }
+function setPaletteGain(v)      { paletteGain = v; _requestRender(); }
+
 // Paleta w stylu WSJT-X/JTDX: ciemny granat (cisza/szum) -> niebieski ->
 // cyjan -> zielony -> zolty -> bialy (silne sygnaly). Wieksza czesc zakresu
 // (szum tla) zostaje ciemna i stonowana, tylko silne sygnaly robia sie jasne.
@@ -120,6 +130,9 @@ uniform float uAspectPx;
 uniform float uAspectPxY;
 uniform float uPeriodBoundaryRow;
 uniform float uHasPeriodBoundary;
+uniform float uPaletteRef;
+uniform float uPaletteZero;
+uniform float uPaletteGain;
 
 void main() {
   float rowsFilled = min(uRowsFilled, uMaxRows);
@@ -156,7 +169,19 @@ void main() {
   float v1 = texture2D(uData, vec2(vUv.x, (texRow1 + 0.5) / uMaxRows)).r;
   float v = mix(v0, v1, frac);
 
-  vec3 color = texture2D(uPalette, vec2(v, 0.5)).rgb;
+  // Palette Adjust (REF/ZERO/GAIN), w stylu WSJT-X. Przy domyslnych
+  // wartosciach (ref=0.15, zero=0, gain=1.0) to no-op — v przechodzi bez
+  // zmian, wiec baseline wyglada dokladnie tak jak przed dodaniem tych
+  // suwakow. REF: przesuniecie jasnosci wzgledem wbudowanego punktu
+  // odniesienia palety (0.15, tam gdzie PALETTE_STOPS ma "typowy szum").
+  // ZERO: odcina dol (przycina slabe sygnaly do czerni). GAIN: kontrast
+  // wzgledem srodka zakresu.
+  float vAdj = v + (uPaletteRef - 0.15);
+  vAdj = max(0.0, vAdj - uPaletteZero);
+  vAdj = (vAdj - 0.5) * uPaletteGain + 0.5;
+  vAdj = clamp(vAdj, 0.0, 1.0);
+
+  vec3 color = texture2D(uPalette, vec2(vAdj, 0.5)).rgb;
 
   // Cienka linia pozioma na granicy okresu dekodowania (xx:00/15/30/45 dla
   // FT8, co 7.5s dla FT4) — informuje ze ponizej tej linii zaczyna sie NOWE
@@ -250,6 +275,9 @@ function _initGL() {
     uAspectPxY: gl.getUniformLocation(prog, 'uAspectPxY'),
     uPeriodBoundaryRow: gl.getUniformLocation(prog, 'uPeriodBoundaryRow'),
     uHasPeriodBoundary: gl.getUniformLocation(prog, 'uHasPeriodBoundary'),
+    uPaletteRef: gl.getUniformLocation(prog, 'uPaletteRef'),
+    uPaletteZero: gl.getUniformLocation(prog, 'uPaletteZero'),
+    uPaletteGain: gl.getUniformLocation(prog, 'uPaletteGain'),
   };
 
   dataBuf = new Uint8Array(nBins * MAX_ROWS);
@@ -572,6 +600,9 @@ function _render() {
   gl.uniform1f(uLoc.uAspectPxY, canvas.height);
   gl.uniform1f(uLoc.uHasPeriodBoundary, periodBoundaryRow !== null ? 1.0 : 0.0);
   gl.uniform1f(uLoc.uPeriodBoundaryRow, periodBoundaryRow !== null ? periodBoundaryRow : 0.0);
+  gl.uniform1f(uLoc.uPaletteRef, paletteRef);
+  gl.uniform1f(uLoc.uPaletteZero, paletteZero);
+  gl.uniform1f(uLoc.uPaletteGain, paletteGain);
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
@@ -580,5 +611,6 @@ function onSplitStatus(msg) { /* split status - obsluzone przez wsjtx.js */ }
 
 window.WSJTXScope = { init, onWaterfallData, onTxFreqUpdate, onRxFreqUpdate, onSplitStatus,
                         setRxFreq, setTxFreqManual, setRxFreqManual, rxEqTx, getRxFreq, getTxFreq, isTxFrozen,
-                        toggleTxFreeze, setScopeDecodeMode };
+                        toggleTxFreeze, setScopeDecodeMode,
+                        setPaletteReference, setPaletteZero, setPaletteGain };
 })();

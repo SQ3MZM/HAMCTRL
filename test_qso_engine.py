@@ -284,8 +284,9 @@ def test_queue():
     eng.enqueue_caller("SP1AAA")  # duplikat
     check(eng.queue.count("SP1AAA") == 1, "Brak duplikatow w kolejce")
 
-    nxt = eng.pop_next_from_queue()
+    nxt, nxt_epoch = eng.pop_next_from_queue()
     check(nxt == "SP1AAA", "Pop: FIFO (najpierw SP1AAA)")
+    check(nxt_epoch is None, "Pop: brak recv_epoch gdy nie podano przy enqueue")
 
     ok = eng.remove_from_queue("SP2BBB")
     check(ok and "SP2BBB" not in eng.queue, "Remove: usuwa z kolejki")
@@ -296,6 +297,39 @@ def test_queue():
     check(eng.queue == [], "Clear: oproznia cala kolejke")
     eng.enqueue_caller("SP3CCC")  # po clear stacja moze wrocic (nie jest "widziana")
     check(eng.queue == ["SP3CCC"], "Clear: resetuje tez dedup (_queue_seen)")
+
+
+def test_queue_recv_epoch():
+    # Regresja 2026-08-13: _advance_auto_qso_queue w webapp.py wywolywal
+    # _send_auto_tx dla stacji wywolanej z kolejki BEZ partner_decode, wiec
+    # nigdy nie przeliczal periodu TX dla tej konkretnej stacji — dziedziczyl
+    # przypadkowy period zostawiony po POPRZEDNIM QSO. Losowo (gdy parzystosc
+    # sie nie zgadzala) nadawalismy w oknie partnera zamiast wlasnym, co
+    # gwarantowalo brak odpowiedzi. Fix: kolejka pamieta recv_epoch dekodu,
+    # ktory dodal kazda stacje, zeby po pop_next_from_queue() mozna bylo
+    # poprawnie wyliczyc period (patrz _period_from_epoch w webapp.py).
+    section("Kolejka Call 1st: recv_epoch do wyliczenia periodu TX")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.enqueue_caller("SP1AAA", recv_epoch=1000.5)
+    eng.enqueue_caller("SP2BBB", recv_epoch=1015.7)
+
+    nxt, nxt_epoch = eng.pop_next_from_queue()
+    check(nxt == "SP1AAA" and nxt_epoch == 1000.5,
+          "Pop: zwraca recv_epoch zapamietany przy enqueue")
+
+    nxt2, nxt2_epoch = eng.pop_next_from_queue()
+    check(nxt2 == "SP2BBB" and nxt2_epoch == 1015.7,
+          "Pop: kazda stacja ma WLASNY recv_epoch (nie dzieli sie ze wspolna)")
+
+    empty, empty_epoch = eng.pop_next_from_queue()
+    check(empty is None and empty_epoch is None, "Pop z pustej kolejki: (None, None)")
+
+    eng.enqueue_caller("SP3CCC", recv_epoch=2000.0)
+    eng.remove_from_queue("SP3CCC")
+    eng.enqueue_caller("SP3CCC", recv_epoch=2050.0)  # wraca z NOWYM czasem
+    _, re_epoch = eng.pop_next_from_queue()
+    check(re_epoch == 2050.0,
+          "Remove+re-enqueue: stary recv_epoch nie zostaje jako smiec")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -396,6 +430,7 @@ def main():
     test_frozen_report()
     test_partner_report_last_value()
     test_queue()
+    test_queue_recv_epoch()
     test_reset_between_qso()
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()

@@ -414,6 +414,23 @@ function _initSplitResizer() {
 // Proxy do WSJTXScope (przyciski w HTML wywoluja WSJTX.*, logika jest w scope module)
 function toggleTxFreeze() { window.WSJTXScope?.toggleTxFreeze(); }
 
+// Przywroc suwaki Palette Adjust (REF/ZERO/GAIN) do wartosci domyslnych —
+// zarowno w DOM (input + wyswietlana liczba), jak i w samym wodospadzie.
+function resetPaletteAdjust() {
+  const defaults = [
+    ['wj-palette-ref',  15,  '15',  v => window.WSJTXScope?.setPaletteReference(v / 100)],
+    ['wj-palette-zero', 0,   '0',   v => window.WSJTXScope?.setPaletteZero(v / 100)],
+    ['wj-palette-gain', 100, '1.0', v => window.WSJTXScope?.setPaletteGain(v / 100)],
+  ];
+  for (const [inputId, rawVal, label, apply] of defaults) {
+    const input = document.getElementById(inputId);
+    if (input) input.value = rawVal;
+    const valEl = document.getElementById(inputId + '-val');
+    if (valEl) valEl.textContent = label;
+    apply(rawVal);
+  }
+}
+
 // FAKE SPLIT (Rig Split): wlacz/wylacz przesuwanie VFO by audio bylo ~1500Hz
 // (pelna moc, brak splatterow przy krawedziach filtra). Steruje radiem podczas
 // TX — wlaczaj swiadomie. Stan zapamietany w configu (przetrwa restart).
@@ -1034,10 +1051,42 @@ function _macroNumberForText(text) {
   return 2;
 }
 
+// Licznik oczekiwania na okno TX. Wczesniej jedynym sygnalem byl znikajacy
+// toast (parka sekund) — po jego zniknieciu przez reszte kilkunastu sekund
+// oczekiwania UI nie dawalo ZADNEGO widocznego znaku ze cos sie dzieje, wiec
+// wygladalo na zawieszone i operator recznie przerywal ("abort") zanim TX
+// w ogole ruszyl. Trwaly, odliczajacy wskaznik (wj-tx-wait-status) zamiast
+// tego, zeby bylo jasno widac ze to normalne odliczanie do granicy okna
+// 15s/7.5s UTC, nie blad.
+let _txWaitTimer = null;
+let _txWaitTarget = 0; // Date.now() (ms) w ktorym TX ma faktycznie wystartowac
+
+function _stopTxWaitCountdown() {
+  if (_txWaitTimer) { clearInterval(_txWaitTimer); _txWaitTimer = null; }
+  const el = document.getElementById('wj-tx-wait-status');
+  if (el) el.style.display = 'none';
+}
+
+function _startTxWaitCountdown(waitSeconds, text) {
+  _txWaitTarget = Date.now() + waitSeconds * 1000;
+  const el = document.getElementById('wj-tx-wait-status');
+  if (!el) return;
+  el.style.display = '';
+  const tick = () => {
+    const remain = Math.max(0, (_txWaitTarget - Date.now()) / 1000);
+    el.textContent = `⏳ TX za ${remain.toFixed(1)}s — ${text}`;
+    if (remain <= 0) _stopTxWaitCountdown();
+  };
+  tick();
+  if (_txWaitTimer) clearInterval(_txWaitTimer);
+  _txWaitTimer = setInterval(tick, 200);
+}
+
 function _onFt8TxStatus(d) {
   const btns = document.querySelectorAll('.wj-tx-btn');
   if (d.status === 'waiting') {
     window.UI?.showToast(`Czekam na okno 15s (${(d.waitSeconds||0).toFixed(1)}s) — ${d.text}`);
+    _startTxWaitCountdown(d.waitSeconds||0, d.text);
     // Podswietl JUZ na etapie oczekiwania (nie dopiero przy starcie nadawania),
     // zeby bylo widac co poleci w eter zanim faktycznie zacznie sie PTT —
     // to wlasnie najbardziej przydaje sie w automatyce, gdzie oczekiwanie na
@@ -1047,13 +1096,18 @@ function _onFt8TxStatus(d) {
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'starting') {
     window.UI?.showToast(`Nadaje: ${d.text}`);
+    _stopTxWaitCountdown();
+    const el = document.getElementById('wj-tx-wait-status');
+    if (el) { el.style.display = ''; el.textContent = `📡 NADAJE — ${d.text}`; }
     const n = _macroNumberForText(d.text);
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'error') {
     window.UI?.showToast(`Blad TX FT8: ${d.error}`);
+    _stopTxWaitCountdown();
     btns.forEach(b=>b.classList.remove('active'));
   } else if (d.status === 'done') {
+    _stopTxWaitCountdown();
     btns.forEach(b=>b.classList.remove('active'));
   }
 }
@@ -1583,6 +1637,7 @@ window.WSJTX = {
   _selectRow, addLog, deleteLog, exportAdif, loadMore, loadLog,
   toggleHound, houndStop, houndConfirm,
   removeFromQueue, clearAutoQsoQueue, skipAutoQso,
+  resetPaletteAdjust,
 };
 
 })();

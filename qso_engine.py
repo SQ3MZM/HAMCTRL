@@ -307,6 +307,12 @@ class QsoEngine:
         self.retry_count = 0      # ile razy powtorzylismy ostatnia wiadomosc bez odpowiedzi
         self.queue = []   # lista callsignow oczekujacych w kolejce (FIFO), wypelniana CQ-odpowiedziami
         self._queue_seen = set()  # zapobiega duplikatom w kolejce
+        # call -> recvEpoch (czas ODBIORU dekodu, ktory dodal te stacje do
+        # kolejki). Potrzebne zeby po pop_next_from_queue() webapp.py mogl
+        # poprawnie wyliczyc period TX (patrz _period_from_epoch w webapp.py) -
+        # bez tego auto-advance z kolejki nadawal z DOWOLNYM/starym periodem
+        # zostawionym po poprzednim QSO, co losowo kolidowalo z partnerem.
+        self._queue_recv_epoch = {}
 
     # ── Zarzadzanie QSO ──────────────────────────────────────────────────────
 
@@ -350,6 +356,7 @@ class QsoEngine:
         self.retry_count = 0
         self._queue_seen.discard(self.partner_call)
         self.queue = [c for c in self.queue if c != self.partner_call]
+        self._queue_recv_epoch.pop(self.partner_call, None)
         if initial_decode is not None:
             return self.on_decode(initial_decode)
         return None
@@ -365,10 +372,12 @@ class QsoEngine:
         self.last_tx_at = None
         self.retry_count = 0
 
-    def enqueue_caller(self, callsign: str):
+    def enqueue_caller(self, callsign: str, recv_epoch: float = None):
         """Dodaje stacje do kolejki "Call 1st" (odpowiedziala na nasze CQ,
         ale aktualnie prowadzimy inne QSO lub jeszcze nie zaczelismy).
-        FIFO, bez duplikatow."""
+        FIFO, bez duplikatow. recv_epoch (czas odbioru dekodu ktory ja
+        dodal) jest zapamietywany do pozniejszego wyliczenia periodu TX
+        przy pop_next_from_queue()."""
         callsign = callsign.upper()
         # Porownanie po BASE call zeby XX0XXX/M nie zostal zdupikowany
         # gdy XX0XXX jest juz partnerem (albo odwrotnie).
@@ -378,14 +387,20 @@ class QsoEngine:
             return
         self._queue_seen.add(callsign)
         self.queue.append(callsign)
+        if recv_epoch is not None:
+            self._queue_recv_epoch[callsign] = recv_epoch
 
     def pop_next_from_queue(self):
-        """Zwraca i usuwa pierwsza stacje z kolejki (FIFO), lub None jesli pusta."""
+        """Zwraca (callsign, recv_epoch) pierwszej stacji z kolejki (FIFO) i
+        usuwa ja, lub (None, None) jesli pusta. recv_epoch to None gdy stacja
+        trafila do kolejki bez znacznika czasu (nie powinno sie zdarzac w
+        normalnym uzyciu, ale wywolujacy musi to obsluzyc)."""
         if not self.queue:
-            return None
+            return None, None
         callsign = self.queue.pop(0)
         self._queue_seen.discard(callsign)
-        return callsign
+        recv_epoch = self._queue_recv_epoch.pop(callsign, None)
+        return callsign, recv_epoch
 
     def remove_from_queue(self, callsign: str) -> bool:
         """Usuwa wskazana stacje z kolejki (przycisk ✕ w UI). Zwraca True
@@ -396,6 +411,7 @@ class QsoEngine:
             return False
         self.queue = [c for c in self.queue if c != callsign]
         self._queue_seen.discard(callsign)
+        self._queue_recv_epoch.pop(callsign, None)
         return True
 
     def clear_queue(self):
@@ -406,15 +422,22 @@ class QsoEngine:
         sesji kolejka rosla i Call 1st w koncu "wyplowal" stary, nieaktualny znak."""
         self.queue = []
         self._queue_seen = set()
+        self._queue_recv_epoch = {}
 
     # ── Przetwarzanie odebranych wiadomosci ──────────────────────────────────
 
-    def on_decode(self, parsed: dict):
+    def on_decode(self, parsed: dict, recv_epoch: float = None):
         """
         Wywolywane dla KAZDEGO sparsowanego dekodowania (patrz parse_message).
         Zwraca dict {'action': 'reply'|'enqueue'|None, 'call_to', 'call_de',
         'report_or_grid', 'r_flag'} opisujacy co zrobic, lub None jesli ta
         wiadomosc nie wymaga zadnej reakcji.
+
+        recv_epoch: czas ODBIORU tego dekodu (webapp.py's recvEpoch) — jesli
+        stacja trafia do kolejki Call 1st, jest zapamietywany razem z nia
+        (patrz enqueue_caller), zeby po pop_next_from_queue() webapp.py mogl
+        poprawnie wyliczyc period TX dla tej stacji zamiast dziedziczyc
+        przypadkowy period po poprzednim QSO.
 
         Logika rozpoznawania:
         - Jesli to CQ od kogos: jesli IDLE -> nic (UI moze pokazac liste CQ,
@@ -451,7 +474,7 @@ class QsoEngine:
             # Zawsze faktycznie dodajemy do kolejki (nie tylko sygnalizujemy) —
             # tak ze nawet jesli webapp.py zignoruje zwrocony 'enqueue' i nie
             # odpali natychmiast start_qso, stacja i tak nie zostanie zgubiona.
-            self.enqueue_caller(call_de)
+            self.enqueue_caller(call_de, recv_epoch)
             if self.state == ST_IDLE:
                 # Nikt nie jest aktualnie obslugiwany — sygnalizujemy 'enqueue'
                 # zeby webapp.py mogl (wg ustawien Call 1st) NATYCHMIAST wywolac

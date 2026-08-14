@@ -6078,7 +6078,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-11-FT8-RADIOLOCK-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-13-DECODE-STATS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6340,7 +6340,7 @@ class App:
         i kolejka nie jest pusta, startuje QSO z nastepna stacja. Wywolujacy
         MUSI wczesniej ustawic silnik z powrotem w IDLE (abort_qso())."""
         if self._auto_call_1st and self._qso_engine.queue:
-            next_call = self._qso_engine.pop_next_from_queue()
+            next_call, next_recv_epoch = self._qso_engine.pop_next_from_queue()
             print(f"[autoqso] Nastepna stacja z kolejki: {next_call}")
             # UWAGA: tu NIE mamy initial_decode (ta stacja odpowiedziala
             # wczesniej, nie w tym samym cyklu) — startujemy normalnie
@@ -6350,7 +6350,20 @@ class App:
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
                                        "partner": next_call})
-            asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action()))
+            # BEZ tego _send_auto_tx dziedziczyl self._ft8_tx_period
+            # zostawiony po POPRZEDNIM QSO zamiast wyliczyc wlasciwy dla TEJ
+            # stacji — jesli parzystosci sie nie zgadzaly, nadawalismy w
+            # oknie partnera (kolizja, brak odpowiedzi) losowo co drugie
+            # auto-advance z kolejki Call 1st. next_recv_epoch to czas
+            # odbioru dekodu ktory dodal ta stacje do kolejki (patrz
+            # enqueue_caller/_period_from_epoch) — moze byc None jesli
+            # stacja trafila do kolejki przed ta poprawka (restart serwera),
+            # wtedy _send_auto_tx bezpiecznie zostawia period bez zmian.
+            self._qso_period_locked = False
+            _partner_decode = ({"recvEpoch": next_recv_epoch}
+                                if next_recv_epoch is not None else None)
+            asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action(),
+                                                    partner_decode=_partner_decode))
 
     async def _process_auto_qso(self, m: dict):
         """
@@ -6385,7 +6398,7 @@ class App:
             if parsed.get('call_de', '').upper() == self._qso_engine.my_call.upper():
                 return
 
-            result = self._qso_engine.on_decode(parsed)
+            result = self._qso_engine.on_decode(parsed, recv_epoch=m.get("recvEpoch"))
             if result is None:
                 # Widocznosc w UI: on_decode() mogl cicho dopisac stacje do
                 # kolejki Call 1st (bo jestesmy w trakcie innego QSO, wiec
@@ -6677,6 +6690,21 @@ class App:
                 if msg is None:
                     continue
 
+                if msg.get("type") == "decode_stats":
+                    # Diagnostyka: CALKOWITY czas dekodowania w Rust
+                    # (decode_ft8/decode_ft4, ze WSZYSTKIMI przebiegami
+                    # odejmowania sygnalu) dla TEGO okna. Od 2026-08-14 Rust
+                    # wysyla wyniki KAZDEGO przebiegu strumieniowo, zaraz po
+                    # dekodowaniu+dedup, PRZED odejmowaniem sygnalu (patrz
+                    # decode_and_subtract w mod.rs) — wiec ta linia (i
+                    # decode_elapsed_s w niej) juz NIE odpowiada bezposrednio
+                    # pos_in_win pierwszych dekodow z tego okna (te docieraja
+                    # duzo wczesniej, zwykle po samym pass 0). To wciaz gorna
+                    # granica calkowitego kosztu (wszystkie przebiegi razem).
+                    print(f"[ft8dec] decode_elapsed_s={msg.get('decode_elapsed_s', 0):.3f} "
+                          f"n_results={msg.get('n_results', 0)}", flush=True)
+                    continue
+
                 if msg.get("type") != "wsjtx_decode":
                     continue
 
@@ -6697,8 +6725,20 @@ class App:
                 # log every decode compactly so the count in the log matches
                 # what the operator sees in the UI.
                 self._ft8_dbg_count = getattr(self, "_ft8_dbg_count", 0) + 1
+                # pos_in_win: gdzie w biezacym oknie 15s/7.5s wypada CHWILA
+                # ODBIORU tego dekodu od Rusta. Diagnostyka dla podejrzenia
+                # ze przetwarzanie (dekodowanie + do 3 przebiegow odejmowania
+                # sygnalu) na zatloczonym pasmie moze trwac na tyle dlugo, ze
+                # recvEpoch wpada juz w NASTEPNE okno wzgledem tego w ktorym
+                # partner faktycznie nadawal — co przesuwaloby wyliczany
+                # period TX o cala dodatkowa runde (patrz _period_from_epoch).
+                # Male pos_in_win (~0-3s) = dekod dotarl swiezo, jak oczekiwano.
+                # Duze pos_in_win (~10s+) = podejrzanie pozno, warto zbadac.
+                _win_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
+                _pos_in_win = msg["recvEpoch"] % _win_s
                 print(f"[ft8rx] dekod -> UI: {msg.get('message','?')} "
-                      f"(#{self._ft8_dbg_count}, klientow={len(self.online_users)})",
+                      f"(#{self._ft8_dbg_count}, klientow={len(self.online_users)}, "
+                      f"pos_in_win={_pos_in_win:.2f}s)",
                       flush=True)
 
                 # Broadcast do przegladarek
