@@ -254,7 +254,18 @@ fn decode_and_subtract(
                 extract_llr_ft4(&power, p)
             };
 
-            let (bits174, success, _iters) = bp_decode(&llr174, 50);
+            // JTDX's own reference decoder (ft8b.f90: max_iterations=30) uses
+            // 30, not 50 - this port had been running 67% more BP iterations
+            // than the software it's modeled after. Matters most for
+            // candidates that DON'T converge (the majority on a real band -
+            // e.g. 60 candidates searched, ~18-20 typically succeed): those
+            // run the FULL iteration budget before giving up, so this is a
+            // direct, proportional cut to the dominant cost of the
+            // par_decode phase - confirmed live (i7-3612QM, 8 rayon threads
+            // actually in use) to be ~1.05s for 60 candidates, ~7-8x the
+            // ~130-165ms measured offline, with no other explanation found
+            // (thread count, CPU affinity and power plan all ruled out).
+            let (bits174, success, _iters) = bp_decode(&llr174, 30);
             if !success { return None; }
 
             // bits174[0..91] = [data77/scrambled77 | crc14]
