@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::buffer::Ft8Buffer;
-use super::{decode_ft8, decode_ft4};
+use super::{decode_ft8, decode_ft4, DecodeResult};
 use crate::config::Config;
 
 pub type SharedConfig = Arc<RwLock<Config>>;
@@ -93,31 +93,75 @@ async fn run_loop(
             let t0 = std::time::Instant::now();
             let mode_str = decode_mode.clone();
 
-            let results = tokio::task::spawn_blocking(move || {
-                if is_ft4 { decode_ft4(&samples) } else { decode_ft8(&samples) }
-            }).await.unwrap_or_default();
+            // Stream each pass's results out to Python AS SOON AS that pass's
+            // decode+dedup is done, instead of waiting for decode_ft8/ft4 to
+            // fully return (which also includes the expensive, SIC-subtract
+            // cleanup + any later passes). Measured offline: pass 0 alone
+            // (spectrogram+candidate-search+parallel-LDPC) takes ~150-200ms
+            // on a busy window, vs ~500ms-1s+ for the full pipeline including
+            // subtraction - and pass 0 already accounts for the large
+            // majority of decodes. Subtraction only helps LATER passes find
+            // a handful of extra masked signals, so there's no reason the
+            // operator should have to wait for it before seeing/clicking a
+            // decode. See decode_and_subtract's doc comment in mod.rs.
+            //
+            // blocking_send from inside spawn_blocking (sync context) into a
+            // channel this async task drains concurrently - recv() yields
+            // each batch as soon as it's sent, it does NOT wait for the
+            // sender to be dropped/closed.
+            let (tx_batch, mut rx_batch) = tokio::sync::mpsc::channel::<Vec<DecodeResult>>(8);
 
+            let decode_handle = tokio::task::spawn_blocking(move || {
+                let mut on_pass = move |batch: &[DecodeResult]| {
+                    let _ = tx_batch.blocking_send(batch.to_vec());
+                };
+                if is_ft4 { decode_ft4(&samples, &mut on_pass) } else { decode_ft8(&samples, &mut on_pass) }
+            });
+
+            let time_str = utc_time_str();
+            while let Some(batch) = rx_batch.recv().await {
+                for r in &batch {
+                    let json = serde_json::json!({
+                        "type":           "wsjtx_decode",
+                        "timeStr":        time_str,
+                        "snr":            r.snr_db.round() as i32,
+                        "deltaTime":      ((r.time_offset_s - 0.5) * 10.0).round() / 10.0,
+                        "deltaFreq":      r.freq_hz.round() as i32,
+                        "message":        r.message,
+                        "call_to":        r.call_to,
+                        "call_de":        r.call_de,
+                        "report_or_grid": r.report_or_grid,
+                        "mode":           mode_str,
+                    });
+                    let line = format!("{}\n", json);
+                    if stream.write_all(line.as_bytes()).await.is_err() {
+                        return; // Connection lost
+                    }
+                }
+            }
+
+            let results = decode_handle.await.unwrap_or_default();
             let elapsed = t0.elapsed().as_secs_f32();
             println!("[ft8dec] decoded {} messages in {:.2}s", results.len(), elapsed);
 
-            let time_str = utc_time_str();
-            for r in &results {
-                let json = serde_json::json!({
-                    "type":           "wsjtx_decode",
-                    "timeStr":        time_str,
-                    "snr":            r.snr_db.round() as i32,
-                    "deltaTime":      ((r.time_offset_s - 0.5) * 10.0).round() / 10.0,
-                    "deltaFreq":      r.freq_hz.round() as i32,
-                    "message":        r.message,
-                    "call_to":        r.call_to,
-                    "call_de":        r.call_de,
-                    "report_or_grid": r.report_or_grid,
-                    "mode":           mode_str,
-                });
-                let line = format!("{}\n", json);
-                if stream.write_all(line.as_bytes()).await.is_err() {
-                    return; // Connection lost
-                }
+            // Wyslij czas dekodowania do Pythona jako osobna linia JSON - to
+            // idzie do TEGO SAMEGO loga co "[ft8rx] dekod -> UI: ...", ktory
+            // operator faktycznie wkleja/sprawdza. Bez tego powyzszy println!
+            // znika w OSOBNEJ konsoli ham_audio.exe (CREATE_NEW_CONSOLE w
+            // audio_rust_bridge.py), niewidocznej operatorowi razem z reszta
+            // logu. To CALKOWITY czas (wszystkie przebiegi + subtraction) -
+            // od zmiany powyzej NIE odpowiada juz bezposrednio pos_in_win
+            // pierwszych dekodow (te teraz docieraja duzo wczesniej, patrz
+            // kanal tx_batch/rx_batch powyzej), ale wciaz uzyteczne jako
+            // gorna granica calkowitego kosztu dekodowania danego okna.
+            let stats = serde_json::json!({
+                "type": "decode_stats",
+                "decode_elapsed_s": elapsed,
+                "n_results": results.len(),
+            });
+            let stats_line = format!("{}\n", stats);
+            if stream.write_all(stats_line.as_bytes()).await.is_err() {
+                return;
             }
         }
     }

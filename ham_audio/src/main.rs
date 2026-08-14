@@ -68,6 +68,15 @@ async fn main() {
         .with_env_filter("ham_audio=info")
         .init();
 
+    // Znacznik wersji — potwierdza ktora wersja kodu jest w EXE, analogicznie
+    // do "[build] webapp.py wersja BUILD-..." w webapp.py. Bez tego, po
+    // rebuildzie, nie ma jak z logu stwierdzic czy zmiana w Rust faktycznie
+    // dotarla do dzialajacego procesu (ham_audio.exe biegnie jako osobny
+    // proces w OSOBNEJ konsoli od hamctrl.exe - latwo przetestowac stara
+    // binarke myslac ze to nowa). Podbijac przy kazdej istotnej zmianie w
+    // decode/*, zwlaszcza timingowej (patrz FT8_TIME_BUDGET_S w decode/mod.rs).
+    println!("[build] ham_audio.exe wersja BUILD-2026-08-14-STREAM-PASS-RESULTS");
+
     let cfg: SharedConfig = Arc::new(RwLock::new(Config::from_env()));
     let (audio_tx, _)     = broadcast::channel::<AudioFrame>(256);
     let audio_tx          = Arc::new(audio_tx);

@@ -108,8 +108,16 @@ class RustAudioBridge:
             cwd=str(exe.parent),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0,
         )
+        # Znacznik czasu modyfikacji EXE w logu Pythona - ham_audio.exe biegnie
+        # jako osobny proces w OSOBNEJ konsoli (CREATE_NEW_CONSOLE), wiec jego
+        # wlasny "[build] ..." print (main.rs) NIE trafia do tego samego logu,
+        # ktory operator faktycznie wkleja/sprawdza. Bez tego nie ma jak z tego
+        # loga stwierdzic, czy po `cargo build` faktycznie testowana jest nowa
+        # binarka, a nie stara sprzed rebuildu.
+        import datetime as _dt
+        _mtime = _dt.datetime.fromtimestamp(exe.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[audio_bridge] Uruchomiono ham_audio.exe PID={self._proc.pid} "
-              f"(cwd={exe.parent})", flush=True)
+              f"(cwd={exe.parent}, plik zmieniony={_mtime})", flush=True)
 
         for _ in range(20):
             await asyncio.sleep(0.3)
