@@ -6690,6 +6690,18 @@ class App:
                 if msg is None:
                     continue
 
+                if msg.get("type") == "pass_stats":
+                    # Diagnostyka: czas (mierzony w Rust, od startu dekodowania
+                    # TEGO okna) do momentu gdy TA PACZKA wynikow (jeden pass,
+                    # PRZED odjeciem sygnalu) byla gotowa do wyslania. To jest
+                    # dokladnie to, co zmiana "stream pass-0 results" mialy
+                    # przyspieszyc z ~1.1s do ~150-200ms. Linia ta pojawia sie
+                    # TUZ PRZED odpowiadajacymi jej liniami
+                    # "[ft8rx] dekod -> UI: ..." dla tej samej paczki.
+                    print(f"[ft8dec] pass_elapsed_s={msg.get('pass_elapsed_s', 0):.3f} "
+                          f"n={msg.get('n', 0)}", flush=True)
+                    continue
+
                 if msg.get("type") == "decode_stats":
                     # Diagnostyka: CALKOWITY czas dekodowania w Rust
                     # (decode_ft8/decode_ft4, ze WSZYSTKIMI przebiegami
