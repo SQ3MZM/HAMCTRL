@@ -6690,6 +6690,21 @@ class App:
                 if msg is None:
                     continue
 
+                if msg.get("type") == "startup_stats":
+                    # Diagnostyka: ile watkow faktycznie uzywa rayon (pula
+                    # rownoleglego dekodowania kandydatow) i ile logicznych
+                    # rdzeni widzi system, wyslane RAZ przy kazdym polaczeniu
+                    # Rust->Python. Slaba/nieoczekiwana rownoleglosc (np.
+                    # maszyna z rdzeniami wydajnosciowymi/energooszczednymi
+                    # gdzie rayon domyslnie widzi mniej watkow niz jest
+                    # rdzeni fizycznie) to jedna z niepotwierdzonych jeszcze
+                    # hipotez dlaczego decode_elapsed_s/pass_elapsed_s nie
+                    # reaguje na kolejne poprawki - ta linia rozstrzyga to
+                    # wprost, bez zgadywania.
+                    print(f"[ft8dec] startup: rayon_threads={msg.get('rayon_threads', 0)} "
+                          f"cpus={msg.get('cpus', 0)}", flush=True)
+                    continue
+
                 if msg.get("type") == "pass_stats":
                     # Diagnostyka: czas (mierzony w Rust, od startu dekodowania
                     # TEGO okna) do momentu gdy TA PACZKA wynikow (jeden pass,
@@ -6698,8 +6713,18 @@ class App:
                     # przyspieszyc z ~1.1s do ~150-200ms. Linia ta pojawia sie
                     # TUZ PRZED odpowiadajacymi jej liniami
                     # "[ft8rx] dekod -> UI: ..." dla tej samej paczki.
+                    # spec_ms/find_cand_ms/par_decode_ms/n_cand: pelny rozklad
+                    # fazowy tego przebiegu — dodane po tym jak cztery kolejne
+                    # poprawki (streaming, cache FFT, cache LDPC, keep-alive
+                    # tokio) NIE ruszyly pass_elapsed_s na zywym sprzecie ani
+                    # trocha, wiec zgadywanie kolejnej przyczyny przestalo
+                    # miec sens — ten rozklad pokazuje z NAZWY ktora faza
+                    # faktycznie zjada czas.
                     print(f"[ft8dec] pass_elapsed_s={msg.get('pass_elapsed_s', 0):.3f} "
-                          f"n={msg.get('n', 0)}", flush=True)
+                          f"n={msg.get('n', 0)} spec_ms={msg.get('spec_ms', 0):.1f} "
+                          f"find_cand_ms={msg.get('find_cand_ms', 0):.1f} "
+                          f"par_decode_ms={msg.get('par_decode_ms', 0):.1f} "
+                          f"n_cand={msg.get('n_cand', 0)}", flush=True)
                     continue
 
                 if msg.get("type") == "decode_stats":

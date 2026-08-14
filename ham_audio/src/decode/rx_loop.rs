@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::buffer::Ft8Buffer;
-use super::{decode_ft8, decode_ft4, DecodeResult};
+use super::{decode_ft8, decode_ft4, DecodeResult, PassTiming};
 use crate::config::Config;
 
 pub type SharedConfig = Arc<RwLock<Config>>;
@@ -45,6 +45,24 @@ async fn run_loop(
     cfg:    SharedConfig,
     mut stream: TcpStream,
 ) {
+    // Sent once per connection, into the SAME shared Python log the
+    // operator pastes (ham_audio.exe's own println!s land in a SEPARATE
+    // console - see the [build] marker's comment in main.rs for why that's
+    // been a recurring blind spot). rayon::current_num_threads() also
+    // lazily initializes rayon's global pool on first call, which is fine
+    // here (decode_and_subtract's par_iter uses that same global pool).
+    // Weak/unexpected parallelism (e.g. a hybrid-CPU machine defaulting to
+    // far fewer usable threads than logical cores) is one of the remaining
+    // unconfirmed explanations for why live decode time hasn't responded
+    // to any of several targeted fixes - this makes it checkable directly
+    // instead of inferred.
+    let startup = serde_json::json!({
+        "type": "startup_stats",
+        "rayon_threads": rayon::current_num_threads(),
+        "cpus": std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
+    });
+    let _ = stream.write_all(format!("{}\n", startup).as_bytes()).await;
+
     // Align to the FT8/FT4 UTC grid. We wake shortly AFTER each window
     // boundary, then decode the window that just completed using an aligned
     // snapshot. Previously the loop woke 0.6s before the boundary and grabbed
@@ -109,35 +127,39 @@ async fn run_loop(
             // channel this async task drains concurrently - recv() yields
             // each batch as soon as it's sent, it does NOT wait for the
             // sender to be dropped/closed.
-            let (tx_batch, mut rx_batch) = tokio::sync::mpsc::channel::<(f64, Vec<DecodeResult>)>(8);
+            let (tx_batch, mut rx_batch) = tokio::sync::mpsc::channel::<(f64, PassTiming, Vec<DecodeResult>)>(8);
 
             let decode_handle = tokio::task::spawn_blocking(move || {
-                let mut on_pass = move |batch: &[DecodeResult]| {
+                let mut on_pass = move |batch: &[DecodeResult], timing: &PassTiming| {
                     // Captured HERE, on the decode thread, right when this
                     // pass's results are ready - not after the channel
                     // hand-off - so this measures the thing the streaming
                     // change above is supposed to have sped up: time from
                     // "window audio ready" to "this pass's results exist".
                     let pass_elapsed = t0.elapsed().as_secs_f64();
-                    let _ = tx_batch.blocking_send((pass_elapsed, batch.to_vec()));
+                    let _ = tx_batch.blocking_send((pass_elapsed, *timing, batch.to_vec()));
                 };
                 if is_ft4 { decode_ft4(&samples, &mut on_pass) } else { decode_ft8(&samples, &mut on_pass) }
             });
 
             let time_str = utc_time_str();
-            while let Some((pass_elapsed, batch)) = rx_batch.recv().await {
-                // Diagnostyka: ile czasu minelo od startu dekodowania tego
-                // okna do momentu gdy TA PACZKA wynikow (jeden pass) byla
-                // gotowa - PRZED odjeciem sygnalu. Jesli to nadal ~1s+ na
-                // zywym sprzecie mimo ze offline (ft8.wav, ten sam kod)
-                // wychodzilo ~150-200ms dla pass 0, watek dekodujacy sam w
-                // sobie jest wolniejszy live (mniej rdzeni/watkow rayon,
-                // obciazenie CPU przez rownolegle audio/CI-V) - inny problem
-                // niz kolejnosc dostarczania wynikow, ktora ta zmiana naprawia.
+            while let Some((pass_elapsed, timing, batch)) = rx_batch.recv().await {
+                // Diagnostyka: pelny rozklad fazowy tego przebiegu - cztery
+                // niezalezne poprawki (wczesniejsze dostarczanie wynikow,
+                // cache planow FFT, cache grafu LDPC, dluzszy keep-alive puli
+                // watkow tokio) NIE zmienily pass_elapsed_s na zywym sprzecie
+                // ani trocha (stale ~1.08s, niezaleznie od n_results 0-26) -
+                // zamiast zgadywac piaty raz, ten rozklad (spec_ms/
+                // find_cand_ms/par_decode_ms/n_cand) pokazuje z NAZWY, ktora
+                // faza faktycznie zjada czas na TEJ maszynie.
                 let pstats = serde_json::json!({
                     "type": "pass_stats",
                     "pass_elapsed_s": pass_elapsed,
                     "n": batch.len(),
+                    "spec_ms": timing.spec_ms,
+                    "find_cand_ms": timing.find_cand_ms,
+                    "par_decode_ms": timing.par_decode_ms,
+                    "n_cand": timing.n_cand,
                 });
                 if stream.write_all(format!("{}\n", pstats).as_bytes()).await.is_err() {
                     return;

@@ -23,6 +23,24 @@ use subtract::{bits_to_symbols_ft8, bits_to_symbols_ft4, subtract_ft8, subtract_
 use serde::Serialize;
 use rayon::prelude::*;
 
+/// Per-pass phase timing, reported alongside that pass's results via
+/// on_pass_results - see decode_ft8's doc comment. Four fixes in a row
+/// (streaming delivery, FFT-plan caching, LDPC-graph caching, tokio
+/// blocking-pool keep-alive) each targeted a DIFFERENT plausible mechanism
+/// and NONE moved the live-measured pass_elapsed_s number at all (stayed
+/// ~1.08s across all of them, regardless of n_results 0-26). That flatness
+/// pattern plus zero response to four independent fixes means guessing
+/// again isn't productive - this struct exists to make the NEXT live log
+/// show the exact phase breakdown directly instead of another single
+/// ambiguous total, so whatever is actually slow becomes visible by name.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PassTiming {
+    pub spec_ms:       f64,
+    pub find_cand_ms:  f64,
+    pub par_decode_ms: f64,
+    pub n_cand:        usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DecodeResult {
     pub freq_hz:        f32,
@@ -102,7 +120,7 @@ const FT4_TIME_BUDGET_S: f64 = 0.25;
 /// offline), instead of after the full multi-pass+subtraction budget
 /// (~500ms-1s+ measured live) - see FT8_TIME_BUDGET_S's comment for the
 /// full history of why that gap mattered.
-pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult])) -> Vec<DecodeResult> {
+pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
     let p = &FT8;
     let min_samples = (12.5 * p.sample_rate as f64) as usize;
     if audio.len() < min_samples { return vec![]; }
@@ -113,11 +131,15 @@ pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
 
     for _pass in 0..MAX_SUBTRACT_PASSES {
         if _pass > 0 && std::time::Instant::now() >= deadline { break; }
+        let t_spec = std::time::Instant::now();
         let spec = compute_spectrogram(&residual, p, 2, 2);
+        let spec_ms = t_spec.elapsed().as_secs_f64() * 1000.0;
+        let t_cand = std::time::Instant::now();
         // prog 0.4 dla nowego scoringu (ton-srednia)/srednia; stary log-scoring mial 0.15
         let candidates = find_candidates_ft8(&spec, p, 60, 0.4);
+        let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, true, noise_floor, &spec, &all_decoded, deadline, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, true, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -128,7 +150,7 @@ pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
 
 /// Decode one FT4 window (nominally 7.5s, at least 4.5s, 12000 Hz float32).
 /// See decode_ft8 for `on_pass_results`.
-pub fn decode_ft4(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult])) -> Vec<DecodeResult> {
+pub fn decode_ft4(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
     let p = &FT4;
     let min_samples = (4.5 * p.sample_rate as f64) as usize;
     if audio.len() < min_samples { return vec![]; }
@@ -139,11 +161,15 @@ pub fn decode_ft4(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
 
     for _pass in 0..MAX_SUBTRACT_PASSES {
         if _pass > 0 && std::time::Instant::now() >= deadline { break; }
+        let t_spec = std::time::Instant::now();
         let spec = compute_spectrogram(&residual, p, 2, 2);
+        let spec_ms = t_spec.elapsed().as_secs_f64() * 1000.0;
+        let t_cand = std::time::Instant::now();
         // prog 0.4 dla nowego scoringu (jak FT8)
         let candidates = find_candidates_ft4(&spec, p, 60, 0.4);
+        let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, false, noise_floor, &spec, &all_decoded, deadline, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, false, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -191,16 +217,20 @@ fn decode_and_subtract(
     spec: &Spectrogram,
     already: &[DecodeResult],
     deadline: std::time::Instant,
-    on_pass_results: &mut dyn FnMut(&[DecodeResult]),
+    spec_ms: f64,
+    find_cand_ms: f64,
+    on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming),
 ) -> Vec<DecodeResult> {
     let mode = if is_ft8 { "FT8" } else { "FT4" };
     let sample_rate = p.sample_rate;
+    let n_cand = candidates.len();
 
     // Reborrow as shared/immutable for the parallel phase - subtraction
     // (the only mutation) happens later, sequentially, once this borrow
     // and the parallel iterator over it have gone out of scope.
     let residual_ro: &[f32] = residual;
 
+    let t_par = std::time::Instant::now();
     let decoded: Vec<(Candidate, [u8; 174], DecodeResult)> = candidates
         .par_iter()
         .filter_map(|coarse_cand| {
@@ -260,6 +290,7 @@ fn decode_and_subtract(
             Some((cand, bits174, result))
         })
         .collect();
+    let par_decode_ms = t_par.elapsed().as_secs_f64() * 1000.0;
 
     // Dedup phase: cheap (just comparisons), no subtraction yet. par_iter()
     // doesn't preserve candidate order, but that's fine here - dedup is
@@ -279,7 +310,8 @@ fn decode_and_subtract(
     // Hand results to the caller NOW - see this function's doc comment for
     // why this doesn't need to wait for subtraction below.
     let results: Vec<DecodeResult> = new_decoded.iter().map(|(_, _, r)| r.clone()).collect();
-    on_pass_results(&results);
+    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand };
+    on_pass_results(&results, &timing);
 
     // Subtract each signal from the residual, so a weaker signal that was
     // overlapping it in frequency has a chance to surface on the next
