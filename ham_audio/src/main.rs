@@ -62,8 +62,32 @@ pub type SharedMixer  = Arc<Mixer>;
 pub type AudioTx      = broadcast::Sender<AudioFrame>;
 pub type AudioRx      = broadcast::Receiver<AudioFrame>;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Manual runtime build instead of #[tokio::main] to raise
+    // thread_keep_alive above tokio's default 10s. The FT8 decode window is
+    // 15s (FT4: 7.5s) and each decode's spawn_blocking call (rx_loop.rs)
+    // only occupies its blocking-pool thread for ~1s, so with the 10s
+    // default that thread sits idle for ~14s between windows - LONGER than
+    // the keep-alive - and gets reaped. The next window then has to spin up
+    // a brand new OS thread from scratch before decoding can even start.
+    // Live diagnostics (pass_elapsed_s) showed a suspiciously constant
+    // ~1.08-1.09s cost on EVERY window regardless of candidate count (even
+    // n=0, zero work) - a fixed per-window overhead independent of
+    // workload points at exactly this kind of "always pay thread-creation
+    // cost" pattern rather than anything in the decode math itself (which
+    // offline profiling, run without spawn_blocking/tokio at all, showed
+    // taking ~130-200ms of actual work). 60s keep-alive comfortably covers
+    // both window periods so the SAME blocking thread gets reused window
+    // after window instead of being torn down and recreated every time.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_keep_alive(std::time::Duration::from_secs(60))
+        .build()
+        .expect("tokio runtime build");
+    rt.block_on(async_main());
+}
+
+async fn async_main() {
     tracing_subscriber::fmt()
         .with_env_filter("ham_audio=info")
         .init();
@@ -75,7 +99,7 @@ async fn main() {
     // proces w OSOBNEJ konsoli od hamctrl.exe - latwo przetestowac stara
     // binarke myslac ze to nowa). Podbijac przy kazdej istotnej zmianie w
     // decode/*, zwlaszcza timingowej (patrz FT8_TIME_BUDGET_S w decode/mod.rs).
-    println!("[build] ham_audio.exe wersja BUILD-2026-08-14-FFT-PLAN-CACHE");
+    println!("[build] ham_audio.exe wersja BUILD-2026-08-14-BLOCKING-KEEPALIVE-60S");
 
     let cfg: SharedConfig = Arc::new(RwLock::new(Config::from_env()));
     let (audio_tx, _)     = broadcast::channel::<AudioFrame>(256);
