@@ -1,7 +1,8 @@
 /// FT8/FT4 spectrogram and candidate sync search.
 /// Port of sync.py and sync_ft4.py — vectorized Costas correlation.
 
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::num_complex::Complex;
+use super::fft_cache::cached_fft_forward;
 use super::params::{Params, FT8_COSTAS, FT4_COSTAS};
 
 /// Local search grid step counts for fine sync refinement below: the
@@ -42,8 +43,7 @@ pub fn compute_spectrogram(audio: &[f32], p: &Params, freq_osr: usize, time_osr:
     let n_samples = audio.len();
     let n_blocks = if n_samples >= n { (n_samples - n) / time_step + 1 } else { 0 };
 
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(nfft);
+    let fft = cached_fft_forward(nfft);
 
     // Hanning window
     let window: Vec<f32> = (0..n).map(|i| {
@@ -318,8 +318,7 @@ fn refine_offset(audio: &[f32], cand: &Candidate, p: &Params, costas_syms: &[(us
     let nfft = n * 4;
     let freq_step = p.sample_rate as f32 / nfft as f32;
 
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(nfft);
+    let fft = cached_fft_forward(nfft);
     let mut scratch = vec![Complex::new(0f32, 0f32); fft.get_inplace_scratch_len()];
 
     let window: Vec<f32> = (0..n).map(|i| {

@@ -4,6 +4,7 @@
 pub mod buffer;
 pub mod crc14;
 pub mod demod;
+pub mod fft_cache;
 pub mod ldpc;
 pub mod params;
 pub mod rx_loop;

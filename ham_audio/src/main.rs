@@ -75,7 +75,7 @@ async fn main() {
     // proces w OSOBNEJ konsoli od hamctrl.exe - latwo przetestowac stara
     // binarke myslac ze to nowa). Podbijac przy kazdej istotnej zmianie w
     // decode/*, zwlaszcza timingowej (patrz FT8_TIME_BUDGET_S w decode/mod.rs).
-    println!("[build] ham_audio.exe wersja BUILD-2026-08-14-PASS-STATS-DIAG");
+    println!("[build] ham_audio.exe wersja BUILD-2026-08-14-FFT-PLAN-CACHE");
 
     let cfg: SharedConfig = Arc::new(RwLock::new(Config::from_env()));
     let (audio_tx, _)     = broadcast::channel::<AudioFrame>(256);

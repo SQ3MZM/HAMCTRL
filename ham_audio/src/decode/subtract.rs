@@ -16,7 +16,8 @@
 /// reveals the weaker one on a second candidate-search pass over the
 /// residual audio.
 
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::num_complex::Complex;
+use super::fft_cache::{cached_fft_forward, cached_fft_inverse};
 use super::params::{FT8_COSTAS, FT8_GRAYMAP, FT4_COSTAS, FT4_GRAYMAP};
 
 const SAMPLES_PER_SYM_FT8: usize = 1920;
@@ -197,8 +198,7 @@ fn build_lowpass(nfft: usize) -> (Vec<Complex<f32>>, Vec<f32>) {
         endcorr[j0] = (1.0 / (1.0 - s / sumw)) as f32;
     }
 
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(nfft);
+    let fft = cached_fft_forward(nfft);
     let mut scratch = vec![Complex::new(0f32, 0f32); fft.get_inplace_scratch_len()];
     fft.process_with_scratch(&mut h, &mut scratch);
     // Not scaled by 1/nfft here - rustfft's forward/inverse pair are both
@@ -230,9 +230,8 @@ fn subtract_signal(
         }
     }
 
-    let mut planner = FftPlanner::<f32>::new();
-    let fft_fwd = planner.plan_fft_forward(nfft);
-    let fft_inv = planner.plan_fft_inverse(nfft);
+    let fft_fwd = cached_fft_forward(nfft);
+    let fft_inv = cached_fft_inverse(nfft);
     let mut scratch_f = vec![Complex::new(0f32, 0f32); fft_fwd.get_inplace_scratch_len()];
     let mut scratch_i = vec![Complex::new(0f32, 0f32); fft_inv.get_inplace_scratch_len()];
     fft_fwd.process_with_scratch(&mut cfilt, &mut scratch_f);

@@ -1,7 +1,8 @@
 /// Demodulation: extract tone powers and compute soft LLRs.
 /// Port of demod.py and demod_ft4.py.
 
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::num_complex::Complex;
+use super::fft_cache::cached_fft_forward;
 use super::params::{Params, FT8_GRAYMAP, FT4_GRAYMAP};
 use super::sync::{Candidate, Spectrogram};
 
@@ -13,8 +14,7 @@ pub fn extract_tone_power(audio: &[f32], cand: &Candidate, p: &Params) -> Vec<f3
 
     let start_sample = (cand.time_offset_s * p.sample_rate as f32) as isize;
 
-    let mut planner = FftPlanner::<f32>::new();
-    let fft = planner.plan_fft_forward(nfft);
+    let fft = cached_fft_forward(nfft);
 
     // Hanning window
     let window: Vec<f32> = (0..n).map(|i| {

@@ -2,6 +2,7 @@
 /// Direct port of ldpc_decode.py, optimized for Rust.
 
 use super::params::NM;
+use std::sync::OnceLock;
 
 const N_BITS: usize = 174;
 const N_CHECKS: usize = 83;
@@ -46,10 +47,17 @@ fn parity_ok(bits: &[u8], g: &LdpcGraph) -> bool {
     true
 }
 
+static GRAPH: OnceLock<LdpcGraph> = OnceLock::new();
+
 /// Decode LLRs (positive = bit likely 0, negative = bit likely 1).
 /// Returns (bits, success, iterations).
 pub fn bp_decode(llr_channel: &[f32; N_BITS], max_iters: usize) -> ([u8; N_BITS], bool, usize) {
-    let g = LdpcGraph::build();
+    // LdpcGraph::build() only depends on the constant NM matrix, never on
+    // input data - it was previously rebuilt (with ~500 small heap
+    // allocations for bit_checks) on EVERY call, i.e. up to 60x per decode
+    // pass, every window, forever. Built once and shared read-only across
+    // threads (rayon calls bp_decode concurrently per candidate) instead.
+    let g = GRAPH.get_or_init(LdpcGraph::build);
 
     // Q[c][pos_in_check] = message from bit to check
     let mut q = [[0f32; 7]; N_CHECKS];
