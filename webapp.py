@@ -5671,10 +5671,12 @@ class App:
             if start_result and start_result.get("action") == "reply":
                 # Klikniety dekod byl juz odpowiedzia partnera (nie CQ) -
                 # engine przeskoczyl Tx1, wysylamy od razu wlasciwy krok.
-                await self._dispatch_auto_reply(start_result, _partner_decode or {})
+                await self._dispatch_auto_reply(start_result, _partner_decode or {},
+                                                 tx_seq=self._reserve_tx_seq())
             else:
                 asyncio.create_task(self._send_auto_tx(
-                    self._qso_engine.next_tx_action(), partner_decode=_partner_decode))
+                    self._qso_engine.next_tx_action(), partner_decode=_partner_decode,
+                    tx_seq=self._reserve_tx_seq()))
 
         elif t == "ft8_queue_remove":
             # Usun stacje z kolejki "Call 1st" (przycisk ✕ na chipie w UI).
@@ -6061,7 +6063,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-SEQ-INVALIDATE-ABORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-SEQ-RESERVE-SYNC, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6383,7 +6385,8 @@ class App:
             _partner_decode = ({"recvEpoch": next_recv_epoch}
                                 if next_recv_epoch is not None else None)
             asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action(),
-                                                    partner_decode=_partner_decode))
+                                                    partner_decode=_partner_decode,
+                                                    tx_seq=self._reserve_tx_seq()))
 
     async def _process_auto_qso(self, m: dict):
         """
@@ -6464,7 +6467,8 @@ class App:
                               f"{self._last_auto_tx_action['call_to']} "
                               f"{self._last_auto_tx_action['call_de']} "
                               f"{self._last_auto_tx_action.get('report_or_grid')}")
-                        asyncio.create_task(self._send_auto_tx(self._last_auto_tx_action))
+                        asyncio.create_task(self._send_auto_tx(
+                            self._last_auto_tx_action, tx_seq=self._reserve_tx_seq()))
                 return
 
             if result.get("action") == "enqueue":
@@ -6488,7 +6492,8 @@ class App:
                     print(f"[autoqso] Auto-start QSO z {call_de} (bezczynnosc)")
                     start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
                     if start_result and start_result.get("action") == "reply":
-                        await self._dispatch_auto_reply(start_result, m)
+                        await self._dispatch_auto_reply(start_result, m,
+                                                         tx_seq=self._reserve_tx_seq())
                 await self.hub.broadcast({"type": "auto_qso_queue",
                                            "queue": list(self._qso_engine.queue),
                                            "active": self._qso_engine.partner_call})
@@ -6517,7 +6522,7 @@ class App:
                 return
 
             if result.get("action") == "reply":
-                await self._dispatch_auto_reply(result, m)
+                await self._dispatch_auto_reply(result, m, tx_seq=self._reserve_tx_seq())
 
                 if result.get("qso_complete"):
                     print(f"[autoqso] QSO z {self._qso_engine.partner_call} zakonczone (73)")
@@ -6598,9 +6603,15 @@ class App:
         except Exception as e:
             print(f"[autoqso] BLAD przetwarzania automatyki: {e}")
 
-    async def _dispatch_auto_reply(self, result: dict, m: dict):
+    async def _dispatch_auto_reply(self, result: dict, m: dict, tx_seq: int = None):
         """Podstawia zmierzony SNR (jesli wymagany) i planuje wyslanie
-        odpowiedzi wygenerowanej przez silnik QSO."""
+        odpowiedzi wygenerowanej przez silnik QSO.
+
+        tx_seq: patrz _reserve_tx_seq - MUSI byc zarezerwowany PRZEZ
+        WYWOLUJACEGO, synchronicznie, przed pierwszym await (ta metoda ma
+        wlasny await ponizej — hub.broadcast — ktory jest wlasnie takim
+        punktem gdzie inne zadanie mogloby sie wcisnac, gdyby numer byl
+        rezerwowany dopiero tutaj)."""
         if result.get("needs_measured_report"):
             result = dict(result)  # nie mutuj oryginalnego dict z silnika
             result["report_or_grid"] = self._format_report(m.get("snr_db", m.get("snr", 0)))
@@ -6620,7 +6631,7 @@ class App:
                                    "state": self._qso_engine.state,
                                    "partner": self._qso_engine.partner_call,
                                    "rstSent": rst_sent, "rstRcvd": rst_rcvd})
-        await self._send_auto_tx(result, partner_decode=m)
+        await self._send_auto_tx(result, partner_decode=m, tx_seq=tx_seq)
 
     def _period_from_epoch(self, recv_epoch, window_s: float):
         """Wylicza NASZ period (1 lub 2) TX na podstawie dokladnego
@@ -6653,16 +6664,45 @@ class App:
             return None
         return 1 if (window_idx % 2 == 0) else 2
 
-    async def _send_auto_tx(self, action: dict, partner_decode: dict = None):
+    def _reserve_tx_seq(self) -> int:
+        """Rezerwuje numer sekwencyjny SYNCHRONICZNIE, w dokladnym momencie
+        podjecia decyzji "to idzie w eter" — a NIE pozniej, wewnatrz
+        _send_auto_tx (jak poprzednio). Powod: _send_auto_tx i
+        _dispatch_auto_reply maja WLASNE punkty await (hub.broadcast,
+        generowanie PCM przez run_in_executor) — kazdy taki await pozwala
+        INNEMU, WCZESNIEJ zaplanowanemu zadaniu (retransmisja przez
+        asyncio.create_task, ktora nie jest tu awaitowana) wykonac sie w
+        miedzyczasie. Jesli numer byl przydzielany dopiero wewnatrz
+        _send_auto_tx, retransmisja mogla dostac numer NOWSZY niz w
+        rzeczywistosci pozniejsza decyzja (np. odpowiedz na dopiero co
+        odebrany raport partnera) — bo o kolejnosci decydowala wtedy
+        kolejnosc w ktorej asyncio akurat przydzielilo im czas procesora,
+        nie faktyczna kolejnosc decyzji w _process_auto_qso. Zaobserwowane
+        na zywo: stara retransmisja "JO72" (Tx1) wyszla w tym samym oknie
+        co odebrany juz raport partnera, zamiast zostac zablokowana przez
+        stale-TX-guard. Rezerwacja TUTAJ, przed jakimkolwiek await,
+        gwarantuje ze numery odzwierciedlaja PRAWDZIWA kolejnosc decyzji."""
+        self._autoqso_tx_seq += 1
+        return self._autoqso_tx_seq
+
+    async def _send_auto_tx(self, action: dict, partner_decode: dict = None, tx_seq: int = None):
         """Uruchamia wyslanie wiadomosci wygenerowanej przez automatyke QSO,
         uzywajac DOKLADNIE tej samej sciezki co reczne TX (_ft8_tx_sequence) —
         co oznacza ze respektuje synchronizacje do okna 15s, PTT, itd.
 
         Automatycznie wykrywa okno partnera i ustawia PRZECIWNY period nadawania,
         zeby nie kolidowac (jesli partner nadawal w period=1, my nadajemy w period=2).
+
+        tx_seq: numer zarezerwowany PRZEZ WYWOLUJACEGO (_reserve_tx_seq(),
+        wywolane SYNCHRONICZNIE, przed jakimkolwiek await) - jesli brak
+        (None), rezerwujemy tutaj jako siatka bezpieczenstwa, ale to juz
+        NIE gwarantuje poprawnej kolejnosci wzgledem rownolegle
+        zaplanowanych wysylek (patrz _reserve_tx_seq).
         """
         if not action:
             return
+        if tx_seq is None:
+            tx_seq = self._reserve_tx_seq()
 
         # Ustal NASZ period TX z dokladnego znacznika czasu ODBIORU dekodu
         # (recvEpoch) — patrz _period_from_epoch po wyjasnienie dlaczego to
@@ -6698,18 +6738,16 @@ class App:
         self._last_auto_tx_action = dict(action)
         self._qso_engine.record_tx_sent()
 
-        # Numer sekwencyjny TEJ konkretnej akcji — patrz stale-TX-guard w
-        # _ft8_tx_sequence_inner (tuz przed PTT) po pelne wyjasnienie. W
-        # skrocie: jesli miedzy zaplanowaniem tej wysylki a jej faktycznym
-        # PTT zdazyla zostac zlecona NOWSZA akcja (np. partner odpowiedzial
-        # zanim ta retransmisja doszla do PTT), ta stara akcja jest z
-        # definicji nieaktualna — bez wzgledu na to w jakim stanie silnik
-        # QSO akurat jest w danym momencie (pierwsza wersja tej ochrony,
-        # oparta o partner_call+is_active(), bledna blokowala WLASNIE
-        # akcje ktora legalnie konczy QSO, bo koncowe "73" samo przestawia
-        # silnik w stan DONE zanim jeszcze zdazy wyjsc w eter).
-        self._autoqso_tx_seq += 1
-        my_tx_seq = self._autoqso_tx_seq
+        # Numer sekwencyjny TEJ konkretnej akcji (zarezerwowany przez
+        # wywolujacego, patrz _reserve_tx_seq) — uzywany przez stale-TX-guard
+        # w _ft8_tx_sequence_inner tuz przed PTT: jesli miedzy zaplanowaniem
+        # tej wysylki a jej faktycznym PTT zdazyla zostac zlecona NOWSZA
+        # akcja, ta stara jest z definicji nieaktualna — bez wzgledu na to
+        # w jakim stanie silnik QSO akurat jest (pierwsza wersja tej ochrony,
+        # oparta o partner_call+is_active(), bledna blokowala WLASNIE akcje
+        # ktora legalnie konczy QSO, bo koncowe "73" samo przestawia silnik
+        # w stan DONE zanim jeszcze zdazy wyjsc w eter).
+        my_tx_seq = tx_seq
 
         # Wygeneruj PCM PRZED uruchomieniem TX task — eliminuje ~500ms opoznienia DT
         ct, cd, rg, rf = (action["call_to"], action["call_de"],
