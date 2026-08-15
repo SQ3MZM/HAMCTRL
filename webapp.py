@@ -3204,6 +3204,16 @@ class App:
         if p == "/api/ft8/halt" and method == "POST":
             self._ft8_tx_abort = True
             self._stop_cq_calling()  # zatrzymaj cykliczne CQ
+            # Patrz identyczny blok/komentarz w WS "ft8_tx_stop" powyzej —
+            # haltTx() we froncie wysyla OBA (WS + ten REST call) na kazde
+            # klikniecie HALT, wiec musi tu byc ta sama poprawka.
+            if self._qso_engine.is_active():
+                print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
+                self._qso_engine.abort_qso()
+                self._qso_period_locked = False
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": self._qso_engine.state,
+                                           "partner": None})
             if not self.rig.sim:
                 try: await self.rig.set_ptt(False)
                 except: pass
@@ -5420,11 +5430,28 @@ class App:
             self._stop_cq_calling()  # zatrzymaj tez cykliczne CQ
 
         elif t == "ft8_tx_stop":
-            # Zatrzymanie TX z frontendu (przycisk STOP, wygasniecie timera
+            # Zatrzymanie TX z frontendu (przycisk HALT, wygasniecie timera
             # bezpieczenstwa). Zatrzymuje cykliczne CQ i biezaca transmisje.
             print("[ft8] ft8_tx_stop - zatrzymuje TX i CQ")
             self._ft8_tx_abort = True
             self._stop_cq_calling()
+            # Zatrzymaj TEZ silnik automatyki QSO, nie tylko fizyczne TX —
+            # bez tego HALT przerywal jedynie biezaca transmisje audio, ale
+            # silnik (self._qso_engine) zostawal w swoim stanie (np. w
+            # trakcie rozmowy z partnerem) i przy KOLEJNYM dekodzie tej
+            # stacji (albo przy wlasnej retransmisji z timera) sam planowal
+            # NOWA transmisje — objaw: "zrobilem HALT i wyczyscilem kolejke,
+            # a automat i tak za jakis czas wypycha nadawanie z pamieci".
+            # Kolejki CELOWO nie ruszamy (do tego jest osobny przycisk
+            # "wyczysc kolejke") — HALT ma zatrzymac biezaca akcje, nie
+            # kasowac liste oczekujacych stacji.
+            if self._qso_engine.is_active():
+                print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
+                self._qso_engine.abort_qso()
+                self._qso_period_locked = False
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": self._qso_engine.state,
+                                           "partner": None})
             try:
                 if not self.rig.sim:
                     await self.rig.set_ptt(False)
@@ -6086,7 +6113,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-PERIOD-UNLOCK, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-HALT-ABORTS-AUTOQSO, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

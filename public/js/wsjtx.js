@@ -740,12 +740,15 @@ const _CQ_MODIFIERS = new Set([
 
 // Czy `s` wyglada jak modifier CQ (POTA/DX/USA itp.), nie jak callsign.
 // Ta sama heurystyka co is_cq_modifier() w qso_engine.py: whitelist LUB
-// krotki (<=3 znaki) string zlozony tylko z liter (bez cyfr — cyfra sugeruje
-// prawdziwy callsign/prefix, np. "K7RA").
+// string do 6 znakow zlozony WYLACZNIE z liter (bez cyfr). Celowo ogolne,
+// nie whitelist-only: prawdziwy znak amatorski zawsze ma cyfre, wiec kazdy
+// czysto literowy modifier do 6 znakow (BOTA/GOTA/HOTA/... - caly rodzaj
+// "*OTA" programow aktywacyjnych, nie tylko POTA/SOTA) jest bezpiecznie
+// rozpoznawany bez wymieniania kazdego z osobna.
 function _isCqModifier(s) {
   if (!s) return false;
   if (_CQ_MODIFIERS.has(s)) return true;
-  return s.length <= 3 && /^[A-Z]+$/.test(s);
+  return s.length <= 6 && /^[A-Z]+$/.test(s);
 }
 
 function _extractCall(msg) {

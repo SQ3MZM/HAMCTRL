@@ -40,6 +40,7 @@ _spec.loader.exec_module(_qe)
 
 QsoEngine = _qe.QsoEngine
 parse_message = _qe.parse_message
+is_cq_modifier = _qe.is_cq_modifier
 ST_IDLE = _qe.ST_IDLE
 ST_CALLING = _qe.ST_CALLING
 ST_REPORT_SENT = _qe.ST_REPORT_SENT
@@ -128,6 +129,29 @@ def test_parsing():
 
     check(parse_message("") is None, "Pusta wiadomosc -> None")
     check(parse_message("XYZ") is None, "Pojedynczy token -> None")
+
+    # CQ z modifierem programu aktywacyjnego (2026-08-15: front i backend
+    # traktowaly modifier jako call_de, bo "SOTA"/"POTA" (4 znaki) nie
+    # laczyly sie z heurystyka len<=3 - naprawiono do len<=6, tu blokujemy
+    # regresje na kilku z calej rodziny "*OTA", nie tylko na tych dwoch co
+    # akurat byly na sztywnej whiteliscie.
+    p = parse_message("CQ SOTA 5B4AMX KM65")
+    check(p is not None and p["call_de"] == "5B4AMX", "CQ SOTA: call_de = 5B4AMX (nie 'SOTA')")
+    check(p["cq_modifier"] == "SOTA", "CQ SOTA: modifier rozpoznany")
+
+    p = parse_message("CQ POTA W1XYZ FN42")
+    check(p is not None and p["call_de"] == "W1XYZ", "CQ POTA: call_de = W1XYZ (nie 'POTA')")
+
+    p = parse_message("CQ BOTA DL1ABC JO62")
+    check(p is not None and p["call_de"] == "DL1ABC",
+          "CQ BOTA (nie na whiteliscie): call_de = DL1ABC (nie 'BOTA') - fallback len<=6")
+    check(p["cq_modifier"] == "BOTA", "CQ BOTA: modifier rozpoznany przez fallback")
+
+    check(is_cq_modifier("SOTA"), "is_cq_modifier: SOTA (whitelist)")
+    check(is_cq_modifier("BOTA"), "is_cq_modifier: BOTA (fallback <=6 liter)")
+    check(is_cq_modifier("GOTA"), "is_cq_modifier: GOTA (fallback <=6 liter)")
+    check(not is_cq_modifier("SP3GSK"), "is_cq_modifier: SP3GSK (ma cyfre) -> NIE modifier")
+    check(not is_cq_modifier("K7RA"), "is_cq_modifier: K7RA (ma cyfre) -> NIE modifier")
 
 
 # ════════════════════════════════════════════════════════════════════════════

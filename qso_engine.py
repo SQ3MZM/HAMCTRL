@@ -98,15 +98,29 @@ def is_cq_modifier(s: str) -> bool:
     Klasyfikacja: (1) whitelist znanych modifierow, LUB
     (2) 2-6 znakow, bez cyfr (jesli ma cyfry - to raczej callsign albo prefix).
     Uwaga: to jest heurystyka - w rzadkich przypadkach cos w stylu 'K7RA'
-    zostanie zle sklasyfikowane, ale dla 99% praktyki na pasmie dziala."""
+    zostanie zle sklasyfikowane, ale dla 99% praktyki na pasmie dziala.
+
+    (2) jest CELOWO ogolna, nie kolejnym wpisem do whitelisty: prawdziwy
+    znak amatorski ZAWSZE zawiera cyfre (patrz is_valid_callsign wyzej),
+    wiec kazdy czysto literowy string do 6 znakow jest bezpiecznie
+    klasyfikowany jako modifier bez wymieniania z nazwy kazdego programu
+    aktywacyjnego osobno. Znaleziono 2026-08-15: whitelist mial explicite
+    POTA/SOTA ale NIE BOTA (Bunkers on the Air) - kod faktycznie
+    sprawdzal `len(s) <= 3`, mimo ze ten docstring od zawsze mowil "2-6" -
+    niezgodnosc kodu z opisem, nie tylko brakujacy wpis. Naprawiono przez
+    poprawienie granicy do faktycznych 6 zamiast dopisywania kolejnych
+    4-6-literowych skrotow (COTA/GOTA/HOTA/LOTA/MOTA/VOTA/WOTA/ZOTA/...) na
+    sztywno - ta sama poprawka jest zwierciedlona w _isCqModifier (JS,
+    wsjtx.js) po stronie frontu, ktory ma wlasny, mniejszy podzbior
+    whitelisty."""
     if not s:
         return False
     if s in _CQ_MODIFIERS:
         return True
-    # Fallback: krotki string bez cyfr moze byc modifierem (np. rzadki kraj)
-    # ale MUSI byc krotszy niz callsign lub dziwnego formatu.
-    # Jesli 2-3 znaki + zawiera litery i cyfry -> raczej callsign
-    if len(s) <= 3 and s.isalpha():
+    # Fallback: krotki string bez cyfr moze byc modifierem (np. rzadki kraj
+    # lub nieujety w whiteliscie program aktywacyjny) - MUSI byc bez cyfr,
+    # bo prawdziwy znak amatorski zawsze ma przynajmniej jedna.
+    if len(s) <= 6 and s.isalpha():
         return True
     return False
 
