@@ -687,7 +687,12 @@ function _onAutoQsoComplete(msg) {
   }
 
   if (callEl) {
-    callEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // BEZ scrollIntoView: panel "MOJ LOG QSO" jest i tak zawsze widoczny w
+    // tym layoucie (bez przewijania strony) - scrollIntoView({block:'center'})
+    // na stronie ze skalowaniem transform (#app-scale) liczyl "wysrodkowanie"
+    // zle i wywalal cale okno FT8/WSJTX wysoko w gore po kazdym zakonczonym
+    // auto-QSO, zaslaniajac gorny pasek az do band-select. Samo podswietlenie
+    // wystarcza do zwrocenia uwagi.
     callEl.classList.add('wj-pending-log-highlight');
     setTimeout(() => callEl.classList.remove('wj-pending-log-highlight'), 3000);
   }
