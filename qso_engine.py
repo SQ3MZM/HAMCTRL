@@ -474,6 +474,19 @@ class QsoEngine:
             return None  # UI/webapp decyduje czy/kiedy zainicjowac QSO z CQ-callera
 
         if parsed['call_to'] != self.my_call:
+            # Wiadomosc nie do nas — ale jesli to NASZ AKTUALNY PARTNER
+            # nadajacy do KOGOS INNEGO, to dowod ze juz zaczal QSO z tamta
+            # stacja i dalsze wolanie go nie ma sensu - bez tego retry
+            # (should_retransmit) slepo probowal dalej mimo ewidentnego
+            # dowodu ze stacja jest zajeta. Zglaszane na zywo: "jesli
+            # odpowiadamy stacji na CQ a on juz nadaje do kogos innego, nie
+            # mozemy nadawac". Tylko gdy mamy aktywnego partnera (nie IDLE/
+            # DONE) — inaczej kazda przypadkowa wymiana miedzy dwiema
+            # OBCYMI stacjami wywolywalaby to bez potrzeby.
+            if self.is_active() and self.partner_call and parsed.get('call_de'):
+                de_base = parsed.get('de_base') or base_call(parsed['call_de'])
+                if de_base == base_call(self.partner_call):
+                    return {'action': 'partner_busy', 'call_de': self.partner_call}
             return None  # wiadomosc nie do nas — ignoruj (Band Activity i tak ja pokaze)
 
         call_de = parsed['call_de']

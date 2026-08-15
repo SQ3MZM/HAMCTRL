@@ -462,6 +462,34 @@ def test_rrr_goes_straight_to_73():
     check(eng.state == ST_DONE, "Po odebranym RRR: od razu DONE (nie RRR_SENT)")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# REGRESJA: partner nadaje juz do kogos innego -> porzucamy wolanie zamiast
+# slepo probowac dalej (naprawa sesji 2026-08-15). Zglaszane na zywo:
+# odpowiedzielismy na CQ, ale zanim partner nas uslyszal, zaczal QSO z inna
+# stacja - retry mechanizm i tak dalej go wolal, mimo widocznego dowodu w
+# dekodach ze jest juz zajety.
+# ════════════════════════════════════════════════════════════════════════════
+def test_partner_busy_with_someone_else():
+    section("Regresja: partner nadaje do kogos innego -> porzucamy wolanie")
+    eng = QsoEngine("SQ3MZM", "JO72")
+    eng.start_qso("YO1BRANCUSI", parse_message("CQ YO1BRANCUSI KN34"))
+    check(eng.state == ST_CALLING, "Po start_qso: CALLING")
+
+    # YO1BRANCUSI nadaje do UR5WCS, nie do nas
+    result = eng.on_decode(parse_message("UR5WCS YO1BRANCUSI -09"))
+    check(result is not None and result.get("action") == "partner_busy",
+          "Partner zajety inna stacja -> akcja partner_busy")
+    check(result.get("call_de") == "YO1BRANCUSI",
+          "partner_busy wskazuje wlasciwa (nasza) stacje")
+
+    # Kontrola: wiadomosc miedzy DWIEMA OBCYMI stacjami (nie nasz partner)
+    # nie powinna wywolywac partner_busy - to normalna aktywnosc pasma.
+    eng2 = QsoEngine("SQ3MZM", "JO72")
+    eng2.start_qso("YO1BRANCUSI", parse_message("CQ YO1BRANCUSI KN34"))
+    result2 = eng2.on_decode(parse_message("UR5WCS DL1ABC -09"))
+    check(result2 is None, "Wymiana miedzy obcymi stacjami -> cisza (nie partner_busy)")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -480,6 +508,7 @@ def main():
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()
     test_rrr_goes_straight_to_73()
+    test_partner_busy_with_someone_else()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

@@ -6052,7 +6052,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-RRR-DIRECT-73, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-PARTNER-BUSY-ABORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6472,6 +6472,21 @@ class App:
                 await self.hub.broadcast({"type": "auto_qso_queue",
                                            "queue": list(self._qso_engine.queue),
                                            "active": self._qso_engine.partner_call})
+                return
+
+            if result.get("action") == "partner_busy":
+                # Nasz partner nadaje juz do KOGOS INNEGO - zauwazony dowod
+                # ze zajal sie inna stacja, nie ma sensu dalej go wolac ani
+                # czekac na retry-timeout (patrz komentarz w qso_engine.py
+                # on_decode). Porzucamy od razu, tak samo jak przy give-up
+                # po wyczerpaniu prob, tylko szybciej i bez zgadywania.
+                print(f"[autoqso] {result['call_de']} nadaje juz do innej "
+                      f"stacji — porzucam wolanie, przechodze do kolejki")
+                self._qso_engine.abort_qso()
+                self._qso_period_locked = False
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": "IDLE", "partner": None})
+                await self._advance_auto_qso_queue()
                 return
 
             if result.get("action") == "reply":
