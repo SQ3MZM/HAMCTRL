@@ -5658,6 +5658,14 @@ class App:
             # Przerwij poprzedni TX jesli to inna stacja
             if self._ft8_tx_lock.locked():
                 self._ft8_tx_abort = True
+            # Odblokuj period — inaczej _send_auto_tx dziedziczy okres
+            # zamrozony przez POPRZEDNIA stacje (patrz komentarz przy
+            # _qso_period_locked=False w _advance_auto_qso_queue) i nigdy
+            # nie przelaczy sie na wlasciwy dla TEJ, swiezo wybranej stacji.
+            # Wszystkie INNE sciezki konczace QSO (auto-complete, give-up,
+            # reczny abort, advance kolejki) juz to robily — tego recznego
+            # startu brakowalo, mimo ze to najczestsza sciezka operatora.
+            self._qso_period_locked = False
             # Jesli front przekazal TRESC dekodowania (stacja odpowiada nam),
             # sparsuj ja i przekaz jako initial_decode - wtedy engine przeskoczy
             # do wlasciwego kroku (raport) zamiast wysylac Tx1/grid od nowa.
@@ -6078,7 +6086,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-13-DECODE-STATS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-PERIOD-UNLOCK, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

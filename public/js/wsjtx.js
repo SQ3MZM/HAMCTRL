@@ -718,15 +718,46 @@ function _extractGrid(msg) {
   return '';
 }
 
+// CQ MODIFIERS — musi byc w zgodzie z _CQ_MODIFIERS w qso_engine.py (backend
+// tam ma pelniejsza/autorytatywna liste, to jest jej podzbior dla najczestszych
+// przypadkow). Bez tego "CQ SOTA W1XYZ FN42"/"CQ POTA ..." byly parsowane jako
+// call="SOTA"/"POTA" (dlugosc 4 > starego progu <=3 dla modifierow typu DX/NA),
+// wiec klikniecie takiego CQ startowalo automatyczne QSO z fikcyjnym partnerem
+// "SOTA" zamiast prawdziwym callsignem aktywatora.
+const _CQ_MODIFIERS = new Set([
+  'DX','NA','SA','EU','AS','AF','OC','WW','WWDX',
+  'USA','JA','DL','PA','OE','OK','OM','SP','SM','OZ','LA','OH','OY',
+  'EA','CT','IT','IS','YO','YU','LY','YL','ES','UR','UA','UN','UK',
+  'VE','VK','ZL','ZS','PY','LU','CE','HK','HC','HI','HP','TI','TG',
+  'XE','CO',
+  'TEST','CONTEST','SPRINT','FD','FIELD',
+  'POTA','SOTA','IOTA','WWFF','COTA','BUNKER','REF','USI','USIS',
+  'ILLW','WCA','WFF','TQP',
+  'ARRL','RSGB','DARC','IARU',
+  'QRP','QRO','QRPP',
+  'FF','SKCC','SOWP','PODXS',
+]);
+
+// Czy `s` wyglada jak modifier CQ (POTA/DX/USA itp.), nie jak callsign.
+// Ta sama heurystyka co is_cq_modifier() w qso_engine.py: whitelist LUB
+// krotki (<=3 znaki) string zlozony tylko z liter (bez cyfr — cyfra sugeruje
+// prawdziwy callsign/prefix, np. "K7RA").
+function _isCqModifier(s) {
+  if (!s) return false;
+  if (_CQ_MODIFIERS.has(s)) return true;
+  return s.length <= 3 && /^[A-Z]+$/.test(s);
+}
+
 function _extractCall(msg) {
   // Format FT8: "CQ SP3GSK JO82" — wywolanie CQ — chcemy SP3GSK
+  // Format FT8: "CQ SOTA SP3GSK/P JO82" — CQ z modifierem — chcemy SP3GSK/P (parts[2])
   // Format FT8: "SP3GSK SQ3MZM -05" — SQ3MZM wywoluje SP3GSK — chcemy SQ3MZM (parts[1])
   // Format FT8: "SQ3MZM SP3GSK R-12" — chcemy SQ3MZM (parts[0])
   const parts = msg.trim().toUpperCase().replace(/[<>]/g, '').split(/\s+/);
   if (!parts.length) return '';
-  // CQ [DX] CALL GRID
+  // CQ [MOD] CALL GRID
   if (parts[0] === 'CQ') {
-    return parts.length >= 3 && parts[1].length <= 3 ? parts[2] : parts[1];
+    return parts.length >= 3 && _isCqModifier(parts[1]) ? parts[2] : parts[1];
   }
   // CALL_TO CALL_DE ... — zwroc CALL_DE (ten kto nadaje = nasz korespondent)
   if (parts.length >= 2) return parts[1];
