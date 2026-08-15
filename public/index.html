@@ -559,7 +559,6 @@
         </label>
         <button onclick="WSJTX.resetPaletteAdjust()" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
       </div>
-      <button onclick="WSJTX.haltTx()"     class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
       <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
       <button onclick="WSJTX.clearDecodes()" class="wj-btn">WYCZYŚĆ</button>
       <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" title="Ukryj stacje już zaliczone w logu QSO">
@@ -592,7 +591,8 @@
                onchange="WSJTX.setRxFreqManual(this.value)">Hz
       </span>
       <div style="flex:1"></div>
-      <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
+      <button onclick="WSJTX.haltTx()" class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
+      <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" style="margin-left:6px;" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
       <button id="wj-fake-split-toggle" onclick="WSJTX.toggleFakeSplit()" class="wj-btn" style="margin-left:6px;"
         title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
       <span id="wj-fake-split-target" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:4px;"></span>
