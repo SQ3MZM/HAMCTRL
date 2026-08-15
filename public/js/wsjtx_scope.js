@@ -539,6 +539,10 @@ function rxEqTx() {
   window.WS?.send({ type: 'ft8_rx_eq_tx' });
 }
 
+function txEqRx() {
+  window.WS?.send({ type: 'ft8_tx_eq_rx' });
+}
+
 function getRxFreq() {
   return rxFreqHz;
 }
@@ -610,7 +614,7 @@ function _render() {
 function onSplitStatus(msg) { /* split status - obsluzone przez wsjtx.js */ }
 
 window.WSJTXScope = { init, onWaterfallData, onTxFreqUpdate, onRxFreqUpdate, onSplitStatus,
-                        setRxFreq, setTxFreqManual, setRxFreqManual, rxEqTx, getRxFreq, getTxFreq, isTxFrozen,
+                        setRxFreq, setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx, getRxFreq, getTxFreq, isTxFrozen,
                         toggleTxFreeze, setScopeDecodeMode,
                         setPaletteReference, setPaletteZero, setPaletteGain };
 })();

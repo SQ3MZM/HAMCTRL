@@ -772,6 +772,7 @@ function _renderAutoQsoPanel() {
 function setTxFreqManual(val) { window.WSJTXScope?.setTxFreqManual(val); }
 function setRxFreqManual(val) { window.WSJTXScope?.setRxFreqManual(val); }
 function rxEqTx() { window.WSJTXScope?.rxEqTx(); }
+function txEqRx() { window.WSJTXScope?.txEqRx(); }
 
 // ── WS dispatch ───────────────────────────────────────────────────────────────
 function handleWS(msg) {
@@ -2051,12 +2052,12 @@ function toggleHideWorked(chk) {
 
 window.WSJTX = {
   init, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
-  tuneToBand, rxEqTx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
+  tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
   updateBeamRow, rotorGoBeam, rotorGoManual,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, toggleCall1st, setDecodeMode,
   tuneToBand, setTxPeriod,
-  setTxFreqManual, setRxFreqManual, rxEqTx,
+  setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx,
   _selectRow, addLog, exportAdif,
   toggleHound, houndStop, houndConfirm,
   removeFromQueue, clearAutoQsoQueue, skipAutoQso,

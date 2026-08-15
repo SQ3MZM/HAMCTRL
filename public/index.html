@@ -558,6 +558,7 @@
                onchange="WSJTX.setTxFreqManual(this.value)">Hz
       </span>
       <button id="wj-rx-eq-tx-btn" onclick="WSJTX.rxEqTx()" class="wj-btn" title="Ustaw znacznik RX na biezaca czestotliwosc TX" style="margin-left:6px;">RX=TX</button>
+      <button id="wj-tx-eq-rx-btn" onclick="WSJTX.txEqRx()" class="wj-btn" title="Ustaw znacznik TX na biezaca czestotliwosc RX" style="margin-left:4px;">TX=RX</button>
       <span class="wj-freq-field" style="color:#5c5; margin-left:10px;">
         RX:
         <input type="number" id="wj-rx-freq-input" class="wj-freq-input" step="1"
@@ -2435,8 +2436,8 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608150005"></script>
-<script src="js/wsjtx_scope.js?v=202608130001"></script>
+<script src="js/wsjtx.js?v=202608150006"></script>
+<script src="js/wsjtx_scope.js?v=202608150001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
 <script src="js/waterfall.js?v=202606250001"></script>

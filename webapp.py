@@ -5498,6 +5498,24 @@ class App:
             print(f"[ft8] RX=TX -> {self._ft8_rx_freq_hz:.0f}Hz")
             await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": self._ft8_rx_freq_hz})
 
+        elif t == "ft8_tx_eq_rx":
+            # Przycisk "TX=RX": odwrotnosc powyzszego - przesuwa znacznik TX
+            # na biezaca pozycje RX. Respektuje zamrozenie (Hold Tx Freq) i
+            # tryb split (min. czestotliwosc) tak samo jak reczne
+            # przeciagniecie znacznika TX (ft8_set_tx_freq powyzej).
+            if self._ft8_tx_frozen:
+                await ws.send_json({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
+                                     "frozen": True})
+                return
+            freq = self._ft8_rx_freq_hz
+            if self._ft8_split_enabled and freq < self._ft8_split_min_hz:
+                freq = self._ft8_split_min_hz
+            freq = max(200.0, min(2900.0, freq))
+            self._ft8_tx_freq_hz = freq
+            print(f"[ft8] TX=RX -> {freq:.0f}Hz")
+            await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": freq,
+                                       "frozen": self._ft8_tx_frozen})
+
         elif t == "ft8_toggle_tx_freeze":
             self._ft8_tx_frozen = bool(msg.get("frozen", not self._ft8_tx_frozen))
             print(f"[ft8] TX {'ZAMROZONE' if self._ft8_tx_frozen else 'odmrozone'} @ {self._ft8_tx_freq_hz:.0f}Hz"
@@ -6036,7 +6054,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-FT8-TX-WATCHDOG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-TX-EQ-RX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
