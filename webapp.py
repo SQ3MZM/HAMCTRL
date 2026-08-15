@@ -2305,6 +2305,14 @@ class App:
                 return 403, {"error": "Nie masz aktywnej blokady radia"}
             released_by = self.radio_lock["username"] or user.get("username", "")
             self._release_radio()
+            # Wyczysc oczekujace prosby (tak samo jak przy force-release nizej) —
+            # gdy radio jest wolne, kazdy i tak widzi "PRZEJMIJ TRX" bezposrednio,
+            # a stare prosby tylko trzymalyby proszacym permanentnie zablokowany
+            # przycisk "POPROS O TRX" (hasReq nigdy by sie nie wyczyscilo, bo
+            # _lock_radio() usuwa wpis TYLKO dla usera ktory faktycznie przejmie
+            # radio, nie dla kazdego kto o nie prosil). Wykryte w audycie
+            # zakladki RADIO 2026-08-15.
+            self.radio_requests.clear()
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
             await self.hub.broadcast({"type": "toast",
                                       "message": f"✓ Radio zwolnione przez {released_by}"})
@@ -2342,6 +2350,34 @@ class App:
             """Wycofaj prosbe o radio."""
             self.radio_requests.pop(uid, None)
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
+            return 200, {"ok": True}
+
+        if p == "/api/radio/reject-request" and method == "POST":
+            """Aktywny operator (lub admin) odrzuca cudza prosbe o radio.
+
+            Front (przycisk "ODRZUC" w _showRequestToast, index.html) wczesniej
+            TYLKO usuwal dymek lokalnie i nie wolal zadnego API — prosba
+            zostawala w self.radio_requests NA ZAWSZE (nic jej stamtad nie
+            usuwalo poza przejeciem/zwolnieniem radia albo admin force-release),
+            wiec przycisk "POPROS O TRX" proszacego blokowal sie na stale
+            (_renderOpPanel: hasReq==True -> disabled). Wykryte w audycie
+            zakladki RADIO 2026-08-15."""
+            target_uid = str(body.get("uid", ""))
+            if not target_uid:
+                return 400, {"error": "Brak uid"}
+            if role != "admin" and not self._user_has_lock(uid):
+                return 403, {"error": "Tylko aktywny operator lub admin moze odrzucic prosbe"}
+            req = self.radio_requests.pop(target_uid, None)
+            if req is None:
+                return 200, {"ok": True}  # juz nieaktualna (np. wycofana w miedzyczasie)
+            u_obj = self.find_user_by_id(uid) or {}
+            by_callsign = u_obj.get("callsign", user.get("username", ""))
+            await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
+            await self.hub.broadcast({
+                "type":   "radio_request_rejected",
+                "to_uid": target_uid,
+                "by":     by_callsign,
+            })
             return 200, {"ok": True}
 
         if p == "/api/radio/force-release" and method == "POST":
@@ -2856,6 +2892,18 @@ class App:
 
         m = re.match(r"^/api/rotator/(\d+)/position$", p)
         if m and method == "POST":
+            # Brak tego sprawdzenia pozwalal KAZDEMU zalogowanemu (nawet
+            # viewerowi) obracac anten poprzez bezposrednie wywolanie API,
+            # niezaleznie od tego czy przyciski START/STOP w UI byly wygaszone
+            # (CSS .radio-readonly) — wykryte 2026-08-15 w audycie zakladki
+            # RADIO. Ten sam wzorzec co /api/cw/send: viewer zawsze blokowany,
+            # pozostali musza trzymac radio_lock (chyba ze admin).
+            if role == "viewer":
+                return 403, {"error": "Brak uprawnien (rotator)"}
+            if role != "admin" and not self._user_has_lock(uid):
+                holder = self.radio_lock["callsign"] or self.radio_lock["username"] or ""
+                msg_err = f"Rotator zablokowany — radio ma {holder}" if holder else "Rotator zablokowany — najpierw przejmij radio"
+                return 403, {"error": msg_err}
             rot = self.get_rot(int(m.group(1)))
             if not rot: return 404, {"error": "Rotator nie znaleziony"}
             rot.go_to(float(body.get("az", 0)))
@@ -2863,6 +2911,13 @@ class App:
 
         m = re.match(r"^/api/rotator/(\d+)/stop$", p)
         if m and method == "POST":
+            # Tak samo jak /position powyzej — patrz komentarz tam.
+            if role == "viewer":
+                return 403, {"error": "Brak uprawnien (rotator)"}
+            if role != "admin" and not self._user_has_lock(uid):
+                holder = self.radio_lock["callsign"] or self.radio_lock["username"] or ""
+                msg_err = f"Rotator zablokowany — radio ma {holder}" if holder else "Rotator zablokowany — najpierw przejmij radio"
+                return 403, {"error": msg_err}
             rot = self.get_rot(int(m.group(1)))
             if not rot: return 404, {"error": "Rotator nie znaleziony"}
             rot.stop()
@@ -6063,7 +6118,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-TX-MUTEX-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-RADIOLOCK-REQUEST-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

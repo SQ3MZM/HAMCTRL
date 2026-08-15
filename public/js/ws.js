@@ -33,7 +33,17 @@ function initAudioContext() {
       sampleRate: 48000,
     });
     window._masterGain = audioCtx.createGain();
-    window._masterGain.gain.value = 0.7;
+    window._masterGain.gain.value = 0.7;  // fallback zanim ponizej dojdzie realny per-user poziom
+    // _masterGain powstaje TUTAJ, dopiero gdy realnie startuje audio (gest
+    // uzytkownika / autoplay policy) — czyli PO tym jak initRxVol() juz raz
+    // probowal zastosowac zapisany poziom (app:ready, patrz nizej w tym
+    // pliku). W tamtym momencie _masterGain jeszcze nie istnial, wiec
+    // setRxVol() zaktualizowal tylko suwak w UI, a realny gain zostawal na
+    // sztywnych 0.7 z linii wyzej — suwak wygladal na zapamietany, ale
+    // glosnosc i tak zawsze wracala do 70%. Ponowne wywolanie teraz, gdy
+    // _masterGain juz istnieje, dociaga zapisana per-user wartosc do
+    // faktycznego dzwieku. Wykryte na zywo 2026-08-15.
+    window.AudioControls?.initRxVol?.();
 
     // Przyciszanie RX podczas WLASNEGO TX (FT8/FT4). Radio z wlaczonym MONI
     // podaje na USB-out swoj sygnal TX — w przegladarce slychac piszczace
@@ -90,9 +100,10 @@ function initAudioContext() {
   }
 }
 
-// Zaladuj glosnosc RX per user po zalogowaniu
+// Zaladuj glosnosc RX i TX GAIN per user po zalogowaniu
 window.addEventListener('app:ready', () => {
   window.AudioControls?.initRxVol?.();
+  window.AudioControls?.initTxGain?.();
 });
 // (kliknięcie, dotknięcie, klawisz) — polityka autoplay przegladarki
 function _resumeAudioOnGesture() {
@@ -596,6 +607,9 @@ function handleMessage(msg) {
     case 'radio_request_received':
       if (typeof window.OpPanel?.handleRequest === 'function') window.OpPanel.handleRequest(msg);
       break;
+    case 'radio_request_rejected':
+      if (typeof window.OpPanel?.handleRejected === 'function') window.OpPanel.handleRejected(msg);
+      break;
     case 'qso_new': window.QSOLog?.prependEntry(msg.entry); break;
     case 'error': window.UI?.showToast('✗ ' + msg.message, 'error'); break;
     case 'scope_frame':
@@ -707,6 +721,22 @@ window.AudioControls = (function() {
   let _txActive  = false;
 
   // ── TX GAIN ────────────────────────────────────────────────────────────────
+  // Per-user zapis w localStorage (taki sam wzorzec jak RX VOL nizej) — bez
+  // tego suwak wracal po kazdym odswiezeniu/przelogowaniu do sztywnej
+  // wartosci 0.15 z HTML, wiec kazdy user musial reczne ustawiac modulacje
+  // SSB od nowa za kazdym razem. Dodane 2026-08-15.
+  function _txGainKey() {
+    const uid = window.AppState?.my_uid || window.CurrentUser?.id || 'default';
+    return `txGain_${uid}`;
+  }
+
+  function _loadTxGain() {
+    try {
+      const saved = localStorage.getItem(_txGainKey());
+      return saved !== null ? parseFloat(saved) : 0.15;
+    } catch(e) { return 0.15; }
+  }
+
   function setTxGain(val) {
     _txGain = Math.max(0.01, Math.min(1.0, val));
     window._txGain = _txGain;
@@ -718,6 +748,11 @@ window.AudioControls = (function() {
     const sl = document.getElementById('tx-gain-slider');
     if (sl) sl.value = _txGain;
     _updateSliderColor(_txGain);
+    try { localStorage.setItem(_txGainKey(), _txGain); } catch(e) {}
+  }
+
+  function initTxGain() {
+    setTxGain(_loadTxGain());
   }
 
   // Kolor suwaka TX GAIN wg poziomu
@@ -828,7 +863,7 @@ window.AudioControls = (function() {
   }, 200);
 
   // Publiczne API
-  return { setTxGain, setRxVol, startVU, stopVU, initRxVol };
+  return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain };
 })();
 
 // ── Audio WebSocket — bezposrednie polaczenie z Rust WSS (port 9443) ─────────

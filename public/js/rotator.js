@@ -445,8 +445,17 @@ function goDir(id, az) {
 async function apiPost(url, body) {
   try {
     const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
-    return r.json();
-  } catch(e) { console.error('[rotator]', e); }
+    const res = await r.json();
+    // Backend teraz odrzuca /position i /stop dla viewera lub osoby bez
+    // zajetego radia (403 {error}) — bez tego sprawdzenia klik po prostu nic
+    // by nie robil, bez zadnego komunikatu (patrz audyt zakladki RADIO
+    // 2026-08-15, ten sam endpoint co rotormini.js).
+    if (res && res.error) window.UI?.showToast?.('✗ ' + res.error, 'error');
+    return res;
+  } catch(e) {
+    console.error('[rotator]', e);
+    window.UI?.showToast?.('✗ ' + e.message, 'error');
+  }
 }
 
 window.Rotator = { load, render, handleWS, compassClick, previewTarget, goTarget, setPos, stop, park, goDir };

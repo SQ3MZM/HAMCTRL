@@ -86,8 +86,15 @@ function applyRadioLockUI() {
   const canControl = _canControlRadio();
   const page = document.getElementById('page-radio');
   if (!page) return;
+  // Blokada radio_lock idzie WYLACZNIE przez te klase (CSS pointer-events w
+  // style.css, .radio-readonly .ptt-btn i .radio-readonly button:not(...)) —
+  // to jedyne miejsce ktore decyduje kto moze klikac. updatePTT() ponizej NIE
+  // wie nic o radio_lock (patrz jej definicja) — odswieza tylko cross-band
+  // split guard, wiec musi byc wolana tutaj żeby zdazyc zanim zwroci UI.
+  // Wczesniej istnial tu blednie opisany drugi mechanizm (_setUILocked w
+  // index.html, usuniety w audycie zakladki RADIO 2026-08-15) ktory rowniez
+  // ustawial .disabled — ten komentarz sie do niego odnosil.
   page.classList.toggle('radio-readonly', !canControl);
-  // Zaktualizuj PTT i inne stany (updatePTT ma juz swoje logiki disabled)
   updatePTT();
 }
 

@@ -462,6 +462,27 @@ input[type="range"].rf-range::-webkit-slider-thumb {
   box-shadow: none !important;
   animation: none !important;
 }
+/* Makra CW (F1-F6) sa <div onclick=...>, nie <button> — selektor
+ * ".radio-readonly button:..." powyzej ich nie lapie, wiec wygladaly na
+ * aktywne mimo ze backend i tak odrzuca wysylke (/api/cw/send) gdy ktos
+ * inny trzyma radio. Wykryte w audycie zakladki RADIO 2026-08-15. */
+.radio-readonly .cw-macro-card {
+  opacity: 0.4;
+  pointer-events: none;
+  filter: grayscale(0.6);
+}
+/* Zasada blokady: kto NIE trzyma TRX jest traktowany prawie jak viewer —
+ * ALE zawsze ma dostep do wlasnego logu QSO (i do zakladki Ustawienia, ktora
+ * jest osobna strona spoza #page-radio i tak nigdy nie byla dotykana przez
+ * .radio-readonly). Sam pasek "LOG QSO" jest jedynym elementem logu we-
+ * wnatrz zakladki RADIO, wiec wylaczamy go z ogolnej blokady przyciskow
+ * powyzej. Pola tekstowe (CALL/RST/GRID) i tak nigdy nie byly blokowane —
+ * ogolna reguła gasi tylko input[type=number/range] i select. 2026-08-15. */
+.radio-readonly #quick-log-bar button {
+  opacity: 1;
+  pointer-events: auto;
+  filter: none;
+}
 /* Wyraznie oznaczmy panel OPERATORZY zeby user wiedzial gdzie kliknac PRZEJMIJ */
 .radio-readonly #op-list {
   border: 1px solid var(--amber);

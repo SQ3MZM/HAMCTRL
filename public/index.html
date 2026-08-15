@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202608100001">
+<link rel="stylesheet" href="css/style.css?v=202608150001">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -264,12 +264,12 @@
           width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
           border:1px solid var(--border2);border-radius:3px;color:var(--text);"
           onkeydown="if(event.key==='Enter')QSOLog.quickLog()">
-        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">RST</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" title="RST wyslane">SENT</span>
         <input type="text" id="qlog-rst-s" placeholder="599" maxlength="3"
           style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
           padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
           border-radius:3px;color:var(--text);text-align:center;" value="599">
-        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">/</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" title="RST odebrane">RCVD</span>
         <input type="text" id="qlog-rst-r" placeholder="599" maxlength="3"
           style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
           padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
@@ -2421,17 +2421,17 @@
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608150001"></script>
+<script src="js/ws.js?v=202608150004"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
-<script src="js/ui.js?v=202608130001"></script>
+<script src="js/ui.js?v=202608150001"></script>
 <script src="js/settings.js?v=202606180504"></script>
 <script src="js/tx_eq.js?v=202606300001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
 <script src="js/audio_autodetect.js?v=202606300001"></script>
 <script src="js/com_bridge.js?v=202607040001"></script>
-<script src="js/rotator.js?v=202606180504"></script>
-<script src="js/rotormini.js?v=202606180504"></script>
+<script src="js/rotator.js?v=202608150001"></script>
+<script src="js/rotormini.js?v=202608150001"></script>
 <script src="js/admin.js?v=202606180504"></script>
 <script src="js/admin_status.js?v=202607020001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
@@ -2874,7 +2874,7 @@ function _showRequestToast(callsign, fromUid) {
         border-radius:4px;color:var(--green);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✓ ODDAJ RADIO
       </button>
-      <button onclick="document.getElementById('radio-request-toast')?.remove();"
+      <button onclick="window.OpPanel.rejectRequest('${fromUid}');document.getElementById('radio-request-toast')?.remove();"
         style="flex:1;padding:8px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
         border-radius:4px;color:var(--red);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✗ ODRZUĆ
@@ -2920,6 +2920,23 @@ async function requestRadio() {
     window.UI?.showToast('✗ Błąd wysyłania prośby', 'error');
     if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ O TRX'; }
   }
+}
+
+async function rejectRequest(fromUid) {
+  try {
+    const r = await _api('/api/radio/reject-request', 'POST', { uid: fromUid });
+    if (!r.ok) window.UI?.showToast('✗ ' + (r.error || 'Błąd'), 'error');
+  } catch(e) { window.UI?.showToast('✗ Błąd odrzucania prośby', 'error'); }
+}
+
+// Powiadomienie DLA PROSZĄCEGO gdy jego prośba zostanie odrzucona — bez tego
+// przycisk "POPROŚ O TRX" milczy i user nie wie czy ktoś w ogóle odpowiedział.
+function handleRejected(msg) {
+  const myUid = window.AppState?.my_uid || window.CurrentUser?.id;
+  if (String(msg.to_uid) !== String(myUid)) return;
+  window.UI?.showToast(`✗ Prośba o TRX odrzucona przez ${msg.by || '?'}`, 'error');
+  const btn = document.getElementById('op-btn-request');
+  if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ PONOWNIE'; }
 }
 
 async function forceRelease() {
@@ -2990,22 +3007,14 @@ function _renderOpPanel() {
   }
   if (btnForce)   btnForce.style.display   = (isAdmin && _state.locked && !isHolder) ? '' : 'none';
 
-  // Blokada UI gdy ktoś inny ma radio
-  _setUILocked(_state.locked && !isHolder);
-}
-
-function _setUILocked(locked) {
-  // Nakładka "read-only" — szare przyciski i zablokowane slidery
-  const controls = document.querySelectorAll(
-    '.ptt-btn, .step-btn, .mode-btn, .band-btn, .go-btn, ' +
-    '.btn-func-toggle, .btn-vfo-select, .btn-power-toggle, .rf-btn, ' +
-    '.rf-range, #bw-select, #preamp-select, #att-select, #tuner-btn'
-  );
-  controls.forEach(el => {
-    el.disabled = locked;
-    el.style.opacity = locked ? '0.4' : '';
-    el.style.cursor  = locked ? 'not-allowed' : '';
-  });
+  // Blokada UI gdy ktos inny ma radio zalatwia WYLACZNIE applyRadioLockUI()
+  // (ui.js) przez klase .radio-readonly (CSS pointer-events — dziala
+  // niezaleznie od atrybutu disabled). Byla tu KIEDYS druga, rownolegla
+  // sciezka (_setUILocked wlasnym querySelectorAll ustawiajaca .disabled) —
+  // usunieta w audycie zakladki RADIO 2026-08-15: mialo nieaktualna liste
+  // selektorow (np. ".go-btn" nie pasowal do zadnego elementu — prawdziwe
+  // przyciski rotora to .rot-go-btn/.rot-stop-btn) i dublowalo stan bez
+  // realnej korzysci, bo klikniecia i tak byly juz zablokowane przez CSS.
 }
 
 // ── HTTP helper ───────────────────────────────────────────────────────────────
@@ -3020,7 +3029,7 @@ async function _api(path, method, body) {
   return r.json();
 }
 
-window.OpPanel = { handleWS, handleRequest, lockRadio, releaseRadio, requestRadio, forceRelease };
+window.OpPanel = { handleWS, handleRequest, handleRejected, lockRadio, releaseRadio, requestRadio, rejectRequest, forceRelease };
 return window.OpPanel;
 })();
 

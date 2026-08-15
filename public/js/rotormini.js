@@ -228,8 +228,12 @@ async function go() {
 
 async function stop() {
   if (!_rotId) return;
-  try { await fetch('/api/rotator/'+_rotId+'/stop',{method:'POST'}); window.UI?.showToast?.('■ Zatrzymano'); }
-  catch(e) {}
+  try {
+    const r=await fetch('/api/rotator/'+_rotId+'/stop',{method:'POST'});
+    const res=await r.json();
+    if (res.ok) window.UI?.showToast?.('■ Zatrzymano');
+    else window.UI?.showToast?.('✗ '+(res.error||'Błąd'),'error');
+  } catch(e) { window.UI?.showToast?.('✗ '+e.message,'error'); }
 }
 
 // ── WS ────────────────────────────────────────────────────────────────────────
