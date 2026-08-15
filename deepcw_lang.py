@@ -23,6 +23,14 @@ CW_WORDS = {
     # Skroty Q
     "QRZ", "QTH", "QSL", "QRM", "QRN", "QSB", "QRP", "QRO", "QSY", "QRT",
     "QSO", "QRX", "QRL", "QRG", "QRQ", "QRS",
+    # Skroty Q — dorzucone (realnie uzywane w QSO/kontestach, nie tylko QRT/QSY)
+    "QRV", "QSK", "QSP", "QRU", "QST", "QTC", "QSA", "QRA", "QRK",
+    # Prosign BT (przerwa/separator czesci wiadomosci) — model nie ma "="
+    # w zestawie znakow (patrz DEFAULT_META['chars'] w deepcw_engine.py),
+    # wiec prosign wychodzi jako litery "BT".
+    "BT",
+    # Czeste kontrakcje/pozdrowienia koncowe CW
+    "CUAGN", "HNY", "MERRY", "XMAS", "ELMER",
     # Slowa robocze
     "UR", "URS", "TU", "TKS", "TNX", "THX", "FB", "HR", "HW", "PSE", "PWR",
     "RST", "RIG", "ANT", "WX", "TEMP", "NAME", "OP", "QTH", "AGN", "CFM",
@@ -57,15 +65,90 @@ CW_NAMES = {
     "IVAN", "YURI", "SERGE", "OLEG", "NICK", "ALEX", "VIC", "WALLY",
     "ANDY", "CHRIS", "DENNIS", "DON", "DOUG", "FRANK", "GEORGE", "GREG",
     "HARRY", "JERRY", "LEO", "LES", "NORM", "RUSS", "SCOTT", "WAYNE",
+    # Dorzucone — czeste imiona operatorow spoza pierwotnej (glownie
+    # anglo/niemieckiej) listy, stacja pracuje DX na wielu kontynentach.
+    "JOSE", "JUAN", "CARLOS", "LUIS", "MIGUEL", "PABLO", "PEDRO", "RAUL",
+    "MARIO", "GIANNI", "GIORGIO", "FRANCO", "ROBERTO", "RENATO",
+    "PIOTR", "MAREK", "JUREK", "JANEK", "TOMEK", "KRZYSZTOF", "ANDRZEJ",
+    "WOJCIECH", "GRZEGORZ", "PAWEL", "MIROSLAW", "ZBIGNIEW", "STANISLAW",
+    "DMITRY", "VLADIMIR", "IGOR", "BORIS", "VIKTOR", "ANATOLY", "MIKHAIL",
+    "TAKASHI", "HIROSHI", "KENJI", "AKIRA", "YOSHI",
+    "AHMED", "MOHAMMED", "ALI", "HASSAN", "OMAR",
+    "ERIK", "LARS", "SVEN", "OLE", "NIELS", "ANDERS", "BJORN",
+    "WILLEM", "HENK", "PIET", "KEES", "JAN", "GERRIT",
 }
 
 # ── Cut numbers (skroty cyfr) ────────────────────────────────────────────────
 CUT = {"T": "0", "N": "9", "E": "5", "A": "1", "U": "2", "V": "3",
        "4": "4", "G": "7", "D": "8", "B": "6"}
 
+# ── Kod Morse'a — do wazenia kosztu podstawienia w _edit_dist ────────────────
+# Model CTC myli litery/cyfry o PODOBNYM zapisie kropka-kreska (E "." vs T "-",
+# S "..." vs O "---" to NIE jest bliskie, ale E vs T juz tak — 1 symbol roznicy).
+# Plaska odleglosc Levenshteina (kazde podstawienie=1) traktowala kazda pomylke
+# tak samo, wiec przy max_dist=1 poprawiala tez podstawienia ktore w realnym
+# CW sa niemozliwe (np. T->O, litery o kompletnie roznym zapisie) - falszywe
+# "poprawki" psuly poprawny, surowy odczyt. Kosztem podstawienia jest teraz
+# odleglosc Levenshteina MIEDZY SAMYMI kodami Morse'a (dlugosc 1-5 znakow,
+# maks. koszt do policzenia to ~25 porownan) — tanie, liczone raz na token
+# przy korekcie tekstu, zero kosztu audio/inferencji.
+MORSE_CODE = {
+    "A": ".-",    "B": "-...",  "C": "-.-.",  "D": "-..",   "E": ".",
+    "F": "..-.",  "G": "--.",   "H": "....",  "I": "..",    "J": ".---",
+    "K": "-.-",   "L": ".-..",  "M": "--",    "N": "-.",    "O": "---",
+    "P": ".--.",  "Q": "--.-",  "R": ".-.",   "S": "...",   "T": "-",
+    "U": "..-",   "V": "...-",  "W": ".--",   "X": "-..-",  "Y": "-.--",
+    "Z": "--..",
+    "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+    "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----.",
+}
+
+
+def _morse_edit(a: str, b: str) -> int:
+    """Zwykla odleglosc Levenshteina miedzy dwoma ciagami kropek/kresek
+    (kody Morse'a, dlugosc 1-5) — pomocnicza dla _sub_cost, NIE dla tekstu."""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        for j in range(1, lb + 1):
+            cost = 0 if a[i-1] == b[j-1] else 1
+            cur[j] = min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + cost)
+        prev = cur
+    return prev[lb]
+
+
+def _build_sub_cost_table() -> dict:
+    """Prekomputuj koszt podstawienia dla kazdej pary znakow raz przy imporcie
+    (36x36 par) — w _edit_dist jest to potem zwykle O(1) odczyt ze slownika,
+    szybsze niz liczenie _morse_edit na kazdej komorce DP."""
+    chars = list(MORSE_CODE.keys())
+    table = {}
+    for x in chars:
+        for y in chars:
+            table[(x, y)] = max(1, _morse_edit(MORSE_CODE[x], MORSE_CODE[y]))
+    return table
+
+
+_SUB_COST = _build_sub_cost_table()
+
+
+def _sub_cost(a: str, b: str) -> int:
+    """Koszt podstawienia znaku a->b. Morse-bliskie znaki (np. E<->T) kosztuja
+    1 (jak dawniej plaska odleglosc), Morse-dalekie wiecej — wiec przy tym
+    samym max_dist mniej falszywych "poprawek" miedzy niepodobnymi znakami,
+    a prawdziwe pomylki modelu (jeden symbol Morse'a roznicy) nadal przechodza."""
+    if a == b:
+        return 0
+    return _SUB_COST.get((a, b), 1)  # fallback dla spacji/znakow spoza A-Z0-9
+
 
 def _edit_dist(a: str, b: str) -> int:
-    """Odleglosc Levenshteina (male ciagi, prosta implementacja DP)."""
+    """Odleglosc edycyjna wazona kosztem Morse'a dla podstawien (male ciagi,
+    prosta implementacja DP). Insercja/usuniecie znaku kosztuje 1 jak dawniej —
+    to nie jest "pomylka miedzy dwoma znakami", tylko caly znak za duzo/za malo."""
     if a == b:
         return 0
     la, lb = len(a), len(b)
@@ -75,7 +158,7 @@ def _edit_dist(a: str, b: str) -> int:
     for i in range(1, la + 1):
         cur = [i] + [0] * lb
         for j in range(1, lb + 1):
-            cost = 0 if a[i-1] == b[j-1] else 1
+            cost = _sub_cost(a[i-1], b[j-1])
             cur[j] = min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + cost)
         prev = cur
     return prev[lb]
@@ -121,28 +204,53 @@ def _is_report(tok: str) -> str | None:
     return None
 
 
-def _segment(token: str) -> str | None:
-    """Rozdziel sklejony ciag na znane slowa CW.
+def _segment(token: str, known_calls: set | None = None) -> str | None:
+    """Rozdziel sklejony ciag na znane slowa CW, zaznane znaki i raporty RST.
 
     Model przy szybkim CW nie wstawia spacji (widzi ciag znakow bez wyraznych
     przerw), wiec zwraca np. 'TKSFERFB' zamiast 'TKS FER FB'. Probujemy podzielic
-    token na kolejne slowa ze slownika. Zwraca podzial tylko gdy CALY token da
-    sie pokryc znanymi slowami — inaczej None (nie zgadujemy).
+    token na kolejne slowa ze slownika (albo znany znak wywolawczy, albo raport
+    RST doklejony bez spacji — patrz nizej). Zwraca podzial tylko gdy CALY token
+    da sie pokryc rozpoznanymi kawalkami — inaczej None (nie zgadujemy).
     """
     t = token.upper()
     if len(t) < 4 or t in CW_WORDS:
         return None
-    # Programowanie dynamiczne: czy da sie pokryc t[i:] znanymi slowami
+    known_calls = known_calls or set()
+    # Programowanie dynamiczne: czy da sie pokryc t[i:] rozpoznanymi kawalkami
     n = len(t)
-    # dp[i] = lista slow pokrywajacych t[i:], albo None
+    # dp[i] = lista kawalkow pokrywajacych t[i:], albo None
     dp: list = [None] * (n + 1)
     dp[n] = []
     for i in range(n - 1, -1, -1):
+        # a) slowo ze slownika CW_WORDS
         for w in CW_WORDS:
             lw = len(w)
             if lw >= 2 and t[i:i+lw] == w and dp[i+lw] is not None:
                 dp[i] = [w] + dp[i+lw]
                 break
+        if dp[i] is not None:
+            continue
+        # b) znany znak wywolawczy doklejony do sasiedniego slowa, np.
+        # "DESQ3MZM" -> "DE SQ3MZM". Dlugosc znaku jest zmienna (3-10), wiec
+        # probujemy kolejne dlugosci od najdluzszej zamiast iterowac caly
+        # (potencjalnie duzy) zbior known_calls — to zwykle O(10) sprawdzen
+        # przynaleznosci do zbioru (O(1) kazde), nie O(|known_calls|).
+        if known_calls:
+            for lw in range(min(10, n - i), 2, -1):
+                cand = t[i:i+lw]
+                if cand in known_calls and dp[i+lw] is not None:
+                    dp[i] = [cand] + dp[i+lw]
+                    break
+        if dp[i] is not None:
+            continue
+        # c) raport RST doklejony bez spacji, np. "5NNTU" -> "5NN TU" —
+        # bardzo czesty wzorzec (operator wysyla raport i od razu "TU" bez
+        # przerwy). _is_report jest juz konserwatywny (tylko rozpoznaje
+        # sensowny ksztalt raportu, niczego nie wymysla), wiec bezpiecznie
+        # uzyc go tu jako zrodla "znanego slowa" dlugosci 3.
+        if i + 3 <= n and _is_report(t[i:i+3]) and dp[i+3] is not None:
+            dp[i] = [t[i:i+3]] + dp[i+3]
     if dp[0] is not None and len(dp[0]) >= 2:
         return " ".join(dp[0])
     return None
@@ -173,8 +281,16 @@ def correct(text: str, known_calls: set | None = None) -> str:
             continue
 
         # 2. Po NAME / OP — sprobuj dopasowac imie
+        # max_dist=3 (bylo 2 pod plaska odleglosc) — budzet 2 byl skalibrowany
+        # gdy KAZDE podstawienie kosztowalo dokladnie 1. Teraz podstawienie
+        # miedzy odleglymi znakami kosztuje wiecej (patrz _sub_cost), wiec ten
+        # sam przyklad co w naglowku pliku (KEITH -> KEHTHA: I->H to 2 kropki
+        # roznicy + wstawione A) potrzebuje budzetu 3, inaczej NIE zlapalby
+        # sie wlasny przyklad autora. _best_match i tak odrzuca remisy, wiec
+        # wiekszy budzet nie oznacza wiecej falszywych trafien, tylko wiecej
+        # SZANS na jednoznaczne.
         if prev_upper in ("NAME", "OP", "OM") and len(T) >= 3:
-            m = _best_match(T, CW_NAMES, max_dist=2)
+            m = _best_match(T, CW_NAMES, max_dist=3)
             if m:
                 out.append(m)
                 prev_upper = m
@@ -205,7 +321,7 @@ def correct(text: str, known_calls: set | None = None) -> str:
                 continue
 
         # 5. Sklejone slowa — sprobuj rozdzielic wg slownika (TKSFER -> TKS FER)
-        seg = _segment(T)
+        seg = _segment(T, known_calls)
         if seg:
             out.append(seg)
             prev_upper = seg.split()[-1]

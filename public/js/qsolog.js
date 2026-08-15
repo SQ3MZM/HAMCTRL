@@ -337,6 +337,25 @@ function _freqToBand(hz) {
 }
 
 // ── Szybkie logowanie z zakładki RADIO ───────────────────────────────────────
+// Podpowiedz raportu (RST) w polach SENT/RCVD zalezna od trybu: CW/CW-R -> 599,
+// telefonia (USB/LSB/AM/FM/...) -> 59 — automatycznie po przelaczeniu modulacji
+// (wolane z UI.updateModeButtons(), ktore i tak biegnie przy kazdej zmianie
+// trybu: klik, telemetria, WS 'mode'). Nadpisuje pole TYLKO gdy wciaz trzyma
+// jeden z dwoch znanych domyslnych raportow (albo jest puste) — recznie
+// wpisany prawdziwy raport QSO nigdy nie jest nadpisywany.
+const _RST_CW = '599';
+const _RST_PHONE = '59';
+function updateRstDefaults(mode) {
+  const def = String(mode || '').toUpperCase().startsWith('CW') ? _RST_CW : _RST_PHONE;
+  const other = def === _RST_CW ? _RST_PHONE : _RST_CW;
+  ['qlog-rst-s', 'qlog-rst-r'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.value === '' || el.value === other || el.value === def) el.value = def;
+    el.placeholder = def;
+  });
+}
+
 async function quickLog() {
   const call = document.getElementById('qlog-call')?.value?.trim().toUpperCase();
   if (!call) {
@@ -355,8 +374,8 @@ async function quickLog() {
     band:      _freqToBand(S?.freq || 0),
     mode:      S?.mode || 'SSB',
     freq:      S?.freq ? (S.freq / 1e6).toFixed(4) : '',
-    rst_sent:  document.getElementById('qlog-rst-s')?.value || '599',
-    rst_rcvd:  document.getElementById('qlog-rst-r')?.value || '599',
+    rst_sent:  document.getElementById('qlog-rst-s')?.value || (String(S?.mode||'').toUpperCase().startsWith('CW') ? _RST_CW : _RST_PHONE),
+    rst_rcvd:  document.getElementById('qlog-rst-r')?.value || (String(S?.mode||'').toUpperCase().startsWith('CW') ? _RST_CW : _RST_PHONE),
     gridsquare: document.getElementById('qlog-grid')?.value?.trim().toUpperCase() || '',
     my_call:   S?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
@@ -593,7 +612,7 @@ async function checkWorkedBefore() {
 }
 
 window.QSOLog = {
-  load, sort, clearFilters, quickLog, importADIF, selectAll, deleteSelected, deleteAll,
+  load, sort, clearFilters, quickLog, updateRstDefaults, importADIF, selectAll, deleteSelected, deleteAll,
   prevPage, nextPage,
   openNew, openEdit, closeModal, saveQSO, deleteQSO,
   exportADI, exportCSV,

@@ -168,6 +168,10 @@ function updateModeButtons() {
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.textContent === S.mode);
   });
+  // Podpowiedz RST w "LOG QSO" (CW->599, telefonia->59) — wolane stad bo
+  // updateModeButtons() i tak biegnie przy KAZDEJ zmianie trybu (klik,
+  // telemetria, WS 'mode'), wiec to jedyne miejsce ktore trzeba podpiac.
+  window.QSOLog?.updateRstDefaults?.(S.mode);
 }
 
 // ── Pasma ─────────────────────────────────────────────────────────────────────
