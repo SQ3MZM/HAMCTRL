@@ -98,7 +98,7 @@ SERVER_VERSION = "1.0"
 GITHUB_REPO = ""   # TODO: "owner/repo" — fill in after creating the GitHub repo
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
-                    MIME, PUBLIC, CFG_F, USR_F, LOG_F, ADMIN_PW, FIRST_RUN)
+                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
@@ -429,7 +429,6 @@ class App:
             self.rig = RigCAT()
         self.rotators: list[Rotator] = []
         self.users    = get_users()
-        self.log      = load_json(LOG_F, [])
         self.audio    = AudioStream()
         self.audio.cfg = self.cfg.get("audio", {})
 
@@ -604,6 +603,10 @@ class App:
         self._ft8_tx_lock = asyncio.Lock()
         self._ft8_tx_period = 1  # 1 = okna xx:00/xx:30 (domyslny), 2 = xx:15/xx:45
         self._qso_period_locked = False  # True gdy period wykryty dla biezacego QSO
+        # Licznik "ktora automatyczna akcja TX jest AKTUALNIE ta ostatnia
+        # zlecona" — patrz komentarz przy uzyciu w _send_auto_tx/
+        # _ft8_tx_sequence_inner (stale-TX-guard).
+        self._autoqso_tx_seq = 0
         self._ft8_decode_mode = "FT8"  # "FT8" lub "FT4" — ktorego enkodera/timingu uzywac
 
         self.webrtc   = WebRTCAudioReceiver(
@@ -2978,75 +2981,6 @@ class App:
             self.init_rotators()
             return 200, {"ok": True, "count": len(self.rotators)}
 
-        if p == "/api/log" and method == "GET":
-            page     = int(query.get("page", ["0"])[0])
-            size     = int(query.get("size", ["200"])[0])
-            user_filter = query.get("user", [None])[0]
-            logs = self.log
-            if user_filter == "me":
-                logs = [e for e in logs if e.get("user_id") == uid]
-            elif user_filter and user_filter != "all":
-                logs = [e for e in logs if e.get("user_id") == user_filter]
-            return 200, {"entries": logs[page*size:(page+1)*size],
-                         "total": len(logs), "page": page, "size": size}
-
-        if p == "/api/log" and method == "POST":
-            entry = {
-                **body,
-                "id":        str(int(time.time()*1000)),
-                "timestamp": int(time.time()*1000),
-                "user_id":   uid,
-                "operator":  user.get("username", ""),
-            }
-            self.log.insert(0, entry)
-            if len(self.log) > 5000: self.log = self.log[:5000]
-            save_json(LOG_F, self.log)
-            await self.hub.broadcast({"type": "qso_new", "entry": entry})
-            return 200, {"ok": True, "entry": entry}
-
-        if p == "/api/log/export" and method == "GET":
-            """Eksport logu do ADIF — tylko własne QSO (user=me) lub wszystkie (admin)."""
-            user_filter = query.get("user", ["me"])[0]
-            if user_filter == "me":
-                logs = [e for e in self.log if e.get("user_id") == uid]
-            elif role == "admin":
-                logs = self.log
-            else:
-                logs = [e for e in self.log if e.get("user_id") == uid]
-
-            def _adif_field(name, val):
-                v = str(val or "")
-                return f"<{name}:{len(v)}>{v}"
-
-            lines = ["ADIF Export from Ham Radio Control Server", "<EOH>", ""]
-            for e in reversed(logs):
-                dt = e.get("date","") or ""
-                tm = e.get("time","") or ""
-                row = " ".join([
-                    _adif_field("CALL",     e.get("dxCall","")),
-                    _adif_field("BAND",     e.get("band","")),
-                    _adif_field("MODE",     e.get("mode","FT8")),
-                    _adif_field("QSO_DATE", dt.replace("-","")),
-                    _adif_field("TIME_ON",  tm.replace(":","")[:6]),
-                    _adif_field("RST_SENT", e.get("rstSent","599")),
-                    _adif_field("RST_RCVD", e.get("rstRcvd","599")),
-                    _adif_field("GRIDSQUARE", e.get("dxGrid","")),
-                    _adif_field("FREQ",     str(round(e.get("freq",0)/1e6,6))),
-                    _adif_field("OPERATOR", e.get("operator","")),
-                    _adif_field("COMMENT",  e.get("comment","")),
-                    "<EOR>",
-                ])
-                lines.append(row)
-            adif_content = "\n".join(lines)
-            return 200, {"adif": adif_content, "count": len(logs)}
-
-        m = re.match(r"^/api/log/(.+)$", p)
-        if m and method == "DELETE":
-            eid = m.group(1)
-            self.log = [e for e in self.log if e.get("id") != eid]
-            save_json(LOG_F, self.log)
-            return 200, {"ok": True}
-
         if p == "/api/users" and method == "GET":
             if role != "admin": return 403, {"error": "Tylko admin"}
             # Zwracamy pelen zestaw pol edytowalnych z profilu - inaczej admin
@@ -3712,6 +3646,11 @@ class App:
                 qso = qso_db.add_qso(uid, body)
                 # Wyslij do CloudLog jesli skonfigurowany
                 asyncio.ensure_future(self._cloudlog_push_qso(uid, qso))
+                # Live-update mini-logu pod automatyka (WSJT-X page) - ten
+                # sam broadcast co przy auto-zapisie QSO z automatyki (patrz
+                # "QSO ZAPISANE do logu" w _process_auto_qso) - jeden typ
+                # wiadomosci dla obu sciezek zapisu (recznej i automatycznej).
+                await self.hub.broadcast({"type": "qso_logged", "qso": qso})
                 return 200, {"ok": True, "id": qso["id"]}
             except ValueError as e:
                 return 400, {"ok": False, "error": str(e)}
@@ -6017,7 +5956,7 @@ class App:
         await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                    "frozen": self._ft8_tx_frozen})
 
-    async def _ft8_tx_sequence(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False):
+    async def _ft8_tx_sequence(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False, tx_seq: int = None):
         """
         Wrapper z mutexem wokol _ft8_tx_sequence_inner — zapobiega rownoleglemu
         wykonaniu dwoch transmisji (np. automatyka + reczny klik, lub dwie
@@ -6030,9 +5969,9 @@ class App:
         o jeden cykl).
         """
         async with self._ft8_tx_lock:
-            await self._ft8_tx_sequence_inner(call_to, call_de, report, r_flag, auto_respond=auto_respond)
+            await self._ft8_tx_sequence_inner(call_to, call_de, report, r_flag, auto_respond=auto_respond, tx_seq=tx_seq)
 
-    async def _ft8_tx_sequence_inner(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False):
+    async def _ft8_tx_sequence_inner(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False, tx_seq: int = None):
         """
         Pelna sekwencja nadawania FT8: enkoduj -> czekaj na okno 15s UTC ->
         PTT ON -> stream audio (kawalki 20ms przez feed_tx_pcm) -> PTT OFF.
@@ -6113,7 +6052,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-STALE-TX-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-QSOLOG-UNIFY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6220,22 +6159,37 @@ class App:
             # Ostatnia kontrola aktualnosci TUZ przed PTT (nie na etapie
             # planowania) — automatyka planuje wysylke jako osobny task
             # (asyncio.create_task) ktory czeka na wlasciwe okno (nawet do
-            # ~15-30s wyzej). W tym czasie MOZE zajsc kolejny dekod ktory
-            # przesunie silnik QSO dalej (albo go zakonczy) zanim ten
-            # zaplanowany task w ogole dotrze do PTT. Zaobserwowane na zywo
-            # 2026-08-15: retransmisja raportu "+08" (Brak odpowiedzi -
-            # powtarzam) i finalne "73" (partner faktycznie odpowiedzial
-            # RR73 w MIEDZYCZASIE) zostaly zaplanowane niemal rownoczesnie z
-            # tej samej paczki dekodow — "73" zdazylo sie nadac i ZALOGOWAC
-            # QSO, a przestarzale "+08" i tak nadalo sie PO fakcie, bo nic
-            # nie sprawdzalo czy silnik nadal jest w stanie/z partnerem
-            # pasujacym do TEJ konkretnej wiadomosci. Nie dotyczy CQ
-            # (auto_respond=False dla cyklicznego CQ) ani recznego TX.
-            if auto_respond and call_to != "CQ":
-                _cur_partner = self._qso_engine.partner_call
-                if _cur_partner != call_to or not self._qso_engine.is_active():
+            # ~15-30s wyzej). W tym czasie MOZE zostac zlecona NOWSZA akcja
+            # (np. partner odpowiedzial zanim ta stara doszla do PTT).
+            # Zaobserwowane na zywo 2026-08-15: retransmisja raportu "+08"
+            # (Brak odpowiedzi - powtarzam) i finalne "73" (partner faktycznie
+            # odpowiedzial RR73 W MIEDZYCZASIE) zostaly zlecone niemal
+            # rownoczesnie z tej samej paczki dekodow — "73" zdazylo sie
+            # nadac i ZALOGOWAC QSO, a przestarzale "+08" i tak nadalo sie
+            # PO fakcie.
+            #
+            # PIERWSZA wersja tej ochrony (partner_call==call_to AND
+            # is_active()) byla BLEDNA w drugi sposob: koncowe "73" SAMO
+            # przestawia silnik w stan DONE (is_active()==False) jako
+            # BEZPOSREDNI skutek wygenerowania WLASNIE TEJ akcji — wiec
+            # blokowala dokladnie tę wiadomosc, ktora legalnie konczy QSO
+            # (na zywo 2026-08-15: "partner dostal RR73, automat nie
+            # potwierdzil 73"). Stan silnika w danej chwili nie mowi wiec
+            # nic o tym, czy TA KONKRETNA zaplanowana akcja jest wciaz
+            # aktualna, czy juz przestarzala — bo silnik sam siebie
+            # "konczy" jako naturalny skutek WYSYLANIA wlasnie tej akcji.
+            #
+            # Poprawne kryterium: numer sekwencyjny (_autoqso_tx_seq,
+            # patrz _send_auto_tx) przypisany w chwili ZLECENIA tej akcji.
+            # Jesli od tego czasu zdazyla zostac zlecona JAKAKOLWIEK nowsza
+            # automatyczna akcja (bez wzgledu na to, w jakim stanie to
+            # zostawilo silnik), ta jest z definicji nieaktualna. Nie
+            # dotyczy CQ (auto_respond=False dla cyklicznego CQ) ani
+            # recznego TX (tx_seq=None wtedy).
+            if auto_respond and call_to != "CQ" and tx_seq is not None:
+                if tx_seq != self._autoqso_tx_seq:
                     print(f"[autoqso] TX '{call_to} {call_de} {report}' nieaktualne "
-                          f"(partner={_cur_partner!r}, state={self._qso_engine.state}) — pomijam")
+                          f"(tx_seq={tx_seq}, aktualny={self._autoqso_tx_seq}) — pomijam")
                     await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                     return
 
@@ -6702,6 +6656,19 @@ class App:
         self._last_auto_tx_action = dict(action)
         self._qso_engine.record_tx_sent()
 
+        # Numer sekwencyjny TEJ konkretnej akcji — patrz stale-TX-guard w
+        # _ft8_tx_sequence_inner (tuz przed PTT) po pelne wyjasnienie. W
+        # skrocie: jesli miedzy zaplanowaniem tej wysylki a jej faktycznym
+        # PTT zdazyla zostac zlecona NOWSZA akcja (np. partner odpowiedzial
+        # zanim ta retransmisja doszla do PTT), ta stara akcja jest z
+        # definicji nieaktualna — bez wzgledu na to w jakim stanie silnik
+        # QSO akurat jest w danym momencie (pierwsza wersja tej ochrony,
+        # oparta o partner_call+is_active(), bledna blokowala WLASNIE
+        # akcje ktora legalnie konczy QSO, bo koncowe "73" samo przestawia
+        # silnik w stan DONE zanim jeszcze zdazy wyjsc w eter).
+        self._autoqso_tx_seq += 1
+        my_tx_seq = self._autoqso_tx_seq
+
         # Wygeneruj PCM PRZED uruchomieniem TX task — eliminuje ~500ms opoznienia DT
         ct, cd, rg, rf = (action["call_to"], action["call_de"],
                           action["report_or_grid"], action.get("r_flag", False))
@@ -6726,7 +6693,7 @@ class App:
         except Exception as e:
             print(f"[ft8] pre_gen blad: {e}")
 
-        asyncio.create_task(self._ft8_tx_sequence(ct, cd, rg, rf, auto_respond=True))
+        asyncio.create_task(self._ft8_tx_sequence(ct, cd, rg, rf, auto_respond=True, tx_seq=my_tx_seq))
 
     async def _ft8_rx_loop(self):
         """

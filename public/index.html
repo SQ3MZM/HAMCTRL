@@ -531,18 +531,10 @@
     <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;"
          title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
     <div style="flex:1"></div>
-    <span id="wj-de-call" style="font-family:var(--mono);font-size:12px;color:#8be;">DE: --</span>
-    <span id="wj-de-grid" style="font-family:var(--mono);font-size:11px;color:rgba(136,187,238,0.6);">--</span>
     <div style="display:flex;gap:6px;margin-left:12px;">
-      <input type="number" id="wsjtx-udp-port" value="2238"
-        style="width:64px;font-family:var(--mono);font-size:11px;padding:3px 6px;background:#111;border:1px solid #333;color:#ccc;border-radius:2px;">
-      <button onclick="WSJTX.startWsjtx()" class="wj-btn wj-btn-green">▶ START</button>
-      <button onclick="WSJTX.stopWsjtx()"  class="wj-btn wj-btn-red">■ STOP</button>
       <button onclick="WSJTX.haltTx()"     class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
       <span id="wj-tx-watchdog" style="display:none;font-family:var(--mono);font-size:10px;padding:3px 8px;background:rgba(217,119,106,0.15);border:1px solid var(--red);color:var(--red);border-radius:3px;letter-spacing:1px;">⏱ AUTO-OFF: <span id="wj-tx-watchdog-time">30</span>s</span>
       <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
-      <button onclick="WSJTX.quickLogQso()" class="wj-btn wj-btn-green" id="wj-quicklog-btn" title="Szybko zapisz QSO — używa danych z formularza Log (DX call, RST, grid)">📝 LOG QSO</button>
-      <button onclick="WSJTX.bestSP()" class="wj-btn" id="wj-best-sp-btn" title="Wybierz najsilniejszą stację CQ z ostatnich 5 minut (Search & Pounce). Auto-select najsilniejszej CQ dla contestowego S&P.">⭐ BEST S&P</button>
       <button onclick="WSJTX.clearDecodes()" class="wj-btn">WYCZYŚĆ</button>
       <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" title="Ukryj stacje już zaliczone w logu QSO">
         <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)"
@@ -618,6 +610,8 @@
         <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
           BAND ACTIVITY
           <div style="flex:1"></div>
+          <button class="wj-btn wj-btn-xs wj-country-mode-btn" onclick="WSJTX.toggleCountryMode()"
+            title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
           <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearDecodes()" title="Wyczysc Band Activity">🗑</button>
         </div>
         <div class="wsjtx-decode-header">
@@ -640,6 +634,8 @@
         <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
           RX FREQUENCY
           <div style="flex:1"></div>
+          <button class="wj-btn wj-btn-xs wj-country-mode-btn" onclick="WSJTX.toggleCountryMode()"
+            title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
           <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearRxFreqPanel()" title="Wyczysc Rx Frequency">🗑</button>
         </div>
         <div class="wsjtx-decode-header">
@@ -764,14 +760,12 @@
           <span class="wj-tx-num">F6</span>
           <span class="wj-tx-text" id="wj-tx6-text">{DXCALL} RR73</span>
         </button>
-        <button class="wj-tx-btn" id="wj-tx7" onclick="WSJTX.sendTx(7)">
-          <span class="wj-tx-num">F7</span>
-          <span class="wj-tx-text" id="wj-tx7-text">CQ {MYCALL} {GRID}</span>
-        </button>
       </div>
       <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
         <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">DX:</span>
-        <input id="wj-dx-call" type="text" placeholder="-- KLIKNIJ WIERSZ --"
+        <input id="wj-dx-call" type="text" placeholder="-- KLIKNIJ WIERSZ LUB WPISZ --"
+          onkeydown="if(event.key==='Enter'){WSJTX.searchDxCall(this.value)}"
+          onblur="WSJTX.searchDxCall(this.value)"
           style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;
           background:#0a0a0a;border:1px solid #333;color:#8be;padding:3px 6px;border-radius:2px;">
         <input id="wj-dx-grid" type="text" placeholder="Grid"
@@ -797,23 +791,39 @@
       <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
           <input id="wj-log-call" type="text" placeholder="CALLSIGN DX *"
+            oninput="WSJTX.updateBeamRow()"
             style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
             background:#0a0a0a;border:1px solid #2a2a2a;color:#4cf;padding:3px 5px;border-radius:2px;">
           <input id="wj-log-grid" type="text" placeholder="Grid DX"
+            oninput="WSJTX.updateBeamRow()"
             style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
             background:#0a0a0a;border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
         </div>
         <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
-             wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu) -->
+             wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu).
+             Prawa strona: zywa pozycja rotora (ten sam WS "rotator_update"
+             co duzy kompas w RADIO) + SP/LP - klik od razu wysyla komende,
+             bez osobnego potwierdzenia (patrz rotorGoBeam w wsjtx.js). -->
         <div id="wj-beam-row" style="display:none;font-family:var(--mono);
              font-size:10px;color:#888;padding:2px 4px;margin-bottom:3px;
-             background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;">
+             background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;
+             align-items:center;gap:0;white-space:nowrap;overflow:hidden;">
           <span style="color:#666;">ANTENA</span>
           <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
                 margin:0 4px;">---°</span>
           <span id="wj-beam-dist" style="color:#4cf;"></span>
           <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
           <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+          <div style="flex:1;min-width:6px;"></div>
+          <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
+          <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
+            title="Ustaw rotor na azymut SP (krotka droga)"
+            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
+            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
+          <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
+            title="Ustaw rotor na azymut LP (dluga droga)"
+            style="font-family:var(--mono);font-size:9px;padding:1px 5px;
+            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:3px;">
           <select id="wj-log-mode"
@@ -836,11 +846,15 @@
           <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:4px 8px;" title="Eksport ADIF">⬇ ADIF</button>
         </div>
       </div>
-      <div style="flex:1;display:flex;align-items:center;justify-content:center;color:#333;font-family:var(--mono);font-size:10px;padding:8px;text-align:center;">
-        QSO są automatycznie zapisywane do logu użytkownika.<br>
-        <span style="color:#4cf;cursor:pointer;text-decoration:underline;" onclick="document.querySelector('[data-tab=log]')?.click()">
-          → Przejdź do LOG QSO
-        </span>
+      <!-- Mini-log: czysto informacyjny podglad tego co wyladowalo w logu -->
+      <!-- (pasmo/znak/RST) - edycja i pelny zapis sa na osobnej stronie -->
+      <!-- LOG QSO (tab-log), tu tylko podglad na biezaco. -->
+      <div style="flex:1;overflow-y:auto;padding:2px 6px;">
+        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;">
+          <tbody id="wj-minilog-body">
+            <tr><td colspan="4" style="color:#333;text-align:center;padding:8px;">Brak zalogowanych QSO</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -2400,7 +2414,7 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608150001"></script>
+<script src="js/wsjtx.js?v=202608150002"></script>
 <script src="js/wsjtx_scope.js?v=202608130001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>

@@ -46,10 +46,138 @@ let _myGrid      = '';
 let _status      = { running: false, transmit: false, decoding: false };
 let _clockTimer  = null;
 let _decodeCount = 0;
-let _logEntries  = [];      // własny log QSO z serwera
-let _logPage     = 0;
-let _logTotal    = 0;
+let _miniLogEntries = [];   // ostatnie QSO z prawdziwego logu (qso_db, /api/qsolog) - podglad pod automatyka
+const MINI_LOG_MAX = 8;
 const MAX_DECODES = 300;
+
+// ── Kraj wolajacego CQ (kolumna "Kraj" w Band Activity / RX Frequency) ────────
+// Naglowek kolumny byl w HTML od dawna, ale nic jej nigdy nie wypelnialo -
+// _decodeRowHtml renderowal <span class="wj-d-country"></span> zawsze pusty.
+// Heurystyka prefiksowa (nie pelny/dokladny DXCC - to wymagaloby zewnetrznej
+// bazy zakresow prefiksow z wyjatkami), analogiczna do prefixToLatLon() w
+// beamheading.js (ta sama idea: probuj od najdluzszego prefiksu), ale osobna
+// tabela - tu potrzebna nazwa+flaga, nie wspolrzedne.
+const _PREFIX_COUNTRY = {
+  // Europa
+  'SP':['Polska','PL'], 'SQ':['Polska','PL'], 'SN':['Polska','PL'], 'SO':['Polska','PL'], 'SR':['Polska','PL'], 'HF':['Polska','PL'], '3Z':['Polska','PL'],
+  'DL':['Niemcy','DE'], 'DK':['Niemcy','DE'], 'DJ':['Niemcy','DE'], 'DF':['Niemcy','DE'], 'DB':['Niemcy','DE'], 'DA':['Niemcy','DE'], 'DC':['Niemcy','DE'], 'DD':['Niemcy','DE'], 'DG':['Niemcy','DE'], 'DH':['Niemcy','DE'], 'DM':['Niemcy','DE'], 'DO':['Niemcy','DE'],
+  'G':['Anglia','GB'], 'M':['Anglia','GB'], '2E':['Anglia','GB'],
+  'GW':['Walia','GB'], 'MW':['Walia','GB'], 'GM':['Szkocja','GB'], 'MM':['Szkocja','GB'],
+  'GI':['Irlandia Płn.','GB'], 'MI':['Irlandia Płn.','GB'], 'GD':['Wyspa Man','GB'], 'GJ':['Jersey','GB'], 'GU':['Guernsey','GB'],
+  'F':['Francja','FR'], 'TM':['Francja','FR'], 'TO':['Francja','FR'],
+  'ON':['Belgia','BE'], 'OO':['Belgia','BE'], 'OP':['Belgia','BE'], 'OQ':['Belgia','BE'], 'OR':['Belgia','BE'], 'OS':['Belgia','BE'], 'OT':['Belgia','BE'],
+  'PA':['Holandia','NL'], 'PB':['Holandia','NL'], 'PC':['Holandia','NL'], 'PD':['Holandia','NL'], 'PE':['Holandia','NL'], 'PF':['Holandia','NL'], 'PG':['Holandia','NL'], 'PH':['Holandia','NL'], 'PI':['Holandia','NL'],
+  'LX':['Luksemburg','LU'],
+  'EA':['Hiszpania','ES'], 'EB':['Hiszpania','ES'], 'EC':['Hiszpania','ES'], 'ED':['Hiszpania','ES'], 'EE':['Hiszpania','ES'], 'EF':['Hiszpania','ES'], 'EG':['Hiszpania','ES'], 'EH':['Hiszpania','ES'],
+  'CT':['Portugalia','PT'], 'CQ':['Portugalia','PT'], 'CS':['Portugalia','PT'], 'CR':['Portugalia','PT'],
+  'I':['Włochy','IT'], 'IK':['Włochy','IT'], 'IZ':['Włochy','IT'], 'IW':['Włochy','IT'], 'IU':['Włochy','IT'], 'IN':['Włochy','IT'], 'IQ':['Włochy','IT'], 'IR':['Włochy','IT'], 'IT':['Włochy','IT'], 'IS':['Sardynia','IT'], 'IB':['Baleary','ES'],
+  'HB':['Szwajcaria','CH'], 'HE':['Szwajcaria','CH'],
+  'OE':['Austria','AT'],
+  'OK':['Czechy','CZ'], 'OL':['Czechy','CZ'],
+  'OM':['Słowacja','SK'],
+  'HA':['Węgry','HU'], 'HG':['Węgry','HU'],
+  'YO':['Rumunia','RO'], 'YP':['Rumunia','RO'], 'YQ':['Rumunia','RO'], 'YR':['Rumunia','RO'],
+  'LZ':['Bułgaria','BG'],
+  'YU':['Serbia','RS'], 'YT':['Serbia','RS'],
+  'S5':['Słowenia','SI'], '9A':['Chorwacja','HR'], 'E7':['Bośnia i Hercegowina','BA'],
+  'Z3':['Macedonia Płn.','MK'], 'Z6':['Kosowo','XK'], '4O':['Czarnogóra','ME'],
+  'SV':['Grecja','GR'], 'SY':['Grecja','GR'], 'SZ':['Grecja','GR'], 'SW':['Grecja','GR'], 'SX':['Grecja','GR'],
+  'TA':['Turcja','TR'], 'TB':['Turcja','TR'], 'TC':['Turcja','TR'],
+  'ZA':['Albania','AL'],
+  'OH':['Finlandia','FI'], 'OF':['Finlandia','FI'], 'OG':['Finlandia','FI'], 'OI':['Finlandia','FI'], 'OJ':['Wyspy Alandzkie','AX'],
+  'SM':['Szwecja','SE'], 'SA':['Szwecja','SE'], 'SB':['Szwecja','SE'], 'SC':['Szwecja','SE'], 'SD':['Szwecja','SE'], 'SE':['Szwecja','SE'], 'SF':['Szwecja','SE'], 'SG':['Szwecja','SE'], 'SH':['Szwecja','SE'], 'SI':['Szwecja','SE'], 'SJ':['Szwecja','SE'], 'SK':['Szwecja','SE'], 'SL':['Szwecja','SE'],
+  'LA':['Norwegia','NO'], 'LB':['Norwegia','NO'], 'LJ':['Norwegia','NO'], 'LN':['Norwegia','NO'],
+  'OZ':['Dania','DK'], '5P':['Dania','DK'], '5Q':['Dania','DK'], 'OU':['Dania','DK'], 'OV':['Dania','DK'],
+  'OY':['Wyspy Owcze','FO'], 'TF':['Islandia','IS'],
+  'ES':['Estonia','EE'], 'YL':['Łotwa','LV'], 'LY':['Litwa','LT'],
+  'EW':['Białoruś','BY'], 'EU':['Białoruś','BY'], 'EV':['Białoruś','BY'],
+  'UR':['Ukraina','UA'], 'UT':['Ukraina','UA'], 'UX':['Ukraina','UA'], 'US':['Ukraina','UA'], 'UY':['Ukraina','UA'], 'UZ':['Ukraina','UA'], 'EM':['Ukraina','UA'], 'EN':['Ukraina','UA'], 'EO':['Ukraina','UA'],
+  'ER':['Mołdawia','MD'],
+  'EI':['Irlandia','IE'], 'EJ':['Irlandia','IE'],
+  'C3':['Andora','AD'], '3A':['Monako','MC'], '4U':['Watykan/UN','VA'], 'ZB':['Gibraltar','GI'], '9H':['Malta','MT'], '5B':['Cypr','CY'], 'ZC':['Cypr (bryt.)','CY'],
+  'R':['Rosja (Europ.)','RU'], 'UA':['Rosja (Europ.)','RU'], 'RA':['Rosja (Europ.)','RU'], 'RK':['Rosja (Europ.)','RU'], 'RN':['Rosja (Europ.)','RU'], 'RV':['Rosja (Europ.)','RU'], 'RW':['Rosja (Europ.)','RU'], 'RX':['Rosja (Europ.)','RU'], 'RZ':['Rosja (Europ.)','RU'], 'RC':['Rosja (Europ.)','RU'], 'RD':['Rosja (Europ.)','RU'], 'RG':['Rosja (Europ.)','RU'], 'RJ':['Rosja (Europ.)','RU'], 'RL':['Rosja (Europ.)','RU'], 'RM':['Rosja (Europ.)','RU'], 'RO':['Rosja (Europ.)','RU'], 'RP':['Rosja (Europ.)','RU'], 'RQ':['Rosja (Europ.)','RU'], 'RT':['Rosja (Europ.)','RU'], 'RU':['Rosja (Europ.)','RU'],
+  'UA9':['Rosja (Azja)','RU'], 'RA9':['Rosja (Azja)','RU'], 'UA0':['Rosja (Azja)','RU'], 'RA0':['Rosja (Azja)','RU'], 'R9':['Rosja (Azja)','RU'], 'R0':['Rosja (Azja)','RU'],
+  '4X':['Izrael','IL'], '4Z':['Izrael','IL'],
+  // Afryka Płn./Bliski Wschod
+  'CN':['Maroko','MA'], 'SU':['Egipt','EG'], '3V':['Tunezja','TN'], '7X':['Algieria','DZ'], '5A':['Libia','LY'],
+  'A4':['Oman','OM'], 'A6':['ZEA','AE'], 'A7':['Katar','QA'], 'A9':['Bahrajn','BH'], '9K':['Kuwejt','KW'], 'HZ':['Arabia Saudyjska','SA'], '7Z':['Arabia Saudyjska','SA'],
+  // Afryka Subsah.
+  'EL':['Liberia','LR'], '5N':['Nigeria','NG'], 'TR':['Gabon','GA'], '9J':['Zambia','ZM'], 'ZS':['RPA','ZA'], 'ZR':['RPA','ZA'], 'ZT':['RPA','ZA'], 'ZU':['RPA','ZA'], '5H':['Tanzania','TZ'], '5Z':['Kenia','KE'], '5X':['Uganda','UG'], '7P':['Lesotho','LS'], 'V5':['Namibia','NA'], 'C9':['Mozambik','MZ'],
+  // Ameryka Płn.
+  'W':['USA','US'], 'K':['USA','US'], 'N':['USA','US'], 'AA':['USA','US'], 'AB':['USA','US'], 'AC':['USA','US'], 'AD':['USA','US'], 'AE':['USA','US'], 'AF':['USA','US'], 'AG':['USA','US'], 'AI':['USA','US'], 'AJ':['USA','US'], 'AK':['USA','US'],
+  'KL':['Alaska','US'], 'KL7':['Alaska','US'], 'NL7':['Alaska','US'], 'KH6':['Hawaje','US'], 'NH6':['Hawaje','US'],
+  'VE':['Kanada','CA'], 'VA':['Kanada','CA'], 'VO':['Kanada','CA'], 'VY':['Kanada','CA'], 'CF':['Kanada','CA'], 'CG':['Kanada','CA'], 'CJ':['Kanada','CA'], 'CK':['Kanada','CA'],
+  'XE':['Meksyk','MX'], 'XF':['Meksyk','MX'],
+  // Ameryka Środk./Karaiby
+  'CO':['Kuba','CU'], 'CM':['Kuba','CU'], 'HI':['Dominikana','DO'], 'KP4':['Puerto Rico','PR'], 'NP4':['Puerto Rico','PR'], 'V2':['Antigua','AG'], '8P':['Barbados','BB'], 'J3':['Grenada','GD'], '6Y':['Jamajka','JM'], 'TG':['Gwatemala','GT'], 'TI':['Kostaryka','CR'], 'HP':['Panama','PA'], 'YN':['Nikaragua','NI'], 'HR':['Honduras','HN'], 'YS':['Salwador','SV'],
+  // Ameryka Płd.
+  'PY':['Brazylia','BR'], 'PP':['Brazylia','BR'], 'PQ':['Brazylia','BR'], 'PR':['Brazylia','BR'], 'PS':['Brazylia','BR'], 'PT':['Brazylia','BR'], 'PU':['Brazylia','BR'], 'PV':['Brazylia','BR'], 'PW':['Brazylia','BR'], 'ZV':['Brazylia','BR'], 'ZW':['Brazylia','BR'], 'ZX':['Brazylia','BR'], 'ZY':['Brazylia','BR'], 'ZZ':['Brazylia','BR'],
+  'LU':['Argentyna','AR'], 'LO':['Argentyna','AR'], 'LP':['Argentyna','AR'], 'LQ':['Argentyna','AR'], 'LR':['Argentyna','AR'], 'LS':['Argentyna','AR'], 'LT':['Argentyna','AR'], 'LV':['Argentyna','AR'], 'LW':['Argentyna','AR'],
+  'CE':['Chile','CL'], 'CA':['Chile','CL'], 'CB':['Chile','CL'], 'CC':['Chile','CL'], 'CD':['Chile','CL'], 'XQ':['Chile','CL'], 'XR':['Chile','CL'],
+  'HK':['Kolumbia','CO'], 'HJ':['Kolumbia','CO'],
+  'YV':['Wenezuela','VE'], 'YW':['Wenezuela','VE'], 'YX':['Wenezuela','VE'],
+  'OA':['Peru','PE'], 'OB':['Peru','PE'], 'OC':['Peru','PE'],
+  'CP':['Boliwia','BO'], 'HC':['Ekwador','EC'], 'HD':['Ekwador','EC'], 'CX':['Urugwaj','UY'], 'CV':['Urugwaj','UY'], 'ZP':['Paragwaj','PY'],
+  // Azja
+  'JA':['Japonia','JP'], 'JE':['Japonia','JP'], 'JF':['Japonia','JP'], 'JG':['Japonia','JP'], 'JH':['Japonia','JP'], 'JI':['Japonia','JP'], 'JJ':['Japonia','JP'], 'JK':['Japonia','JP'], 'JL':['Japonia','JP'], 'JM':['Japonia','JP'], 'JN':['Japonia','JP'], 'JO':['Japonia','JP'], 'JP':['Japonia','JP'], 'JQ':['Japonia','JP'], 'JR':['Japonia','JP'], 'JS':['Japonia','JP'], '7J':['Japonia','JP'], '7K':['Japonia','JP'], '7L':['Japonia','JP'], '7M':['Japonia','JP'], '7N':['Japonia','JP'], '8J':['Japonia','JP'],
+  'HL':['Korea Płd.','KR'], 'DS':['Korea Płd.','KR'], '6K':['Korea Płd.','KR'], '6L':['Korea Płd.','KR'], '6M':['Korea Płd.','KR'], '6N':['Korea Płd.','KR'],
+  'BY':['Chiny','CN'], 'BA':['Chiny','CN'], 'BD':['Chiny','CN'], 'BG':['Chiny','CN'], 'BH':['Chiny','CN'], 'BI':['Chiny','CN'],
+  'BV':['Tajwan','TW'],
+  'VU':['Indie','IN'], 'AT':['Indie','IN'], 'AU':['Indie','IN'], 'AV':['Indie','IN'], 'AW':['Indie','IN'],
+  'YB':['Indonezja','ID'], 'YC':['Indonezja','ID'], 'YD':['Indonezja','ID'], 'YE':['Indonezja','ID'], 'YF':['Indonezja','ID'], 'YG':['Indonezja','ID'], 'YH':['Indonezja','ID'],
+  'EX':['Kirgistan','KG'], 'UN':['Kazachstan','KZ'], 'EY':['Tadżykistan','TJ'], 'EZ':['Turkmenistan','TM'], 'UK':['Uzbekistan','UZ'], 'EK':['Armenia','AM'], '4J':['Azerbejdżan','AZ'], '4L':['Gruzja','GE'],
+  'HS':['Tajlandia','TH'], 'E2':['Tajlandia','TH'], '9M':['Malezja','MY'], '9V':['Singapur','SG'], 'XV':['Wietnam','VN'], '3W':['Wietnam','VN'], 'XU':['Kambodża','KH'], 'XW':['Laos','LA'], 'XZ':['Mjanma','MM'],
+  'DU':['Filipiny','PH'], 'DV':['Filipiny','PH'], 'DW':['Filipiny','PH'], 'DX':['Filipiny','PH'], 'DY':['Filipiny','PH'], 'DZ':['Filipiny','PH'], '4D':['Filipiny','PH'],
+  '9M2':['Malezja Zach.','MY'], '9M6':['Malezja Wsch.','MY'],
+  // Oceania
+  'VK':['Australia','AU'], 'VH':['Australia','AU'], 'VI':['Australia','AU'], 'VJ':['Australia','AU'], 'VL':['Australia','AU'], 'VN':['Australia','AU'], 'VZ':['Australia','AU'],
+  'ZL':['Nowa Zelandia','NZ'], 'ZK':['Nowa Zelandia','NZ'], 'ZM':['Nowa Zelandia','NZ'],
+  'KH0':['Mariany Płn.','MP'], 'KH2':['Guam','GU'],
+  // Afryka Płd./inne
+  'ZS':['RPA','ZA'],
+};
+
+// Flaga z kodu ISO-3166 alpha-2 (regionalne wskazniki Unicode) - algorytm, nie
+// baza obrazkow, wiec nie trzeba trzymac osobnych plikow/emoji per kraj.
+function _isoToFlag(iso2) {
+  if (!iso2 || iso2.length !== 2) return '';
+  const codePoints = [...iso2.toUpperCase()].map(c => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+}
+
+function _countryForCall(call) {
+  const c = (call || '').trim().toUpperCase();
+  if (!c) return null;
+  const base = c.includes('/')
+      ? c.split('/').reduce((a, b) => (a.length <= b.length ? a : b))
+      : c;
+  for (let len = 3; len >= 1; len--) {
+    const p = base.slice(0, len);
+    if (_PREFIX_COUNTRY[p]) {
+      const [name, iso2] = _PREFIX_COUNTRY[p];
+      return { name, flag: _isoToFlag(iso2) };
+    }
+  }
+  return null;
+}
+
+// Tryb wyswietlania kolumny "Kraj" - CELOWO tylko jedna opcja naraz (flaga
+// ALBO nazwa), nie obie jednoczesnie - przelacznik w naglowku Band Activity
+// i RX Frequency (ten sam globalny stan, dwa przyciski .wj-country-mode-btn
+// zeby dzialalo z obu paneli).
+let _countryMode = 'flag'; // 'flag' | 'name'
+
+function toggleCountryMode() {
+  _countryMode = _countryMode === 'flag' ? 'name' : 'flag';
+  document.querySelectorAll('.wj-country-mode-btn').forEach(b => {
+    b.textContent = _countryMode === 'flag' ? '🏳️' : 'Aa';
+    b.title = _countryMode === 'flag'
+      ? 'Kolumna Kraj: flaga (klik: przelacz na nazwe)'
+      : 'Kolumna Kraj: nazwa (klik: przelacz na flage)';
+  });
+  _renderDecodes();
+  _renderRxFreqPanel();
+}
 
 // Automatyka QSO (stan UI, zrodlo prawdy jest na backendzie — synchronizowane
 // przez WS auto_seq_status/auto_qso_status/auto_qso_queue)
@@ -113,7 +241,11 @@ async function init() {
       if (pill) { pill.textContent = '● ONLINE'; pill.className = 'wsjtx-status-pill online'; }
       window.UI?.showToast(`✓ WSJT-X monitor aktywny (UDP :${d.port})`);
     } else {
-      if (pill) { pill.textContent = '○ OFFLINE — kliknij START'; pill.className = 'wsjtx-status-pill'; }
+      // Autostart (wsjtxAutostart w config, domyslnie wlaczony) normalnie
+      // sam nasluchuje na porcie 2238 - OFFLINE tutaj oznacza ze autostart
+      // sie nie udal (np. port zajety), nie ze trzeba cos recznie kliknac
+      // (przycisk START usuniety 2026-08-15, nasluch juz zawsze auto-startuje).
+      if (pill) { pill.textContent = '○ OFFLINE (autostart nieudany?)'; pill.className = 'wsjtx-status-pill'; }
     }
     // Pokaż liczniki
     if (d.packets_rx > 0 || d.decodes_rx > 0) {
@@ -121,7 +253,12 @@ async function init() {
       if (countEl) countEl.textContent = `${d.decodes_rx} odebranych dekodowań (sesja)`;
     }
   } catch(e) { console.warn('[wsjtx] init error', e); }
-  await loadLog();
+  await _loadMiniLog();
+  try {
+    const rr = await fetch('/api/rotator');
+    const rots = await rr.json();
+    if (Array.isArray(rots) && rots.length > 0) _onRotatorUpdate(rots[0]);
+  } catch(e) { /* brak rotora - przyciski SP/LP zostaja wylaczone */ }
   // Init scope — ponawia az canvas bedzie mial wymiary (WebGL wymaga width>0)
   function _tryScopeInit(attempts) {
     const c = document.getElementById('wj-scope-canvas');
@@ -528,6 +665,16 @@ function _onAutoQsoComplete(msg) {
 
   window.UI?.showToast(`✓ QSO z ${msg.dxCall} zakonczone — sprawdz i zatwierdz w "MÓJ LOG QSO"`);
 
+  // Dopisz OD RAZU do _workedCalls (zamiast czekac do 60s pollingu
+  // _loadWorkedCalls) — inaczej ta sama stacja, gdyby zawolala CQ ponownie
+  // za chwile, jeszcze przez do minuty wygladalaby jak NIEzrobiona w oknie
+  // Band Activity (patrz _classify: CQ od juz-zrobionej stacji -> szary).
+  if (msg.dxCall) {
+    const band = window.UI?.getBandName ? window.UI.getBandName(S.freq) : '';
+    _workedCalls.add(_workedKey(msg.dxCall, band, msg.mode || _decodeMode));
+    _renderDecodes();
+  }
+
   if (callEl) {
     callEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     callEl.classList.add('wj-pending-log-highlight');
@@ -634,13 +781,22 @@ function handleWS(msg) {
     case 'auto_qso_complete': _onAutoQsoComplete(msg); break;
     case 'auto_qso_queue':   _onAutoQsoQueue(msg); break;
     case 'auto_qso_error':   window.UI?.showToast(`⚠ ${msg.error}`); break;
-    case 'qso_new':
-      // Odświeź log jeśli nowe QSO należy do nas
-      if (msg.entry?.user_id === window.CurrentUser?.id) {
-        _logEntries.unshift(msg.entry);
-        _logTotal++;
-        _renderLog();
-      }
+    case 'qso_logged':
+      // Nowe QSO w prawdziwym logu (qso_db) — zarowno z automatyki jak i
+      // recznego "+ LOG QSO" (patrz broadcast w /api/qsolog POST i w
+      // _process_auto_qso, oba wysylaja ten sam typ). Broadcast idzie do
+      // WSZYSTKICH klientow (nie tylko wlasciciela QSO) - filtrujemy tu,
+      // bo user_id nie jest w tym konkretnym payloadzie z auto_qso, tylko
+      // porownujemy przez to ze i tak liczy sie WYLACZNIE dla wlasnego
+      // widoku (kazdy klient ma wlasny mini-log niezaleznie).
+      _onQsoLogged(msg);
+      break;
+    case 'rotator_update':
+      // Ten sam broadcast co duzy kompas w RADIO (rotormini.js) — zasila
+      // tylko zywy odczyt ROTOR ---° i stan przyciskow SP/LP tutaj, nie
+      // duplikuje calego widgetu. Wiele rotorow: bierzemy ten sam co
+      // rotormini.js (pierwszy z listy / juz wybrany _rotorId).
+      if (msg.rotator && (!_rotorId || msg.rotator.id === _rotorId)) _onRotatorUpdate(msg.rotator);
       break;
   }
 }
@@ -695,13 +851,22 @@ function _classify(message) {
   const m  = message.toUpperCase();
   const mc = (_myCall||'').toUpperCase();
   if (mc && m.includes(mc)) return 'wj-mycall';
-  if (m.startsWith('CQ '))  return 'wj-cq';
+  if (m.startsWith('CQ ')) {
+    // "juz zrobiona" ma sens pokazac TYLKO przy CQ — to jedyny moment gdy
+    // operator faktycznie decyduje "klikac czy pomijac". Ta sama stacja
+    // widziana w trakcie QSO Z KIMS INNYM (raport/73/RR73) nie niesie tej
+    // informacji (nie ma czego klikac), wiec tam kolor CQ/73/DX zostaje
+    // bez zmian - poprzednia wersja sprawdzala "worked" na samym koncu, PO
+    // klasyfikacji CQ, wiec w praktyce PRAWIE NIGDY sie nie uruchamiala
+    // (niemal kazdy dekod trafial w CQ/73/DX pierwszy) - stacja juz w logu
+    // wygladala identycznie jak swieza.
+    const call = _extractCall(m);
+    if (_isWorkedHere(call)) return 'wj-worked';
+    return 'wj-cq';
+  }
   if (/\bRR73\b|\b73\b/.test(m)) return 'wj-73';
   const dx = (document.getElementById('wj-dx-call')?.value||'').toUpperCase();
   if (dx && m.startsWith(dx)) return 'wj-dx';
-  // Sprawdz czy znak juz zrobiony na TYM pasmie/trybie
-  const call = _extractCall(m);
-  if (_isWorkedHere(call)) return 'wj-worked';
   return '';
 }
 
@@ -809,6 +974,13 @@ function _decodeRowHtml(d, idx) {
   const grid= _extractGrid(d.message);
   const txMark = d.is_tx ? '<span class="wj-tx-mark" style="color:#ff6; font-weight:bold;">▶ TX</span> ' : '';
   const txStyle = d.is_tx ? ' style="background:rgba(255,200,0,0.12); border-left:3px solid #fc0;"' : '';
+  // Kraj TYLKO przy CQ — to jedyny moment gdy ma to praktyczne znaczenie
+  // (kogo szukamy/wolamy), patrz komentarz przy _PREFIX_COUNTRY wyzej.
+  let country = '';
+  if (!d.is_tx && (d.message||'').toUpperCase().startsWith('CQ ')) {
+    const info = _countryForCall(_extractCall(d.message));
+    if (info) country = _countryMode === 'flag' ? info.flag : _esc(info.name);
+  }
   return `<div class="wj-decode-row ${cls}"${txStyle} data-idx="${idx}"
     onclick="WSJTX._selectRow(this,${idx})">
     <span class="wj-d-time">${d.timeStr||'--'}</span>
@@ -817,7 +989,7 @@ function _decodeRowHtml(d, idx) {
     <span class="wj-d-freq">${d.deltaFreq}</span>
     <span class="wj-d-msg">${txMark}${d.mode&&!d.is_tx?d.mode+' ':''}${_esc(d.message)}</span>
     <span class="wj-d-grid">${grid}</span>
-    <span class="wj-d-country"></span>
+    <span class="wj-d-country">${country}</span>
   </div>`;
 }
 
@@ -946,16 +1118,30 @@ function _selectRow(el, idx) {
   _setField('wj-log-grid',    grid);
   _setField('wj-log-rst-rcvd', d.snr>=0?'+'+d.snr:String(d.snr));
   _setField('wj-log-mode', d.mode || 'FT8');
+  // _setField() ustawia .value programowo, wiec NIE odpala oninput z HTML -
+  // trzeba jawnie przeliczyc namiar anteny po kliknieciu wiersza.
+  updateBeamRow();
   // Zaktualizuj tekst makr TX
   _updateMacroTexts();
 
-  // Klikniecie na wywolanie CQ przy wlaczonej automatyce startuje PELNE,
-  // automatyczne QSO (zamiast tylko wypelniac pola do recznego wyslania).
+  // Klikniecie na wywolanie CQ LUB na wiadomosc adresowana BEZPOSREDNIO do
+  // nas (ktos juz nas zawolal - Tx1/raport/RRR/RR73/73 z naszym znakiem
+  // jako call_to) przy wlaczonej automatyce startuje PELNE automatyczne
+  // QSO (zamiast tylko wypelniac pola do recznego wyslania). Do 2026-08-15
+  // dzialalo to WYLACZNIE dla "CQ ..." — stacja ktora zawolala nas wprost
+  // (np. "SQ3MZM DL3MIB JN57", wchodzaca do kolejki Call 1st automatycznie
+  // po stronie backendu) nie dawala sie recznie "przeskoczyc" klikniciem,
+  // bo isCq bylo falszywe i klik tylko przestrajal RX/TX, bez wyslania
+  // ft8_start_auto_qso w ogole — backend (handler "ft8_start_auto_qso" w
+  // webapp.py) juz ODDAWNA poprawnie przyjmuje initial_decode DOWOLNEGO
+  // typu wiadomosci, wiec to byla wylacznie blokada front-endu.
   // Guard call!=='CQ': wiadomosci niekompletne/skrocone (np. samo "CQ" bez
   // callsignu, blad dekodowania) daja call==='CQ' z _extractCall — to NIE
   // jest prawdziwy callsign partnera i nie powinno startowac automatyki.
-  const isCq = (d.message||'').toUpperCase().startsWith('CQ ');
-  if (isCq && _autoSeqEnabled && call && call !== 'CQ') {
+  const upperMsg = (d.message||'').toUpperCase();
+  const isCq = upperMsg.startsWith('CQ ');
+  const isDirectToMe = _myCall && upperMsg.startsWith(_myCall.toUpperCase() + ' ');
+  if ((isCq || isDirectToMe) && _autoSeqEnabled && call && call !== 'CQ') {
     // recvEpoch (dokladny czas odbioru TEGO dekodu od backendu, nie
     // "teraz") jest kluczowy — backend liczy z niego nasze okno TX. Bez
     // tego poprawny wybor okna dzialal tylko gdy klikniesz w ulamek
@@ -965,6 +1151,107 @@ function _selectRow(el, idx) {
     window.WS?.send({ type: 'ft8_start_auto_qso', callDe: call,
                        message: d.message, recvEpoch: d.recvEpoch, snr: d.snr });
   }
+}
+
+// Reczne wyszukanie stacji po znaku w polu DX (Enter/utrata fokusu) —
+// odwrotny kierunek niz klik w wiersz: zamiast myszka wskazywac dekod,
+// operator wpisuje znak, a jesli stacja jest AKTUALNIE widoczna w historii
+// dekodow na pasmie, znacznik RX sam przestraja sie na jej czestotliwosc.
+// Grid CELOWO nie jest wymagany do przestrojenia (uzupelniany tylko jesli
+// akurat sie znajdzie w dopasowanym dekodzie) — to czysto informacyjne pole
+// tutaj, nie warunek. TX marker NIE podaza (w odroznieniu od klikniecia
+// wiersza) — wpisanie znaku to "szukam/nasluchuje", nie "zamierzam nadac
+// teraz", te dwie intencje maja byc rozdzielone.
+function searchDxCall(rawCall) {
+  const call = (rawCall || '').trim().toUpperCase();
+  if (!call) return;
+  // Szukaj od NAJNOWSZEGO dekodu wstecz — jesli stacja pojawila sie
+  // wielokrotnie, interesuje nas jej OSTATNIA znana czestotliwosc.
+  for (let i = _decodes.length - 1; i >= 0; i--) {
+    const d = _decodes[i];
+    if (d.is_tx || d.deltaFreq === undefined) continue;
+    const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
+    if (tokens.includes(call)) {
+      window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
+      const grid = _extractGrid(d.message);
+      if (grid) _setField('wj-dx-grid', grid);
+      return;
+    }
+  }
+  window.UI?.showToast(`${call} nie widac aktualnie na pasmie`, 'error');
+}
+
+// ── Namiar anteny + rotor (wiersz ANTENA pod polem DX w SZYBKI ZAPIS QSO) ─────
+// Naglowek/wiersz byl w HTML od dawna (beamheading.js liczyl azymut), ale
+// nic nigdy nie wywolywalo BeamHeading.headingFor() ani nie laczylo tego z
+// rotorem — czysto martwy fragment UI. Naprawione 2026-08-15: przelicza sie
+// przy kazdej zmianie pola CALLSIGN DX/Grid DX (oninput w index.html + po
+// programowym wypelnieniu przez _selectRow), a SP/LP wysylaja komende
+// BEZPOSREDNIO do tego samego /api/rotator/<id>/position co duzy kompas w
+// RADIO (rotormini.js) — bez osobnego potwierdzenia, klik = jedz. Zywa
+// pozycja rotora aktualizuje sie przez TEN SAM broadcast "rotator_update"
+// co duzy kompas (patrz case w handleWS), niezaleznie od tego czy operator
+// ma akurat otwarta zakladke RADIO.
+let _rotorId  = null;
+let _beamSpAz = null;
+let _beamLpAz = null;
+
+function updateBeamRow() {
+  const row = document.getElementById('wj-beam-row');
+  if (!row) return;
+  const call = document.getElementById('wj-log-call')?.value.trim().toUpperCase() || '';
+  const grid = document.getElementById('wj-log-grid')?.value.trim().toUpperCase() || '';
+  const h = call ? window.BeamHeading?.headingFor(call, grid) : null;
+  if (!h) {
+    row.style.display = 'none';
+    _beamSpAz = null; _beamLpAz = null;
+    _updateRotorButtons();
+    return;
+  }
+  row.style.display = 'flex';
+  const azEl   = document.getElementById('wj-beam-az');
+  const distEl = document.getElementById('wj-beam-dist');
+  const srcEl  = document.getElementById('wj-beam-src');
+  const longEl = document.getElementById('wj-beam-long');
+  if (azEl)   azEl.textContent   = h.azimuth + '°';
+  if (distEl) distEl.textContent = h.distance + 'km';
+  if (srcEl)  srcEl.textContent  = h.source === 'grid' ? '(grid)' : '(prefix)';
+  if (longEl) longEl.textContent = `LP:${h.azLong}°`;
+  _beamSpAz = h.azimuth;
+  _beamLpAz = h.azLong;
+  _updateRotorButtons();
+}
+
+function _updateRotorButtons() {
+  const spBtn = document.getElementById('wj-rotor-sp-btn');
+  const lpBtn = document.getElementById('wj-rotor-lp-btn');
+  const has = _rotorId != null;
+  if (spBtn) spBtn.disabled = !has || _beamSpAz == null;
+  if (lpBtn) lpBtn.disabled = !has || _beamLpAz == null;
+}
+
+function _onRotatorUpdate(rot) {
+  if (!rot) return;
+  _rotorId = rot.id;
+  const az = Math.round(parseFloat(rot.azimuth ?? rot.az ?? 0));
+  const el = document.getElementById('wj-rotor-az');
+  if (el) el.textContent = `ROTOR ${az}°`;
+  _updateRotorButtons();
+}
+
+async function rotorGoBeam(which) {
+  if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
+  const az = which === 'lp' ? _beamLpAz : _beamSpAz;
+  if (az == null) return;
+  try {
+    const r = await fetch(`/api/rotator/${_rotorId}/position`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({az, el: 0})
+    });
+    const d = await r.json();
+    if (d.ok) window.UI?.showToast?.(`↻ Rotor → ${az}° (${which.toUpperCase()})`);
+    else window.UI?.showToast?.(`✗ ${d.error || 'Błąd'}`, 'error');
+  } catch(e) { window.UI?.showToast?.(`✗ ${e.message}`, 'error'); }
 }
 
 // ── TX makra ──────────────────────────────────────────────────────────────────
@@ -1001,7 +1288,7 @@ function _txMacroParts(n) {
   const myGrid = _myGrid || window.CurrentUser?.locator || '';
   const dxCall = document.getElementById('wj-dx-call')?.value || '';
   switch (n) {
-    case 1: case 7: return { callTo: 'CQ',   callDe: myCall, report: myGrid };
+    case 1:         return { callTo: 'CQ',   callDe: myCall, report: myGrid };
     case 2:         return { callTo: dxCall, callDe: myCall, report: myGrid };
     case 3:         return { callTo: dxCall, callDe: myCall, report: _macro3Report(), rFlag: true };
     case 4:         return { callTo: dxCall, callDe: myCall, report: 'RRR' };
@@ -1023,7 +1310,6 @@ function _updateMacroTexts() {
     4: `${dxCall} ${myCall} RRR`,
     5: `${dxCall} ${myCall} 73`,
     6: `${dxCall} ${myCall} RR73`,
-    7: `CQ ${myCall} ${myGrid}`,
   };
   for (const [n, text] of Object.entries(macros)) {
     const el = document.getElementById(`wj-tx${n}-text`);
@@ -1147,17 +1433,60 @@ function _onFt8TxStatus(d) {
 }
 
 // ── QSO Log ───────────────────────────────────────────────────────────────────
-async function loadLog(page=0) {
-  _logPage = page;
+// Prawdziwy log to /api/qsolog (baza qso_db) - TA SAMA co pelna strona LOG QSO
+// (qsolog.js), automatyczne zapisywanie QSO z FT8 i sprawdzanie "juz zrobione"
+// (patrz _isWorkedHere/_loadWorkedCalls wyzej). Panel "SZYBKI ZAPIS QSO" tutaj
+// dawniej pisal/czytal z ZUPELNIE INNEGO, osobnego magazynu (/api/log,
+// self.log w webapp.py) - QSO dodane tym formularzem nigdy nie trafialy do
+// prawdziwego logu, nie liczyly sie jako "juz zrobione", nie szly do
+// CloudLog. Naprawione 2026-08-15 - patrz identyczna poprawka w webapp.py
+// (usuniete /api/log*, self.log; dodany broadcast "qso_logged" do
+// /api/qsolog POST tak samo jak juz mial auto-zapis z automatyki).
+
+// Pobiera ostatnie MINI_LOG_MAX QSO do wstepnego wypelnienia mini-logu przy
+// starcie strony - potem trzyma sie na biezaco przez broadcast "qso_logged"
+// (_onQsoLogged), bez ponownego odpytywania.
+async function _loadMiniLog() {
   try {
-    const r = await fetch(`/api/log?user=me&page=${page}&size=50`);
+    const token = localStorage.getItem('token') || '';
+    const r = await fetch(`/api/qsolog?page=1&per=${MINI_LOG_MAX}`, {
+      headers: token ? {'Authorization': `Bearer ${token}`} : {}
+    });
     const d = await r.json();
-    if (page === 0) _logEntries = d.entries || [];
-    else _logEntries = [..._logEntries, ...(d.entries||[])];
-    _logTotal = d.total || 0;
-    _renderLog();
-    _updateLogCount();
-  } catch(e) { console.warn('[wsjtx] log load error', e); }
+    _miniLogEntries = d.qsos || [];
+    _renderMiniLog();
+  } catch(e) { console.warn('[wsjtx] mini-log load error', e); }
+}
+
+// Nowe QSO w prawdziwym logu (auto-zapis z automatyki LUB reczne "+ LOG QSO"
+// ponizej - oba wysylaja ten sam broadcast, patrz komentarz przy handleWS).
+// Broadcast idzie do WSZYSTKICH polaczonych klientow (hub.broadcast nie jest
+// per-user), wiec filtrujemy po user_id - inaczej QSO innego zalogowanego
+// operatora wskoczyloby do naszego mini-logu.
+function _onQsoLogged(msg) {
+  const qso = msg.qso;
+  if (!qso || qso.user_id !== window.CurrentUser?.id) return;
+  _miniLogEntries.unshift(qso);
+  if (_miniLogEntries.length > MINI_LOG_MAX) _miniLogEntries.length = MINI_LOG_MAX;
+  _renderMiniLog();
+}
+
+// Mini-log pod "SZYBKI ZAPIS QSO" (panel automatyki) — czysto informacyjny
+// podglad ostatnich QSO z prawdziwego logu. Zero edycji/usuwania tutaj
+// CELOWO - do tego jest osobna strona LOG QSO (pelna edycja i zapis).
+function _renderMiniLog() {
+  const el = document.getElementById('wj-minilog-body');
+  if (!el) return;
+  if (!_miniLogEntries.length) {
+    el.innerHTML = '<tr><td colspan="4" style="color:#333;text-align:center;padding:8px;">Brak zalogowanych QSO</td></tr>';
+    return;
+  }
+  el.innerHTML = _miniLogEntries.slice(0, MINI_LOG_MAX).map(e => `<tr>
+    <td style="padding:2px 4px;color:#888;">${_esc(e.band||'')}</td>
+    <td style="padding:2px 4px;color:#4cf;font-weight:bold;">${_esc(e.call||'')}</td>
+    <td style="padding:2px 4px;color:#888;white-space:nowrap;">R: ${_esc(e.rst_rcvd||'')}</td>
+    <td style="padding:2px 4px;color:#888;white-space:nowrap;">S: ${_esc(e.rst_sent||'')}</td>
+  </tr>`).join('');
 }
 
 async function addLog() {
@@ -1165,8 +1494,6 @@ async function addLog() {
   if (!call) { window.UI?.showToast('✗ Wpisz callsign DX', 'error'); return; }
 
   const now    = new Date();
-  const dateStr= now.toISOString().slice(0,10);
-  const timeStr= now.toISOString().slice(11,19);
   const freq   = S?.freq || 0;
   const band   = _freqToBand(freq);
   const mode   = document.getElementById('wj-log-mode')?.value || 'FT8';
@@ -1175,92 +1502,64 @@ async function addLog() {
   const rstR   = document.getElementById('wj-log-rst-rcvd')?.value || '+00';
   const comment= document.getElementById('wj-log-comment')?.value.trim() || '';
 
+  // Format qso_db (qso_date=YYYYMMDD, time_on=HHMMSS, bez separatorow) -
+  // patrz add_qso() w qso_db.py i identyczny sposob budowania w
+  // _process_auto_qso (webapp.py, auto-zapis QSO).
+  const pad = n => String(n).padStart(2,'0');
+  const qso_date = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}`;
+  const time_on  = `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
+
   const entry = {
-    dxCall: call, dxGrid: grid, band, mode, freq,
-    date: dateStr, time: timeStr,
-    rstSent: rstS, rstRcvd: rstR, comment,
-    myCall: _myCall, myGrid: _myGrid,
+    call, gridsquare: grid, band, mode, freq,
+    qso_date, time_on,
+    rst_sent: rstS, rst_rcvd: rstR, comment,
+    my_call: _myCall, my_gridsquare: _myGrid,
+    source: 'manual',
   };
 
   try {
-    const r = await fetch('/api/log', {
-      method:'POST', headers:{'Content-Type':'application/json'},
+    const token = localStorage.getItem('token') || '';
+    const r = await fetch('/api/qsolog', {
+      method:'POST',
+      headers: {'Content-Type':'application/json', ...(token ? {'Authorization': `Bearer ${token}`} : {})},
       body: JSON.stringify(entry)
     });
     const d = await r.json();
     if (d.ok) {
       window.UI?.showToast(`✓ QSO zalogowane: ${call}`);
+      // Dopisz OD RAZU do _workedCalls (zamiast czekac na 60s polling)
+      // — inaczej ta sama stacja wygladalaby jak niezrobiona w Band
+      // Activity jeszcze przez chwile (patrz identyczny komentarz w
+      // _onAutoQsoComplete). Mini-log sam sie odswieży przez broadcast
+      // "qso_logged" (_onQsoLogged) - nie trzeba go tu recznie dopisywac.
+      _workedCalls.add(_workedKey(call, band, mode));
+      _renderDecodes();
       // Wyczyść formularz
       ['wj-log-call','wj-log-grid','wj-log-rst-rcvd','wj-log-comment'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.value='';
       });
+    } else {
+      window.UI?.showToast(`✗ ${d.error || 'Błąd logowania'}`, 'error');
     }
   } catch(e) { window.UI?.showToast('✗ Błąd logowania', 'error'); }
 }
 
-async function deleteLog(id) {
-  if (!confirm('Usunąć to QSO z logu?')) return;
-  try {
-    await fetch(`/api/log/${id}`, {method:'DELETE'});
-    _logEntries = _logEntries.filter(e=>e.id!==id);
-    _logTotal = Math.max(0, _logTotal-1);
-    _renderLog();
-    _updateLogCount();
-  } catch(e) {}
-}
-
 async function exportAdif() {
   try {
-    const r = await fetch('/api/log/export?user=me');
-    const d = await r.json();
-    if (!d.adif) { window.UI?.showToast('✗ Błąd eksportu', 'error'); return; }
-    // Pobierz plik
-    const blob = new Blob([d.adif], {type:'text/plain'});
+    const token = localStorage.getItem('token') || '';
+    const r = await fetch('/api/qsolog/export?format=adi', {
+      headers: token ? {'Authorization': `Bearer ${token}`} : {}
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
     a.download = `log_${(_myCall||'unknown').replace('/','_')}_${new Date().toISOString().slice(0,10)}.adi`;
     a.click();
     URL.revokeObjectURL(url);
-    window.UI?.showToast(`✓ Wyeksportowano ${d.count} QSO (ADIF)`);
+    window.UI?.showToast('✓ Wyeksportowano log (ADIF)');
   } catch(e) { window.UI?.showToast('✗ Błąd eksportu', 'error'); }
-}
-
-function _renderLog() {
-  const el = document.getElementById('wj-log-table-body');
-  if (!el) return;
-  if (!_logEntries.length) {
-    el.innerHTML = '<tr><td colspan="8" class="wj-log-empty">Brak zalogowanych QSO</td></tr>';
-    return;
-  }
-  el.innerHTML = _logEntries.map(e => {
-    const dt = `${e.date||''} ${(e.time||'').slice(0,5)}`;
-    return `<tr class="wj-log-row">
-      <td>${_esc(dt)}</td>
-      <td class="wj-log-call">${_esc(e.dxCall||'')}</td>
-      <td>${_esc(e.band||'')}</td>
-      <td>${_esc(e.mode||'FT8')}</td>
-      <td>${_esc(e.dxGrid||'')}</td>
-      <td>${_esc(e.rstSent||'')} / ${_esc(e.rstRcvd||'')}</td>
-      <td>${_esc(e.comment||'')}</td>
-      <td><button onclick="WSJTX.deleteLog('${e.id}')"
-        style="background:none;border:none;color:#555;cursor:pointer;font-size:12px;"
-        title="Usuń">✕</button></td>
-    </tr>`;
-  }).join('');
-
-  // Przycisk "Załaduj więcej"
-  const moreBtn = document.getElementById('wj-log-more-btn');
-  if (moreBtn) moreBtn.style.display = _logEntries.length < _logTotal ? '' : 'none';
-}
-
-function loadMore() {
-  loadLog(_logPage + 1);
-}
-
-function _updateLogCount() {
-  const el = document.getElementById('wj-log-count');
-  if (el) el.textContent = `${_logEntries.length} / ${_logTotal} QSO`;
 }
 
 // QSO zalogowane przez WSJT-X automatycznie (z pakietu UDP)
@@ -1663,12 +1962,13 @@ function toggleHideWorked(chk) {
 
 window.WSJTX = {
   init, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
-  tuneToBand, rxEqTx, toggleTxFreeze, _selectRow, addLog, deleteLog, exportAdif, loadMore, loadLog,
-  toggleHideWorked, loadWorkedCalls: _loadWorkedCalls,
+  tuneToBand, rxEqTx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
+  toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
+  updateBeamRow, rotorGoBeam,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, toggleCall1st, setDecodeMode,
   tuneToBand, setTxPeriod,
   setTxFreqManual, setRxFreqManual, rxEqTx,
-  _selectRow, addLog, deleteLog, exportAdif, loadMore, loadLog,
+  _selectRow, addLog, exportAdif,
   toggleHound, houndStop, houndConfirm,
   removeFromQueue, clearAutoQsoQueue, skipAutoQso,
   resetPaletteAdjust,
