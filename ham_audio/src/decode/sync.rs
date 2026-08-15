@@ -328,13 +328,42 @@ fn refine_offset(audio: &[f32], cand: &Candidate, p: &Params, costas_syms: &[(us
     let mut best_score = f32::MIN;
     let mut best_dt = 0f32;
     let mut best_df = 0f32;
-    let mut buf = vec![Complex::new(0f32, 0f32); nfft];
     let mut tone_power = [0f32; 8]; // n_tones <= 8 for both FT8 and FT4
+
+    // The FFT of each Costas symbol's audio segment depends only on `dt`
+    // (which samples go in), NOT on `df` - `df` only changes which output
+    // bin gets read out afterward. The previous version recomputed the FFT
+    // inside the df loop too, so each symbol's spectrum was computed
+    // 2*REFINE_FREQ_STEPS+1 (7) times over instead of once - a pure,
+    // provably-redundant 7x FFT cost with no effect on the result (same
+    // spectrum, just re-derived). Confirmed as the dominant live cost via
+    // PassTiming's demod_ms_sum vs ldpc_ms_sum split (2026-08-15: LDPC
+    // ~25ms, demod ~7930ms out of ~8000ms/candidate-batch on the i7-3612QM -
+    // LDPC was never the bottleneck, this refine grid was). Fixed by
+    // computing each symbol's spectrum once per `dt` and reusing it across
+    // all `df` trials below.
+    let mut spectra: Vec<Vec<Complex<f32>>> = vec![vec![Complex::new(0f32, 0f32); nfft]; costas_syms.len()];
+    let mut spectra_valid: Vec<bool> = vec![false; costas_syms.len()];
 
     for it in -REFINE_TIME_STEPS..=REFINE_TIME_STEPS {
         let dt = it as f32 * REFINE_TIME_STEP_S;
         let trial_time = cand.time_offset_s + dt;
         let start_sample = (trial_time * p.sample_rate as f32) as isize;
+
+        for (idx, &(sym_idx, _tone)) in costas_syms.iter().enumerate() {
+            let s0 = start_sample + (sym_idx * n) as isize;
+            let s1 = s0 + n as isize;
+            if s0 < 0 || s1 > audio.len() as isize {
+                spectra_valid[idx] = false;
+                continue;
+            }
+            let s0 = s0 as usize;
+            let sbuf = &mut spectra[idx];
+            for i in 0..n { sbuf[i] = Complex::new(audio[s0 + i] * window[i], 0.0); }
+            for i in n..nfft { sbuf[i] = Complex::new(0.0, 0.0); }
+            fft.process_with_scratch(sbuf, &mut scratch);
+            spectra_valid[idx] = true;
+        }
 
         for jf in -REFINE_FREQ_STEPS..=REFINE_FREQ_STEPS {
             let df = jf as f32 * REFINE_FREQ_STEP_HZ;
@@ -342,23 +371,17 @@ fn refine_offset(audio: &[f32], cand: &Candidate, p: &Params, costas_syms: &[(us
 
             let mut score = 0f32;
             let mut n_terms = 0f32;
-            for &(sym_idx, tone) in costas_syms {
-                let s0 = start_sample + (sym_idx * n) as isize;
-                let s1 = s0 + n as isize;
-                if s0 < 0 || s1 > audio.len() as isize { continue; }
-                let s0 = s0 as usize;
-
-                for i in 0..n { buf[i] = Complex::new(audio[s0 + i] * window[i], 0.0); }
-                for i in n..nfft { buf[i] = Complex::new(0.0, 0.0); }
-                fft.process_with_scratch(&mut buf, &mut scratch);
+            for (idx, &(_sym_idx, tone)) in costas_syms.iter().enumerate() {
+                if !spectra_valid[idx] { continue; }
+                let spec = &spectra[idx];
 
                 let mut sum_all = 0f32;
                 for t in 0..p.n_tones {
                     let f_target = trial_freq + t as f32 * p.tone_spacing as f32;
                     let bin = (f_target / freq_step).round() as usize;
                     let bin = bin.min(nfft / 2);
-                    let re = buf[bin].re;
-                    let im = buf[bin].im;
+                    let re = spec[bin].re;
+                    let im = spec[bin].im;
                     let pw = re * re + im * im;
                     if t < 8 { tone_power[t] = pw; }
                     sum_all += pw;

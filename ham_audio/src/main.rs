@@ -99,7 +99,7 @@ async fn async_main() {
     // proces w OSOBNEJ konsoli od hamctrl.exe - latwo przetestowac stara
     // binarke myslac ze to nowa). Podbijac przy kazdej istotnej zmianie w
     // decode/*, zwlaszcza timingowej (patrz FT8_TIME_BUDGET_S w decode/mod.rs).
-    println!("[build] ham_audio.exe wersja BUILD-2026-08-15-DEMOD-LDPC-SPLIT");
+    println!("[build] ham_audio.exe wersja BUILD-2026-08-15-REFINE-FFT-DEDUP");
 
     let cfg: SharedConfig = Arc::new(RwLock::new(Config::from_env()));
     let (audio_tx, _)     = broadcast::channel::<AudioFrame>(256);
