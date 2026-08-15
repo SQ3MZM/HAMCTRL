@@ -800,27 +800,41 @@
       <div id="wj-beam-row" style="display:flex;font-family:var(--mono);
            font-size:10px;color:#888;padding:3px 6px;margin:0 6px 4px;
            background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;
-           align-items:center;gap:0;white-space:nowrap;overflow:hidden;">
-        <span style="color:#666;">ANTENA</span>
-        <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
-              margin:0 4px;">---°</span>
-        <span id="wj-beam-dist" style="color:#4cf;"></span>
-        <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
-        <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+           align-items:center;gap:0;">
+        <!-- Lewa czesc (namiar na stacje) MOZE sie skracac/obcinac (...) -
+             prawa (kontrolki rotora) MA flex-shrink:0, wiec nigdy nie
+             zostaje wypchnieta poza widoczny obszar bez wzgledu na to jak
+             dlugi zrobi sie tekst namiaru. Wczesniej caly wiersz mial
+             overflow:hidden bez tego podzialu, wiec wypelnienie namiaru po
+             wybraniu stacji (dluzszy tekst) obcinalo przyciski SP/LP/target
+             po prawej - wygladalo jak zniknely, choc byly tylko wypchniete
+             poza krawedz. Zglaszone na zywo: "znacznik recznego wyboru
+             pozycji rotora zniknal jak tylko wybralem stacje do QSO". -->
+        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+             min-width:0;flex-shrink:1;">
+          <span style="color:#666;">ANTENA</span>
+          <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
+                margin:0 4px;">---°</span>
+          <span id="wj-beam-dist" style="color:#4cf;"></span>
+          <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
+          <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+        </div>
         <div style="flex:1;min-width:6px;"></div>
-        <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
-        <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
-          title="Ustaw rotor na azymut SP (krotka droga)"
-          style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
-          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
-        <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
-          title="Ustaw rotor na azymut LP (dluga droga)"
-          style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
-          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
-        <button id="wj-rotor-manual-btn" onclick="WSJTX.rotorGoManual()" disabled
-          title="Recznie: wpisz azymut w stopniach lub lokator"
-          style="font-family:var(--mono);font-size:9px;padding:1px 5px;
-          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">🎯</button>
+        <div style="display:flex;align-items:center;flex-shrink:0;white-space:nowrap;">
+          <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
+          <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
+            title="Ustaw rotor na azymut SP (krotka droga)"
+            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
+            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
+          <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
+            title="Ustaw rotor na azymut LP (dluga droga)"
+            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
+            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
+          <button id="wj-rotor-manual-btn" onclick="WSJTX.rotorGoManual()" disabled
+            title="Recznie: wpisz azymut w stopniach lub lokator"
+            style="font-family:var(--mono);font-size:9px;padding:1px 5px;
+            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">🎯</button>
+        </div>
       </div>
       <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
