@@ -441,6 +441,27 @@ def test_call1st_start_with_raw_report():
     check(eng.state == ST_DONE, "QSO zakonczone poprawnie mimo pominietego Tx1/grid")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# REGRESJA: odebrane RRR -> od razu 73, bez wlasnego echo RRR (naprawa sesji
+# 2026-08-15). Wczesniej odebranie literalnego "RRR" od partnera (w
+# odroznieniu od "R+raport") wysylalo WLASNE RRR z powrotem (stan RRR_SENT)
+# i dopiero echo TEGO RRR od partnera konczylo QSO wyslaniem 73 - zbedny
+# dodatkowy cykl. Zgloszone na zywo: "automat niepotrzebnie przedluza QSO,
+# jesli dostalem RRR to wysylam 73".
+# ════════════════════════════════════════════════════════════════════════════
+def test_rrr_goes_straight_to_73():
+    section("Regresja: odebrane RRR -> od razu 73 (bez wlasnego echo RRR)")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("SP9XYZ", parse_message("CQ SP9XYZ JO90"))
+    _dispatch(eng, "SQ3MZM SP9XYZ -12", snr=-8)
+    check(eng.state == ST_REPORT_SENT, "Po naszym R-raporcie: REPORT_SENT")
+
+    act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ RRR", snr=-8)
+    check(act is not None and rpt == "73", "RRR partnera -> nasze 73 BEZPOSREDNIO (nie wlasne RRR)")
+    check(act.get("qso_complete"), "QSO oznaczone jako complete po odebranym RRR")
+    check(eng.state == ST_DONE, "Po odebranym RRR: od razu DONE (nie RRR_SENT)")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -458,6 +479,7 @@ def main():
     test_reset_between_qso()
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()
+    test_rrr_goes_straight_to_73()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

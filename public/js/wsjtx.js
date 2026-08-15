@@ -1197,22 +1197,25 @@ let _beamSpAz = null;
 let _beamLpAz = null;
 
 function updateBeamRow() {
-  const row = document.getElementById('wj-beam-row');
-  if (!row) return;
-  const call = document.getElementById('wj-log-call')?.value.trim().toUpperCase() || '';
-  const grid = document.getElementById('wj-log-grid')?.value.trim().toUpperCase() || '';
-  const h = call ? window.BeamHeading?.headingFor(call, grid) : null;
-  if (!h) {
-    row.style.display = 'none';
-    _beamSpAz = null; _beamLpAz = null;
-    _updateRotorButtons();
-    return;
-  }
-  row.style.display = 'flex';
   const azEl   = document.getElementById('wj-beam-az');
   const distEl = document.getElementById('wj-beam-dist');
   const srcEl  = document.getElementById('wj-beam-src');
   const longEl = document.getElementById('wj-beam-long');
+  const call = document.getElementById('wj-log-call')?.value.trim().toUpperCase() || '';
+  const grid = document.getElementById('wj-log-grid')?.value.trim().toUpperCase() || '';
+  const h = call ? window.BeamHeading?.headingFor(call, grid) : null;
+  // Wiersz jest STALE WIDOCZNY (patrz index.html) — tu tylko resetujemy do
+  // placeholderow "---°" gdy nie ma jeszcze wybranej stacji, zamiast chowac
+  // caly wiersz. SP/LP zostaja wylaczone naturalnie (_beamSpAz/_beamLpAz=null).
+  if (!h) {
+    if (azEl)   azEl.textContent   = '---°';
+    if (distEl) distEl.textContent = '';
+    if (srcEl)  srcEl.textContent  = '';
+    if (longEl) longEl.textContent = '';
+    _beamSpAz = null; _beamLpAz = null;
+    _updateRotorButtons();
+    return;
+  }
   if (azEl)   azEl.textContent   = h.azimuth + '°';
   if (distEl) distEl.textContent = h.distance + 'km';
   if (srcEl)  srcEl.textContent  = h.source === 'grid' ? '(grid)' : '(prefix)';

@@ -530,24 +530,22 @@ class QsoEngine:
                     'r_flag': False, 'qso_complete': True}
 
         if parsed['is_rrr']:
-            # Partner potwierdzil odbior naszego raportu. Jesli MY jestesmy
-            # w stanie REPORT_SENT, to oznacza ze cykl si zamknal z ich strony
-            # i zazwyczaj odpowiadamy RRR rowniez (jesli jeszcze nie wyslalismy)
-            # lub przechodzimy od razu do 73 jesli juz wyslalismy RRR wczesniej.
-            # NAPRAWA: po DONE nie reagujemy na echo RRR (koniec przedluzania).
+            # Partner potwierdzil odbior naszego raportu (RRR = "Roger Roger
+            # Roger"). Odpowiadamy OD RAZU naszym 73 - RRR od partnera juz
+            # JEST potwierdzeniem, nie trzeba na nie echo-odpowiadac WLASNYM
+            # RRR i czekac na kolejny cykl. Dziala z dowolnego nie-DONE stanu,
+            # tak samo jak is_73/is_rr73 ponizej.
+            # NAPRAWA 2026-08-15: poprzednia wersja w tym miejscu wysylala
+            # WLASNE RRR z powrotem (stan RRR_SENT) i dopiero echo TEGO RRR
+            # od partnera konczylo QSO wyslaniem 73 - zbedny dodatkowy cykl
+            # (zgloszone na zywo: "automat niepotrzebnie przedluza QSO, jesli
+            # dostalem RRR to wysylam 73"). Po DONE nie reagujemy na echo RRR.
             if self.state == ST_DONE:
                 return None
-            if self.state == ST_RRR_SENT:
-                # Juz wyslalismy RRR, partner potwierdza ponownie (echo) —
-                # mozemy uznac wymiane za kompletna i wyslac 73.
-                self.state = ST_DONE
-                return {'action': 'reply', 'call_to': self.partner_call,
-                        'call_de': self.my_call, 'report_or_grid': '73',
-                        'r_flag': False, 'qso_complete': True}
-            self.state = ST_RRR_SENT
+            self.state = ST_DONE
             return {'action': 'reply', 'call_to': self.partner_call,
-                    'call_de': self.my_call, 'report_or_grid': 'RRR',
-                    'r_flag': False, 'qso_complete': False}
+                    'call_de': self.my_call, 'report_or_grid': '73',
+                    'r_flag': False, 'qso_complete': True}
 
         if parsed['report'] is not None:
             report = parsed['report']

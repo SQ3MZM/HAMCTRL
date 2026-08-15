@@ -788,6 +788,36 @@
       <div class="wj-panel-title">
         SZYBKI ZAPIS QSO
       </div>
+      <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
+           wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu).
+           STALE WIDOCZNY (nie chowa sie miedzy polami) — placeholder "---°"
+           dopoki nie wybrano stacji. Prawa strona: zywa pozycja rotora (ten
+           sam WS "rotator_update" co duzy kompas w RADIO) + SP/LP - klik od
+           razu wysyla komende, bez osobnego potwierdzenia (patrz
+           rotorGoBeam w wsjtx.js). Umieszczone NAD polami Call/Grid (nie
+           miedzy nimi a Mode/RST) — poprzednia pozycja rozdzielala dwie
+           logicznie powiazane grupy pol. -->
+      <div id="wj-beam-row" style="display:flex;font-family:var(--mono);
+           font-size:10px;color:#888;padding:3px 6px;margin:0 6px 4px;
+           background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;
+           align-items:center;gap:0;white-space:nowrap;overflow:hidden;">
+        <span style="color:#666;">ANTENA</span>
+        <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
+              margin:0 4px;">---°</span>
+        <span id="wj-beam-dist" style="color:#4cf;"></span>
+        <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
+        <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+        <div style="flex:1;min-width:6px;"></div>
+        <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
+        <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
+          title="Ustaw rotor na azymut SP (krotka droga)"
+          style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
+          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
+        <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
+          title="Ustaw rotor na azymut LP (dluga droga)"
+          style="font-family:var(--mono);font-size:9px;padding:1px 5px;
+          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
+      </div>
       <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
           <input id="wj-log-call" type="text" placeholder="CALLSIGN DX *"
@@ -798,32 +828,6 @@
             oninput="WSJTX.updateBeamRow()"
             style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
             background:#0a0a0a;border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
-        </div>
-        <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
-             wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu).
-             Prawa strona: zywa pozycja rotora (ten sam WS "rotator_update"
-             co duzy kompas w RADIO) + SP/LP - klik od razu wysyla komende,
-             bez osobnego potwierdzenia (patrz rotorGoBeam w wsjtx.js). -->
-        <div id="wj-beam-row" style="display:none;font-family:var(--mono);
-             font-size:10px;color:#888;padding:2px 4px;margin-bottom:3px;
-             background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;
-             align-items:center;gap:0;white-space:nowrap;overflow:hidden;">
-          <span style="color:#666;">ANTENA</span>
-          <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
-                margin:0 4px;">---°</span>
-          <span id="wj-beam-dist" style="color:#4cf;"></span>
-          <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
-          <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
-          <div style="flex:1;min-width:6px;"></div>
-          <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
-          <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
-            title="Ustaw rotor na azymut SP (krotka droga)"
-            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
-            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
-          <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
-            title="Ustaw rotor na azymut LP (dluga droga)"
-            style="font-family:var(--mono);font-size:9px;padding:1px 5px;
-            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:3px;">
           <select id="wj-log-mode"
@@ -2414,7 +2418,7 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608150002"></script>
+<script src="js/wsjtx.js?v=202608150003"></script>
 <script src="js/wsjtx_scope.js?v=202608130001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
