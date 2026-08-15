@@ -600,8 +600,19 @@ function toggleCall1st() {
 }
 
 function _onAutoSeqStatus(msg) {
+  if (msg.call1st !== undefined) {
+    // Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") ARM/DISARM na
+    // faktycznej zmianie stanu Call 1st (potwierdzonej przez backend, nie
+    // optymistycznie w toggleCall1st()) - Call 1st ON to jedyny tryb w tej
+    // aplikacji gdzie automat realnie odpowiada nieznanym wolajacym bez
+    // udzialu operatora, wiec to on powinien uzbrajac zegar. Wczesniej
+    // FT8Timer.start()/stop() byly wolane WYLACZNIE z toggleHound() -
+    // dla zwyklej automatyki (Call 1st) zegar nigdy sie nie uzbrajal.
+    if (msg.call1st && !_autoCall1st) window.FT8Timer?.start();
+    else if (!msg.call1st && _autoCall1st) window.FT8Timer?.stop();
+    _autoCall1st = msg.call1st;
+  }
   if (msg.enabled !== undefined) _autoSeqEnabled = msg.enabled;
-  if (msg.call1st !== undefined) _autoCall1st = msg.call1st;
   if (msg.state !== undefined) _autoQsoState = msg.state;
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
   if (msg.queue !== undefined) _autoQsoQueue = msg.queue;
@@ -766,7 +777,13 @@ function rxEqTx() { window.WSJTXScope?.rxEqTx(); }
 function handleWS(msg) {
   switch(msg.type) {
     case 'wsjtx_status':  _updateStatus(msg); break;
-    case 'wsjtx_decode':  _addDecode(msg); window.FT8Timer?.reset(); break;
+    // UWAGA: NIE resetujemy tu FT8Timer.reset() na kazdy dekod - band
+    // activity nie jest dowodem obecnosci OPERATORA (WSJT-X liczy brak
+    // ruchu myszka/klawiatura, nie ruch na pasmie). Na zywym, zajetym
+    // pasmie dekody przychodza co ~15s bez przerwy, wiec timer resetowany
+    // TU nigdy realnie by nie doszedl do zera. reset() jest teraz wolane
+    // z faktycznych akcji operatora - patrz _selectRow/sendTx.
+    case 'wsjtx_decode':  _addDecode(msg); break;
     case 'wsjtx_clear':   _decodes = []; _renderDecodes(); break;
     case 'wsjtx_qso_logged': _onWsjtxQsoLogged(msg); break;
     case 'ft8_tx_status': _onFt8TxStatus(msg); break;
@@ -1087,6 +1104,9 @@ function _renderRxFreqPanel() {
 }
 
 function _selectRow(el, idx) {
+  // Klik operatora = dowod obecnosci dla timera bezpieczenstwa (WSJT-X Tx
+  // Watchdog) - patrz komentarz przy 'wsjtx_decode' w handleWS.
+  window.FT8Timer?.reset();
   document.querySelectorAll('.wj-decode-row.selected').forEach(r=>r.classList.remove('selected'));
   el.classList.add('selected');
   const d = _decodes[idx];
@@ -1349,6 +1369,7 @@ function _updateMacroTexts() {
 }
 
 function sendTx(n) {
+  window.FT8Timer?.reset();  // reczne TX = dowod obecnosci, patrz _selectRow
   const textEl = document.getElementById(`wj-tx${n}-text`);
   if (!textEl) return;
   const parts = _txMacroParts(n);
@@ -1640,6 +1661,7 @@ window.FT8Timer = (() => {
   let _active      = false;
   let _userCanEdit = false;
   let _warnShown   = false;
+  let _expired     = false;  // wygasl, czeka na potwierdzenie (patrz confirm()/reset())
 
   async function init() {
     // Pobierz ustawienia timera dla aktualnego usera
@@ -1656,10 +1678,12 @@ window.FT8Timer = (() => {
   }
 
   function start() {
-    // Startuj licznik gdy uzytkownik wlacza TX
+    // Startuj licznik - Call 1st wlaczony (glowna automatyka) lub Hound
+    // wlaczony, patrz _onAutoSeqStatus/toggleHound.
     _remaining  = _durationMs;
     _active     = true;
     _warnShown  = false;
+    _expired    = false;
     _tick();
     clearInterval(_interval);
     _interval = setInterval(_tick, 1000);
@@ -1667,32 +1691,53 @@ window.FT8Timer = (() => {
   }
 
   function stop() {
-    // Zatrzymaj licznik gdy TX konczy sie
+    // Zatrzymaj licznik (Call 1st/Hound wylaczony, albo wewnetrzne uzycie
+    // przy wygasnieciu - patrz _tick). Explicit disarm (Call 1st off) NIE
+    // zeruje _expired samo z siebie - o to dba wylacznie confirm()/start(),
+    // zeby stan "czeka na potwierdzenie" nie zniknal po cichu bez realnego
+    // potwierdzenia operatora.
     _active = false;
     clearInterval(_interval);
     _interval = null;
     _remaining = 0;
+    const btn = document.getElementById('ft8-timer-confirm');
+    if (btn) btn.style.display = 'none';
     _updateDisplay();
   }
 
+  // Jedyne zrodlo prawdy dla "operator potwierdzil obecnosc" - wolane
+  // zarowno z przycisku POTWIERDZ jak i z reset() gdy operator dziala mimo
+  // wygasnietego timera (patrz reset() nizej). Powiadamia TEZ backend
+  // (ft8_timer_confirm) - bez tego automat zostalby zablokowany na
+  // zawsze, bo backend NIE widzi lokalnych klikniec w przegladarce.
   function confirm() {
-    // Operator potwierdza obecnosc — reset licznika
+    _expired    = false;
     _remaining  = _durationMs;
     _warnShown  = false;
     _active     = true;
-    document.getElementById('ft8-timer-confirm')?.style &&
-      (document.getElementById('ft8-timer-confirm').style.display = 'none');
+    clearInterval(_interval);
+    _interval = setInterval(_tick, 1000);
+    const btn = document.getElementById('ft8-timer-confirm');
+    if (btn) btn.style.display = 'none';
     _updateDisplay();
+    window.WS?.send({ type: 'ft8_timer_confirm' });
     window.UI?.showToast('✓ Timer zresetowany');
   }
 
   function reset() {
-    // Reset bez zatrzymania — po kazdej akcji uzytkownika
+    // Jesli timer wygasl i czeka na potwierdzenie - JAKAKOLWIEK akcja
+    // operatora (klik wiersza, TX makro) JEST tym potwierdzeniem, taka
+    // sama jak klikniecie POTWIERDZ. Bez tego operator musialby zawsze
+    // trafic dokladnie w mala plaszczke przycisku, zamiast po prostu
+    // wrocic do normalnej pracy.
+    if (_expired) { confirm(); return; }
+    // Reset bez zatrzymania — po kazdej akcji uzytkownika, TYLKO gdy timer
+    // faktycznie aktywny (Call 1st wlaczony) - patrz _onAutoSeqStatus.
     if (_active) {
       _remaining = _durationMs;
       _warnShown = false;
-      document.getElementById('ft8-timer-confirm')?.style &&
-        (document.getElementById('ft8-timer-confirm').style.display = 'none');
+      const btn = document.getElementById('ft8-timer-confirm');
+      if (btn) btn.style.display = 'none';
     }
   }
 
@@ -1710,8 +1755,9 @@ window.FT8Timer = (() => {
     }
 
     if (_remaining <= 0) {
-      // Czas minał — zatrzymaj TX
+      // Czas minał — zatrzymaj TX i zablokuj automatyke do potwierdzenia
       stop();
+      _expired = true;
       _stopTX();
       window.UI?.showToast('⛔ FT8 Timer: TX zatrzymany — potwierdź obecność!', 'error');
       return;
@@ -1721,10 +1767,22 @@ window.FT8Timer = (() => {
   }
 
   function _stopTX() {
-    // Zatrzymaj nadawanie
-    if (window.WSJTX?.stopTx) window.WSJTX.stopTx();
-    // Zatrzymaj Hound mode jesli aktywny
+    // Zatrzymaj RZECZYWISTE nadawanie (PTT + silnik QSO) - poprzednia
+    // wersja wolala tylko stopTx() (kosmetyczny reset podswietlenia
+    // przycisku, NIE dotyka PTT ani silnika) i houndStop(), wiec dla
+    // glownej automatyki (Call 1st) w ogole nic realnie nie przerywala.
+    // haltTx() to ten sam pelny halt co przycisk HALT TX (PTT off +
+    // abort_qso + uniewaznienie zaplanowanych w locie retransmisji).
+    window.WSJTX?.haltTx();
     if (window.WSJTX?.houndStop) window.WSJTX.houndStop();
+    // Poinformuj backend - dopoki nie przyjdzie ft8_timer_confirm, automat
+    // ma PRZESTAC reagowac na nowych wolajacych mimo wlaczonego Call 1st
+    // (patrz _ft8_operator_present w webapp.py). Samo haltTx() przerywa
+    // TYLKO biezaca transmisje - bez tej dodatkowej blokady automat
+    // złapałby kolejnego wolajacego juz za chwile, co czyni caly timer
+    // bezuzytecznym (dokladnie ten problem zglosil uzytkownik: timer mial
+    // pilnowac max czasu nadawania, a przerywal co najwyzej jedna wysylke).
+    window.WS?.send({ type: 'ft8_timer_expired' });
   }
 
   function _updateDisplay() {

@@ -177,9 +177,6 @@ _MSG_TYPE_TO_CHANNEL = {
     'ft8_rx_freq':       'ft8',
     'ft8_split_status':  'ft8',
     'ft8_decode_mode':   'ft8',
-    'tx_watchdog_start': 'ft8',
-    'tx_watchdog_countdown': 'ft8',
-    'tx_watchdog_cancel': 'ft8',
     'auto_seq_status':   'ft8',
     'auto_qso_status':   'ft8',
     'auto_qso_queue':    'ft8',
@@ -578,6 +575,16 @@ class App:
         self._qso_engine = qso_engine.QsoEngine(my_call=CALLSIGN, my_grid=LOCATOR)
         self._auto_seq_enabled = True    # ZAWSZE aktywne (nie ma juz toggle w UI);
                                           # klik na makro to reczne wymuszenie
+        # Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") - False oznacza ze
+        # operator NIE potwierdzil ostatnio obecnosci (klik/TX makro) mimo
+        # wlaczonego Call 1st, i automat MUSI przestac reagowac na
+        # wolajacych (patrz _process_auto_qso) dopoki nie przyjdzie
+        # "ft8_timer_confirm" z frontu (FT8Timer.confirm() w wsjtx.js).
+        # CELOWO osobna flaga od _auto_call_1st - Call 1st samo w sobie juz
+        # NIE gates auto-start przy bezczynnosci (patrz 2026-08-15,
+        # "automat nie reaguje"), wiec wylaczenie Call 1st nie zastapiloby
+        # tej blokady.
+        self._ft8_operator_present = True
         self._auto_call_1st = False      # czy automatycznie startowac QSO z pierwsza
         # stacja ktora odpowie na nasze CQ (zamiast czekac na reczny wybor z kolejki)
         self._auto_cq_text = None        # tresc CQ jaka aktualnie "nadajemy" (do
@@ -981,69 +988,14 @@ class App:
         if self._user_has_lock(user_id):
             self.radio_lock["last_activity"] = time.time()
 
-    async def _start_tx_watchdog(self):
-        """Watchdog TX — auto-off PTT po X sekundach nieprzerwanego nadawania.
-        Chroni przed pozostawionym wlaczonym PTT (zawieszenie, zamkniety laptop).
-        Timeout konfigurowalny w cfg['tx_watchdog_s'] (domyslnie 180s).
-        Ostatnie 30s watchdog wysyla powiadomienia toast co 10s zeby operator
-        widzial ze zbliza sie limit."""
-        # Anuluj poprzedni watchdog jesli byl aktywny
-        if hasattr(self, '_tx_watchdog_task') and self._tx_watchdog_task and not self._tx_watchdog_task.done():
-            self._tx_watchdog_task.cancel()
-
-        async def _watchdog():
-            timeout = float(self.cfg.get("tx_watchdog_s", 180.0))
-            if timeout <= 0:
-                return  # wylaczony w konfiguracji
-            try:
-                # Broadcast start watchdog dla UI (żeby zaczął pokazywać licznik)
-                await self.hub.broadcast({
-                    "type": "tx_watchdog_start",
-                    "timeout": timeout,
-                })
-                # Ostrzezenia w ostatnich 30s
-                warn_at = max(timeout - 30, 0)
-                await asyncio.sleep(warn_at)
-                if not self.rig.ptt:
-                    await self.hub.broadcast({"type": "tx_watchdog_cancel"})
-                    return
-                # Broadcast co sekunde w ostatnich 30s dla plynnego countdown UI
-                # + toast wa`rning na 30/20/10s zeby uzytkownik widzial takze
-                # gdy nie ma otwartego panelu FT8 (globalny toast).
-                for remain in range(30, 0, -1):
-                    if not self.rig.ptt:
-                        await self.hub.broadcast({"type": "tx_watchdog_cancel"})
-                        return
-                    await self.hub.broadcast({
-                        "type": "tx_watchdog_countdown",
-                        "remaining": remain,
-                    })
-                    if remain in (30, 20, 10):
-                        await self.hub.broadcast({
-                            "type": "toast",
-                            "msg": f"⚠ Watchdog TX: automatyczne wylaczenie za {remain}s",
-                            "level": "warn",
-                        })
-                    await asyncio.sleep(1)
-                # Wymus PTT OFF
-                if self.rig.ptt:
-                    self.rig.ptt = False
-                    if not self.rig.sim:
-                        try: await self.rig.set_ptt(False)
-                        except Exception as e:
-                            print(f"[watchdog] set_ptt(False) blad: {e}")
-                    await self.hub.broadcast({"type": "ptt", "ptt": False})
-                    await self.hub.broadcast({"type": "tx_watchdog_cancel"})
-                    await self.hub.broadcast({
-                        "type": "toast",
-                        "msg": f"🛑 Watchdog TX zadzialal — PTT wylaczone po {timeout:.0f}s",
-                        "level": "error",
-                    })
-            except asyncio.CancelledError:
-                await self.hub.broadcast({"type": "tx_watchdog_cancel"})
-                pass
-
-        self._tx_watchdog_task = asyncio.create_task(_watchdog())
+    # UWAGA: _start_tx_watchdog byla tu ZDEFINIOWANA DWA RAZY w tej samej
+    # klasie (Python bierze druga - patrz definicja przy _feature_allowed
+    # nizej) - ta pierwsza, jedyna ktora broadcastowala
+    # tx_watchdog_start/countdown/cancel, byla wiec CALKOWICIE martwym,
+    # nieosiagalnym kodem. Front i tak nigdy nie nasluchiwal tych typow
+    # wiadomosci (element #wj-tx-watchdog w index.html byl rownie martwy),
+    # wiec usunieta bez utraty funkcjonalnosci - realny watchdog PTT to
+    # ta druga definicja, dziala niezaleznie i zostaje bez zmian.
 
     async def _start_tune(self, duration_s: float, tone_hz: float = 1500.0):
         """Nadaj stały ton przez duration_s sekund dla strojenia ATU.
@@ -5587,12 +5539,33 @@ class App:
         elif t == "ft8_toggle_call_1st":
             self._auto_call_1st = bool(msg.get("enabled", not self._auto_call_1st))
             print(f"[autoqso] Call 1st {'WLACZONE' if self._auto_call_1st else 'wylaczone'}")
+            # Klikniecie tego checkboxa to akcja operatora - liczy sie jako
+            # dowod obecnosci samo w sobie (podobnie jak reczny klik
+            # dekodu/TX makro na froncie), niezaleznie w ktora strone.
+            self._ft8_operator_present = True
             await self.hub.broadcast({"type": "auto_seq_status",
                                        "enabled": self._auto_seq_enabled,
                                        "call1st": self._auto_call_1st,
                                        "state": self._qso_engine.state,
                                        "partner": self._qso_engine.partner_call,
                                        "queue": list(self._qso_engine.queue)})
+
+        elif t == "ft8_timer_expired":
+            # Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") wygasl na
+            # froncie (FT8Timer._stopTX() w wsjtx.js) - front juz wywolal
+            # WSJTX.haltTx() (przerywa BIEZACA transmisje), ale bez TEJ
+            # flagi automat zlapalby kolejnego wolajacego juz za chwile
+            # mimo wlaczonego Call 1st, co czynilo caly timer bezuzytecznym
+            # (zgloszone na zywo: mial pilnowac max czasu nadawania, a
+            # przerywal co najwyzej jedna wysylke). _process_auto_qso
+            # sprawdza te flage na samym poczatku i ignoruje wszystko
+            # dopoki nie przyjdzie ft8_timer_confirm.
+            self._ft8_operator_present = False
+            print("[autoqso] Timer bezpieczenstwa wygasl — automat zablokowany do potwierdzenia")
+
+        elif t == "ft8_timer_confirm":
+            self._ft8_operator_present = True
+            print("[autoqso] Operator potwierdzil obecnosc — automat odblokowany")
 
         elif t == "ft8_start_auto_qso":
             call_de = (msg.get("callDe") or "").strip().upper()
@@ -6063,7 +6036,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-SEQ-RESERVE-SYNC, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-FT8-TX-WATCHDOG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6419,6 +6392,17 @@ class App:
                 return
             # Ignoruj wlasny sygnal (echo z USB audio) — call_de to MY
             if parsed.get('call_de', '').upper() == self._qso_engine.my_call.upper():
+                return
+
+            # Timer bezpieczenstwa FT8 wygasl i operator jeszcze nie
+            # potwierdzil obecnosci (patrz "ft8_timer_expired"/
+            # "ft8_timer_confirm" w _ws_msg) - CALKOWICIE ignorujemy dekod
+            # do celow automatyki (nie startujemy, nie retransmitujemy, nie
+            # odpowiadamy nawet partnerowi w trakcie QSO). haltTx() na
+            # froncie juz przerwal biezaca transmisje przed wyslaniem tego
+            # sygnalu; ta flaga pilnuje zeby NIC nowego nie ruszylo dopoki
+            # operator sie nie odezwie.
+            if not self._ft8_operator_present:
                 return
 
             result = self._qso_engine.on_decode(parsed, recv_epoch=m.get("recvEpoch"))

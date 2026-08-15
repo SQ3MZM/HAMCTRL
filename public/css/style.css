@@ -518,12 +518,6 @@ html[data-theme="amber-classic"] {
 }
 @keyframes ptt-pulse { 0%,100%{box-shadow:0 0 20px rgba(217,119,106,0.3)} 50%{box-shadow:0 0 35px rgba(217,119,106,0.6)} }
 
-/* Watchdog TX countdown - pulsuje ostatnich 10s */
-@keyframes wj-tx-watchdog-pulse {
-  0%, 100% { background: rgba(217,119,106,0.15); }
-  50%      { background: rgba(217,119,106,0.45); box-shadow: 0 0 12px rgba(217,119,106,0.6); }
-}
-
 /* ── PANEL FUNKCJI RADIA (VFO A/B, func toggle) ── */
 .tile-rigfeatures { padding: 0; }
 /* Jeden zwarty wiersz przyciskow (VFO A/B, Zasilanie, funkcje) miedzy PTT
