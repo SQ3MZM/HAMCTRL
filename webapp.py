@@ -6012,6 +6012,15 @@ class App:
         else:
             print("[cq] sequence CQ pominiete - CQ zatrzymane")
             return
+        # Czy PTT faktycznie zostalo wlaczone w TEJ probie — odrozniamy od
+        # wczesnego return (np. tx_seq nieaktualny, abort przed PTT, blad
+        # audio start_tx). Zywy log 2026-08-15: retransmisja "-07" zostala
+        # poprawnie odrzucona jako nieaktualna (tx_seq stale) PRZED PTT, ale
+        # finally: i tak wykonywal "trzymaj mutex do konca okresu" (do 15s
+        # sleep) tak jakby cos realnie nadal — co zablokowalo prawdziwe "73"
+        # (czekajace w kolejce na ten sam _ft8_tx_lock) az do NASTEPNEGO
+        # okresu. Efekt na zywo: korespondent nie dostal 73 na czas i powtorzyl RRR.
+        ptt_was_on = False
         try:
             is_ft4 = (self._ft8_decode_mode == "FT4")
             # SYNCHRONIZACJA txVolume PRZED TX: audio.cfg to referencja ktora moze
@@ -6054,7 +6063,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-TX-EQ-RX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-TX-MUTEX-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6200,6 +6209,7 @@ class App:
             _pos = _t0 % (ft4_encoder.FT4_SLOT_TIME if is_ft4 else 15.0)
             print(f"[ft8] przed PTT: pozycja w oknie={_pos:.3f}s")
             await self.rig.set_ptt(True)
+            ptt_was_on = True
             print(f"[ft8] PTT ON zajelo: {(_ttt.time()-_t0)*1000:.0f}ms")
             await self.hub.broadcast({"type": "ptt", "ptt": True})
             print(f"[ft8] TX START: '{call_to} {call_de} {report}' ({duration:.2f}s) DT={_pos:.2f}s")
@@ -6277,15 +6287,22 @@ class App:
             # split nie zostal zastosowany dla tej transmisji).
             await self._restore_fake_split_after_tx()
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
-            print("[ft8] TX KONIEC")
-            # Trzymaj mutex do konca biezacego okresu (PTT juz OFF)
-            # zeby kolejny task nie wszedl w okres korespondenta
-            import time as _time
-            _window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
-            _remaining = _window_s - (_time.time() % _window_s)
-            if 0.5 < _remaining < _window_s - 0.5:
-                print(f"[ft8] Czekam {_remaining:.1f}s do konca okresu (PTT OFF)")
-                await asyncio.sleep(_remaining)
+            print("[ft8] TX KONIEC" if ptt_was_on else "[ft8] TX pominieto (bez PTT)")
+            # Trzymaj mutex do konca biezacego okresu (PTT juz OFF) zeby
+            # kolejny task nie wszedl w okres korespondenta — TYLKO jesli
+            # faktycznie bylo PTT. Przy wczesnym return (tx_seq nieaktualny,
+            # abort przed PTT, blad audio) nic nie poszlo w eter, wiec nie ma
+            # czego "doczekiwac" — zwolnij mutex NATYCHMIAST, zeby kolejna,
+            # wciaz aktualna wysylka (np. finalne "73") nie utknela w
+            # kolejce na lock az do nastepnego okresu (patrz komentarz przy
+            # ptt_was_on).
+            if ptt_was_on:
+                import time as _time
+                _window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
+                _remaining = _window_s - (_time.time() % _window_s)
+                if 0.5 < _remaining < _window_s - 0.5:
+                    print(f"[ft8] Czekam {_remaining:.1f}s do konca okresu (PTT OFF)")
+                    await asyncio.sleep(_remaining)
 
     @staticmethod
     def _format_report(snr_db: float) -> str:

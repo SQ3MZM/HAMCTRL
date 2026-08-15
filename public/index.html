@@ -532,6 +532,33 @@
          title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
     <div style="flex:1"></div>
     <div style="display:flex;gap:6px;margin-left:12px;">
+      <!-- Kontrolki palety wodospadu (Reference/Zero/Gain) w stylu WSJT-X —
+           przeniesione tu z paska nad wodospadem, ktory na waskiej lewej
+           kolumnie (1120px przy 320px prawej kolumnie) nie mial juz miejsca
+           i obcinal tresc (overflow:hidden na kolumnie-rodzicu, bez
+           zawijania). Ten gorny pasek ma flex-wrap, wiec jest tu bezpiecznie. -->
+      <div style="display:flex;align-items:center;gap:6px;padding-right:10px;margin-right:6px;
+        border-right:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">
+        <label title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
+          <input type="range" id="wj-palette-ref" min="0" max="100" value="15" step="1"
+            oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value"
+            style="width:50px;accent-color:var(--green);vertical-align:middle;">
+          <span id="wj-palette-ref-val" style="width:20px;display:inline-block;text-align:right;">15</span>
+        </label>
+        <label title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
+          <input type="range" id="wj-palette-zero" min="0" max="60" value="0" step="1"
+            oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value"
+            style="width:50px;accent-color:var(--amber);vertical-align:middle;">
+          <span id="wj-palette-zero-val" style="width:20px;display:inline-block;text-align:right;">0</span>
+        </label>
+        <label title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
+          <input type="range" id="wj-palette-gain" min="30" max="300" value="100" step="5"
+            oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)"
+            style="width:50px;accent-color:var(--red);vertical-align:middle;">
+          <span id="wj-palette-gain-val" style="width:22px;display:inline-block;text-align:right;">1.0</span>
+        </label>
+        <button onclick="WSJTX.resetPaletteAdjust()" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
+      </div>
       <button onclick="WSJTX.haltTx()"     class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
       <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
       <button onclick="WSJTX.clearDecodes()" class="wj-btn">WYCZYŚĆ</button>
@@ -569,29 +596,6 @@
       <button id="wj-fake-split-toggle" onclick="WSJTX.toggleFakeSplit()" class="wj-btn" style="margin-left:6px;"
         title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
       <span id="wj-fake-split-target" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:4px;"></span>
-
-      <!-- Kontrolki palety w stylu WSJT-X (Reference/Zero/Gain) -->
-      <div style="display:flex;align-items:center;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">
-        <label title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
-          <input type="range" id="wj-palette-ref" min="0" max="100" value="15" step="1"
-            oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value"
-            style="width:60px;accent-color:var(--green);vertical-align:middle;">
-          <span id="wj-palette-ref-val" style="width:22px;display:inline-block;text-align:right;">15</span>
-        </label>
-        <label title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
-          <input type="range" id="wj-palette-zero" min="0" max="60" value="0" step="1"
-            oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value"
-            style="width:60px;accent-color:var(--amber);vertical-align:middle;">
-          <span id="wj-palette-zero-val" style="width:22px;display:inline-block;text-align:right;">0</span>
-        </label>
-        <label title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
-          <input type="range" id="wj-palette-gain" min="30" max="300" value="100" step="5"
-            oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)"
-            style="width:60px;accent-color:var(--red);vertical-align:middle;">
-          <span id="wj-palette-gain-val" style="width:24px;display:inline-block;text-align:right;">1.0</span>
-        </label>
-        <button onclick="WSJTX.resetPaletteAdjust()" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
-      </div>
     </div>
     <div id="wj-scope-axis" class="wsjtx-scope-axis"></div>
     <div style="position:relative;width:100%;">
