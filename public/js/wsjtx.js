@@ -1228,9 +1228,11 @@ function updateBeamRow() {
 function _updateRotorButtons() {
   const spBtn = document.getElementById('wj-rotor-sp-btn');
   const lpBtn = document.getElementById('wj-rotor-lp-btn');
+  const manBtn = document.getElementById('wj-rotor-manual-btn');
   const has = _rotorId != null;
   if (spBtn) spBtn.disabled = !has || _beamSpAz == null;
   if (lpBtn) lpBtn.disabled = !has || _beamLpAz == null;
+  if (manBtn) manBtn.disabled = !has;
 }
 
 function _onRotatorUpdate(rot) {
@@ -1242,19 +1244,45 @@ function _onRotatorUpdate(rot) {
   _updateRotorButtons();
 }
 
-async function rotorGoBeam(which) {
+async function _rotorSetAz(az, label) {
   if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
-  const az = which === 'lp' ? _beamLpAz : _beamSpAz;
-  if (az == null) return;
   try {
     const r = await fetch(`/api/rotator/${_rotorId}/position`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({az, el: 0})
     });
     const d = await r.json();
-    if (d.ok) window.UI?.showToast?.(`↻ Rotor → ${az}° (${which.toUpperCase()})`);
+    if (d.ok) window.UI?.showToast?.(`↻ Rotor → ${az}°${label ? ' ('+label+')' : ''}`);
     else window.UI?.showToast?.(`✗ ${d.error || 'Błąd'}`, 'error');
   } catch(e) { window.UI?.showToast?.(`✗ ${e.message}`, 'error'); }
+}
+
+function rotorGoBeam(which) {
+  const az = which === 'lp' ? _beamLpAz : _beamSpAz;
+  if (az == null) return;
+  _rotorSetAz(az, which.toUpperCase());
+}
+
+// Reczne przesuniecie rotora na DOWOLNY azymut lub lokator — SP/LP daja
+// tylko policzony kierunek na aktualnie wybrana stacje, brakowalo sposobu
+// na wpisanie wlasnego celu (zglaszone na zywo). prompt() zamiast stalego
+// pola tekstowego — zero dodatkowego miejsca w i tak juz ciasnym wierszu
+// ANTENA, ten sam format co pole "CEL" w duzym kompasie RADIO (stopnie
+// LUB lokator Maidenhead).
+function rotorGoManual() {
+  if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
+  const raw = (prompt('Rotor → azymut w stopniach (np. 272) lub lokator (np. KO02):') || '').trim();
+  if (!raw) return;
+  let az = null;
+  const n = parseFloat(raw.replace(',', '.'));
+  if (!isNaN(n) && /^\d+([.,]\d+)?°?$/.test(raw)) {
+    az = Math.round(((n % 360) + 360) % 360);
+  } else if (/^[A-R]{2}\d{2}([A-X]{2})?$/i.test(raw)) {
+    const h = window.BeamHeading?.headingFor('', raw.toUpperCase());
+    if (h) az = h.azimuth;
+  }
+  if (az == null) { window.UI?.showToast?.('⚠ Nieprawidłowy format (stopnie lub lokator)', 'error'); return; }
+  _rotorSetAz(az, raw.toUpperCase());
 }
 
 // ── TX makra ──────────────────────────────────────────────────────────────────
@@ -1967,7 +1995,7 @@ window.WSJTX = {
   init, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
   tuneToBand, rxEqTx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
-  updateBeamRow, rotorGoBeam,
+  updateBeamRow, rotorGoBeam, rotorGoManual,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, toggleCall1st, setDecodeMode,
   tuneToBand, setTxPeriod,
   setTxFreqManual, setRxFreqManual, rxEqTx,

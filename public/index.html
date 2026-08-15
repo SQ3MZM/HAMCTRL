@@ -815,8 +815,12 @@
           background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
         <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
           title="Ustaw rotor na azymut LP (dluga droga)"
-          style="font-family:var(--mono);font-size:9px;padding:1px 5px;
+          style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
           background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
+        <button id="wj-rotor-manual-btn" onclick="WSJTX.rotorGoManual()" disabled
+          title="Recznie: wpisz azymut w stopniach lub lokator"
+          style="font-family:var(--mono);font-size:9px;padding:1px 5px;
+          background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">🎯</button>
       </div>
       <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
@@ -2399,7 +2403,7 @@
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202606270010"></script>
+<script src="js/ws.js?v=202608150001"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
 <script src="js/ui.js?v=202608130001"></script>
 <script src="js/settings.js?v=202606180504"></script>
@@ -2418,7 +2422,7 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608150003"></script>
+<script src="js/wsjtx.js?v=202608150004"></script>
 <script src="js/wsjtx_scope.js?v=202608130001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>

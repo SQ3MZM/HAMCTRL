@@ -609,6 +609,13 @@ function handleMessage(msg) {
     case 'rotator_update':
       if (typeof window.RotW?.handleWS === 'function') RotW.handleWS(msg);
       if (typeof window.Rotator?.handleWS   === 'function') Rotator.handleWS(msg);
+      // Ten typ ma wlasny case (powyzej), wiec NIGDY nie spadal do 'default'
+      // ponizej, gdzie normalnie leci do WSJTX.handleWS — zywy odczyt pozycji
+      // rotora w panelu WSJT-X (wiersz ANTENA) nigdy nie dostawal biezacych
+      // aktualizacji, tylko jednorazowy fetch z init(). Zglaszane na zywo:
+      // "odswiezanie pozycji rotora jest tylko wtedy kiedy zmienisz zakladke"
+      // — w rzeczywistosci to byl jedyny raz kiedy w ogole dostawal wartosc.
+      if (typeof window.WSJTX?.handleWS === 'function') WSJTX.handleWS(msg);
       break;
     case 'deepcw_text':
       window.DeepCW?.handleText?.(msg);
