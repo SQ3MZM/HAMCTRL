@@ -6113,7 +6113,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-HALT-ABORTS-AUTOQSO, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-STALE-TX-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6216,6 +6216,28 @@ class App:
                 print("[ft8] TX anulowane przed PTT (abort)")
                 await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                 return
+
+            # Ostatnia kontrola aktualnosci TUZ przed PTT (nie na etapie
+            # planowania) — automatyka planuje wysylke jako osobny task
+            # (asyncio.create_task) ktory czeka na wlasciwe okno (nawet do
+            # ~15-30s wyzej). W tym czasie MOZE zajsc kolejny dekod ktory
+            # przesunie silnik QSO dalej (albo go zakonczy) zanim ten
+            # zaplanowany task w ogole dotrze do PTT. Zaobserwowane na zywo
+            # 2026-08-15: retransmisja raportu "+08" (Brak odpowiedzi -
+            # powtarzam) i finalne "73" (partner faktycznie odpowiedzial
+            # RR73 w MIEDZYCZASIE) zostaly zaplanowane niemal rownoczesnie z
+            # tej samej paczki dekodow — "73" zdazylo sie nadac i ZALOGOWAC
+            # QSO, a przestarzale "+08" i tak nadalo sie PO fakcie, bo nic
+            # nie sprawdzalo czy silnik nadal jest w stanie/z partnerem
+            # pasujacym do TEJ konkretnej wiadomosci. Nie dotyczy CQ
+            # (auto_respond=False dla cyklicznego CQ) ani recznego TX.
+            if auto_respond and call_to != "CQ":
+                _cur_partner = self._qso_engine.partner_call
+                if _cur_partner != call_to or not self._qso_engine.is_active():
+                    print(f"[autoqso] TX '{call_to} {call_de} {report}' nieaktualne "
+                          f"(partner={_cur_partner!r}, state={self._qso_engine.state}) — pomijam")
+                    await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
+                    return
 
             import time as _ttt
             _t0 = _ttt.time()
