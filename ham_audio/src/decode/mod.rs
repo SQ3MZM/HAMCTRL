@@ -35,10 +35,22 @@ use rayon::prelude::*;
 /// ambiguous total, so whatever is actually slow becomes visible by name.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PassTiming {
-    pub spec_ms:       f64,
-    pub find_cand_ms:  f64,
-    pub par_decode_ms: f64,
-    pub n_cand:        usize,
+    pub spec_ms:        f64,
+    pub find_cand_ms:   f64,
+    pub par_decode_ms:  f64,
+    pub n_cand:         usize,
+    // Sum of per-candidate CPU time (across ALL rayon worker threads, so
+    // these are CPU-seconds, not wall-clock - will each exceed par_decode_ms
+    // once parallelism kicks in). Added after cutting LDPC max_iters 50->30
+    // had ZERO measurable effect on live par_decode_ms (still ~1038ms,
+    // unchanged from ~1050-1070ms baseline) - that result rules out LDPC
+    // iteration count as the dominant cost and points at something in
+    // refine/demod/LLR instead, but guessing again isn't warranted until
+    // that's actually confirmed by name. These two sums split par_decode_ms's
+    // single closure into "refine+extract_tone_power+LLR build" vs "bp_decode
+    // itself" so the next live log shows which one is really eating the CPU.
+    pub demod_ms_sum:   f64,
+    pub ldpc_ms_sum:    f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -231,9 +243,12 @@ fn decode_and_subtract(
     let residual_ro: &[f32] = residual;
 
     let t_par = std::time::Instant::now();
+    let demod_ns = std::sync::atomic::AtomicU64::new(0);
+    let ldpc_ns = std::sync::atomic::AtomicU64::new(0);
     let decoded: Vec<(Candidate, [u8; 174], DecodeResult)> = candidates
         .par_iter()
         .filter_map(|coarse_cand| {
+            let t_demod = std::time::Instant::now();
             // Fine-tune time/freq before demodulation - the coarse candidate
             // grid (~0.08s / ~3Hz spacing) leaves enough residual offset to
             // measurably degrade LLR quality, confirmed against captured
@@ -253,6 +268,8 @@ fn decode_and_subtract(
             } else {
                 extract_llr_ft4(&power, p)
             };
+            demod_ns.fetch_add(t_demod.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+            let t_ldpc = std::time::Instant::now();
 
             // JTDX's own reference decoder (ft8b.f90: max_iterations=30) uses
             // 30, not 50 - this port had been running 67% more BP iterations
@@ -266,6 +283,7 @@ fn decode_and_subtract(
             // ~130-165ms measured offline, with no other explanation found
             // (thread count, CPU affinity and power plan all ruled out).
             let (bits174, success, _iters) = bp_decode(&llr174, 30);
+            ldpc_ns.fetch_add(t_ldpc.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
             if !success { return None; }
 
             // bits174[0..91] = [data77/scrambled77 | crc14]
@@ -302,6 +320,8 @@ fn decode_and_subtract(
         })
         .collect();
     let par_decode_ms = t_par.elapsed().as_secs_f64() * 1000.0;
+    let demod_ms_sum = demod_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
+    let ldpc_ms_sum = ldpc_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
 
     // Dedup phase: cheap (just comparisons), no subtraction yet. par_iter()
     // doesn't preserve candidate order, but that's fine here - dedup is
@@ -321,7 +341,7 @@ fn decode_and_subtract(
     // Hand results to the caller NOW - see this function's doc comment for
     // why this doesn't need to wait for subtraction below.
     let results: Vec<DecodeResult> = new_decoded.iter().map(|(_, _, r)| r.clone()).collect();
-    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand };
+    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand, demod_ms_sum, ldpc_ms_sum };
     on_pass_results(&results, &timing);
 
     // Subtract each signal from the residual, so a weaker signal that was

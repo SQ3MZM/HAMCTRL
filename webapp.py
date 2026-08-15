@@ -6724,7 +6724,9 @@ class App:
                           f"n={msg.get('n', 0)} spec_ms={msg.get('spec_ms', 0):.1f} "
                           f"find_cand_ms={msg.get('find_cand_ms', 0):.1f} "
                           f"par_decode_ms={msg.get('par_decode_ms', 0):.1f} "
-                          f"n_cand={msg.get('n_cand', 0)}", flush=True)
+                          f"n_cand={msg.get('n_cand', 0)} "
+                          f"demod_ms_sum={msg.get('demod_ms_sum', 0):.1f} "
+                          f"ldpc_ms_sum={msg.get('ldpc_ms_sum', 0):.1f}", flush=True)
                     continue
 
                 if msg.get("type") == "decode_stats":

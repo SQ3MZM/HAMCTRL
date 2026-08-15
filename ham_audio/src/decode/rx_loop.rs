@@ -160,6 +160,8 @@ async fn run_loop(
                     "find_cand_ms": timing.find_cand_ms,
                     "par_decode_ms": timing.par_decode_ms,
                     "n_cand": timing.n_cand,
+                    "demod_ms_sum": timing.demod_ms_sum,
+                    "ldpc_ms_sum": timing.ldpc_ms_sum,
                 });
                 if stream.write_all(format!("{}\n", pstats).as_bytes()).await.is_err() {
                     return;
