@@ -3145,6 +3145,12 @@ class App:
                 print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
+                # Uniewaznij KAZDA juz zaplanowana (w locie, czekajaca na okno)
+                # automatyczna transmisje do tego partnera - bez tego stale-TX-
+                # guard w _ft8_tx_sequence_inner nie mial jak wiedziec ze to
+                # PRAWDZIWY abort, nie tylko "zlecono nowsza akcje" (patrz
+                # komentarz przy _autoqso_tx_seq w _send_auto_tx).
+                self._autoqso_tx_seq += 1
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
                                            "partner": None})
@@ -5322,6 +5328,7 @@ class App:
                     print(f"[cq] Reset niedokonczonego QSO ({self._qso_engine.state}, "
                           f"partner={self._qso_engine.partner_call}) przed CQ")
                     self._qso_engine.abort_qso()
+                    self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
                 # Przerwij tez ewentualny trwajacy TX sekwencer
                 if self._ft8_tx_lock.locked():
                     self._ft8_tx_abort = True
@@ -5388,6 +5395,7 @@ class App:
                 print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
+                self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
                                            "partner": None})
@@ -5691,6 +5699,7 @@ class App:
             # przechodzi do nastepnej z kolejki Call 1st.
             print(f"[autoqso] Reczne przerwanie QSO z {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
+            self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
             self._ft8_tx_abort = True
             # _qso_period_locked=False NIE ustawia zlego okresu na sztywno —
             # okres dla nastepnej stacji i tak zostanie na nowo wykryty z jej
@@ -6052,7 +6061,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-15-PARTNER-BUSY-ABORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-15-SEQ-INVALIDATE-ABORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6443,6 +6452,7 @@ class App:
                               f"odpowiada po {_max_retries} probach — porzucam QSO")
                         self._qso_engine.abort_qso()
                         self._qso_period_locked = False
+                        self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
                         await self.hub.broadcast({"type": "auto_qso_status",
                                                    "state": "IDLE", "partner": None})
                         await self._advance_auto_qso_queue()
@@ -6464,8 +6474,18 @@ class App:
                 if self._cq_calling:
                     print(f"[cq] {call_de} odpowiedzial na CQ - koncze wolanie, zaczynam QSO")
                     self._stop_cq_calling()
-                if self._auto_call_1st and not self._qso_engine.is_active():
-                    print(f"[autoqso] Call 1st: auto-start QSO z {call_de}")
+                # UWAGA: auto-start gdy IDLE dziala ZAWSZE, niezaleznie od
+                # Call 1st. Call 1st kontroluje WYLACZNIE czy po zakonczeniu
+                # jednego QSO automat sam przechodzi do NASTEPNEJ stacji z
+                # kolejki (_advance_auto_qso_queue) - to jest decyzja o
+                # KOLEJNOSCI przy wielu jednoczesnych wolajacych. Bezposrednie
+                # wolanie gdy stoimy calkowicie bezczynnie to nie jest zadna
+                # decyzja o kolejnosci (jest tylko jedna stacja), wiec nie
+                # powinno zalezec od tego ustawienia. Wczesniej: wylaczony
+                # Call 1st + wolanie w trakcie bezczynnosci = calkowita cisza,
+                # zglaszane na zywo jako "automat nie reaguje".
+                if not self._qso_engine.is_active():
+                    print(f"[autoqso] Auto-start QSO z {call_de} (bezczynnosc)")
                     start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
                     if start_result and start_result.get("action") == "reply":
                         await self._dispatch_auto_reply(start_result, m)
@@ -6484,6 +6504,13 @@ class App:
                       f"stacji — porzucam wolanie, przechodze do kolejki")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
+                # Bez tego juz zaplanowana (w locie) retransmisja do TEGO
+                # partnera i tak leciala w eter mimo abort_qso() - zaobserwowane
+                # na zywo: partner_busy trafial poprawnie, ale wczesniej
+                # zlecona retransmisja (asyncio.create_task w tym samym bloku
+                # co "Brak odpowiedzi — powtarzam") juz czekala na okno z
+                # NIEZMIENIONYM tx_seq, wiec stale-TX-guard jej nie zlapal.
+                self._autoqso_tx_seq += 1
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": "IDLE", "partner": None})
                 await self._advance_auto_qso_queue()
