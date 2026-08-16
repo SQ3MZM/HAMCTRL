@@ -5583,6 +5583,13 @@ class App:
                     pass
 
         elif t == "ft8_rx_enable":
+            # Wlacza/wylacza wspolny dekoder RX (dla WSZYSTKICH klientow, patrz
+            # broadcast nizej) - bez tego gate'u dowolny viewer mogl zdalnie
+            # zgasic dekodowanie wszystkim, wlacznie z operatorem trzymajacym TRX.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             enabled = bool(msg.get("enabled", True))
             mode = self._ft8_decode_mode  # "FT8" lub "FT4"
             # Zapisz kto wlacza (do auto-stop przy disconnect / oddaniu radia).
@@ -5605,7 +5612,13 @@ class App:
         elif t == "ft8_set_tx_freq":
             # Ustawienie docelowej czestotliwosci TX (np. przeciagniecie znacznika
             # TX na wodospadzie). Respektuje zamrozenie (freeze) i tryb split
-            # (min. czestotliwosc).
+            # (min. czestotliwosc). To parametr TX (gdzie faktycznie poleci
+            # nadawanie), w odroznieniu od ft8_set_rx_freq (celowo bez gate'u -
+            # patrz komentarz tam) - wymaga trzymania radia.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             if self._ft8_tx_frozen:
                 # Zamrozone — ignoruj prosby o zmiane, odpowiedz aktualnym stanem
                 await ws.send_json({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
@@ -5626,6 +5639,9 @@ class App:
         elif t == "ft8_set_rx_freq":
             # Ustawienie znacznika RX (Rx Frequency panel) — calkowicie niezalezne
             # od TX, bez logiki split/lock (mozna nasluchiwac gdziekolwiek w pasmie).
+            # CELOWO bez _can_control_radio (sprawdzone w audycie 2026-08-16) -
+            # to tylko gdzie PATRZYMY, nie wplywa na TX ani na innych klientow
+            # w sposob ktory wymagalby wlasnosci radia.
             freq = msg.get("freqHz")
             try:
                 freq = float(freq)
@@ -5639,6 +5655,14 @@ class App:
             # Lewy klik na wodospadzie (poza juz istniejacymi znacznikami) ustawia
             # OBA znaczniki (RX i TX) naraz na ta sama, nowa pozycje. Kazdy z nich
             # mozna potem przeciagnac osobno (ft8_set_tx_freq / ft8_set_rx_freq).
+            # W odroznieniu od samego ft8_set_rx_freq - ten klik typowo oznacza
+            # "wybieram te stacje do wolania", czyli realnie celuje TX-em, wiec
+            # (inaczej niz przy samym przesuwaniu markera RX) wymaga trzymania
+            # radia.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             freq = msg.get("freqHz")
             try:
                 freq = float(freq)
@@ -5657,6 +5681,8 @@ class App:
 
         elif t == "ft8_rx_eq_tx":
             # Przycisk "RX=TX": przesuwa znacznik RX na biezaca pozycje TX.
+            # CELOWO bez _can_control_radio - tylko marker RX, patrz komentarz
+            # przy ft8_set_rx_freq.
             self._ft8_rx_freq_hz = self._ft8_tx_freq_hz
             print(f"[ft8] RX=TX -> {self._ft8_rx_freq_hz:.0f}Hz")
             await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": self._ft8_rx_freq_hz})
@@ -5665,7 +5691,12 @@ class App:
             # Przycisk "TX=RX": odwrotnosc powyzszego - przesuwa znacznik TX
             # na biezaca pozycje RX. Respektuje zamrozenie (Hold Tx Freq) i
             # tryb split (min. czestotliwosc) tak samo jak reczne
-            # przeciagniecie znacznika TX (ft8_set_tx_freq powyzej).
+            # przeciagniecie znacznika TX (ft8_set_tx_freq powyzej). Marker TX
+            # -> wymaga trzymania radia, tak jak ft8_set_tx_freq.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             if self._ft8_tx_frozen:
                 await ws.send_json({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                      "frozen": True})
@@ -5680,6 +5711,10 @@ class App:
                                        "frozen": self._ft8_tx_frozen})
 
         elif t == "ft8_toggle_tx_freeze":
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             self._ft8_tx_frozen = bool(msg.get("frozen", not self._ft8_tx_frozen))
             print(f"[ft8] TX {'ZAMROZONE' if self._ft8_tx_frozen else 'odmrozone'} @ {self._ft8_tx_freq_hz:.0f}Hz"
                   + (" — RX bedzie automatycznie podazac za wywolaniami do nas" if self._ft8_tx_frozen else ""))
@@ -5687,6 +5722,14 @@ class App:
                                        "frozen": self._ft8_tx_frozen})
 
         elif t == "ft8_toggle_split":
+            # Rezerwowy mechanizm (patrz komentarz przy self._ft8_split_enabled
+            # w __init__) - obecnie brak wywolujacego we froncie, ale skoro
+            # steruje progiem czestotliwosci TX, dostaje ten sam gate co
+            # reszta parametrow TX w tym bloku dla spojnosci.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             self._ft8_split_enabled = bool(msg.get("enabled", not self._ft8_split_enabled))
             min_hz = msg.get("minHz")
             if min_hz is not None:
@@ -6252,7 +6295,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-FT8-CALL1ST-LOCK-GATE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-FT8-TX-MARKERS-LOCK-GATE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
