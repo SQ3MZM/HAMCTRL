@@ -3060,10 +3060,13 @@ class App:
             # name i email - obetnij dlugosc i usun znaki HTML-niebezpieczne
             _nm = body.get("name", "").strip()[:64]
             _nm = re.sub(r'[<>"\']', '', _nm)
+            _role = body.get("role", "viewer")
+            if _role not in ("admin", "operator", "viewer"):
+                return 400, {"error": "Nieprawidlowa rola (admin/operator/viewer)"}
             new_u = {"id": str(int(time.time()*1000)),
                      "username": _un,
                      "password": hash_pw_secure(body.get("password", "changeme")),
-                     "role": body.get("role", "viewer"), "active": True,
+                     "role": _role, "active": True,
                      "name":        _nm,
                      "callsign":    _cs,
                      "locator":     _loc,
@@ -3078,19 +3081,48 @@ class App:
         if m and method in ("PUT", "PATCH", "DELETE"):
             if role != "admin": return 403, {"error": "Tylko admin"}
             target_uid = m.group(1)
+
+            # Nic dotad nie chronilo przed usunieciem/zdegradowaniem/
+            # dezaktywowaniem OSTATNIEGO aktywnego admina - taki request by
+            # sie powiodl i zostawil caly system bez nikogo kto moglby
+            # cokolwiek zarzadzac (odzyskanie wymagaloby recznej edycji
+            # users.json na dysku serwera). Front chowa przycisk USUN dla
+            # WLASNEGO konta (patrz renderUsers w admin.js), ale to tylko UI -
+            # nic nie stalo na przeszkodzie usunieciu INNEGO admina jesli byl
+            # jedynym, albo zdegradowaniu/wylaczeniu wlasnego konta.
+            def _other_active_admins():
+                return sum(1 for _u in self.users
+                           if _u["id"] != target_uid and _u.get("role") == "admin"
+                           and _u.get("active", True))
+
             if method == "DELETE":
+                _target = self.find_user_by_id(target_uid)
+                if (_target and _target.get("role") == "admin"
+                        and _target.get("active", True) and _other_active_admins() == 0):
+                    return 400, {"error": "Nie można usunąć ostatniego aktywnego admina"}
                 self.users = [u for u in self.users if u["id"] != target_uid]
                 save_json(USR_F, self.users)
                 return 200, {"ok": True}
             u = self.find_user_by_id(target_uid)
             if not u: return 404, {"error": "Nie znaleziono"}
+            _is_last_admin = u.get("role") == "admin" and u.get("active", True) and _other_active_admins() == 0
             # Pelen zestaw pol edytowalnych - synchronizowane z profil userowy
             # (user edytuje przez /api/user/profile, admin przez tutaj -
             #  oba zapisuja na tych samych polach w users.json).
             if "password"    in body and body["password"]:
                 u["password"] = hash_pw_secure(body["password"])
-            if "role"        in body: u["role"]        = body["role"]
-            if "active"      in body: u["active"]      = bool(body["active"])
+            if "role"        in body:
+                _new_role = body["role"]
+                if _new_role not in ("admin", "operator", "viewer"):
+                    return 400, {"error": "Nieprawidlowa rola (admin/operator/viewer)"}
+                if _is_last_admin and _new_role != "admin":
+                    return 400, {"error": "Nie można odebrać roli admina ostatniemu aktywnemu adminowi"}
+                u["role"] = _new_role
+            if "active"      in body:
+                _new_active = bool(body["active"])
+                if _is_last_admin and not _new_active:
+                    return 400, {"error": "Nie można dezaktywować ostatniego aktywnego admina"}
+                u["active"] = _new_active
             if "name"        in body: u["name"]        = (body["name"] or "").strip()
             if "callsign"    in body: u["callsign"]    = (body["callsign"] or "").strip().upper()
             if "locator"     in body: u["locator"]     = (body["locator"] or "").strip().upper()
@@ -6274,7 +6306,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-TUNNEL-CONFIG-AUTH-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-ADMIN-LAST-ADMIN-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

@@ -769,11 +769,14 @@ async function saveGlobalFt8Timer() {
   } catch(e) { window.UI?.showToast('✗ Błąd zapisu timera', 'error'); }
 }
 
-async function saveFt8Timer(userId) {
-  // legacy — przekieruj na globalny
-  await saveGlobalFt8Timer();
-}
-
+// UWAGA: byla tu wczesniej DRUGA deklaracja "function saveFt8Timer(userId)"
+// (legacy stub przekierowujacy na saveGlobalFt8Timer) NAD tą - w JS druga
+// deklaracja funkcji o tej samej nazwie w tym samym zasiegu CICHO
+// PODMIENIA pierwsza, wiec ten legacy stub nigdy sie nie wykonywal. Zero
+// realnego wplywu (UI per-user timera i tak nie istnieje w index.html od
+// czasu uproszczenia do jednego globalnego timera - ani jedna, ani druga
+// wersja nie miala zadnego wywolujacego), ale usunieta zeby ktos kiedys
+// nie edytowal tej martwej kopii myslac ze to ona dziala.
 async function saveFt8Timer(userId) {
   const durEl  = document.getElementById(`ft8t-dur-${userId}`);
   const editEl = document.getElementById(`ft8t-edit-${userId}`);
