@@ -1,0 +1,101 @@
+/**
+ * hamlib_ui.js — panel WIRTUALNE RADIO (emulacja Hamlib NET rigctl, USTAWIENIA)
+ *
+ * Widoczny dla wszystkich (zeby user wiedzial na jakich portach polaczyc
+ * swoj program), ale wlaczanie/wylaczanie portow TCP i zapis konfiguracji —
+ * TYLKO ADMIN. Przelaczanie tych serwerow wplywa na wszystkich userow naraz
+ * (wspolny port), wiec nie moze tego robic kazdy kto ma dostep do panelu —
+ * dla pozostalych rol to czysty podglad statusu.
+ */
+(function () {
+'use strict';
+
+async function load() {
+  const box = document.getElementById('hamlib-slots');
+  if (!box) return;
+  box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Ładowanie...</div>`;
+  try {
+    const r = await fetch('/api/hamlib/status');
+    const d = await r.json();
+    _render(d.servers || []);
+  } catch (e) {
+    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--red);">Błąd ładowania statusu</div>`;
+  }
+}
+
+function _render(servers) {
+  const box = document.getElementById('hamlib-slots');
+  if (!box) return;
+  const isAdmin = window.AppState?.role === 'admin';
+  const saveBtn = document.getElementById('hamlib-save-btn');
+  if (saveBtn) saveBtn.style.display = isAdmin ? '' : 'none';
+
+  if (!servers.length) {
+    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Brak skonfigurowanych portów.</div>`;
+    return;
+  }
+
+  box.innerHTML = servers.map((s, i) => {
+    const running = s.running
+      ? `<span style="color:var(--green);">● aktywny</span> · ${s.clients || 0} klient${s.clients === 1 ? '' : 'ów'}`
+      : `<span style="color:var(--dim);">— wyłączony —</span>`;
+    if (isAdmin) {
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;">
+          <input type="checkbox" data-slot="${i}" class="hamlib-enabled" ${s.enabled ? 'checked' : ''}
+            title="Włącz/wyłącz ten port">
+          <input type="number" data-slot="${i}" class="hamlib-port" value="${s.port}" min="1024" max="65535"
+            style="width:70px;font-family:var(--mono);font-size:11px;">
+          <input type="text" data-slot="${i}" class="hamlib-label" value="${_esc(s.label || '')}"
+            style="flex:1;font-family:var(--mono);font-size:11px;">
+          <span style="font-family:var(--mono);font-size:9px;white-space:nowrap;">${running}</span>
+        </div>`;
+    }
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--fg);">
+          <b>${s.port}</b> — ${_esc(s.label || '')}
+        </span>
+        <span style="font-family:var(--mono);font-size:9px;white-space:nowrap;">${running}</span>
+      </div>`;
+  }).join('');
+}
+
+function _esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function save() {
+  // Panel ukrywa ten przycisk dla nie-admina, ale backend i tak pilnuje
+  // (role != admin -> 403) — to tylko lokalne zabezpieczenie przed
+  // przypadkowym wywolaniem gdy DOM nie zdazyl sie jeszcze przerenderowac.
+  if (window.AppState?.role !== 'admin') return;
+  const msg = document.getElementById('hamlib-msg');
+  const rows = document.querySelectorAll('#hamlib-slots [data-slot]');
+  const bySlot = {};
+  rows.forEach(el => {
+    const i = el.dataset.slot;
+    bySlot[i] = bySlot[i] || {};
+    if (el.classList.contains('hamlib-enabled')) bySlot[i].enabled = el.checked;
+    if (el.classList.contains('hamlib-port'))    bySlot[i].port    = parseInt(el.value) || 0;
+    if (el.classList.contains('hamlib-label'))   bySlot[i].label   = el.value;
+  });
+  const servers = Object.keys(bySlot).sort((a, b) => a - b).map(k => bySlot[k]);
+  if (msg) msg.textContent = 'zapisywanie...';
+  try {
+    const r = await fetch('/api/hamlib/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ servers }),
+    });
+    const d = await r.json();
+    if (msg) msg.textContent = d.message || (d.ok ? '✓ zapisano' : (d.error || 'błąd'));
+    await load();
+  } catch (e) {
+    if (msg) msg.textContent = 'błąd zapisu';
+  }
+}
+
+window.HamlibUI = { load, save };
+
+})();

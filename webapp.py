@@ -2603,10 +2603,6 @@ class App:
                     return 200, {"ok": True, "message": f"✓ Zapisano — restart wymagany ({e})"}
             return 200, {"ok": True, "message": "✓ Konfiguracja zapisana — zrestartuj serwer aby zastosować"}
 
-            self.cfg["cwMacros"] = body.get("macros", self.cfg.get("cwMacros", []))
-            save_json(CFG_F, self.cfg)
-            return 200, {"ok": True}
-
         m = re.match(r"^/api/config/rig/(\d+)$", p)
         if m and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
@@ -3470,6 +3466,12 @@ class App:
 
         if p == "/api/cloudlog/radio" and method == "POST":
             # Wyslij aktualna czestotliwosc i tryb do CloudLog/WaveLog
+            # UWAGA: bez tego endpoint bral 'url' wprost z body i robil z niego
+            # POST na zewnatrz BEZ zadnej autoryzacji — serwer jako otwarte
+            # proxy (SSRF) dla kazdego kto trafi na adres serwera, nawet bez
+            # konta w HAMCTRL. /config i /test juz mialy ten check, tu brakowalo.
+            if not user:
+                return 401, {"error": "Brak autoryzacji"}
             import aiohttp as _aiohttp
             url       = body.get("url", "").rstrip("/")
             api_key   = body.get("apiKey", "")
@@ -3503,6 +3505,9 @@ class App:
 
         if p == "/api/cloudlog/qso" and method == "POST":
             # Wyslij QSO do CloudLog/WaveLog (ADIF - patrz qso_to_adif)
+            # Ten sam brak autoryzacji co /api/cloudlog/radio wyzej — dopisany.
+            if not user:
+                return 401, {"error": "Brak autoryzacji"}
             import aiohttp as _aiohttp
             url       = body.get("url", "").rstrip("/")
             api_key   = body.get("apiKey", "")
@@ -6118,7 +6123,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-DEEPCW-SEGMENT-REGLUE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-SETTINGS-AUDIT-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
