@@ -44,9 +44,15 @@ def _flatten_xml(text: str) -> dict:
     return out
 
 
-async def _get(url: str) -> str:
+async def _get(url: str, params: dict) -> str:
+    # WAZNE: parametry (haslo w szczegolnosci) MUSZA byc URL-encoded - hasla
+    # ze znakiem &, %, +, =, spacja itp. psuly zapytanie przy recznym
+    # sklejaniu f-stringiem (np. haslo "abc&xyz" ucinalo sie na "abc" i
+    # doklejalo "xyz" jako osobny, nieznany parametr) - QRZ/HamQTH dostawaly
+    # zle dane i zwracaly blad logowania mimo poprawnego hasla. aiohttp z
+    # params= koduje to poprawnie samo.
     async with aiohttp.ClientSession() as sess:
-        async with sess.get(url, timeout=_TIMEOUT) as resp:
+        async with sess.get(url, params=params, timeout=_TIMEOUT) as resp:
             return await resp.text()
 
 
@@ -57,10 +63,9 @@ async def _qrz_session(username: str, password: str, user_id: str, force: bool =
         cached = _sessions.get(key)
         if cached and cached[1] > time.time():
             return cached[0]
-    url = (f"https://xmldata.qrz.com/xml/current/?username={username}"
-           f"&password={password}&agent={_AGENT}")
     try:
-        txt = await _get(url)
+        txt = await _get("https://xmldata.qrz.com/xml/current/",
+                          {"username": username, "password": password, "agent": _AGENT})
     except Exception as e:
         print(f"[callbook] QRZ sesja - blad polaczenia: {e}", flush=True)
         return None
@@ -76,9 +81,9 @@ async def _qrz_session(username: str, password: str, user_id: str, force: bool =
 
 
 async def _qrz_lookup(call: str, session_key: str) -> dict | None:
-    url = f"https://xmldata.qrz.com/xml/current/?s={session_key}&callsign={call}"
     try:
-        txt = await _get(url)
+        txt = await _get("https://xmldata.qrz.com/xml/current/",
+                          {"s": session_key, "callsign": call})
     except Exception as e:
         print(f"[callbook] QRZ lookup - blad polaczenia: {e}", flush=True)
         return None
@@ -109,9 +114,9 @@ async def _hamqth_session(username: str, password: str, user_id: str, force: boo
         cached = _sessions.get(key)
         if cached and cached[1] > time.time():
             return cached[0]
-    url = f"https://www.hamqth.com/xml.php?u={username}&p={password}"
     try:
-        txt = await _get(url)
+        txt = await _get("https://www.hamqth.com/xml.php",
+                          {"u": username, "p": password})
     except Exception as e:
         print(f"[callbook] HamQTH sesja - blad polaczenia: {e}", flush=True)
         return None
@@ -127,9 +132,9 @@ async def _hamqth_session(username: str, password: str, user_id: str, force: boo
 
 
 async def _hamqth_lookup(call: str, session_id: str) -> dict | None:
-    url = f"https://www.hamqth.com/xml.php?id={session_id}&callsign={call}&prg={_AGENT}"
     try:
-        txt = await _get(url)
+        txt = await _get("https://www.hamqth.com/xml.php",
+                          {"id": session_id, "callsign": call, "prg": _AGENT})
     except Exception as e:
         print(f"[callbook] HamQTH lookup - blad polaczenia: {e}", flush=True)
         return None
