@@ -453,12 +453,41 @@ const DXCC_TABLE = {
 // Precompute posortowana lista kluczy (od najdluzszych - waznosc match)
 const _SORTED_KEYS = Object.keys(DXCC_TABLE).sort((a, b) => b.length - a.length);
 
+// Sufiksy OPERACYJNE (tryb pracy, NIE inny kraj) - "SP3MZM/P" to dalej
+// Polska, nie osobny DXCC. Odfiltrowywane PRZED probą rozpoznania
+// prawdziwego znaku zlozonego (dwa rozne kraje) ponizej.
+const _OP_SUFFIXES = new Set(['P', 'M', 'MM', 'QRP', 'A', 'AM', 'MAR', 'LH', 'R']);
+
+function _matchesTable(seg) {
+  return _SORTED_KEYS.some(key => seg.startsWith(key));
+}
+
+// Znak zlozony ("A/B") NIE ma ustalonej kolejnosci prefiks/znak-domowy —
+// w praktyce widuje sie oba szyki ("W1/DL3ABC" i "SP3MZM/W1"). Poprzednia
+// wersja zawsze brala PIERWSZY segment (split('/')[0]), wiec dla "SP3MZM/W1"
+// pokazywala Polske zamiast USA. Teraz: jesli tylko JEDEN segment pasuje do
+// tabeli DXCC, to on jest prefiksem lokalizacji; jesli OBA pasuja (typowe -
+// oba wygladaja jak realne znaki), krotszy zwykle jest prefiksem (znak
+// domowy jest z reguly dluzszy niz sam prefiks lokalizacji).
+function _resolveBase(parts) {
+  if (parts.length === 0) return ''; // np. call byl pusty/samo "/" - brak segmentow
+  if (parts.length === 1) return parts[0];
+  const candidates = parts.filter(p => !_OP_SUFFIXES.has(p));
+  if (candidates.length === 0) return parts[0];
+  if (candidates.length === 1) return candidates[0];
+  const matching = candidates.filter(_matchesTable);
+  if (matching.length === 1) return matching[0];
+  if (matching.length > 1) {
+    return matching.reduce((a, b) => a.length <= b.length ? a : b);
+  }
+  return candidates[0];
+}
+
 // Lookup: sprobuj kolejno kazdy prefix od najdluzszych
 function lookup(call) {
   if (!call) return { name: '', prefix: '', flag: '', continent: '' };
   const up = call.toUpperCase().replace(/[<>]/g, '');
-  // Usuwamy suffixy typu /M, /P, /QRP, /MM
-  const base = up.split('/')[0];
+  const base = _resolveBase(up.split('/').filter(Boolean));
   // Sprobuj matchow od najdluzszych
   for (const key of _SORTED_KEYS) {
     if (base.startsWith(key)) {
