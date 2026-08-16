@@ -1297,13 +1297,29 @@ function rotorGoBeam(which) {
 
 // Reczne przesuniecie rotora na DOWOLNY azymut lub lokator — SP/LP daja
 // tylko policzony kierunek na aktualnie wybrana stacje, brakowalo sposobu
-// na wpisanie wlasnego celu (zglaszone na zywo). prompt() zamiast stalego
-// pola tekstowego — zero dodatkowego miejsca w i tak juz ciasnym wierszu
-// ANTENA, ten sam format co pole "CEL" w duzym kompasie RADIO (stopnie
-// LUB lokator Maidenhead).
+// na wpisanie wlasnego celu (zglaszone na zywo). Wlasny modal (#rotor-manual-
+// modal w index.html) zamiast prompt() — prompt() jest SYNCHRONICZNY i
+// blokuje caly glowny watek JS dopoki user go nie zamknie, co na zywo
+// zawieszalo streaming audio (WebAudio/WebRTC) do czasu zamkniecia okienka.
 function rotorGoManual() {
   if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
-  const raw = (prompt('Rotor → azymut w stopniach (np. 272) lub lokator (np. KO02):') || '').trim();
+  const modal = document.getElementById('rotor-manual-modal');
+  const input = document.getElementById('rotor-manual-input');
+  if (!modal || !input) return;
+  input.value = '';
+  modal.style.display = 'flex';
+  input.focus();
+}
+
+function rotorManualClose() {
+  const modal = document.getElementById('rotor-manual-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function rotorManualSubmit() {
+  const input = document.getElementById('rotor-manual-input');
+  const raw = (input?.value || '').trim();
+  rotorManualClose();
   if (!raw) return;
   let az = null;
   const n = parseFloat(raw.replace(',', '.'));
@@ -2062,7 +2078,7 @@ window.WSJTX = {
   init, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
   tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
-  updateBeamRow, rotorGoBeam, rotorGoManual,
+  updateBeamRow, rotorGoBeam, rotorGoManual, rotorManualClose, rotorManualSubmit,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, toggleCall1st, setDecodeMode,
   tuneToBand, setTxPeriod,
   setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx,

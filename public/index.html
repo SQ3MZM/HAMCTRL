@@ -2543,7 +2543,7 @@
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608160002"></script>
+<script src="js/wsjtx.js?v=202608160003"></script>
 <script src="js/wsjtx_scope.js?v=202608150001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
@@ -2566,6 +2566,24 @@
       <div style="display:flex;gap:8px;justify-content:flex-end;">
         <button class="save-btn" onclick="CW.saveEditMacro()">ZAPISZ</button>
         <button class="save-btn" style="background:transparent;border-color:var(--border);" onclick="CW.closeEdit()">ANULUJ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="rotor-manual-modal" onclick="if(event.target===this)WSJTX.rotorManualClose()" style="display:none;">
+  <div class="modal" style="min-width:280px;max-width:360px;">
+    <div class="modal-header"><span>ROTOR — RĘCZNA POZYCJA</span><button class="modal-close" onclick="WSJTX.rotorManualClose()">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
+      <div>
+        <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">AZYMUT (°) LUB LOKATOR</label>
+        <input type="text" id="rotor-manual-input" placeholder="np. 272 lub KO02"
+          style="width:100%;font-family:var(--mono);font-size:13px;text-transform:uppercase;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:3px;box-sizing:border-box;"
+          onkeydown="if(event.key==='Enter')WSJTX.rotorManualSubmit()">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="save-btn" style="width:auto;" onclick="WSJTX.rotorManualSubmit()">USTAW</button>
+        <button class="save-btn" style="width:auto;background:transparent;border-color:var(--border);" onclick="WSJTX.rotorManualClose()">ANULUJ</button>
       </div>
     </div>
   </div>
