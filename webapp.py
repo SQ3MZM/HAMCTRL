@@ -4616,6 +4616,15 @@ class App:
     # 160m/60m/6m celowo WEZSZE (realna alokacja PL/EU) - to jest tabela
     # uzywana m.in. przez blokade TX (_is_band_allowed), wiec bezpieczniej
     # zawezac niz ryzykowac nadanie poza prawdziwym przydzialem pasma.
+    #
+    # MUSI pokrywac KAZDE pasmo z ktoregokolwiek profilu radia w
+    # rigs/civ_profiles.py (IC-9100/IC-9700 oferuja "23cm" w PASMA) - inaczej
+    # blokada TX odrzuca jako "niedozwolone" pasmo, ktore admin jawnie
+    # wlaczyl i ktore radio fizycznie ma. 23cm dopisane z tym samym zakresem
+    # co _BAND_23CM w civ_profiles.py (1240-1300 MHz). 13cm NIE dopisane -
+    # zaden aktualny profil radia go jeszcze nie oferuje w "bands" (patrz
+    # _BAND_13CM w civ_profiles.py - zdefiniowany, ale nieuzywany), wiec
+    # dodanie teraz byloby zgadywaniem bez pokrycia w rzeczywistym sprzecie.
     _BAND_RANGES = {
         '160m': (1810000,   2000000),
         '80m':  (3500000,   3800000),
@@ -4631,6 +4640,7 @@ class App:
         '4m':   (70000000,  70500000),
         '2m':   (144000000, 146000000),
         '70cm': (430000000, 440000000),
+        '23cm': (1240000000,1300000000),
     }
 
     def _get_band_for_freq(self, hz: int) -> str | None:
@@ -6216,7 +6226,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-BAND-LOCKOUT-TABLE-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-BAND-LOCKOUT-23CM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
