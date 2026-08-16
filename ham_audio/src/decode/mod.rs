@@ -63,6 +63,8 @@ pub struct DecodeResult {
     pub call_de:        String,
     pub report_or_grid: String,
     pub mode:           String,
+    // patrz Ft8Message::is_dxpedition w unpack.rs
+    pub is_dxpedition:  bool,
 }
 
 // Passes over the window after subtracting each pass's successful decodes:
@@ -315,6 +317,7 @@ fn decode_and_subtract(
                 call_de:        msg.call_de,
                 report_or_grid: msg.report_or_grid,
                 mode:           mode.to_string(),
+                is_dxpedition:  msg.is_dxpedition,
             };
             Some((cand, bits174, result))
         })

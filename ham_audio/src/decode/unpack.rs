@@ -16,6 +16,8 @@ const NTOKENS: u32 = 2_063_592;
 struct HashMaps {
     h22: HashMap<u32, String>,
     h12: HashMap<u32, String>,
+    // h10: hash Foxa w wiadomosciach DXpedition (i3=0.1) - patrz unpack_type0_1.
+    h10: HashMap<u32, String>,
 }
 
 static HASH_CACHE: OnceLock<Mutex<HashMaps>> = OnceLock::new();
@@ -24,6 +26,7 @@ fn hash_cache() -> std::sync::MutexGuard<'static, HashMaps> {
     HASH_CACHE.get_or_init(|| Mutex::new(HashMaps {
         h22: HashMap::new(),
         h12: HashMap::new(),
+        h10: HashMap::new(),
     })).lock().unwrap()
 }
 
@@ -49,6 +52,7 @@ pub fn remember_call(call: &str) {
     }
     let h22 = ihashcall(call, 22);
     let h12 = ihashcall(call, 12);
+    let h10 = ihashcall(call, 10);
     let mut map = hash_cache();
     if map.h22.len() >= 2000 {
         if let Some(k) = map.h22.keys().next().copied() { map.h22.remove(&k); }
@@ -56,8 +60,12 @@ pub fn remember_call(call: &str) {
     if map.h12.len() >= 2000 {
         if let Some(k) = map.h12.keys().next().copied() { map.h12.remove(&k); }
     }
+    if map.h10.len() >= 2000 {
+        if let Some(k) = map.h10.keys().next().copied() { map.h10.remove(&k); }
+    }
     map.h22.insert(h22, call.to_string());
     map.h12.insert(h12, call.to_string());
+    map.h10.insert(h10, call.to_string());
 }
 
 fn lookup_hash(h: u32) -> Option<String> {
@@ -66,6 +74,10 @@ fn lookup_hash(h: u32) -> Option<String> {
 
 fn lookup_hash12(h: u32) -> Option<String> {
     hash_cache().h12.get(&h).cloned()
+}
+
+fn lookup_hash10(h: u32) -> Option<String> {
+    hash_cache().h10.get(&h).cloned()
 }
 
 fn bits_to_u32(bits: &[u8]) -> u32 {
@@ -130,7 +142,14 @@ fn unpack_c28(c28: u32) -> String {
         };
 
         let call: String = format!("{}{}{}{}{}{}", c0, c1, c2, suffix(a3), suffix(a4), suffix(a5));
-        return call.trim_end().to_string();
+        // trim() (not trim_end()): a0==0 (1-letter prefix, e.g. "K1ABC") pads
+        // c0 with a LEADING space too - trim_end() alone left it in, so any
+        // single-letter-prefix call (extremely common in the US: K/N/W...)
+        // decoded as " K1ABC". Invisible in HTML (collapses) and masked by
+        // .trim() calls scattered through the JS comparison logic, which is
+        // why this survived unnoticed - caught only by the new Hound type
+        // 0.1 test, whose exact-equality assertion doesn't forgive it.
+        return call.trim().to_string();
     }
     format!("<unk:{}>", c28)
 }
@@ -180,6 +199,12 @@ pub struct Ft8Message {
     #[allow(dead_code)]
     pub r_flag:         bool,
     pub message:        String,
+    /// true dla wiadomosci typu 0.1 (i3=0, n3=1) - "FT8 DXpedition"/Fox
+    /// compound message. W tym wypadku call_to/call_de NIE sa adresat/
+    /// nadawca w zwyklym sensie - to dwa RUZNE znaki Houndow (jeden ktoremu
+    /// Fox wysyla RR73, drugi ktorego zaprasza z raportem). Patrz
+    /// unpack_type0_1 i FT8_DXpedition_Mode.pdf (K1JT) FAQ #7.
+    pub is_dxpedition:   bool,
 }
 
 fn bits_to_u64(bits: &[u8]) -> u64 {
@@ -198,11 +223,22 @@ pub fn unpack77(bits77: &[u8]) -> Option<Ft8Message> {
     let i3 = bits_to_u32(&bits77[74..77]);
 
     match i3 {
+        0 => {
+            // Podtyp n3 (bity 71..74) - i3=0 to rodzina "kompaktowych"
+            // wiadomosci (0.0 free text, 0.1 DXpedition/Fox, 0.3/0.4 Field
+            // Day, 0.5 telemetria). Hound mode potrzebuje tylko 0.1 - patrz
+            // unpack_type0_1.
+            let n3 = bits_to_u32(&bits77[71..74]);
+            match n3 {
+                1 => unpack_type0_1(bits77),
+                _ => None,
+            }
+        }
         1 | 2 => unpack_standard(bits77, i3),
         4     => unpack_nonstandard(bits77),
-        // Typy ktorych nie dekodujemy (0=free text/telemetria, 3=RTTY RU,
-        // 5=EU VHF...): odrzucamy zamiast produkowac smieci. LDPC+CRC moga
-        // przejsc dla kazdego typu — bledna interpretacja pol dawala fantomy.
+        // Typy ktorych nie dekodujemy (3=RTTY RU, 5=EU VHF...): odrzucamy
+        // zamiast produkowac smieci. LDPC+CRC moga przejsc dla kazdego typu
+        // — bledna interpretacja pol dawala fantomy.
         _     => None,
     }
 }
@@ -247,6 +283,50 @@ fn unpack_standard(bits77: &[u8], i3: u32) -> Option<Ft8Message> {
         report_or_grid,
         r_flag,
         message,
+        is_dxpedition: false,
+    })
+}
+
+/// Typ i3=0, n3=1: wiadomosc "FT8 DXpedition" (Fox/Hound). Fox zamyka jedno
+/// QSO (RR73 dla call1) i JEDNOCZESNIE zaprasza kolejna stacje z raportem
+/// (call2) - jedna transmisja, dwa Houndy. Uklad bitow (K9AN/G4WJS/K1JT,
+/// "The FT4 and FT8 Communication Protocols", QEX Jul/Aug 2020, Table 1):
+/// c28(call1) c28(call2) h10(hash wlasnego znaku Foxa) r5(raport dla call2).
+/// To NAJCZESTSZA forma odpowiedzi Foxa w ruchliwym pile-upie (kazde
+/// zamkniecie QSO przy niepustej kolejce laczy sie z zaproszeniem
+/// nastepnego) - bez tej funkcji Hound regularnie nie widzial ani swojego
+/// RR73, ani swojego zaproszenia z raportem (i3=0 bylo wczesniej calkiem
+/// odrzucane w unpack77). Fox mode sam nie jest i nie bedzie implementowany
+/// w tym projekcie (patrz CLAUDE.md) - to dekodowanie jest wylacznie po to,
+/// zeby Hound (_hound w wsjtx.js) mogl poprawnie ROZUMIEC prawdziwego Foxa.
+fn unpack_type0_1(bits77: &[u8]) -> Option<Ft8Message> {
+    let c28_1 = bits_to_u32(&bits77[0..28]);
+    let c28_2 = bits_to_u32(&bits77[28..56]);
+    let h10   = bits_to_u32(&bits77[56..66]);
+    let r5    = bits_to_u32(&bits77[66..71]);
+
+    let call1 = unpack_c28(c28_1);
+    let call2 = unpack_c28(c28_2);
+
+    for call in [&call1, &call2] {
+        if !call.is_empty() && !call.starts_with('<') && call != "CQ" {
+            remember_call(call);
+        }
+    }
+
+    // r5: 0-31 -> -30..+32 dB, co 2 (patrz Table 2 w QEX QEX Jul/Aug 2020).
+    let report = (r5 as i32) * 2 - 30;
+    let report_str = format!("{:+03}", report);
+    let fox_disp = lookup_hash10(h10).unwrap_or_else(|| "...".to_string());
+    let message = format!("{} RR73 {} <{}> {}", call1, call2, fox_disp, report_str);
+
+    Some(Ft8Message {
+        call_to:        call1,
+        call_de:        call2,
+        report_or_grid: report_str,
+        r_flag:         false,
+        message,
+        is_dxpedition:  true,
     })
 }
 
@@ -310,12 +390,13 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
         report_or_grid,
         r_flag: false,
         message,
+        is_dxpedition: false,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::unpack_c28;
+    use super::{unpack_c28, unpack77, remember_call};
 
     // Regression test for a real bug found by comparing decode output
     // against a WSJT-X reference on a captured band recording: c28 values
@@ -344,6 +425,28 @@ mod tests {
         assert_eq!(unpack_c28(0), "DE");
         assert_eq!(unpack_c28(1), "QRZ");
         assert_eq!(unpack_c28(2), "CQ");
+    }
+
+    // Wektor bitowy dla przykladu z FT8_DXpedition_Mode.pdf (K1JT), strona 2:
+    // "K1ABC RR73; W9XYZ <KH1/KH7Z> -08" - Fox=KH1/KH7Z zamyka QSO z K1ABC
+    // (RR73) i jednoczesnie zaprasza W9XYZ z raportem -8dB. Wygenerowany
+    // niezaleznie w Pythonie przy uzyciu JUZ zweryfikowanych _encode_c28/
+    // _ihashcall z ft8_encoder.py (nie duplikujemy enkodera w Ruscie - Fox
+    // mode nigdy nie bedzie nadawal tego typu, tylko odbierac).
+    #[test]
+    fn dxpedition_type0_1_decodes_combined_fox_message() {
+        remember_call("KH1/KH7Z"); // symuluje ze widzielismy juz CQ Foxa
+        let bits: [u8; 77] = [
+            0,0,0,0,1,0,0,1,1,0,1,1,1,1,0,1,1,1,1,0,0,0,1,1,0,1,0,1,0,0,0,0,1,1,0,0,
+            0,0,1,0,1,0,0,1,0,0,1,1,1,0,1,1,1,0,0,0,0,0,1,1,0,0,1,0,0,1,0,1,0,1,1,0,
+            0,1,0,0,0,
+        ];
+        let msg = unpack77(&bits).expect("type 0.1 musi sie zdekodowac");
+        assert!(msg.is_dxpedition);
+        assert_eq!(msg.call_to, "K1ABC");       // dostaje RR73
+        assert_eq!(msg.call_de, "W9XYZ");       // dostaje raport
+        assert_eq!(msg.report_or_grid, "-08");
+        assert!(msg.message.contains("KH1/KH7Z"), "hash Foxa powinien sie rozwiazac z cache: {}", msg.message);
     }
 }
 

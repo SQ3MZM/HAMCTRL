@@ -6295,7 +6295,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-FT8-TX-MARKERS-LOCK-GATE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-HOUND-SPEC-COMPLIANCE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -7178,7 +7178,14 @@ class App:
                 # Hold TX). Wywolywane ZAWSZE - metoda sama sprawdza czy TX
                 # jest zamrozony i decyduje ktore prazki przesuwac.
                 await self._process_tx_freeze_rx_follow(msg)
-                if self._auto_seq_enabled:
+                # isDxpedition (typ 0.1, patrz unpack_type0_1 w unpack.rs):
+                # call_to/call_de tu NIE sa adresat/nadawca w zwyklym sensie -
+                # to dwa RUZNE znaki Houndow. qso_engine.parse_message() nie
+                # zna tej semantyki i przy >3 tokenach mimo to sparsowalby
+                # cos (np. call_de="RR73" jakby to byl czyjs znak) - glowny
+                # automat (nie-Hound) ma wiec NIC z tym nie robic. Sam Hound
+                # (_houndOnDecode w wsjtx.js) czyta te pola bezposrednio.
+                if self._auto_seq_enabled and not msg.get("isDxpedition"):
                     await self._process_auto_qso(msg)
 
             except Exception as e:
