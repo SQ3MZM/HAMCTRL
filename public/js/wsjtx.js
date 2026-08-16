@@ -793,6 +793,12 @@ function handleWS(msg) {
     case 'wsjtx_clear':   _decodes = []; _renderDecodes(); break;
     case 'wsjtx_qso_logged': _onWsjtxQsoLogged(msg); break;
     case 'ft8_tx_status': _onFt8TxStatus(msg); break;
+    case 'ft8_tx_error':
+      // Wysylane gdy reczne TX FT8 (np. klik odpowiedzi na dekod) mialo
+      // brakujace pola (callTo/callDe/report) - bez tego przycisk po prostu
+      // nic nie robil, bez zadnego komunikatu bledu.
+      window.UI?.showToast(`✗ FT8 TX: ${msg.error || 'blad'}`, 'error');
+      break;
     case 'ft8_waterfall': window.WSJTXScope?.onWaterfallData(msg); break;
     case 'ft8_tx_freq':   window.WSJTXScope?.onTxFreqUpdate(msg); break;
     case 'ft8_fake_split_status': _onFakeSplitStatus(msg); break;

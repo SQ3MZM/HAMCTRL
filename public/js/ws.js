@@ -359,6 +359,18 @@ function connect() {
   };
 }
 
+// Trzyma przycisk "#tx-mic-btn" (PROFIL/RADIO) w zgodzie z realnym stanem
+// mikrofonu TX, niezaleznie od zrodla wlaczenia - reczny klik (onclick w
+// index.html) czy zdalny most WSJT-X (wsjtx_tx_start/stop ponizej). Te same
+// stany wizualne co dotychczasowy onclick, zeby nie bylo rozjazdu.
+function _syncTxMicButton(active) {
+  const btn = document.getElementById('tx-mic-btn');
+  if (!btn) return;
+  btn.textContent      = active ? '⏹ Zatrzymaj TX mikrofon' : '🎤 Nadawanie TX — mikrofon';
+  btn.style.color      = active ? 'var(--red)' : 'var(--dim)';
+  btn.style.borderColor = active ? 'var(--red)' : 'rgba(217,119,106,0.3)';
+}
+
 function handleMessage(msg) {
   switch (msg.type) {
     case 'init': {
@@ -489,6 +501,19 @@ function handleMessage(msg) {
     case 'webrtc_error':
       console.warn('[txmic] serwer:', msg.error);
       _txMic.stop();
+      break;
+    case 'wsjtx_tx_start':
+      // Zewnetrzny WSJT-X/JTDX (przez most wsjtx_local.py + emulacja Hamlib)
+      // wlaczyl PTT - uruchom strumien mikrofonu (tu: wirtualny kabel audio
+      // typu VB-Audio, wybrany w PROFIL jako "MIKROFON TX"), tak samo jak
+      // przy recznym PTT. Bylo calkowicie nieobslugiwane - radio dostawalo
+      // PTT ale bez zadnego audio (cisza w eterze).
+      _txMic.start();
+      _syncTxMicButton(true);
+      break;
+    case 'wsjtx_tx_stop':
+      _txMic.stop();
+      _syncTxMicButton(false);
       break;
     case 'smeter': window.UI?.updateSMeter(msg.value ?? 0); break;
     case 'pong': {
@@ -927,8 +952,19 @@ const _txMic = (() => {
       return false;
     }
     try {
-      // Auto-wybor mikrofonu: unikaj wirtualnych kabli i wbudowanych array
-      let preferredMicId = localStorage.getItem('ham_tx_micId');
+      // Zapisany wybor z PROFIL ("MIKROFON TX", patrz profile_audio.js) -
+      // KLUCZOWA POPRAWKA: tu bylo "ham_tx_micId", ktorego NIC w calym
+      // kodzie nigdy nie zapisywalo (profile_audio.js zapisuje pod
+      // "ham_audio_micId") - wybor mikrofonu w PROFIL nie mial ZADNEGO
+      // wplywu na realnie nadawane audio, zawsze leciala ponizsza
+      // heurystyka auto-wyboru. Krytyczne dla mostu do zewnetrznego
+      // WSJT-X/JTDX przez wirtualny kabel audio (VB-Audio) - ta heurystyka
+      // CELOWO omija urzadzenia z "virtual"/"cable" w nazwie, wiec kabel
+      // wybrany recznie w PROFIL byl ignorowany, a leciala inna, prawdziwa
+      // karta (albo cisza, jesli zadnej nie znalazla).
+      let preferredMicId = localStorage.getItem('ham_audio_micId');
+      // Auto-wybor mikrofonu (gdy user nic nie skonfigurowal w PROFIL):
+      // unikaj wirtualnych kabli i wbudowanych array.
       if (!preferredMicId) {
         try {
           const devs = await navigator.mediaDevices.enumerateDevices();
