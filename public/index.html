@@ -1029,8 +1029,14 @@
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
       <div class="sg"><label>ZNAK *
         <span id="qso-worked-badge" style="display:none;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px;letter-spacing:1px;"></span>
-      </label><input type="text" id="qso-call" placeholder="SP3GSK" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"
-        oninput="QSOLog?.checkWorkedBefore?.();QSOLog?.autoFillCountry?.()"></div>
+      </label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="qso-call" placeholder="SP3GSK" style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;"
+            oninput="QSOLog?.checkWorkedBefore?.();QSOLog?.autoFillCountry?.()">
+          <button type="button" id="qso-lookup-btn" onclick="QSOLog.lookupCall()" title="Pobierz dane stacji z QRZ.com/HamQTH"
+            style="flex:0 0 auto;font-family:var(--mono);font-size:12px;padding:0 10px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">🔍</button>
+        </div>
+      </div>
       <div class="sg"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02 lub KO02ab" maxlength="8" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
       <div class="sg"><label>IMIĘ</label><input type="text" id="qso-name" placeholder="John" style="font-family:var(--mono);font-size:12px;"></div>
       <div class="sg"><label>QTH</label><input type="text" id="qso-qth" placeholder="Warsaw" style="font-family:var(--mono);font-size:12px;"></div>
@@ -1696,6 +1702,59 @@
         <button class="save-btn" style="flex:1;" onclick="CloudLog.save()">ZAPISZ</button>
         <button class="save-btn" style="flex:0 0 auto;background:rgba(76,219,106,0.08);"
           onclick="CloudLog.test()">TEST POŁĄCZENIA</button>
+      </div>
+    </div>
+
+    <!-- WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH.com, wlasne konto kazdego usera -->
+    <div class="box">
+      <div class="box-header">🔍 WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH</div>
+      <div class="settings-inner">
+        <div style="grid-column:1/-1;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+          Przy logowaniu QSO ikonka 🔍 przy polu ZNAK spróbuje pobrać imię/QTH/kraj
+          drugiej stacji — najpierw z QRZ.com (jeśli skonfigurowane), potem HamQTH.
+          Wymaga <b style="color:var(--fg);">Twojego własnego</b> konta w tych serwisach
+          (QRZ: płatna subskrypcja "XML Data" · HamQTH: darmowe konto).
+        </div>
+
+        <div class="sg">
+          <label>QRZ.com — login
+            <span id="cb-qrz-status" title="Status QRZ.com"
+              style="margin-left:4px;font-size:9px;color:var(--dim);"></span>
+          </label>
+          <input type="text" id="cb-qrz-user" placeholder="login QRZ.com"
+            style="font-family:var(--mono);font-size:11px;">
+        </div>
+        <div class="sg">
+          <label>QRZ.com — hasło</label>
+          <div style="display:flex;gap:6px;">
+            <input type="password" id="cb-qrz-pass" placeholder="hasło QRZ.com"
+              style="flex:1;font-family:var(--mono);font-size:11px;">
+            <button class="save-btn" style="flex:0 0 auto;padding:0 10px;"
+              onclick="Callbook.test('qrz')">TEST</button>
+          </div>
+        </div>
+
+        <div class="sg">
+          <label>HamQTH — login
+            <span id="cb-hamqth-status" title="Status HamQTH"
+              style="margin-left:4px;font-size:9px;color:var(--dim);"></span>
+          </label>
+          <input type="text" id="cb-hamqth-user" placeholder="login HamQTH"
+            style="font-family:var(--mono);font-size:11px;">
+        </div>
+        <div class="sg">
+          <label>HamQTH — hasło</label>
+          <div style="display:flex;gap:6px;">
+            <input type="password" id="cb-hamqth-pass" placeholder="hasło HamQTH"
+              style="flex:1;font-family:var(--mono);font-size:11px;">
+            <button class="save-btn" style="flex:0 0 auto;padding:0 10px;"
+              onclick="Callbook.test('hamqth')">TEST</button>
+          </div>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;align-items:center;">
+        <button class="save-btn" style="flex:1;" onclick="Callbook.save()">ZAPISZ</button>
+        <span id="cb-save-msg" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
       </div>
     </div>
 
@@ -2515,7 +2574,8 @@
 <script src="js/cw.js?v=202606250001"></script>
 <script src="js/cloudlog.js?v=202606250001"></script>
 <script src="js/hamlib_ui.js?v=202608160001"></script>
-<script src="js/qsolog.js?v=202608160003"></script>
+<script src="js/callbook.js?v=202608160001"></script>
+<script src="js/qsolog.js?v=202608160004"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

@@ -604,6 +604,7 @@ function setPage(name) {
     window.Settings?.loadStatus?.();
     window.ComBridge?.load?.();
     window.HamlibUI?.load?.();
+    window.Callbook?.load?.();
     var m = window.AppState?.models;
     if (m && Object.keys(m).length) { window.Settings?.renderRigs?.(m, window.AppState.rigs); }
     if (typeof loadProfile === 'function') loadProfile();

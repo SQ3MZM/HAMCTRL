@@ -103,6 +103,7 @@ from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
 import qso_db
+import callbook
 from audio import enumerate_audio_devices, auto_detect_radio_audio
 from audio_stream import AudioStream
 try:
@@ -402,6 +403,7 @@ def qso_to_adif(qso: dict) -> str:
         _adif_field("rst_rcvd",         qso.get("rst_rcvd", "")),
         _adif_field("gridsquare",       qso.get("gridsquare", "")),
         _adif_field("station_callsign", qso.get("my_call", "")),
+        _adif_field("operator",         qso.get("my_call", "")),
         _adif_field("my_gridsquare",    qso.get("my_gridsquare", "")),
         _adif_field("tx_pwr",           qso.get("power", "")),
         _adif_field("comment",          qso.get("comment", "")),
@@ -3571,6 +3573,59 @@ class App:
             except Exception as e:
                 return 200, {"ok": False, "error": str(e)[:80]}
 
+        # ── Callbook (QRZ.com / HamQTH.com) — lookup znaku wywolawczego ──────────
+        # Kazdy user ma wlasne dane logowania (patrz callbook.py). Zrobione
+        # serwerowo: obie uslugi nie maja CORS, i nie chcemy hasel w JS.
+        if p == "/api/callbook/config" and method == "GET":
+            if not user: return 401, {"error": "Brak autoryzacji"}
+            u = self.find_user_by_id(user["id"])
+            cfg = dict((u or {}).get("callbook", {}))
+            return 200, cfg
+
+        if p == "/api/callbook/config" and method == "POST":
+            if not user: return 401, {"error": "Brak autoryzacji"}
+            u = self.find_user_by_id(user["id"])
+            if not u: return 404, {"error": "Uzytkownik nie istnieje"}
+            u["callbook"] = {
+                "qrzUsername":    body.get("qrzUsername", "").strip(),
+                "qrzPassword":    body.get("qrzPassword", "").strip(),
+                "hamqthUsername": body.get("hamqthUsername", "").strip(),
+                "hamqthPassword": body.get("hamqthPassword", "").strip(),
+            }
+            save_json(USR_F, self.users)
+            return 200, {"ok": True}
+
+        if p == "/api/callbook/test" and method == "POST":
+            if not user: return 401, {"error": "Brak autoryzacji"}
+            service  = body.get("service", "")
+            username = body.get("username", "")
+            password = body.get("password", "")
+            if service not in ("qrz", "hamqth") or not username or not password:
+                return 400, {"ok": False, "error": "Brak danych"}
+            res = await callbook.test_connection(service, username, password, uid)
+            if not res.get("ok"):
+                res["error"] = res.get("error") or "Blad logowania - sprawdz dane"
+            return 200, res
+
+        if p == "/api/callbook/lookup" and method == "GET":
+            if not user: return 401, {"error": "Brak autoryzacji"}
+            call = query.get("call", "")
+            if isinstance(call, list): call = call[0] if call else ""
+            if not call:
+                return 400, {"ok": False, "error": "Brak znaku"}
+            u = self.find_user_by_id(uid) or {}
+            cb = u.get("callbook", {})
+            qrz_creds = ((cb.get("qrzUsername"), cb.get("qrzPassword"))
+                         if cb.get("qrzUsername") and cb.get("qrzPassword") else None)
+            hamqth_creds = ((cb.get("hamqthUsername"), cb.get("hamqthPassword"))
+                            if cb.get("hamqthUsername") and cb.get("hamqthPassword") else None)
+            if not qrz_creds and not hamqth_creds:
+                return 200, {"ok": False, "error": "Skonfiguruj QRZ.com lub HamQTH w USTAWIENIACH"}
+            res = await callbook.lookup(call, uid, qrz_creds, hamqth_creds)
+            if not res:
+                return 200, {"ok": False, "error": "Nie znaleziono znaku"}
+            return 200, {"ok": True, **res}
+
         # ── FT8 Timer API ────────────────────────────────────────────────────────
         if p == "/api/ft8timer/global" and method == "GET":
             dur = self.cfg.get("ft8_safety_timer", 6)
@@ -6148,7 +6203,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-QSOLOG-ADIF-FIELDS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-CALLBOOK-QRZ-HAMQTH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

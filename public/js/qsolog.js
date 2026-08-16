@@ -154,9 +154,11 @@ function toggleSatFields(show) {
 }
 
 // Podpowiedz KRAJ (i kontynent, w tle) z lokalnej tabeli prefiksow (dxcc.js) —
-// dziala od razu, bez lookupu QRZ/HamQTH (ten jeszcze nie podpiety). Nie
-// nadpisuje pola jesli user juz cos tam wpisal recznie (np. skorygowal
-// pomylke tabeli prefiksow) — patrz ten sam wzorzec co updateRstDefaults.
+// dziala natychmiast przy samym wpisywaniu znaku, zanim user w ogole zdazy
+// kliknac lookup QRZ/HamQTH (patrz lookupCall() nizej - realny lookup
+// NADPISUJE, bo jest wiarygodniejszy niz zgadywanie z prefiksu). Ten
+// auto-fill NIE nadpisuje jesli user juz cos tam wpisal recznie — patrz ten
+// sam wzorzec co updateRstDefaults.
 function autoFillCountry() {
   const callEl    = document.getElementById('qso-call');
   const countryEl = document.getElementById('qso-country');
@@ -168,6 +170,48 @@ function autoFillCountry() {
   if (!countryEl.value.trim()) countryEl.value = info.name;
   if (flagEl) flagEl.textContent = info.flag || '';
   countryEl.dataset.cont = info.continent || '';
+}
+
+// Lookup realny (QRZ.com / HamQTH, wg konfiguracji usera w USTAWIENIACH) —
+// wolany recznie klikniecien ikonki 🔍, nie automatycznie na kazde wpisanie
+// znaku (obie uslugi maja limity zapytan, nie ma sensu ich zuzywac na
+// kazdy klawisz). W odroznieniu od autoFillCountry() ten NADPISUJE
+// NAME/QTH/KRAJ/LOKATOR - dane z realnego lookupu sa wiarygodniejsze niz to
+// co juz tam bylo (recznie wpisane albo zgadniete z prefiksu).
+// DXCC/CQZ/ITUZ/STATE/IOTA nie maja jeszcze pola w formularzu - trzymane po
+// cichu w dataset #qso-country, trafiaja do zapisu (patrz saveQSO) i eksportu
+// ADIF dla innych programow, ale nie zaśmiecaja naszego widoku logu.
+async function lookupCall() {
+  const callEl = document.getElementById('qso-call');
+  const btn    = document.getElementById('qso-lookup-btn');
+  const call   = callEl?.value?.trim().toUpperCase();
+  if (!call) { window.UI?.showToast('Wpisz znak', 'error'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    const res = await window.Callbook?.lookup?.(call);
+    if (!res) {
+      window.UI?.showToast('✗ Nie znaleziono albo brak konfiguracji QRZ/HamQTH (USTAWIENIA)', 'error');
+      return;
+    }
+    if (res.name)       _setField('qso-name', res.name);
+    if (res.qth)         _setField('qso-qth', res.qth);
+    if (res.country)     _setField('qso-country', res.country);
+    if (res.gridsquare) _setField('qso-gridsquare', res.gridsquare.toUpperCase());
+    const countryEl = document.getElementById('qso-country');
+    const flagEl    = document.getElementById('qso-country-flag');
+    if (countryEl) {
+      countryEl.dataset.dxcc  = res.dxcc  || '';
+      countryEl.dataset.cqz   = res.cqz   || '';
+      countryEl.dataset.ituz  = res.ituz  || '';
+      countryEl.dataset.state = res.state || '';
+      countryEl.dataset.iota  = res.iota  || '';
+      countryEl.dataset.cont  = window.DXCC?.lookup?.(call)?.continent || countryEl.dataset.cont || '';
+    }
+    if (flagEl) flagEl.textContent = window.DXCC?.lookup?.(call)?.flag || '';
+    window.UI?.showToast(`✓ Dane pobrane z ${res.source}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔍'; }
+  }
 }
 
 function openNew() {
@@ -182,6 +226,11 @@ function openNew() {
   _setField('qso-name', '');
   _setField('qso-qth', '');
   _setField('qso-country', '');
+  const countryEl0 = document.getElementById('qso-country');
+  if (countryEl0) {
+    countryEl0.dataset.cont = countryEl0.dataset.dxcc = countryEl0.dataset.cqz =
+      countryEl0.dataset.ituz = countryEl0.dataset.state = countryEl0.dataset.iota = '';
+  }
   const flagEl0 = document.getElementById('qso-country-flag');
   if (flagEl0) flagEl0.textContent = '';
   _setField('qso-date', dateStr);
@@ -222,7 +271,14 @@ async function openEdit(id) {
     _setField('qso-qth', q.qth || '');
     _setField('qso-country', q.country || '');
     const countryEl = document.getElementById('qso-country');
-    if (countryEl) countryEl.dataset.cont = q.cont || '';
+    if (countryEl) {
+      countryEl.dataset.cont  = q.cont  || '';
+      countryEl.dataset.dxcc  = q.dxcc  || '';
+      countryEl.dataset.cqz   = q.cqz   || '';
+      countryEl.dataset.ituz  = q.ituz  || '';
+      countryEl.dataset.state = q.state || '';
+      countryEl.dataset.iota  = q.iota  || '';
+    }
     const flagEl = document.getElementById('qso-country-flag');
     if (flagEl) flagEl.textContent = q.country ? (window.DXCC?.lookup?.(q.call)?.flag || '') : '';
     _setField('qso-date', q.qso_date ? `${q.qso_date.slice(0,4)}-${q.qso_date.slice(4,6)}-${q.qso_date.slice(6,8)}` : '');
@@ -285,7 +341,15 @@ async function saveQSO() {
     name:     document.getElementById('qso-name')?.value?.trim() || '',
     qth:      document.getElementById('qso-qth')?.value?.trim() || '',
     country:  document.getElementById('qso-country')?.value?.trim() || '',
-    cont:     document.getElementById('qso-country')?.dataset.cont || '',
+    // DXCC/CQZ/ITUZ/STATE/IOTA — bez wlasnego pola w formularzu, ale jesli
+    // przyszly z lookupCall() (QRZ/HamQTH) sa trzymane w dataset i wchodza
+    // do zapisu, zeby eksport ADIF mial komplet danych dla innych programow.
+    cont:     document.getElementById('qso-country')?.dataset.cont  || '',
+    dxcc:     document.getElementById('qso-country')?.dataset.dxcc  || '',
+    cqz:      document.getElementById('qso-country')?.dataset.cqz   || '',
+    ituz:     document.getElementById('qso-country')?.dataset.ituz  || '',
+    state:    document.getElementById('qso-country')?.dataset.state || '',
+    iota:     document.getElementById('qso-country')?.dataset.iota  || '',
   };
 
   // Lacznosc satelitarna — tylko gdy checkbox zaznaczony. PASMO/FREQ wyzej
@@ -729,7 +793,7 @@ async function checkWorkedBefore() {
 window.QSOLog = {
   load, sort, clearFilters, quickLog, updateRstDefaults, importADIF, selectAll, deleteSelected, deleteAll,
   prevPage, nextPage,
-  openNew, openEdit, closeModal, saveQSO, deleteQSO, toggleSatFields, autoFillCountry,
+  openNew, openEdit, closeModal, saveQSO, deleteQSO, toggleSatFields, autoFillCountry, lookupCall,
   exportADI, exportCSV,
   loadAdminUsers: _loadAdminUsers,
   checkWorkedBefore,

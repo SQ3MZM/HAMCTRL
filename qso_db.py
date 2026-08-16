@@ -631,7 +631,14 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
         rec += field("RST_SENT",      q["rst_sent"])
         rec += field("RST_RCVD",      q["rst_rcvd"])
         rec += field("GRIDSQUARE",    q["gridsquare"])
-        rec += field("MY_CALL",       q["my_call"])
+        # STATION_CALLSIGN to prawidlowy tag ADIF dla znaku stacji logujacej
+        # (wczesniej bylo "MY_CALL" - nie istnieje w standardzie, wiec inne
+        # programy przy imporcie po prostu go ignorowaly i nie wiedzialy
+        # czyj to log). OPERATOR dopisany obok - ten sam znak, ale to pole
+        # ADIF na "kto byl przy kluczu" (istotne gdy kilku userow dzieli
+        # jedna stacje/znak).
+        rec += field("STATION_CALLSIGN", q["my_call"])
+        rec += field("OPERATOR",         q["my_call"])
         rec += field("MY_GRIDSQUARE", q["my_gridsquare"])
         rec += field("TX_PWR",        q["power"])
         rec += field("COMMENT",       q["comment"])
