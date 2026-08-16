@@ -3132,6 +3132,17 @@ class App:
             return 200, self.tunnel.get_status()
 
         if p == "/api/tunnel/config" and method == "GET":
+            # get_config() zwraca CALY config, wlacznie z tokenem Cloudflare
+            # Tunnel i tokenem DuckDNS w plaintext (patrz TunnelManager._cfg
+            # / save_config w tunnel_manager.py - brak tu redakcji jak np.
+            # przy /api/dxcluster/config gdzie leci tylko has_password).
+            # Cala zakladka INTERNET jest data-perm="admin" w index.html, ale
+            # to tylko UKRYWA przycisk zakladki w UI - realne wymuszenie MUSI
+            # byc tutaj. Bez tego gate'u dowolny zalogowany viewer/operator
+            # mogl przez fetch('/api/tunnel/config') w konsoli przegladarki
+            # odczytac te tokeny (pelna kontrola nad tunelem Cloudflare /
+            # mozliwosc podmiany rekordu DNS DuckDNS).
+            if role != "admin": return 403, {"error": "Tylko admin"}
             return 200, self.tunnel.get_config()
 
         if p == "/api/tunnel/config" and method == "POST":
@@ -3214,38 +3225,6 @@ class App:
 
         if p == "/api/wsjtx/status" and method == "GET":
             return 200, self.wsjtx.get_status()
-
-        if p == "/api/tunnel/status" and method == "GET":
-            return 200, self.tunnel.get_status()
-
-        if p == "/api/tunnel/config" and method == "GET":
-            return 200, self.tunnel.get_config()
-
-        if p == "/api/tunnel/config" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            self.tunnel.save_config(body)
-            return 200, {"ok": True}
-
-        if p == "/api/tunnel/start" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            asyncio.create_task(self.tunnel.start(
-                mode=body.get("mode"),
-                token=body.get("token"),
-                hostname=body.get("hostname"),
-            ))
-            return 200, {"ok": True}
-
-        if p == "/api/tunnel/stop" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            asyncio.create_task(self.tunnel.stop())
-            return 200, {"ok": True}
-
-        if p == "/api/tunnel/check" and method == "GET":
-            # check_available runs several subprocess.run calls (sc query,
-            # cloudflared --version) — all blocking. The frontend polls this
-            # status on a timer, so run it in a thread to avoid freezing the
-            # event loop (looplag stack pointed at _is_service_installed).
-            return 200, await asyncio.to_thread(self.tunnel.check_available)
 
         if p == "/api/audio/enumerate":
             rust = getattr(self, 'rust_audio', None)
@@ -6295,7 +6274,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-MSHV-MULTISTREAM-SUPPORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-TUNNEL-CONFIG-AUTH-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

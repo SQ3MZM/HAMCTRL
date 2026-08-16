@@ -8,6 +8,7 @@ Tryby:
 """
 import asyncio
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -298,16 +299,23 @@ class TunnelManager:
             self._error = "Brak domeny lub tokenu DuckDNS"
             return False
         try:
-            import urllib.request, ssl
+            import urllib.request, urllib.parse, ssl
             # urllib.urlopen jest BLOKUJACE (DNS + HTTP + timeout do 10s). Mimo
             # ze ta funkcja jest async, samo urlopen zamrazalo cala petle zdarzen
             # na czas zapytania — wykryte przez looplag (stos: getaddrinfo w
             # tunnel DuckDNS update). Wynosimy do watku, zeby petla plynela.
             def _do_update():
+                # PELNA weryfikacja certyfikatu - duckdns.org ma normalny,
+                # publicznie zaufany cert, nie ma powodu jej wylaczac.
+                # Wczesniej (check_hostname=False, verify_mode=CERT_NONE) tunel
+                # do DuckDNS byl podatny na MITM, co przy przesylaniu TOKENU w
+                # URL oznaczalo mozliwosc jego przechwycenia. Bez komentarza w
+                # kodzie tlumaczacego dlaczego weryfikacja miala byc wylaczona -
+                # usunieta, DuckDNS nie wymaga tego wyjatku.
                 ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode    = ssl.CERT_NONE
-                url  = f"https://www.duckdns.org/update?domains={domain}&token={token}&ip="
+                _d = urllib.parse.quote(domain, safe='')
+                _t = urllib.parse.quote(token, safe='')
+                url  = f"https://www.duckdns.org/update?domains={_d}&token={_t}&ip="
                 return urllib.request.urlopen(url, timeout=10, context=ctx).read().decode().strip()
             resp = await asyncio.to_thread(_do_update)
             print(f"[tunnel] DuckDNS update: {resp}", flush=True)
@@ -644,9 +652,12 @@ class TunnelManager:
 
         if sys.platform == "win32":
             hook = hook_dir / "duckdns_hook.bat"
+            # BEZ -k: curl domyslnie weryfikuje cert duckdns.org (publicznie
+            # zaufany, nie ma powodu tego wylaczac - patrz ten sam komentarz
+            # przy _duckdns_update_ip, ktory mial identyczny problem).
             hook.write_text(
                 f"@echo off\n"
-                f"curl -k \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=%CERTBOT_VALIDATION%&verbose=true\"\n"
+                f"curl \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=%CERTBOT_VALIDATION%&verbose=true\"\n"
                 f"echo Czekam 120 sekund na propagacje DNS...\n"
                 f"timeout /t 120 /nobreak >nul\n",
                 encoding="utf-8",
@@ -655,7 +666,7 @@ class TunnelManager:
             hook = hook_dir / "duckdns_hook.sh"
             hook.write_text(
                 f"#!/bin/bash\n"
-                f"curl -sk \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=$CERTBOT_VALIDATION\"\n"
+                f"curl -s \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=$CERTBOT_VALIDATION\"\n"
                 f"echo 'Czekam 120s na propagacje DNS...'\n"
                 f"sleep 120\n",
                 encoding="utf-8",
