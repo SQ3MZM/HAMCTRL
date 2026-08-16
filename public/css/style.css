@@ -809,6 +809,13 @@ body.page-wsjtx-active { overflow: hidden; }
 .page-col textarea {
   font-size: 13px; padding: 7px 10px;
 }
+/* PROFIL: pary bokow obok siebie (MOJ PROFIL+HASLO, AUDIO+WYGLAD), TX EQ
+   sam na cala szerokosc. Staly grid bez @media — zgodny z zasada #app-scale
+   nizej (caly UI renderowany w stalym 1440px i skalowany transform:scale(),
+   wiec proporcje kolumn sa identyczne na kazdej fizycznej rozdzielczosci,
+   nie trzeba przelamywac ukladu przy roznych ekranach). */
+.profile-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+
 .settings-inner  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 13px 15px; }
 .sg { display: flex; flex-direction: column; gap: 5px; }
 .sg label { font-family: var(--mono); font-size: 13px; color: var(--dim); letter-spacing: 1px; }

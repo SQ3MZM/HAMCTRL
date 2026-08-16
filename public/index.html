@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202608150001">
+<link rel="stylesheet" href="css/style.css?v=202608160001">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -1062,8 +1062,9 @@
 
 <!-- ─── PAGE: PROFIL ──────────────────────────────────────────────────────────── -->
 <div class="page-content" id="page-profile">
-  <div class="page-col" style="max-width:600px;">
+  <div class="page-col">
 
+    <div class="profile-row">
     <div class="box">
       <div class="box-header">👤 MÓJ PROFIL</div>
       <div class="box-body change-pwd-form">
@@ -1101,7 +1102,9 @@
         </div>
       </div>
     </div>
+    </div>
 
+    <div class="profile-row">
     <div class="box">
       <div class="box-header">🔊 AUDIO — MOJE URZĄDZENIA (przeglądarka)</div>
       <div class="box-body" style="display:flex;flex-direction:column;gap:10px;">
@@ -1165,6 +1168,7 @@
           </select>
         </div>
       </div>
+    </div>
     </div>
 
     <div class="box">
