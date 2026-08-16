@@ -25,7 +25,7 @@
     <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="settings">USTAWIENIA</button>
     <button class="tab-btn" onclick="UI.setPage('profile')" data-perm="view" id="tab-profile">👤 PROFIL</button>
     <button class="tab-btn" onclick="UI.setPage('log')" data-perm="view" id="tab-log">LOG QSO</button>
-    <button class="tab-btn" onclick="UI.setPage('config')" data-perm="admin" id="tab-config">KONFIGURACJA</button>
+    <button class="tab-btn" onclick="UI.setPage('config')" data-perm="settings" id="tab-config">KONFIGURACJA</button>
       <button class="tab-btn" id="tab-wsjtx" onclick="UI.setPage('wsjtx')" data-perm="view">FT8/WSJT-X</button>
     <button class="tab-btn" id="tab-dxcluster" onclick="UI.setPage('dxcluster')" data-perm="view">📡 DX CLUSTER</button>
     <button class="tab-btn" id="tab-internet" onclick="UI.setPage('internet')" data-perm="admin">🌐 INTERNET</button>
@@ -3424,6 +3424,16 @@ async function _audioDeviceLoad() {
     if (rx && d.rx_device) rx.value = d.rx_device;
     if (tx && d.tx_device) tx.value = d.tx_device;
     if (br && d.opus_bitrate) br.value = d.opus_bitrate;
+    // TX Volume — brakowalo tego (mimo komentarza wyzej ze "robi jedno i
+    // drugie"). Suwak zostawal na statycznym HTML "4" niezaleznie od
+    // realnie zapisanej wartosci (serwer ja poprawnie zwraca, patrz
+    // /api/audio/status w webapp.py - front po prostu jej nie czytal).
+    const tv = document.getElementById('cfg-tx-volume');
+    const tvVal = document.getElementById('cfg-tx-volume-val');
+    if (tv && typeof d.txVolume === 'number') {
+      tv.value = d.txVolume;
+      if (tvVal) tvVal.textContent = d.txVolume + 'x';
+    }
   } catch(e) {}
 }
 
@@ -3451,10 +3461,13 @@ async function _audioDeviceSave() {
   }
 }
 
-// Załaduj przy wejściu na zakładkę USTAWIENIA
-const _origSetPage = window.UI?.setPage;
+// Zaladuj przy wejsciu na zakladke KONFIGURACJA (nie USTAWIENIA - pola
+// cfg-audio-rx/tx/cfg-tx-volume zyja w #page-config, nie w #page-settings;
+// bylo tu zle dopiete, wiec ten hak nigdy realnie nie odswiezal wlasciwej
+// zakladki - ratowal to tylko rowlolegly _audioDeviceLoad() wolany z
+// toggleExpert() w audio_autodetect.js po kliknieciu TRYB EKSPERT).
 document.addEventListener('DOMContentLoaded', () => {
-  const origBtn = document.querySelector('[onclick="UI.setPage(\'settings\')"]');
+  const origBtn = document.querySelector('[onclick="UI.setPage(\'config\')"]');
   if (origBtn) {
     const orig = origBtn.getAttribute('onclick');
     origBtn.setAttribute('onclick', orig + '; _audioDeviceLoad()');

@@ -916,6 +916,19 @@ class App:
     def find_user_by_id(self, uid: str) -> dict | None:
         return next((u for u in self.users if u["id"] == uid), None)
 
+    def _has_perm(self, uid: str, role: str, key: str) -> bool:
+        """Admin ma zawsze dostep. Inaczej sprawdz granularne uprawnienie
+        (permissions[key] w users.json, ustawiane w formularzu edycji usera).
+        UWAGA: JWT niesie tylko id/role/username/pw_ver (patrz jwt_sign w
+        /api/auth/login) - NIE niesie permissions, wiec trzeba doczytac
+        pelny, aktualny rekord usera z self.users zamiast polegac na
+        dekodowanym tokenie (ktory moglby byc przestarzaly po zmianie
+        uprawnien przez admina bez ponownego logowania)."""
+        if role == "admin":
+            return True
+        u = self.find_user_by_id(uid)
+        return bool((u or {}).get("permissions", {}).get(key))
+
     def find_user_by_email(self, email: str) -> dict | None:
         return next((u for u in self.users
                      if (u.get("email") or "").lower() == email.lower()), None)
@@ -2548,7 +2561,7 @@ class App:
             }
 
         if p == "/api/config/station" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             _loc = str(body.get("stationLocator", "")).strip().upper()
             if _loc and not re.match(r"^[A-R]{2}\d{2}([A-X]{2})?$", _loc):
                 return 400, {"error": "Zly format lokatora (np. JO72 lub JO72AB)"}
@@ -2560,7 +2573,7 @@ class App:
             return 200, {"ok": True, "stationLocator": _loc}
 
         if p == "/api/config/bands" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             self.cfg["enabledBands"] = body.get("enabledBands", [])
             save_json(CFG_F, self.cfg)
             # Broadcast do klientow zeby odswiezyli siatkę pasm
@@ -2609,7 +2622,7 @@ class App:
             ]}
 
         if p == "/api/hamlib/config" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             servers = body.get("servers", [])
             # Waliduj porty
             ports = [s.get("port", 4532+i) for i,s in enumerate(servers)]
@@ -2632,7 +2645,7 @@ class App:
 
         m = re.match(r"^/api/config/rig/(\d+)$", p)
         if m and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             rid = m.group(1)
             if not self.cfg.get("rigs"):
                 self.cfg["rigs"] = []
@@ -2733,10 +2746,11 @@ class App:
 
         # ── Panel funkcji radia (capabilities + admin whitelist) ──────────────
         if p == "/api/rig/features" and method == "GET":
-            return 200, await self._get_rig_features(role)
+            _admin_view = "admin" if self._has_perm(uid, role, "settings") else role
+            return 200, await self._get_rig_features(_admin_view)
 
         if p == "/api/rig/features" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, await self._set_rig_features(body or {})
 
         # ── CW Keyer (wysylanie makr CW przez CI-V cmd 17) ────────────────────
@@ -3005,7 +3019,7 @@ class App:
                              "testMsg": str(e)}
 
         if p == "/api/rotator/config" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             self.cfg["rotators"] = body.get("rotators", [])
             save_json(CFG_F, self.cfg)
             self.init_rotators()
@@ -3277,9 +3291,9 @@ class App:
             return 200, _st
 
         if p == "/api/audio/detect" and method == "GET":
-            # Zwroc status auto-detekcji karty radia (dla admina).
+            # Zwroc status auto-detekcji karty radia.
             # Nie triggeruje ponownej detekcji - to jest cache z init.
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, {
                 "ok": True,
                 "auto_enabled": self._audio_auto,
@@ -3289,7 +3303,7 @@ class App:
 
         if p == "/api/audio/detect" and method == "POST":
             # Wymus ponowna detekcje (np. po podpięciu radia po starcie serwera)
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             try:
                 detection = auto_detect_radio_audio()
                 self._audio_detection = detection
@@ -3781,9 +3795,10 @@ class App:
                 return 500, {"error": str(e)}
 
         if p.startswith("/api/deepcw/download") and method == "POST":
-            # Pobranie modelu ONNX (~15 MB) z repozytorium. Tylko admin —
-            # to operacja sieciowa zapisujaca do katalogu danych.
-            if role != "admin": return 403, {"error": "Tylko admin"}
+            # Pobranie modelu ONNX (~15 MB) z repozytorium — operacja sieciowa
+            # zapisujaca do katalogu danych, wiec wymaga uprawnienia "ustawienia
+            # serwera" (nie tylko roli admin).
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             if deepcw_engine is None:
                 return 503, {"error": "Silnik DeepCW niedostepny "
                                       "(brak pakietu onnxruntime)"}
@@ -3899,6 +3914,12 @@ class App:
                 return (200, {"ok": True}) if ok else (404, {"error": "QSO nie znalezione"})
 
         if p == "/api/audio/config" and method == "POST":
+            # Brak sprawdzenia uprawnien tu byl bledem — kazdy zalogowany user
+            # (nawet viewer) mogl zdalnie zmienic karte audio calej wspolnej
+            # stacji i TX Volume (mnoznik uzywany tez przez enkoder FT8/FT4,
+            # czyli wplywajacy na realny sygnal w eterze). Wymagane teraz to
+            # samo uprawnienie "ustawienia serwera" co reszta tej zakladki.
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             rx = body.get("rxDevice")
             tx = body.get("txDevice")
             br = body.get("bitrate", 24000)
@@ -6203,7 +6224,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-QSOMODAL-WIDTH-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-GRANULAR-SETTINGS-PERM, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
