@@ -57,6 +57,10 @@ function applyConfig(cfg) {
   _s('tn-duck-token',  cfg.duckToken);
   _s('tn-static-ip',   cfg.staticIp);
   _s('tn-static-port', cfg.staticPort || '8001');
+  _s('tn-custom-hostname', cfg.customHostname);
+  _s('tn-custom-port',     cfg.customPort || '8001');
+  _s('tn-custom-certpath', cfg.customCertPath);
+  _s('tn-custom-keypath',  cfg.customKeyPath);
   _c('tn-autostart',   cfg.autoStart);
 
   modeChanged(cfg.mode || 'off');
@@ -187,15 +191,16 @@ function copyUrl(url) {
 // ── Zmiana trybu ─────────────────────────────────────────────────────────────
 function modeChanged(mode) {
   // Ukryj wszystkie panele
-  ['tn-named-fields','tn-duckdns-fields','tn-staticip-fields'].forEach(id => {
+  ['tn-named-fields','tn-duckdns-fields','tn-staticip-fields','tn-customcert-fields'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
 
   // Pokaż odpowiedni panel
-  if (mode === 'named')    { const el = document.getElementById('tn-named-fields');    if (el) el.style.display = 'block'; }
-  if (mode === 'duckdns')  { const el = document.getElementById('tn-duckdns-fields');  if (el) el.style.display = 'block'; }
-  if (mode === 'staticip') { const el = document.getElementById('tn-staticip-fields'); if (el) el.style.display = 'block'; }
+  if (mode === 'named')      { const el = document.getElementById('tn-named-fields');      if (el) el.style.display = 'block'; }
+  if (mode === 'duckdns')    { const el = document.getElementById('tn-duckdns-fields');    if (el) el.style.display = 'block'; }
+  if (mode === 'staticip')   { const el = document.getElementById('tn-staticip-fields');   if (el) el.style.display = 'block'; }
+  if (mode === 'customcert') { const el = document.getElementById('tn-customcert-fields'); if (el) el.style.display = 'block'; }
 
   // Zaznacz aktywny tryb
   document.querySelectorAll('.tn-mode-btn').forEach(b => {
@@ -207,7 +212,7 @@ function modeChanged(mode) {
 
   // Otwórz collapse "zaawansowane" gdy wybrany tryb jest zaawansowany
   // (żeby user widział że jego wybór jest widoczny)
-  const isAdvancedMode = (mode === 'named' || mode === 'staticip');
+  const isAdvancedMode = (mode === 'named' || mode === 'staticip' || mode === 'customcert');
   const advDetails = document.querySelector('#page-internet details');
   if (advDetails && isAdvancedMode) advDetails.open = true;
 
@@ -218,8 +223,8 @@ function modeChanged(mode) {
     cfStatus.style.display = showCf ? 'flex' : 'none';
   }
 
-  // Pokaż detail-pills wg trybu (cert tylko dla DuckDNS, tunel dla Cloudflare)
-  const showCert   = (mode === 'duckdns' || mode === 'staticip');
+  // Pokaż detail-pills wg trybu (cert dla DuckDNS/stałe IP/własny cert, tunel dla Cloudflare)
+  const showCert   = (mode === 'duckdns' || mode === 'staticip' || mode === 'customcert');
   const showTunnel = (mode === 'quick'  || mode === 'named'   || mode === 'duckdns');
   const cert = document.getElementById('tn-detail-cert');
   const tun  = document.getElementById('tn-detail-tunnel');
@@ -258,11 +263,12 @@ async function copyPublic() {
 
 // ── Akcje ─────────────────────────────────────────────────────────────────────
 async function startTunnel() {
-  const mode       = document.getElementById('tn-mode')?.value?.trim()        || 'quick';
-  const token      = document.getElementById('tn-token')?.value?.trim()       || '';
-  const duckDomain = document.getElementById('tn-duck-domain')?.value?.trim() || '';
-  const duckToken  = document.getElementById('tn-duck-token')?.value?.trim()  || '';
-  const staticIp   = document.getElementById('tn-static-ip')?.value?.trim()   || '';
+  const mode           = document.getElementById('tn-mode')?.value?.trim()        || 'quick';
+  const token          = document.getElementById('tn-token')?.value?.trim()       || '';
+  const duckDomain     = document.getElementById('tn-duck-domain')?.value?.trim() || '';
+  const duckToken      = document.getElementById('tn-duck-token')?.value?.trim()  || '';
+  const staticIp       = document.getElementById('tn-static-ip')?.value?.trim()   || '';
+  const customHostname = document.getElementById('tn-custom-hostname')?.value?.trim() || '';
 
   // Walidacja per tryb
   if (mode === 'named' && !token) {
@@ -273,6 +279,9 @@ async function startTunnel() {
   }
   if (mode === 'staticip' && !staticIp) {
     window.UI?.showToast('⚠ Wpisz adres IP', 'error'); return;
+  }
+  if (mode === 'customcert' && !customHostname) {
+    window.UI?.showToast('⚠ Wpisz domenę', 'error'); return;
   }
 
   // Zapisz konfigurację przed uruchomieniem
@@ -309,13 +318,17 @@ async function stopTunnel() {
 
 // Zapisz konfigurację tunelu
 async function saveTunnelConfig(showToast = true) {
-  const mode       = document.getElementById('tn-mode')?.value?.trim()        || 'off';
-  const token      = document.getElementById('tn-token')?.value?.trim()       || '';
-  const hostname   = document.getElementById('tn-hostname')?.value?.trim()    || '';
-  const duckDomain = document.getElementById('tn-duck-domain')?.value?.trim() || '';
-  const duckToken  = document.getElementById('tn-duck-token')?.value?.trim()  || '';
-  const staticIp   = document.getElementById('tn-static-ip')?.value?.trim()   || '';
-  const staticPort = document.getElementById('tn-static-port')?.value?.trim() || '8001';
+  const mode           = document.getElementById('tn-mode')?.value?.trim()        || 'off';
+  const token          = document.getElementById('tn-token')?.value?.trim()       || '';
+  const hostname       = document.getElementById('tn-hostname')?.value?.trim()    || '';
+  const duckDomain     = document.getElementById('tn-duck-domain')?.value?.trim() || '';
+  const duckToken      = document.getElementById('tn-duck-token')?.value?.trim()  || '';
+  const staticIp       = document.getElementById('tn-static-ip')?.value?.trim()   || '';
+  const staticPort     = document.getElementById('tn-static-port')?.value?.trim() || '8001';
+  const customHostname = document.getElementById('tn-custom-hostname')?.value?.trim() || '';
+  const customPort     = document.getElementById('tn-custom-port')?.value?.trim()     || '8001';
+  const customCertPath = document.getElementById('tn-custom-certpath')?.value?.trim() || '';
+  const customKeyPath  = document.getElementById('tn-custom-keypath')?.value?.trim()  || '';
   const autoStart  = document.getElementById('tn-autostart')?.checked         || false;
 
   // Podgląd adresu DuckDNS
@@ -328,7 +341,8 @@ async function saveTunnelConfig(showToast = true) {
       method: 'POST',
       headers: {'Content-Type':'application/json',
         ...(tkn ? {'Authorization': `Bearer ${tkn}`} : {})},
-      body: JSON.stringify({ mode, token, hostname, duckDomain, duckToken, staticIp, staticPort, autoStart }),
+      body: JSON.stringify({ mode, token, hostname, duckDomain, duckToken, staticIp, staticPort,
+        customHostname, customPort, customCertPath, customKeyPath, autoStart }),
     });
     if (showToast) window.UI?.showToast('✓ Konfiguracja tunelu zapisana');
   } catch(e) {

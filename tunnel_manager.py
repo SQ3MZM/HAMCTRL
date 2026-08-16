@@ -265,6 +265,9 @@ class TunnelManager:
         if mode == "staticip":
             await self._start_staticip()
             return
+        if mode == "customcert":
+            await self._start_customcert()
+            return
 
         # Tryby Cloudflare — pobierz cloudflared jeśli brak
         if not await self._download_cloudflared():
@@ -709,6 +712,62 @@ class TunnelManager:
             self._public_url = f"http://{ip}:{port}"
         await self._broadcast()
         print(f"[tunnel] Stałe IP: {self._public_url}", flush=True)
+
+    # ── Własna domena + własny certyfikat ────────────────────────────────────
+
+    async def _start_customcert(self):
+        """
+        Admin ma juz WLASNA domene (DNS wskazujacy na jego stale IP/router z
+        przekierowanym portem) i WLASNY, gdzies wykupiony/wystawiony
+        certyfikat SSL - w odroznieniu od _start_staticip (zawsze generuje
+        self-signed) i _start_duckdns (zawsze Let's Encrypt), tu NIC nie
+        generujemy. Tylko wskazujemy istniejace pliki PEM.
+
+        server.py (glowny serwer HTTP/HTTPS) juz umie zaladowac certPath/
+        keyPath z tunnel_config.json - to DOKLADNIE ten sam mechanizm co
+        certyfikat Let's Encrypt z trybu DuckDNS (patrz "Najpierw sprawdz
+        certyfikat z konfiguracji tunelu" w server.py), wiec tu wystarczy
+        zwalidowac ze pliki istnieja i ustawic te same dwa pola.
+        """
+        hostname = self._cfg.get("customHostname", "").strip()
+        port     = (self._cfg.get("customPort", "8001") or "8001").strip()
+        if not hostname:
+            self._error  = "Brak domeny"
+            self._status = "error"
+            await self._broadcast()
+            return
+
+        # Puste pola = domyslna lokalizacja ktorej server.py i tak szuka jako
+        # fallback (cert.pem/key.pem w katalogu danych) - user moze tam po
+        # prostu podmienic pliki i nic wiecej nie wpisywac.
+        cert = (self._cfg.get("customCertPath", "") or "").strip() or str(_DATA / "cert.pem")
+        key  = (self._cfg.get("customKeyPath", "")  or "").strip() or str(_DATA / "key.pem")
+
+        if not pathlib.Path(cert).exists() or not pathlib.Path(key).exists():
+            self._error  = (f"Nie znaleziono plikow certyfikatu — umiesc wlasny "
+                             f"cert.pem/key.pem pod: {cert}  /  {key}")
+            self._status = "error"
+            await self._broadcast()
+            return
+
+        self._cfg["certPath"] = cert
+        self._cfg["keyPath"]  = key
+        save_cfg(self._cfg)
+
+        self._public_url = f"https://{hostname}:{port}"
+        self._status     = "connected"
+        await self._broadcast()
+        print(f"[tunnel] Wlasny certyfikat: {self._public_url} (cert={cert})", flush=True)
+        # server.py laduje cert PRZY STARCIE; jesli HTTPS juz wtedy dzialal
+        # (choc self-signed), hot-reload watcher (co 6h) sam podmieni go na
+        # zywo po podmianie plikow na dysku. Jesli HTTPS w ogole nie wstal
+        # (np. brak "cryptography" albo to pierwszy start bez zadnego certu)
+        # - potrzebny restart. Nie da sie stad wiarygodnie odroznic ktory to
+        # przypadek, wiec informujemy zawsze, na wszelki wypadek.
+        await self._broadcast_msg(
+            "✓ Wskazano własny certyfikat. Jeśli HTTPS jeszcze nie działał "
+            "(pierwsze uruchomienie), zrestartuj serwer — inaczej wystarczy "
+            "poczekać do 6h na automatyczne przeładowanie na żywo.")
 
     def _generate_selfsigned(self, cn: str) -> tuple:
         try:

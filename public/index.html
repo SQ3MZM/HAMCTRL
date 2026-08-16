@@ -1884,9 +1884,9 @@
         <!-- Tryby zaawansowane (collapse — domyślnie ukryte) -->
         <details style="border-top:1px dashed var(--border);padding-top:8px;">
           <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:1px;padding:4px 0;list-style:none;">
-            ▸ TRYBY ZAAWANSOWANE (własna domena, stałe IP)
+            ▸ TRYBY ZAAWANSOWANE (własna domena, stałe IP, własny certyfikat)
           </summary>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
 
             <button class="tn-mode-btn" data-mode="named" onclick="Tunnel.modeChanged('named')"
               style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
@@ -1903,6 +1903,15 @@
               <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">STAŁE IP + HTTPS</div>
               <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
                 Publiczne stałe IP + self-signed cert.
+              </div>
+            </button>
+
+            <button class="tn-mode-btn" data-mode="customcert" onclick="Tunnel.modeChanged('customcert')"
+              style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
+              <div style="font-size:18px;margin-bottom:4px;">🔐</div>
+              <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">WŁASNA DOMENA + CERT</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.5;">
+                Masz już domenę i wykupiony certyfikat.
               </div>
             </button>
           </div>
@@ -1970,6 +1979,30 @@
           </div>
           <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;">
             Cert SSL self-signed generowany automatycznie. Przeglądarka ostrzeże raz — kliknij "Zaawansowane → Przejdź dalej".
+          </div>
+        </div>
+
+        <!-- POLA — Własna domena + własny certyfikat -->
+        <div id="tn-customcert-fields" style="display:none;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-bottom:8px;">
+            📋 Ten tryb NICZEGO nie generuje — musisz już mieć domenę (DNS wskazujący na Twoje stałe IP/router) i gotowy certyfikat SSL (plik cert.pem + key.pem, np. z zewnętrznego CA).
+          </div>
+          <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:8px;">
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">TWOJA DOMENA</div>
+              <input type="text" id="tn-custom-hostname" placeholder="radio.twojadomena.pl" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:4px;">PORT</div>
+              <input type="text" id="tn-custom-port" placeholder="8001" value="8001" oninput="Tunnel.saveTunnelConfig(false)">
+            </div>
+          </div>
+          <div class="form-label" style="margin-bottom:4px;">ŚCIEŻKA DO cert.pem (opcjonalnie)</div>
+          <input type="text" id="tn-custom-certpath" placeholder="zostaw puste = domyślny katalog danych serwera" oninput="Tunnel.saveTunnelConfig(false)" style="margin-bottom:8px;">
+          <div class="form-label" style="margin-bottom:4px;">ŚCIEŻKA DO key.pem (opcjonalnie)</div>
+          <input type="text" id="tn-custom-keypath" placeholder="zostaw puste = domyślny katalog danych serwera" oninput="Tunnel.saveTunnelConfig(false)">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;">
+            Zostawiając ścieżki puste, wystarczy podmienić pliki <code>cert.pem</code> i <code>key.pem</code> w katalogu danych serwera (obok EXE albo %APPDATA%\HAMCTRL) — reszta zadzieje się automatycznie.
           </div>
         </div>
 
@@ -2539,7 +2572,7 @@
 <script src="js/admin_status.js?v=202608160001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
-<script src="js/tunnel.js?v=202608160001"></script>
+<script src="js/tunnel.js?v=202608160002"></script>
 <script src="js/dxcc.js?v=202608160001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
