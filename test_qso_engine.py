@@ -490,6 +490,73 @@ def test_partner_busy_with_someone_else():
     check(result2 is None, "Wymiana miedzy obcymi stacjami -> cisza (nie partner_busy)")
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# NOWA FUNKCJA: parse_dxpedition_message (typ 0.1, i3=0/n3=1) - wiadomosc
+# ktorej Fox uzywa zeby JEDNOCZESNIE zamknac QSO (RR73) i zaprosic kolejna
+# stacje z raportem, w jednej transmisji. Ten sam format wiadomosci uzywaja
+# stacje na MSHV w trybie "Multi Answering" nawet w zwyklych, codziennych
+# QSO (nie tylko prawdziwe DXpedycje) - stad silnik glownego automatu, nie
+# tylko Hound mode, musi to poprawnie rozumiec.
+# ════════════════════════════════════════════════════════════════════════════
+def test_dxpedition_message_not_for_us():
+    section("parse_dxpedition_message: wiadomosc dotyczy dwoch INNYCH stacji")
+    parse_dxpedition_message = _qe.parse_dxpedition_message
+    result = parse_dxpedition_message("K1ABC", "W9XYZ", "KH1/KH7Z", "-08", "SQ3MZM")
+    check(result is None, "Ani call_to ani call_de to nie my -> None")
+
+
+def test_dxpedition_message_we_get_report():
+    section("parse_dxpedition_message: jestesmy zapraszani z nowym raportem")
+    parse_dxpedition_message = _qe.parse_dxpedition_message
+    # call_to=K1ABC (inny Hound, dostaje RR73), call_de=SQ3MZM (my, dostajemy raport)
+    parsed = parse_dxpedition_message("K1ABC", "SQ3MZM", "KH1/KH7Z", "-08", "SQ3MZM")
+    check(parsed is not None, "Wiadomosc do nas -> sparsowana")
+    check(parsed["call_to"] == "SQ3MZM", "call_to = my znak")
+    check(parsed["call_de"] == "KH1/KH7Z", "call_de = prawdziwy nadawca (sender_call)")
+    check(parsed["report"] == "-08", "Surowy raport bez R-prefix")
+    check(not parsed["is_rr73"] and not parsed["is_73"] and not parsed["is_rrr"],
+          "To NIE jest RR73/73/RRR - zwykly nowy raport")
+
+    # Pelna integracja: IDLE + Call 1st -> powinno dac 'enqueue'
+    eng = QsoEngine("SQ3MZM", "JO82")
+    result = eng.on_decode(parsed)
+    check(result is not None and result.get("action") == "enqueue",
+          "Stacja MSHV zaprasza nas z raportem gdy IDLE -> enqueue")
+
+
+def test_dxpedition_message_we_get_rr73():
+    section("parse_dxpedition_message: dostajemy RR73 (konczy nasze QSO)")
+    parse_dxpedition_message = _qe.parse_dxpedition_message
+    # call_to=SQ3MZM (my, dostajemy RR73), call_de=W9XYZ (inny Hound, dostaje raport)
+    parsed = parse_dxpedition_message("SQ3MZM", "W9XYZ", "DL1XYZ", "-13", "SQ3MZM")
+    check(parsed is not None, "Wiadomosc do nas -> sparsowana")
+    check(parsed["is_rr73"] is True, "To jest RR73")
+    check(parsed["call_de"] == "DL1XYZ", "call_de = prawdziwy nadawca (sender_call)")
+
+    # Pelna integracja: jestesmy W TRAKCIE QSO z DL1XYZ (np. stacja na MSHV
+    # ktora dopiero co wyslala nam surowy raport zwykla wiadomoscia, my
+    # odpowiedzielismy R+rpt, i TERAZ ona konczy QSO polaczona wiadomoscia
+    # zamiast zwyklego "SQ3MZM DL1XYZ RR73").
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("DL1XYZ", parse_message("CQ DL1XYZ JO60"))
+    _dispatch(eng, "SQ3MZM DL1XYZ -12", snr=-8)
+    check(eng.state == ST_REPORT_SENT, "Przed polaczona wiadomoscia: REPORT_SENT")
+
+    result = eng.on_decode(parsed)
+    check(result is not None and result.get("qso_complete"),
+          "Polaczona wiadomosc RR73 od aktywnego partnera -> QSO complete")
+    check(result.get("report_or_grid") == "73", "Odpowiadamy naszym 73")
+    check(eng.state == ST_DONE, "Po polaczonym RR73: DONE")
+
+
+def test_dxpedition_message_unresolved_sender_falls_back():
+    section("parse_dxpedition_message: nierozpoznany hash Foxa (\"...\") -> fallback")
+    parse_dxpedition_message = _qe.parse_dxpedition_message
+    parsed = parse_dxpedition_message("SQ3MZM", "W9XYZ", "...", "-13", "SQ3MZM")
+    check(parsed is not None, "Wiadomosc do nas -> sparsowana mimo nierozpoznanego hasha")
+    check(parsed["call_de"] == "W9XYZ", "Fallback na call_de gdy sender_call nierozpoznany")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -509,6 +576,10 @@ def main():
     test_call1st_start_with_raw_report()
     test_rrr_goes_straight_to_73()
     test_partner_busy_with_someone_else()
+    test_dxpedition_message_not_for_us()
+    test_dxpedition_message_we_get_report()
+    test_dxpedition_message_we_get_rr73()
+    test_dxpedition_message_unresolved_sender_falls_back()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

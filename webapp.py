@@ -6295,7 +6295,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-HOUND-SPEC-COMPLIANCE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-MSHV-MULTISTREAM-SUPPORT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -6649,7 +6649,20 @@ class App:
              dostac potwierdzenie), i sprawdz kolejke na nastepna stacje.
         """
         try:
-            parsed = qso_engine.parse_message(m["message"])
+            # isDxpedition (typ 0.1, patrz unpack_type0_1 w unpack.rs): Fox
+            # (albo stacja MSHV w trybie "Multi Answering", ktora uzywa
+            # TEGO SAMEGO formatu wiadomosci nawet w zwyklych QSO) laczy w
+            # jednej transmisji RR73 dla jednego Hounda i raport dla
+            # drugiego. call_to/call_de tu NIE sa adresat/nadawca w zwyklym
+            # sensie - parse_message() zwyklym parsowaniem tekstu by to
+            # zgubila (albo sparsowala cos bezsensownego, np. "RR73" jako
+            # znak). Dedykowany tlumacz zamiast tego.
+            if m.get("isDxpedition"):
+                parsed = qso_engine.parse_dxpedition_message(
+                    m.get("call_to"), m.get("call_de"), m.get("senderCall"),
+                    m.get("report_or_grid"), self._qso_engine.my_call)
+            else:
+                parsed = qso_engine.parse_message(m["message"])
             # UWAGA (perf): usunieto print per-decode — logował KAZDE dekodowanie
             # FT8/FT4 (20-40/sekunde przy aktywnym pasmie), kazdy print to
             # blokujacy syscall zapychajacy event loop.
@@ -7178,14 +7191,7 @@ class App:
                 # Hold TX). Wywolywane ZAWSZE - metoda sama sprawdza czy TX
                 # jest zamrozony i decyduje ktore prazki przesuwac.
                 await self._process_tx_freeze_rx_follow(msg)
-                # isDxpedition (typ 0.1, patrz unpack_type0_1 w unpack.rs):
-                # call_to/call_de tu NIE sa adresat/nadawca w zwyklym sensie -
-                # to dwa RUZNE znaki Houndow. qso_engine.parse_message() nie
-                # zna tej semantyki i przy >3 tokenach mimo to sparsowalby
-                # cos (np. call_de="RR73" jakby to byl czyjs znak) - glowny
-                # automat (nie-Hound) ma wiec NIC z tym nie robic. Sam Hound
-                # (_houndOnDecode w wsjtx.js) czyta te pola bezposrednio.
-                if self._auto_seq_enabled and not msg.get("isDxpedition"):
+                if self._auto_seq_enabled:
                     await self._process_auto_qso(msg)
 
             except Exception as e:

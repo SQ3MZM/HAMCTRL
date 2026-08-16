@@ -205,6 +205,14 @@ pub struct Ft8Message {
     /// Fox wysyla RR73, drugi ktorego zaprasza z raportem). Patrz
     /// unpack_type0_1 i FT8_DXpedition_Mode.pdf (K1JT) FAQ #7.
     pub is_dxpedition:   bool,
+    /// Znak stacji ktora FAKTYCZNIE nadala te wiadomosc. Dla typow 1/2/4
+    /// to zwyczajnie call_de (juz poprawny nadawca). Dla is_dxpedition=true
+    /// call_to/call_de to dwaj Houndowie (NIE nadawca) - prawdziwy nadawca
+    /// (Fox/stacja MSHV) jest tu osobno, rozwiazany z 10-bit hasha h10 (albo
+    /// "..." jesli jeszcze nierozpoznany). Konsument (glowny automat w
+    /// webapp.py, patrz qso_engine.parse_dxpedition_message) uzywa tego
+    /// zamiast zgadywac nadawce z call_to/call_de.
+    pub sender_call:     String,
 }
 
 fn bits_to_u64(bits: &[u8]) -> u64 {
@@ -276,6 +284,7 @@ fn unpack_standard(bits77: &[u8], i3: u32) -> Option<Ft8Message> {
     }
 
     let message = format_message(&call_to, &call_de, &report_or_grid);
+    let sender_call = call_de.clone(); // typ 1/2: call_de JUZ jest prawdziwym nadawca
 
     Some(Ft8Message {
         call_to,
@@ -284,6 +293,7 @@ fn unpack_standard(bits77: &[u8], i3: u32) -> Option<Ft8Message> {
         r_flag,
         message,
         is_dxpedition: false,
+        sender_call,
     })
 }
 
@@ -327,6 +337,7 @@ fn unpack_type0_1(bits77: &[u8]) -> Option<Ft8Message> {
         r_flag:         false,
         message,
         is_dxpedition:  true,
+        sender_call:    fox_disp, // NIE call1/call2 - prawdziwy nadawca (Fox/MSHV)
     })
 }
 
@@ -383,6 +394,7 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
 
     let report_or_grid = rpt.to_string();
     let message = format_message(&call_to, &call_de, &report_or_grid);
+    let sender_call = call_de.clone(); // typ 4: call_de JUZ jest prawdziwym nadawca
 
     Some(Ft8Message {
         call_to,
@@ -391,6 +403,7 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
         r_flag: false,
         message,
         is_dxpedition: false,
+        sender_call,
     })
 }
 
@@ -447,6 +460,7 @@ mod tests {
         assert_eq!(msg.call_de, "W9XYZ");       // dostaje raport
         assert_eq!(msg.report_or_grid, "-08");
         assert!(msg.message.contains("KH1/KH7Z"), "hash Foxa powinien sie rozwiazac z cache: {}", msg.message);
+        assert_eq!(msg.sender_call, "KH1/KH7Z"); // prawdziwy nadawca, NIE call_to/call_de
     }
 }
 

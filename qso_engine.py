@@ -174,6 +174,64 @@ def base_call(call: str) -> str:
     return b
 
 
+def parse_dxpedition_message(call_to: str, call_de: str, sender_call: str,
+                              report: str, my_call: str):
+    """
+    Buduje dict w TYM SAMYM ksztalcie co parse_message(), ale z pol
+    wiadomosci typu 0.1 (i3=0, n3=1 - "FT8 DXpedition"/Fox, patrz
+    unpack_type0_1 w ham_audio/src/decode/unpack.rs). Ta wiadomosc NIE ma
+    zwyklej semantyki TO/DE: call_to/call_de to dwaj ROZNI Houndowie (jeden
+    dostaje RR73, drugi dostaje nowy raport) w JEDNEJ transmisji Foxa,
+    prawdziwy nadawca jest osobno jako sender_call (rozwiazany 10-bitowy
+    hash jego znaku, moze byc "..." jesli jeszcze nierozpoznany).
+
+    Uzywane NIE TYLKO przez tryb Hound (ktory czyta te pola bezposrednio w
+    _houndOnDecode w wsjtx.js) - stacje na MSHV w trybie "Multi Answering"
+    uzywaja TEGO SAMEGO formatu wiadomosci nawet w zwyklych, codziennych
+    QSO (nie tylko prawdziwe DXpedycje - potwierdzone: nowsze wersje MSHV
+    Multistream sa nie do odroznienia od Fox/Hound na poziomie samej
+    transmisji), wiec GLOWNY automat (Call 1st / zwykle QSO) tez musi to
+    rozumiec - inaczej QSO z taka stacja nigdy nie domknie sie w logu (ich
+    koncowe RR73 albo zaproszenie z raportem po prostu by zniknelo).
+
+    Zwraca None jesli wiadomosc nie dotyczy nas w ogole (ani call_to, ani
+    call_de nie jest naszym znakiem).
+    """
+    my = (my_call or "").upper()
+    call_to = (call_to or "").strip().upper()
+    call_de = (call_de or "").strip().upper()
+    sender = (sender_call or "").strip().upper()
+    if sender in ("", "...", "<...>"):
+        sender = ""
+    report = (report or "").strip()
+
+    if call_to == my:
+        # Do nas: nadawca (Fox albo stacja MSHV Multistream) mowi RR73 -
+        # QSO zakonczone. call_de to INNY Hound (nie my) - uzywamy go tylko
+        # jako fallback gdy sender_call jeszcze nie rozpoznany.
+        de = sender or call_de
+        de_base, de_suffix, de_prefix = strip_suffix(de) if de else (None, None, None)
+        return {'call_to': my, 'call_de': de, 'extra': None,
+                'is_cq': False, 'is_rrr': False, 'is_73': False, 'is_rr73': True,
+                'report': None, 'cq_modifier': None,
+                'de_base': de_base, 'de_suffix': de_suffix, 'de_prefix': de_prefix,
+                'to_base': base_call(my)}
+
+    if call_de == my:
+        # Do nas: nadawca zaprasza nas z NOWYM raportem (surowy, bez R-
+        # prefix - jak Tx1/Tx2 w normalnej sekwencji). call_to to INNY
+        # Hound (ten co dostal RR73 w TEJ SAMEJ transmisji), nie my.
+        de = sender or call_to
+        de_base, de_suffix, de_prefix = strip_suffix(de) if de else (None, None, None)
+        return {'call_to': my, 'call_de': de, 'extra': None,
+                'is_cq': False, 'is_rrr': False, 'is_73': False, 'is_rr73': False,
+                'report': report or None, 'cq_modifier': None,
+                'de_base': de_base, 'de_suffix': de_suffix, 'de_prefix': de_prefix,
+                'to_base': base_call(my)}
+
+    return None  # dotyczy dwoch innych Houndow - nas nie obchodzi
+
+
 def parse_message(message: str):
     """
     Rozbija zdekodowana wiadomosc FT8 na skladowe.

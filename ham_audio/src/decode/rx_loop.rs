@@ -179,6 +179,7 @@ async fn run_loop(
                         "report_or_grid": r.report_or_grid,
                         "mode":           mode_str,
                         "isDxpedition":   r.is_dxpedition,
+                        "senderCall":     r.sender_call,
                     });
                     let line = format!("{}\n", json);
                     if stream.write_all(line.as_bytes()).await.is_err() {
