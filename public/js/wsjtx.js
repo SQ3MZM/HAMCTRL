@@ -1938,10 +1938,9 @@ function _houndOnDecode(decoded) {
 function _houndStartCalling() {
   if (!_hound.active || _hound.step !== 1) return;
   // TX1: "KH1/KH7Z SP3GSK KO02" na freq >1000 Hz
-  const msg  = `${_hound.foxCall} ${_myCall} ${_myGrid || ''}`.trim();
   const freq = _hound.txFreq;
   _houndUpdateUI();
-  _houndSendMsg(msg, freq, 'hound_call');
+  _houndSendMsg(_hound.foxCall, _myCall, (_myGrid || '').trim(), false, freq);
 }
 
 function _houndSendReport() {
@@ -1959,10 +1958,9 @@ function _houndSendReport() {
     return;
   }
   // TX3: "KH1/KH7Z SP3GSK R-13" na tej samej freq co Fox nas wołał (300-540 Hz)
-  const msg  = `${_hound.foxCall} ${_myCall} R${_hound.foxReport}`;
   const freq = _hound.reportFreq || 400;
   _houndUpdateUI();
-  _houndSendMsg(msg, freq, 'hound_report');
+  _houndSendMsg(_hound.foxCall, _myCall, `R${_hound.foxReport}`, false, freq);
 }
 
 function _houndQSOComplete() {
@@ -1984,20 +1982,19 @@ function _houndAutoLog(foxCall) {
   window.QSOLog?.quickLog?.();
 }
 
-function _houndSendMsg(message, audioFreqHz, type) {
-  // Wyslij przez backend — enkoder FT8 z podana czestotliwoscia audio
-  const token = localStorage.getItem('token') || '';
-  fetch('/api/wsjtx/tx', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json',
-      ...(token ? {'Authorization': `Bearer ${token}`} : {}) },
-    body: JSON.stringify({
-      message,
-      audioFreq: audioFreqHz,
-      mode:      'FT8',
-      type,      // 'hound_call' | 'hound_report'
-    }),
-  }).catch(e => console.warn('[hound] TX error:', e));
+function _houndSendMsg(callTo, callDe, report, rFlag, audioFreqHz) {
+  // Ta sama sciezka WS co zwykle TX FT8 (patrz sendMacro() wyzej) — jedyna
+  // faktycznie dzialajaca. Wczesniej Hound wysylal POST na /api/wsjtx/tx,
+  // ktorego backend nigdy nie mial (0 wynikow w webapp.py) — TX Hounda bylo
+  // wiec cichym no-opem (tylko console.warn), mimo ze panel wygladal na
+  // aktywny. audioFreq nadpisuje freq TX przed enkodowaniem — patrz komentarz
+  // przy "elif t == ft8_tx" w webapp.py, ktory explicite nazywa Hound mode.
+  window.WS?.send({
+    type: 'ft8_tx',
+    callTo, callDe, report,
+    rFlag: !!rFlag,
+    audioFreq: audioFreqHz,
+  });
 }
 
 function _houndUpdateUI() {
