@@ -71,7 +71,27 @@ CREATE TABLE IF NOT EXISTS qso (
     sat_name        TEXT DEFAULT '',
     sat_mode        TEXT DEFAULT '',
     freq_rx         TEXT DEFAULT '',
-    band_rx         TEXT DEFAULT ''
+    band_rx         TEXT DEFAULT '',
+    name            TEXT DEFAULT '',
+    qth             TEXT DEFAULT '',
+    dxcc            TEXT DEFAULT '',
+    country         TEXT DEFAULT '',
+    cont            TEXT DEFAULT '',
+    cqz             TEXT DEFAULT '',
+    ituz            TEXT DEFAULT '',
+    state           TEXT DEFAULT '',
+    iota            TEXT DEFAULT '',
+    qsl_sent        TEXT DEFAULT '',
+    qsl_rcvd        TEXT DEFAULT '',
+    lotw_qsl_sent   TEXT DEFAULT '',
+    lotw_qsl_rcvd   TEXT DEFAULT '',
+    lotw_qslsdate   TEXT DEFAULT '',
+    lotw_qslrdate   TEXT DEFAULT '',
+    eqsl_qsl_sent   TEXT DEFAULT '',
+    eqsl_qsl_rcvd   TEXT DEFAULT '',
+    pota_ref        TEXT DEFAULT '',
+    sota_ref        TEXT DEFAULT '',
+    wwff_ref        TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_qso_user      ON qso(user_id);
@@ -132,7 +152,44 @@ _NEW_COLUMNS = {
     "sat_mode":  "TEXT DEFAULT ''",
     "freq_rx":   "TEXT DEFAULT ''",
     "band_rx":   "TEXT DEFAULT ''",
+    # NAME/QTH/KRAJ — wypelniane recznie albo (KRAJ/CONT juz teraz) lokalnie
+    # z tabeli prefiksow (dxcc.js), DXCC/CQZ/ITUZ/STATE/IOTA docelowo z
+    # lookupu QRZ/HamQTH (nie zaimplementowany jeszcze - pola gotowe na te dane).
+    "name":          "TEXT DEFAULT ''",
+    "qth":           "TEXT DEFAULT ''",
+    "dxcc":          "TEXT DEFAULT ''",
+    "country":       "TEXT DEFAULT ''",
+    "cont":          "TEXT DEFAULT ''",
+    "cqz":           "TEXT DEFAULT ''",
+    "ituz":          "TEXT DEFAULT ''",
+    "state":         "TEXT DEFAULT ''",
+    "iota":          "TEXT DEFAULT ''",
+    # QSL tracking — pola gotowe, bez UI (aktywacja pozniej: wymaga
+    # integracji z LoTW/eQSL zeby cokolwiek tu realnie wpisywac).
+    "qsl_sent":      "TEXT DEFAULT ''",
+    "qsl_rcvd":      "TEXT DEFAULT ''",
+    "lotw_qsl_sent": "TEXT DEFAULT ''",
+    "lotw_qsl_rcvd": "TEXT DEFAULT ''",
+    "lotw_qslsdate": "TEXT DEFAULT ''",
+    "lotw_qslrdate": "TEXT DEFAULT ''",
+    "eqsl_qsl_sent": "TEXT DEFAULT ''",
+    "eqsl_qsl_rcvd": "TEXT DEFAULT ''",
+    # Aktywacje parkowe — pola gotowe, bez UI (aktywacja pozniej).
+    "pota_ref":      "TEXT DEFAULT ''",
+    "sota_ref":      "TEXT DEFAULT ''",
+    "wwff_ref":      "TEXT DEFAULT ''",
 }
+
+# Pola dopisane RAZEM z prop_mode/sat_* (satelity) - ale te ponizej nie maja
+# jeszcze UI do recznego wpisywania (poza NAME/QTH/COUNTRY - patrz qsolog.js
+# openNew/openEdit/saveQSO). Wspolna lista, zeby add_qso/update_qso/bulk
+# obslugiwaly je identycznie bez powtarzania 20 nazw pol w kazdej funkcji.
+_EXTRA_FIELDS = [
+    "name", "qth", "dxcc", "country", "cont", "cqz", "ituz", "state", "iota",
+    "qsl_sent", "qsl_rcvd", "lotw_qsl_sent", "lotw_qsl_rcvd",
+    "lotw_qslsdate", "lotw_qslrdate", "eqsl_qsl_sent", "eqsl_qsl_rcvd",
+    "pota_ref", "sota_ref", "wwff_ref",
+]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -203,35 +260,31 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
                     dupes += 1
                     continue
 
-                conn.execute("""
-                    INSERT INTO qso (
-                        id, user_id, call, qso_date, time_on, time_off,
-                        band, mode, freq, rst_sent, rst_rcvd,
-                        gridsquare, my_call, my_gridsquare,
-                        power, comment, source, created_at,
-                        prop_mode, sat_name, sat_mode, freq_rx, band_rx
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    qso_id, user_id, call,
-                    _date, _time,
-                    str(data.get("time_off", data.get("time_on", "000000"))),
-                    _band, _mode,
-                    str(data.get("freq", "")),
-                    str(data.get("rst_sent", "")),
-                    str(data.get("rst_rcvd", "")),
-                    str(data.get("gridsquare", "")),
-                    str(data.get("my_call", "")),
-                    str(data.get("my_gridsquare", "")),
-                    str(data.get("power", "")),
-                    str(data.get("comment", "")),
-                    str(data.get("source", "adif_import")),
-                    now,
-                    str(data.get("prop_mode", "")).upper(),
-                    str(data.get("sat_name", "")).upper(),
-                    str(data.get("sat_mode", "")).upper(),
-                    str(data.get("freq_rx", "")),
-                    str(data.get("band_rx", "")),
-                ))
+                bulk_row = {
+                    "id": qso_id, "user_id": user_id, "call": call,
+                    "qso_date": _date, "time_on": _time,
+                    "time_off": str(data.get("time_off", data.get("time_on", "000000"))),
+                    "band": _band, "mode": _mode,
+                    "freq":          str(data.get("freq", "")),
+                    "rst_sent":      str(data.get("rst_sent", "")),
+                    "rst_rcvd":      str(data.get("rst_rcvd", "")),
+                    "gridsquare":    str(data.get("gridsquare", "")),
+                    "my_call":       str(data.get("my_call", "")),
+                    "my_gridsquare": str(data.get("my_gridsquare", "")),
+                    "power":         str(data.get("power", "")),
+                    "comment":       str(data.get("comment", "")),
+                    "source":        str(data.get("source", "adif_import")),
+                    "created_at":    now,
+                    "prop_mode":     str(data.get("prop_mode", "")).upper(),
+                    "sat_name":      str(data.get("sat_name", "")).upper(),
+                    "sat_mode":      str(data.get("sat_mode", "")).upper(),
+                    "freq_rx":       str(data.get("freq_rx", "")),
+                    "band_rx":       str(data.get("band_rx", "")),
+                    **{k: str(data.get(k, "")) for k in _EXTRA_FIELDS},
+                }
+                cols = ", ".join(bulk_row.keys())
+                placeholders = ", ".join(f":{k}" for k in bulk_row.keys())
+                conn.execute(f"INSERT INTO qso ({cols}) VALUES ({placeholders})", bulk_row)
                 inserted += 1
             except Exception:
                 skipped += 1
@@ -279,16 +332,18 @@ def add_qso(user_id: str, data: dict) -> dict:
         "sat_mode":      (data.get("sat_mode") or "").strip().upper(),
         "freq_rx":       data.get("freq_rx", ""),
         "band_rx":       data.get("band_rx", ""),
+        # NAME/QTH/geo/QSL/aktywacje — patrz komentarz przy _NEW_COLUMNS.
+        # Wartosci wpisywane tak jak przyszly (bez wymuszania wielkosci liter -
+        # NAME/QTH/COUNTRY to nazwy wlasne, wersaliki by je zniekształcały).
+        **{k: data.get(k, "") for k in _EXTRA_FIELDS},
     }
 
-    conn.execute("""
-        INSERT INTO qso VALUES (
-            :id,:user_id,:call,:qso_date,:time_on,:time_off,
-            :band,:mode,:freq,:rst_sent,:rst_rcvd,:gridsquare,
-            :my_call,:my_gridsquare,:power,:comment,:source,
-            :created_at,:cloudlog_id,
-            :prop_mode,:sat_name,:sat_mode,:freq_rx,:band_rx
-        )""", row)
+    # Kolumny budowane Z SAMEGO row (nie recznie liczona lista VALUES) - eliminuje
+    # cala klase bledow "zapomnialem dopisac nowe pole w VALUES po dodaniu go
+    # do row" (dokladnie to co juz raz trzeba bylo naprawiac przy migracji).
+    cols = ", ".join(row.keys())
+    placeholders = ", ".join(f":{k}" for k in row.keys())
+    conn.execute(f"INSERT INTO qso ({cols}) VALUES ({placeholders})", row)
     conn.commit()
     return dict(row)
 
@@ -331,6 +386,7 @@ def update_qso(user_id: str, qso_id: str, data: dict, is_admin: bool = False) ->
         "sat_mode":      (data.get("sat_mode") or "").strip().upper(),
         "freq_rx":       data.get("freq_rx", ""),
         "band_rx":       data.get("band_rx", ""),
+        **{k: data.get(k, "") for k in _EXTRA_FIELDS},
     }
     set_clause = ", ".join(f"{k}=:{k}" for k in fields)
     fields["id"]      = qso_id
@@ -587,6 +643,32 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
         rec += field("SAT_MODE",      q.get("sat_mode", ""))
         rec += field("FREQ_RX",       q.get("freq_rx", ""))
         rec += field("BAND_RX",       q.get("band_rx", ""))
+        # NAME/QTH/geo drugiej stacji — NAME/QTH recznie lub (COUNTRY/CONT)
+        # z lokalnej tabeli prefiksow (dxcc.js); DXCC/CQZ/ITUZ/STATE/IOTA
+        # docelowo z lookupu QRZ/HamQTH (jeszcze nie podpiety - pola gotowe).
+        rec += field("NAME",          q.get("name", ""))
+        rec += field("QTH",           q.get("qth", ""))
+        rec += field("DXCC",          q.get("dxcc", ""))
+        rec += field("COUNTRY",       q.get("country", ""))
+        rec += field("CONT",          q.get("cont", ""))
+        rec += field("CQZ",           q.get("cqz", ""))
+        rec += field("ITUZ",          q.get("ituz", ""))
+        rec += field("STATE",         q.get("state", ""))
+        rec += field("IOTA",          q.get("iota", ""))
+        # QSL tracking i aktywacje parkowe — pola gotowe w bazie, bez UI do
+        # recznego wpisywania jeszcze (patrz komentarz przy _EXTRA_FIELDS).
+        # Eksportujemy co jest, zeby round-trip z importu ADIF nic nie gubil.
+        rec += field("QSL_SENT",      q.get("qsl_sent", ""))
+        rec += field("QSL_RCVD",      q.get("qsl_rcvd", ""))
+        rec += field("LOTW_QSL_SENT", q.get("lotw_qsl_sent", ""))
+        rec += field("LOTW_QSL_RCVD", q.get("lotw_qsl_rcvd", ""))
+        rec += field("LOTW_QSLSDATE", q.get("lotw_qslsdate", ""))
+        rec += field("LOTW_QSLRDATE", q.get("lotw_qslrdate", ""))
+        rec += field("EQSL_QSL_SENT", q.get("eqsl_qsl_sent", ""))
+        rec += field("EQSL_QSL_RCVD", q.get("eqsl_qsl_rcvd", ""))
+        rec += field("POTA_REF",      q.get("pota_ref", ""))
+        rec += field("SOTA_REF",      q.get("sota_ref", ""))
+        rec += field("WWFF_REF",      q.get("wwff_ref", ""))
         rec += "<EOR>"
         lines.append(rec)
 
@@ -602,7 +684,11 @@ def export_csv(user_id: str, is_admin: bool = False, **filters) -> str:
     cols = ["call","qso_date","time_on","time_off","band","mode","freq",
             "rst_sent","rst_rcvd","gridsquare","my_call","my_gridsquare",
             "power","comment","source",
-            "prop_mode","sat_name","sat_mode","freq_rx","band_rx"]
+            "prop_mode","sat_name","sat_mode","freq_rx","band_rx",
+            "name","qth","dxcc","country","cont","cqz","ituz","state","iota",
+            "qsl_sent","qsl_rcvd","lotw_qsl_sent","lotw_qsl_rcvd",
+            "lotw_qslsdate","lotw_qslrdate","eqsl_qsl_sent","eqsl_qsl_rcvd",
+            "pota_ref","sota_ref","wwff_ref"]
     writer = csv.DictWriter(out, fieldnames=cols, extrasaction="ignore",
                             lineterminator="\r\n")
     writer.writeheader()

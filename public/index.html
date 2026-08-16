@@ -1030,8 +1030,13 @@
       <div class="sg"><label>ZNAK *
         <span id="qso-worked-badge" style="display:none;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px;letter-spacing:1px;"></span>
       </label><input type="text" id="qso-call" placeholder="SP3GSK" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"
-        oninput="QSOLog?.checkWorkedBefore?.()"></div>
-      <div class="sg"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+        oninput="QSOLog?.checkWorkedBefore?.();QSOLog?.autoFillCountry?.()"></div>
+      <div class="sg"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02 lub KO02ab" maxlength="8" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg"><label>IMIĘ</label><input type="text" id="qso-name" placeholder="John" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>QTH</label><input type="text" id="qso-qth" placeholder="Warsaw" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg"><label>KRAJ (DXCC)
+        <span id="qso-country-flag" style="margin-left:4px;"></span>
+      </label><input type="text" id="qso-country" placeholder="auto ze znaku" style="font-family:var(--mono);font-size:12px;"></div>
       <div class="sg"><label>DATA *</label><input type="date" id="qso-date" style="font-family:var(--mono);font-size:12px;"></div>
       <div class="sg"><label>CZAS UTC *</label><input type="time" id="qso-time" style="font-family:var(--mono);font-size:12px;"></div>
       <div class="sg"><label>PASMO *</label>
@@ -2510,7 +2515,7 @@
 <script src="js/cw.js?v=202606250001"></script>
 <script src="js/cloudlog.js?v=202606250001"></script>
 <script src="js/hamlib_ui.js?v=202608160001"></script>
-<script src="js/qsolog.js?v=202608160002"></script>
+<script src="js/qsolog.js?v=202608160003"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

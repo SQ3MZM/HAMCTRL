@@ -111,7 +111,9 @@ function _renderTable(qsos) {
       </td>
       <td>${date}</td>
       <td>${time}</td>
-      <td class="log-call">${q.call || ''}</td>
+      <td class="log-call">${q.call || ''}${q.country
+        ? ` <span title="${q.country}${q.name ? ' — ' + q.name : ''}${q.qth ? ', ' + q.qth : ''}">${window.DXCC?.lookup?.(q.call)?.flag || ''}</span>`
+        : ''}</td>
       <td>${q.band || ''}</td>
       <td class="${modeClass}">${q.mode || ''}${q.sat_name
         ? ` <span title="Satelita: ${q.sat_name}${q.sat_mode ? ' (' + q.sat_mode + ')' : ''}${q.band_rx ? ', downlink ' + q.band_rx : ''}">🛰</span>`
@@ -151,6 +153,23 @@ function toggleSatFields(show) {
   if (box) box.style.display = show ? 'grid' : 'none';
 }
 
+// Podpowiedz KRAJ (i kontynent, w tle) z lokalnej tabeli prefiksow (dxcc.js) —
+// dziala od razu, bez lookupu QRZ/HamQTH (ten jeszcze nie podpiety). Nie
+// nadpisuje pola jesli user juz cos tam wpisal recznie (np. skorygowal
+// pomylke tabeli prefiksow) — patrz ten sam wzorzec co updateRstDefaults.
+function autoFillCountry() {
+  const callEl    = document.getElementById('qso-call');
+  const countryEl = document.getElementById('qso-country');
+  const flagEl    = document.getElementById('qso-country-flag');
+  if (!callEl || !countryEl) return;
+  const call = callEl.value.trim();
+  const info = window.DXCC?.lookup ? window.DXCC.lookup(call) : null;
+  if (!info || !info.name) { if (flagEl) flagEl.textContent = ''; return; }
+  if (!countryEl.value.trim()) countryEl.value = info.name;
+  if (flagEl) flagEl.textContent = info.flag || '';
+  countryEl.dataset.cont = info.continent || '';
+}
+
 function openNew() {
   _editId = null;
   const now = new Date();
@@ -160,6 +179,11 @@ function openNew() {
 
   _setField('qso-call', '');
   _setField('qso-gridsquare', '');
+  _setField('qso-name', '');
+  _setField('qso-qth', '');
+  _setField('qso-country', '');
+  const flagEl0 = document.getElementById('qso-country-flag');
+  if (flagEl0) flagEl0.textContent = '';
   _setField('qso-date', dateStr);
   _setField('qso-time', timeStr);
   _setField('qso-band', S?.mode ? _freqToBand(S.freq) : '20m');
@@ -194,6 +218,13 @@ async function openEdit(id) {
     const q = await r.json();
     _setField('qso-call', q.call || '');
     _setField('qso-gridsquare', q.gridsquare || '');
+    _setField('qso-name', q.name || '');
+    _setField('qso-qth', q.qth || '');
+    _setField('qso-country', q.country || '');
+    const countryEl = document.getElementById('qso-country');
+    if (countryEl) countryEl.dataset.cont = q.cont || '';
+    const flagEl = document.getElementById('qso-country-flag');
+    if (flagEl) flagEl.textContent = q.country ? (window.DXCC?.lookup?.(q.call)?.flag || '') : '';
     _setField('qso-date', q.qso_date ? `${q.qso_date.slice(0,4)}-${q.qso_date.slice(4,6)}-${q.qso_date.slice(6,8)}` : '');
     _setField('qso-time', q.time_on ? `${q.time_on.slice(0,2)}:${q.time_on.slice(2,4)}` : '');
     _setField('qso-band', q.band || '20m');
@@ -251,6 +282,10 @@ async function saveQSO() {
     my_call:  S?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
                    || S?.stationLocator || ''),  // lokator OPERATORA
+    name:     document.getElementById('qso-name')?.value?.trim() || '',
+    qth:      document.getElementById('qso-qth')?.value?.trim() || '',
+    country:  document.getElementById('qso-country')?.value?.trim() || '',
+    cont:     document.getElementById('qso-country')?.dataset.cont || '',
   };
 
   // Lacznosc satelitarna — tylko gdy checkbox zaznaczony. PASMO/FREQ wyzej
@@ -576,6 +611,26 @@ function _parseADIF(text) {
       sat_mode:      fields.SAT_MODE || '',
       freq_rx:       fields.FREQ_RX || '',
       band_rx:       fields.BAND_RX || '',
+      name:          fields.NAME || '',
+      qth:           fields.QTH || '',
+      dxcc:          fields.DXCC || '',
+      country:       fields.COUNTRY || '',
+      cont:          fields.CONT || '',
+      cqz:           fields.CQZ || '',
+      ituz:          fields.ITUZ || '',
+      state:         fields.STATE || '',
+      iota:          fields.IOTA || '',
+      qsl_sent:      fields.QSL_SENT || '',
+      qsl_rcvd:      fields.QSL_RCVD || '',
+      lotw_qsl_sent: fields.LOTW_QSL_SENT || '',
+      lotw_qsl_rcvd: fields.LOTW_QSL_RCVD || '',
+      lotw_qslsdate: fields.LOTW_QSLSDATE || '',
+      lotw_qslrdate: fields.LOTW_QSLRDATE || '',
+      eqsl_qsl_sent: fields.EQSL_QSL_SENT || '',
+      eqsl_qsl_rcvd: fields.EQSL_QSL_RCVD || '',
+      pota_ref:      fields.POTA_REF || '',
+      sota_ref:      fields.SOTA_REF || '',
+      wwff_ref:      fields.WWFF_REF || '',
     });
   }
 
@@ -674,7 +729,7 @@ async function checkWorkedBefore() {
 window.QSOLog = {
   load, sort, clearFilters, quickLog, updateRstDefaults, importADIF, selectAll, deleteSelected, deleteAll,
   prevPage, nextPage,
-  openNew, openEdit, closeModal, saveQSO, deleteQSO, toggleSatFields,
+  openNew, openEdit, closeModal, saveQSO, deleteQSO, toggleSatFields, autoFillCountry,
   exportADI, exportCSV,
   loadAdminUsers: _loadAdminUsers,
   checkWorkedBefore,

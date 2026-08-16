@@ -410,6 +410,26 @@ def qso_to_adif(qso: dict) -> str:
         _adif_field("sat_mode",         qso.get("sat_mode", "")),
         _adif_field("freq_rx",          qso.get("freq_rx", "")),
         _adif_field("band_rx",          qso.get("band_rx", "")),
+        _adif_field("name",             qso.get("name", "")),
+        _adif_field("qth",              qso.get("qth", "")),
+        _adif_field("dxcc",             qso.get("dxcc", "")),
+        _adif_field("country",          qso.get("country", "")),
+        _adif_field("cont",             qso.get("cont", "")),
+        _adif_field("cqz",              qso.get("cqz", "")),
+        _adif_field("ituz",             qso.get("ituz", "")),
+        _adif_field("state",            qso.get("state", "")),
+        _adif_field("iota",             qso.get("iota", "")),
+        _adif_field("qsl_sent",         qso.get("qsl_sent", "")),
+        _adif_field("qsl_rcvd",         qso.get("qsl_rcvd", "")),
+        _adif_field("lotw_qsl_sent",    qso.get("lotw_qsl_sent", "")),
+        _adif_field("lotw_qsl_rcvd",    qso.get("lotw_qsl_rcvd", "")),
+        _adif_field("lotw_qslsdate",    qso.get("lotw_qslsdate", "")),
+        _adif_field("lotw_qslrdate",    qso.get("lotw_qslrdate", "")),
+        _adif_field("eqsl_qsl_sent",    qso.get("eqsl_qsl_sent", "")),
+        _adif_field("eqsl_qsl_rcvd",    qso.get("eqsl_qsl_rcvd", "")),
+        _adif_field("pota_ref",         qso.get("pota_ref", "")),
+        _adif_field("sota_ref",         qso.get("sota_ref", "")),
+        _adif_field("wwff_ref",         qso.get("wwff_ref", "")),
     ]
     return "".join(p for p in parts if p) + "<eor>"
 
@@ -6128,7 +6148,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-QSOLOG-SAT-BANDS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-QSOLOG-ADIF-FIELDS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
