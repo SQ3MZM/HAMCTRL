@@ -1021,32 +1021,32 @@
 <div id="log-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;
   background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
   <div style="background:var(--panel);border:1px solid var(--border);border-radius:6px;
-    padding:24px;width:500px;max-width:90vw;max-height:90vh;overflow-y:auto;">
+    padding:24px;width:580px;max-width:90vw;max-height:90vh;overflow-y:auto;overflow-x:hidden;box-sizing:border-box;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <span style="font-family:var(--mono);font-size:13px;letter-spacing:2px;color:var(--green);" id="log-modal-title">NOWE QSO</span>
       <button onclick="QSOLog.closeModal()" style="background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;">✕</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-      <div class="sg"><label>ZNAK *
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;min-width:0;">
+      <div class="sg" style="min-width:0;"><label>ZNAK *
         <span id="qso-worked-badge" style="display:none;margin-left:6px;font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:2px;letter-spacing:1px;"></span>
       </label>
-        <div style="display:flex;gap:6px;">
-          <input type="text" id="qso-call" placeholder="SP3GSK" style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;"
+        <div style="display:flex;gap:6px;min-width:0;">
+          <input type="text" id="qso-call" placeholder="SP3GSK" style="flex:1;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;text-transform:uppercase;"
             oninput="QSOLog?.checkWorkedBefore?.();QSOLog?.autoFillCountry?.()">
           <button type="button" id="qso-lookup-btn" onclick="QSOLog.lookupCall()" title="Pobierz dane stacji z QRZ.com/HamQTH"
-            style="flex:0 0 auto;font-family:var(--mono);font-size:12px;padding:0 10px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">🔍</button>
+            style="flex:0 0 auto;width:auto;font-family:var(--mono);font-size:12px;padding:0 10px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;white-space:nowrap;">🔍</button>
         </div>
       </div>
-      <div class="sg"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02 lub KO02ab" maxlength="8" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
-      <div class="sg"><label>IMIĘ</label><input type="text" id="qso-name" placeholder="John" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>QTH</label><input type="text" id="qso-qth" placeholder="Warsaw" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>KRAJ (DXCC)
+      <div class="sg" style="min-width:0;"><label>LOKATOR</label><input type="text" id="qso-gridsquare" placeholder="KO02 lub KO02ab" maxlength="8" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg" style="min-width:0;"><label>IMIĘ</label><input type="text" id="qso-name" placeholder="John" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>QTH</label><input type="text" id="qso-qth" placeholder="Warsaw" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>KRAJ (DXCC)
         <span id="qso-country-flag" style="margin-left:4px;"></span>
-      </label><input type="text" id="qso-country" placeholder="auto ze znaku" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>DATA *</label><input type="date" id="qso-date" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>CZAS UTC *</label><input type="time" id="qso-time" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>PASMO *</label>
-        <select id="qso-band" style="font-family:var(--mono);font-size:12px;">
+      </label><input type="text" id="qso-country" placeholder="auto ze znaku" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>DATA *</label><input type="date" id="qso-date" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>CZAS UTC *</label><input type="time" id="qso-time" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>PASMO *</label>
+        <select id="qso-band" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;">
           <option>160m</option><option>80m</option><option>60m</option><option>40m</option>
           <option>30m</option><option selected>20m</option><option>17m</option><option>15m</option>
           <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
@@ -1055,18 +1055,18 @@
           <option>6cm</option><option>3cm</option><option>1.2cm</option>
         </select>
       </div>
-      <div class="sg"><label>TRYB *</label>
-        <select id="qso-mode" style="font-family:var(--mono);font-size:12px;">
+      <div class="sg" style="min-width:0;"><label>TRYB *</label>
+        <select id="qso-mode" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;">
           <option>SSB</option><option>CW</option><option>FT8</option><option>FT4</option>
           <option>AM</option><option>FM</option><option>RTTY</option><option>PSK31</option>
         </select>
       </div>
-      <div class="sg"><label>FREQ MHz</label><input type="text" id="qso-freq" placeholder="14.215" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>PWR (W)</label><input type="number" id="qso-power" placeholder="100" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>RST SENT</label><input type="text" id="qso-rst-sent" placeholder="599" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg"><label>RST RCVD</label><input type="text" id="qso-rst-rcvd" placeholder="599" style="font-family:var(--mono);font-size:12px;"></div>
-      <div class="sg" style="grid-column:1/-1;"><label>KOMENTARZ</label>
-        <input type="text" id="qso-comment" placeholder="73 de SP3GSK" style="font-family:var(--mono);font-size:12px;">
+      <div class="sg" style="min-width:0;"><label>FREQ MHz</label><input type="text" id="qso-freq" placeholder="14.215" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>PWR (W)</label><input type="number" id="qso-power" placeholder="100" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>RST SENT</label><input type="text" id="qso-rst-sent" placeholder="599" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>RST RCVD</label><input type="text" id="qso-rst-rcvd" placeholder="599" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="grid-column:1/-1;min-width:0;"><label>KOMENTARZ</label>
+        <input type="text" id="qso-comment" placeholder="73 de SP3GSK" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;">
       </div>
     </div>
 
@@ -1078,14 +1078,14 @@
     <!-- PASMO/FREQ wyzej = uplink (nadajesz). Downlink (odbierasz) to osobne
          pole FREQ_RX/BAND_RX w ADIF - satelity pracuja cross-band (full duplex),
          wiec jedno pole PASMO nie wystarczy. -->
-    <div id="qso-sat-fields" style="display:none;grid-template-columns:1fr 1fr;gap:10px;
-      margin-top:10px;padding:10px;border:1px solid var(--green2);border-radius:4px;">
-      <div class="sg"><label>SATELITA</label>
-        <input type="text" id="qso-sat-name" placeholder="np. SO-50, QO-100, ISS" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
-      <div class="sg"><label>TRYB SATELITY</label>
-        <input type="text" id="qso-sat-mode" placeholder="np. U/V, V/U, L/X" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
-      <div class="sg"><label>DOWNLINK PASMO</label>
-        <select id="qso-band-rx" style="font-family:var(--mono);font-size:12px;">
+    <div id="qso-sat-fields" style="display:none;grid-template-columns:1fr 1fr;gap:10px;min-width:0;
+      margin-top:10px;padding:10px;border:1px solid var(--green2);border-radius:4px;box-sizing:border-box;">
+      <div class="sg" style="min-width:0;"><label>SATELITA</label>
+        <input type="text" id="qso-sat-name" placeholder="np. SO-50, QO-100, ISS" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg" style="min-width:0;"><label>TRYB SATELITY</label>
+        <input type="text" id="qso-sat-mode" placeholder="np. U/V, V/U, L/X" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg" style="min-width:0;"><label>DOWNLINK PASMO</label>
+        <select id="qso-band-rx" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;">
           <option value="">— jak uplink —</option>
           <option>160m</option><option>80m</option><option>60m</option><option>40m</option>
           <option>30m</option><option>20m</option><option>17m</option><option>15m</option>
@@ -1095,8 +1095,8 @@
           <option>6cm</option><option>3cm</option><option>1.2cm</option>
         </select>
       </div>
-      <div class="sg"><label>DOWNLINK FREQ MHz</label>
-        <input type="text" id="qso-freq-rx" placeholder="145.803" style="font-family:var(--mono);font-size:12px;"></div>
+      <div class="sg" style="min-width:0;"><label>DOWNLINK FREQ MHz</label>
+        <input type="text" id="qso-freq-rx" placeholder="145.803" style="width:100%;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:12px;"></div>
     </div>
 
     <div style="display:flex;gap:8px;margin-top:16px;">
