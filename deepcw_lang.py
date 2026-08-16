@@ -51,7 +51,9 @@ CW_WORDS = {
     "WEEK", "HOUR", "MIN", "SEC", "TIME", "LOCAL", "UTC", "ANT", "TOWER",
     "HEIGHT", "FT", "MTRS", "ELEMENTS", "WATTS", "OUTPUT", "INPUT", "FINALS",
     "TUBE", "SOLID", "STATE", "HOMEBREW", "COMMERCIAL", "MADE",
-    "73", "88", "72", "99",
+    # Numeryczne pozdrowienia/pozegnania — 73/88/72/99 to standard, "44" to
+    # pozdrowienie/pozegnanie uzywane przy parkowych aktywacjach (POTA/SOTA).
+    "73", "88", "72", "99", "44",
 }
 
 # ── Typowe imiona (po NAME / OP) ─────────────────────────────────────────────
@@ -204,56 +206,135 @@ def _is_report(tok: str) -> str | None:
     return None
 
 
+def _longest_piece_at(t: str, i: int, known_calls: set) -> str | None:
+    """Najdluzszy rozpoznany kawalek zaczynajacy sie w t[i:] — slowo CW,
+    znany znak wywolawczy albo raport RST. None gdy nic nie pasuje."""
+    n = len(t)
+    best = None
+    # a) slowo ze slownika CW_WORDS — najdluzsze dopasowanie wygrywa (np.
+    # zeby "FB" nie ucielo dluzszego "FBQSO" gdyby oba byly slowami).
+    for w in CW_WORDS:
+        lw = len(w)
+        if lw >= 2 and t[i:i+lw] == w and (best is None or lw > len(best)):
+            best = w
+    # b) znany znak wywolawczy doklejony do sasiedniego slowa, np.
+    # "DESQ3MZM" -> "DE SQ3MZM". Dlugosc znaku jest zmienna (3-10), wiec
+    # probujemy kolejne dlugosci od najdluzszej zamiast iterowac caly
+    # (potencjalnie duzy) zbior known_calls — to zwykle O(10) sprawdzen
+    # przynaleznosci do zbioru (O(1) kazde), nie O(|known_calls|).
+    if known_calls:
+        for lw in range(min(10, n - i), 2, -1):
+            cand = t[i:i+lw]
+            if cand in known_calls:
+                if best is None or lw > len(best):
+                    best = cand
+                break
+    # c) raport RST doklejony bez spacji, np. "5NNTU" -> "5NN TU" — bardzo
+    # czesty wzorzec (operator wysyla raport i od razu "TU" bez przerwy).
+    if best is None and i + 3 <= n and _is_report(t[i:i+3]):
+        best = t[i:i+3]
+    return best
+
+
 def _segment(token: str, known_calls: set | None = None) -> str | None:
     """Rozdziel sklejony ciag na znane slowa CW, zaznane znaki i raporty RST.
 
     Model przy szybkim CW nie wstawia spacji (widzi ciag znakow bez wyraznych
-    przerw), wiec zwraca np. 'TKSFERFB' zamiast 'TKS FER FB'. Probujemy podzielic
-    token na kolejne slowa ze slownika (albo znany znak wywolawczy, albo raport
-    RST doklejony bez spacji — patrz nizej). Zwraca podzial tylko gdy CALY token
-    da sie pokryc rozpoznanymi kawalkami — inaczej None (nie zgadujemy).
+    przerw), wiec zwraca np. 'TKSFERFB' zamiast 'TKS FER FB'. Idziemy przez
+    token od poczatku, w kazdym miejscu bierzemy NAJDLUZSZY rozpoznany kawalek
+    (slowo, znany znak, raport); to, co nie pasuje, zostaje jako surowa
+    "wyspa" miedzy rozpoznanymi kawalkami zamiast psuc caly wynik.
+    Dawniej wymagalismy pokrycia CALEGO tokenu, inaczej None — ale jeden
+    smieciowy ogon (np. zciecie sygnalu na koncu transmisji) psul WHOLE
+    dopasowanie i pokazywal caly, dluzszy blok bez zadnej spacji ('TNX FER
+    QSO 73' zlepione w czasie transmisji do 'TNXFERQSO73TFE'). Zwracamy
+    wiec podzial takze gdy pokrycie jest CZESCIOWE — ale tylko gdy WIEKSZOSC
+    znakow (>=50%) zostala rozpoznana, zeby nie doszywac spacji w czysty
+    szum (przypadkowe 2-literowe trafienie w dlugim smieciu).
     """
     t = token.upper()
     if len(t) < 4 or t in CW_WORDS:
         return None
     known_calls = known_calls or set()
-    # Programowanie dynamiczne: czy da sie pokryc t[i:] rozpoznanymi kawalkami
     n = len(t)
-    # dp[i] = lista kawalkow pokrywajacych t[i:], albo None
-    dp: list = [None] * (n + 1)
-    dp[n] = []
-    for i in range(n - 1, -1, -1):
-        # a) slowo ze slownika CW_WORDS
-        for w in CW_WORDS:
-            lw = len(w)
-            if lw >= 2 and t[i:i+lw] == w and dp[i+lw] is not None:
-                dp[i] = [w] + dp[i+lw]
+    pieces: list[str] = []
+    matched_chars = 0
+    raw = ""
+    i = 0
+    while i < n:
+        piece = _longest_piece_at(t, i, known_calls)
+        if piece:
+            if raw:
+                pieces.append(raw)
+                raw = ""
+            pieces.append(piece)
+            matched_chars += len(piece)
+            i += len(piece)
+        else:
+            raw += t[i]
+            i += 1
+    if raw:
+        pieces.append(raw)
+    if matched_chars == 0 or len(pieces) < 2:
+        return None
+    if matched_chars / n < 0.5:
+        return None
+    return " ".join(pieces)
+
+
+def _reglue_split_call(tokens: list[str], known_calls: set) -> list[str]:
+    """Sklej ciag krotkich tokenow rozbitych falszywymi przerwami z powrotem
+    w jeden znak wywolawczy, np. ['H','B','9','T','WX'] -> ['HB9TWX'].
+
+    Odwrotnosc problemu naprawianego w _segment: tam model NIE wstawial
+    przerwy miedzy slowami (zlepek bez spacji). Tu wstawia przerwe TAM,
+    gdzie jej nie ma — myli krotka przerwe miedzy literami znaku z przerwa
+    miedzy slowami (obserwowane przy wyraznym, spokojnym nadawaniu). Znak
+    wychodzi rozbity na pojedyncze/dwu-trzyliterowe kawalki.
+
+    Laczymy tylko RUN kolejnych "kandydatow" (1-3 znaki, NIE nalezace do
+    CW_WORDS — zeby nie polykac prawdziwych krotkich slow jak TU/DE/K/BK/WX)
+    i tylko gdy scalony wynik trafia wprost w known_calls albo ma jednoznaczny
+    ksztalt znaku wywolawczego (litery+cyfra, dl. 3-10). Gdy w runie trafi sie
+    prawdziwe slowo (np. "WX"), run konczy sie przed nim — moze to urwac
+    sklejanie za wczesnie (znak konczacy sie akurat na "WX"), ale to lepsze
+    niz polykanie prawdziwych slow. Przy watpliwosci (ksztalt sie nie zgadza)
+    tokeny zostaja jak byly — nie zgadujemy.
+    """
+    out: list[str] = []
+    i, n = 0, len(tokens)
+    while i < n:
+        j = i
+        while j < n:
+            tk = tokens[j].upper()
+            if 1 <= len(tk) <= 3 and tk.isalnum() and tk not in CW_WORDS:
+                j += 1
+            else:
                 break
-        if dp[i] is not None:
-            continue
-        # b) znany znak wywolawczy doklejony do sasiedniego slowa, np.
-        # "DESQ3MZM" -> "DE SQ3MZM". Dlugosc znaku jest zmienna (3-10), wiec
-        # probujemy kolejne dlugosci od najdluzszej zamiast iterowac caly
-        # (potencjalnie duzy) zbior known_calls — to zwykle O(10) sprawdzen
-        # przynaleznosci do zbioru (O(1) kazde), nie O(|known_calls|).
-        if known_calls:
-            for lw in range(min(10, n - i), 2, -1):
-                cand = t[i:i+lw]
-                if cand in known_calls and dp[i+lw] is not None:
-                    dp[i] = [cand] + dp[i+lw]
+        merged, advance = None, i
+        if known_calls and j > i:
+            # Najpierw pewny dowod: caly zlepek (run + do 2 kolejnych tokenow,
+            # NAWET prawdziwe slowo jak "WX") trafia wprost w known_calls.
+            # Sprawdzamy od najdluzszego wariantu — pewne trafienie ma
+            # pierwszenstwo przed samym ksztaltem znaku (nizej), bo inaczej
+            # krotszy, "wyglądający sensownie" prefiks (np. "HB9T") wygrywalby
+            # zanim zdazymy sprawdzic, czy dluzszy wariant to znany znak.
+            for m in range(min(j + 2, n), i, -1):
+                cand = "".join(t.upper() for t in tokens[i:m])
+                if cand in known_calls:
+                    merged, advance = cand, m
                     break
-        if dp[i] is not None:
+        if merged is None and j - i >= 2:
+            cand = "".join(t.upper() for t in tokens[i:j])
+            if len(cand) <= 10 and _looks_like_call(cand):
+                merged, advance = cand, j
+        if merged is not None:
+            out.append(merged)
+            i = advance
             continue
-        # c) raport RST doklejony bez spacji, np. "5NNTU" -> "5NN TU" —
-        # bardzo czesty wzorzec (operator wysyla raport i od razu "TU" bez
-        # przerwy). _is_report jest juz konserwatywny (tylko rozpoznaje
-        # sensowny ksztalt raportu, niczego nie wymysla), wiec bezpiecznie
-        # uzyc go tu jako zrodla "znanego slowa" dlugosci 3.
-        if i + 3 <= n and _is_report(t[i:i+3]) and dp[i+3] is not None:
-            dp[i] = [t[i:i+3]] + dp[i+3]
-    if dp[0] is not None and len(dp[0]) >= 2:
-        return " ".join(dp[0])
-    return None
+        out.append(tokens[i])
+        i += 1
+    return out
 
 
 def correct(text: str, known_calls: set | None = None) -> str:
@@ -264,7 +345,8 @@ def correct(text: str, known_calls: set | None = None) -> str:
     if not text:
         return text
     known_calls = known_calls or set()
-    tokens = text.split(" ")
+    tokens = [t for t in text.split(" ") if t]
+    tokens = _reglue_split_call(tokens, known_calls)
     out = []
     prev_upper = ""
 
