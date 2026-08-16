@@ -221,16 +221,21 @@ async function loadAudioCards(rigId) {
       fillAudioSelect(`cfg-audio-tx-${id}`, _audioDevices.tx);
     }
 
-    // Przywróć zapisane wartości z _rigs
+    // Przywróć zapisane wartości z _rigs. Dopasowanie dokladne, z fallbackiem
+    // na dopasowanie czesciowe (zawiera sie w / zawiera) - Windows potrafi
+    // zwrocic nazwe karty USB troche inaczej zapisana miedzy kolejnymi
+    // odpytaniami, a select.value przy braku dokladnego dopasowania cicho
+    // wraca na pierwsza opcje mimo ze karta jest nadal zapisana poprawnie.
+    const _selectFuzzy = (sel, wanted) => {
+      if (!sel || !wanted) return;
+      for (const opt of sel.options) if (opt.value === wanted) { sel.value = wanted; return; }
+      for (const opt of sel.options) {
+        if (opt.value && (opt.value.includes(wanted) || wanted.includes(opt.value))) { sel.value = opt.value; return; }
+      }
+    };
     _rigs.forEach(rig => {
-      if (rig.audioRx) {
-        const rx = document.getElementById(`cfg-audio-rx-${rig.id}`);
-        if (rx) rx.value = rig.audioRx;
-      }
-      if (rig.audioTx) {
-        const tx = document.getElementById(`cfg-audio-tx-${rig.id}`);
-        if (tx) tx.value = rig.audioTx;
-      }
+      if (rig.audioRx) _selectFuzzy(document.getElementById(`cfg-audio-rx-${rig.id}`), rig.audioRx);
+      if (rig.audioTx) _selectFuzzy(document.getElementById(`cfg-audio-tx-${rig.id}`), rig.audioTx);
     });
 
     const cnt = _audioDevices.rx?.length || 0;

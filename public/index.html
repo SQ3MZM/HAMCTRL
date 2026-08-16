@@ -3378,6 +3378,27 @@ function debounceSave() {
 
 <!-- ─── AUDIO DEVICE MANAGEMENT ──────────────────────────────────────────────── -->
 <script>
+// Dopasowanie DOKLADNE ma pierwszenstwo; jesli nie ma - szukaj opcji ktorej
+// nazwa ZAWIERA sie w "wanted" albo odwrotnie (ten sam wzorzec co backend juz
+// uzywa przy weryfikacji hot-swap karty w /api/audio/config, webapp.py:
+// "rx in n or n in rx"). Windows potrafi zwrocic nazwe karty USB troche
+// inaczej zapisana miedzy kolejnymi odpytaniami (numeracja portu, kolejnosc
+// WASAPI) - select.value przy dokladnym niedopasowaniu CICHO wraca na
+// pierwsza opcje ("domyslna"), mimo ze w configu nadal jest zapisana
+// wlasciwa karta. Std HTML behavior, nie blad przegladarki.
+function _selectByFuzzyName(selectEl, wanted) {
+  if (!selectEl || !wanted) return;
+  for (const opt of selectEl.options) {
+    if (opt.value === wanted) { selectEl.value = wanted; return; }
+  }
+  for (const opt of selectEl.options) {
+    if (opt.value && (opt.value.includes(wanted) || wanted.includes(opt.value))) {
+      selectEl.value = opt.value;
+      return;
+    }
+  }
+}
+
 async function _audioDeviceRefresh() {
   const st = document.getElementById('cfg-audio-status');
   if (st) st.textContent = 'Ładowanie kart...';
@@ -3395,15 +3416,15 @@ async function _audioDeviceRefresh() {
     (d.devices?.rx || []).forEach(name => {
       const o = document.createElement('option');
       o.value = o.textContent = name;
-      if (name === curRx) o.selected = true;
       rx.appendChild(o);
     });
     (d.devices?.tx || []).forEach(name => {
       const o = document.createElement('option');
       o.value = o.textContent = name;
-      if (name === curTx) o.selected = true;
       tx.appendChild(o);
     });
+    _selectByFuzzyName(rx, curRx);
+    _selectByFuzzyName(tx, curTx);
 
     if (st) st.textContent = `${d.source} — ${(d.devices?.rx||[]).length} RX, ${(d.devices?.tx||[]).length} TX`;
   } catch(e) {
@@ -3421,8 +3442,8 @@ async function _audioDeviceLoad() {
     const rx = document.getElementById('cfg-audio-rx');
     const tx = document.getElementById('cfg-audio-tx');
     const br = document.getElementById('cfg-audio-bitrate');
-    if (rx && d.rx_device) rx.value = d.rx_device;
-    if (tx && d.tx_device) tx.value = d.tx_device;
+    _selectByFuzzyName(rx, d.rx_device);
+    _selectByFuzzyName(tx, d.tx_device);
     if (br && d.opus_bitrate) br.value = d.opus_bitrate;
     // TX Volume — brakowalo tego (mimo komentarza wyzej ze "robi jedno i
     // drugie"). Suwak zostawal na statycznym HTML "4" niezaleznie od
