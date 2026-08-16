@@ -4596,38 +4596,30 @@ class App:
             conn.commit()
 
     def _is_band_allowed(self) -> bool:
-        """Sprawdz czy aktualna czestotliwosc radia jest w dozwolonym pasmie."""
-        freq         = self.rig.freq
-        enabled      = self.cfg.get("enabledBands", None)
+        """Sprawdz czy aktualna czestotliwosc radia jest w dozwolonym pasmie.
+        Uzywa self._BAND_RANGES (ta sama tabela co _get_band_for_freq / cross-band
+        split) - wczesniej mial tu byc osobny, niezaleznie utrzymywany slownik
+        ktory rozjechal sie z _BAND_RANGES dla 160m/60m/6m (rozne granice w
+        dwoch miejscach tego samego pliku dla tej samej blokady bezpieczenstwa).
+        """
+        freq    = self.rig.freq
+        enabled = self.cfg.get("enabledBands", None)
         if not enabled:          # brak konfiguracji = wszystkie pasma dozwolone
             return True
-        all_bands = {
-            '160m': (1810000,  2000000),
-            '80m':  (3500000,  3800000),
-            '60m':  (5351500,  5366500),
-            '40m':  (7000000,  7200000),
-            '30m':  (10100000, 10150000),
-            '20m':  (14000000, 14350000),
-            '17m':  (18068000, 18168000),
-            '15m':  (21000000, 21450000),
-            '12m':  (24890000, 24990000),
-            '10m':  (28000000, 29700000),
-            '6m':   (50000000, 52000000),
-            '4m':   (70000000, 70500000),
-            '2m':  (144000000,146000000),
-            '70cm':(430000000,440000000),
-        }
         for band in enabled:
-            lo, hi = all_bands.get(band, (0, 0))
+            lo, hi = self._BAND_RANGES.get(band, (0, 0))
             if lo <= freq <= hi:
                 return True
         return False
 
-    # Wspolna tabela pasm dla wszystkich sprawdzen (unikamy powtarzania)
+    # Wspolna tabela pasm dla wszystkich sprawdzen (unikamy powtarzania) -
+    # 160m/60m/6m celowo WEZSZE (realna alokacja PL/EU) - to jest tabela
+    # uzywana m.in. przez blokade TX (_is_band_allowed), wiec bezpieczniej
+    # zawezac niz ryzykowac nadanie poza prawdziwym przydzialem pasma.
     _BAND_RANGES = {
-        '160m': (1800000,   2000000),
+        '160m': (1810000,   2000000),
         '80m':  (3500000,   3800000),
-        '60m':  (5300000,   5410000),
+        '60m':  (5351500,   5366500),
         '40m':  (7000000,   7200000),
         '30m':  (10100000,  10150000),
         '20m':  (14000000,  14350000),
@@ -4635,7 +4627,7 @@ class App:
         '15m':  (21000000,  21450000),
         '12m':  (24890000,  24990000),
         '10m':  (28000000,  29700000),
-        '6m':   (50000000,  54000000),
+        '6m':   (50000000,  52000000),
         '4m':   (70000000,  70500000),
         '2m':   (144000000, 146000000),
         '70cm': (430000000, 440000000),
@@ -6224,7 +6216,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-TRANSFER-WIDGET-DEAD-BTNS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-BAND-LOCKOUT-TABLE-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
