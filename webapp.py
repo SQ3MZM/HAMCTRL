@@ -583,7 +583,12 @@ class App:
         # wiadomosci adresowanej do NAS (call_to == CALLSIGN) — pozwala
         # operatorowi "zamrozic" TX i sledzic stacje ktora wlasnie do niego
         # nadaje, bez recznego przesuwania znacznika RX.
-        self._ft8_split_enabled = False # tryb split: TX tylko powyzej _ft8_split_min_hz
+        # WYLACZONE NA STALE (2026-08-16): jedyny handler ktory kiedykolwiek
+        # ustawial _ft8_split_enabled=True ("ft8_toggle_split") byl martwym
+        # kodem - zaden front nigdy go nie wywolywal (wyparty przez Fake
+        # Split, patrz _apply_fake_split_before_tx). Zmienne zostaja bo 3
+        # miejsca w logice TX freq je jeszcze czytaja (zawsze False -> no-op).
+        self._ft8_split_enabled = False
         self._ft8_split_min_hz = 1200.0
         self._ft8_rx_freq_hz = 1000.0   # niezalezny znacznik RX (Rx Frequency panel) —
         # startuje na tej samej wartosci co TX, ale moze byc przesuwany calkowicie
@@ -5686,23 +5691,13 @@ class App:
             await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                        "frozen": self._ft8_tx_frozen})
 
-        elif t == "ft8_toggle_split":
-            self._ft8_split_enabled = bool(msg.get("enabled", not self._ft8_split_enabled))
-            min_hz = msg.get("minHz")
-            if min_hz is not None:
-                try:
-                    self._ft8_split_min_hz = max(200.0, min(2900.0, float(min_hz)))
-                except (TypeError, ValueError):
-                    pass
-            # Jesli split wlaczony i obecna czestotliwosc TX jest ponizej progu, podnies ja
-            if self._ft8_split_enabled and self._ft8_tx_freq_hz < self._ft8_split_min_hz:
-                self._ft8_tx_freq_hz = self._ft8_split_min_hz
-            print(f"[ft8] SPLIT {'wlaczony' if self._ft8_split_enabled else 'wylaczony'} (min={self._ft8_split_min_hz:.0f}Hz)")
-            await self.hub.broadcast({"type": "ft8_split_status",
-                                       "enabled": self._ft8_split_enabled,
-                                       "minHz": self._ft8_split_min_hz})
-            await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
-                                       "frozen": self._ft8_tx_frozen})
+        # "ft8_toggle_split" (osobna, starsza implementacja "min TX freq" -
+        # rozna od Fake Split) usunieta 2026-08-16 - audyt zakladki FT8/WSJT-X
+        # wykazal ze zaden front nigdy jej nie wysylal (dead code, wyparta
+        # przez Fake Split). self._ft8_split_enabled zostaje ponizej jako
+        # zawsze-False (czytaja go jeszcze 3 miejsca w logice czestotliwosci
+        # TX - bezpieczniej zostawic je jako martwe gałęzie niz ruszac kod
+        # liczacy czestotliwosc TX przy porzadkowaniu).
 
         # ── Automatyka QSO (pelna automatyka w stylu WSJT-X) ──────────────────
         elif t == "ft8_toggle_auto_seq":
@@ -6226,7 +6221,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-TXMIC-KEY-WSJTX-BRIDGE-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-REMOVE-DEAD-FT8-SPLIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
