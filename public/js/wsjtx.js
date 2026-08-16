@@ -2121,7 +2121,10 @@ function _houndUpdateUI() {
 // ── Pomocnicze ────────────────────────────────────────────────────────────────
 function _freqToBand(hz) {
   if (!hz) return '';
-  if (hz >= 1800000  && hz <= 2000000)  return '160m';
+  // 160m: wezsza (realna alokacja PL/EU) granica, ta sama co webapp.py/
+  // dxcluster.py/ui.js::getBandName - byla tu rozjechana (1800000 zamiast
+  // 1810000), ten sam blad co juz raz naprawiony gdzie indziej w projekcie.
+  if (hz >= 1810000  && hz <= 2000000)  return '160m';
   if (hz >= 3500000  && hz <= 3800000)  return '80m';
   if (hz >= 7000000  && hz <= 7200000)  return '40m';
   if (hz >= 10100000 && hz <= 10150000) return '30m';

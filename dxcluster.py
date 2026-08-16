@@ -19,11 +19,15 @@ import time
 from typing import Callable, Optional
 
 
-# Prefixy pasm z tabeli IARU (do przyporzadkowania spota na waterfall)
+# Prefixy pasm z tabeli IARU (do przyporzadkowania spota na waterfall).
+# 160m/60m/6m CELOWO WEZSZE (realna alokacja PL/EU) - te same wartosci co
+# webapp.py::_BAND_RANGES (tabela uzywana m.in. przez blokade TX). Byla to
+# osobna, niezaleznie utrzymywana kopia ktora sie rozjechala - ten SAM
+# blad co ten juz raz naprawiony w webapp.py, tylko w innym pliku.
 _BAND_RANGES = [
-    ('160m', 1800000,   2000000),
+    ('160m', 1810000,   2000000),
     ('80m',  3500000,   3800000),
-    ('60m',  5300000,   5410000),
+    ('60m',  5351500,   5366500),
     ('40m',  7000000,   7200000),
     ('30m',  10100000,  10150000),
     ('20m',  14000000,  14350000),
@@ -31,7 +35,7 @@ _BAND_RANGES = [
     ('15m',  21000000,  21450000),
     ('12m',  24890000,  24990000),
     ('10m',  28000000,  29700000),
-    ('6m',   50000000,  54000000),
+    ('6m',   50000000,  52000000),
     ('4m',   70000000,  70500000),
     ('2m',   144000000, 146000000),
     ('70cm', 430000000, 440000000),
