@@ -99,11 +99,17 @@ async fn async_main() {
     // proces w OSOBNEJ konsoli od hamctrl.exe - latwo przetestowac stara
     // binarke myslac ze to nowa). Podbijac przy kazdej istotnej zmianie w
     // decode/*, zwlaszcza timingowej (patrz FT8_TIME_BUDGET_S w decode/mod.rs).
-    println!("[build] ham_audio.exe wersja BUILD-2026-08-15-REFINE-FFT-DEDUP");
+    println!("[build] ham_audio.exe wersja BUILD-2026-08-16-ADAPTIVE-BITRATE");
 
     let cfg: SharedConfig = Arc::new(RwLock::new(Config::from_env()));
     let (audio_tx, _)     = broadcast::channel::<AudioFrame>(256);
     let audio_tx          = Arc::new(audio_tx);
+    // Drugi strumien, niski bitrate — dla klientow ze slabym lączem. Ten sam
+    // PCM, kodowany rownolegle (patrz run_audio_loop w audio.rs). Kazdy
+    // klient WS subskrybuje jeden z dwoch niezaleznie od innych (patrz
+    // handle_ws) — jeden slaby link nie obniza jakosci u nikogo innego.
+    let (audio_tx_lo, _)  = broadcast::channel::<AudioFrame>(256);
+    let audio_tx_lo       = Arc::new(audio_tx_lo);
     let mixer             = Arc::new(Mixer::new());
 
     // FT8 audio ring buffer
@@ -119,8 +125,9 @@ async fn async_main() {
     {
         let cfg2     = cfg.clone();
         let atx2     = audio_tx.clone();
+        let atx_lo2  = audio_tx_lo.clone();
         let mix2     = mixer.clone();
-        tokio::spawn(audio::run_audio_loop(cfg2, atx2, mix2, ft8_pcm_tx));
+        tokio::spawn(audio::run_audio_loop(cfg2, atx2, atx_lo2, mix2, ft8_pcm_tx));
     }
 
     // Osobny task: czyta PCM z kanału i zasila FT8 ring buffer
@@ -167,20 +174,22 @@ async fn async_main() {
 
     if let Some(tls_acceptor) = ssl_ctx {
         let wss_listener = TcpListener::bind(&wss_addr).await.expect("bind wss");
-        let atx3 = audio_tx.clone();
+        let atx3    = audio_tx.clone();
+        let atx_lo3 = audio_tx_lo.clone();
         let mix3 = mixer.clone();
         let cfg3 = cfg.clone();
         tokio::spawn(async move {
             loop {
                 if let Ok((stream, addr)) = wss_listener.accept().await {
                     info!("WSS: {}", addr);
-                    let arx  = atx3.subscribe();
+                    let ahi  = atx3.clone();
+                    let alo  = atx_lo3.clone();
                     let mix4 = mix3.clone();
                     let cfg4 = cfg3.clone();
                     let acc  = tls_acceptor.clone();
                     tokio::spawn(async move {
                         match tokio_rustls::TlsAcceptor::from(acc).accept(stream).await {
-                            Ok(tls_stream) => handle_ws_stream(tls_stream, arx, mix4, cfg4).await,
+                            Ok(tls_stream) => handle_ws_stream(tls_stream, ahi, alo, mix4, cfg4).await,
                             Err(e) => warn!("TLS accept: {}", e),
                         }
                     });
@@ -193,17 +202,19 @@ async fn async_main() {
         tokio::select! {
             Ok((stream, addr)) = ctrl_listener.accept() => {
                 info!("Ctrl: {}", addr);
-                let cfg2  = cfg.clone();
-                let atx2  = audio_tx.clone();
-                let mix2  = mixer.clone();
-                tokio::spawn(handle_ctrl(stream, cfg2, atx2, mix2));
+                let cfg2    = cfg.clone();
+                let atx2    = audio_tx.clone();
+                let atx_lo2 = audio_tx_lo.clone();
+                let mix2    = mixer.clone();
+                tokio::spawn(handle_ctrl(stream, cfg2, atx2, atx_lo2, mix2));
             }
             Ok((stream, addr)) = ws_listener.accept() => {
                 info!("WS: {}", addr);
-                let arx  = audio_tx.subscribe();
+                let ahi  = audio_tx.clone();
+                let alo  = audio_tx_lo.clone();
                 let mix2 = mixer.clone();
                 let cfg2 = cfg.clone();
-                tokio::spawn(handle_ws_plain(stream, arx, mix2, cfg2));
+                tokio::spawn(handle_ws_plain(stream, ahi, alo, mix2, cfg2));
             }
         }
     }
@@ -242,9 +253,10 @@ async fn load_ssl_ctx(cfg: &SharedConfig) -> Option<Arc<rustls::ServerConfig>> {
 
 async fn handle_ctrl(
     mut stream: TcpStream,
-    cfg:   SharedConfig,
-    atx:   Arc<AudioTx>,
-    mixer: SharedMixer,
+    cfg:    SharedConfig,
+    atx:    Arc<AudioTx>,
+    atx_lo: Arc<AudioTx>,
+    mixer:  SharedMixer,
 ) {
     let mut buf = [0u8; 4096];
     loop {
@@ -271,7 +283,7 @@ async fn handle_ctrl(
                     tx_device:      c.tx_device.clone(),
                     rx_running:     true,
                     tx_running:     mixer.has_clients(),
-                    subscribers:    atx.receiver_count(),
+                    subscribers:    atx.receiver_count() + atx_lo.receiver_count(),
                     opus_bitrate:   c.bitrate,
                     latency_ms:     c.latency_ms,
                     ft8_mode:       c.ft8_decode_mode.clone(),
@@ -314,25 +326,34 @@ async fn handle_ctrl(
     }
 }
 
-async fn handle_ws_plain(stream: TcpStream, arx: AudioRx, mixer: SharedMixer, cfg: SharedConfig) {
+async fn handle_ws_plain(stream: TcpStream, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig) {
     match accept_async(stream).await {
-        Ok(ws) => handle_ws(ws, arx, mixer, cfg).await,
+        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg).await,
         Err(e) => warn!("WS plain handshake: {}", e),
     }
 }
 
-async fn handle_ws_stream<S>(stream: S, arx: AudioRx, mixer: SharedMixer, cfg: SharedConfig)
+async fn handle_ws_stream<S>(stream: S, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig)
 where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
 {
     match accept_async(stream).await {
-        Ok(ws) => handle_ws(ws, arx, mixer, cfg).await,
+        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg).await,
         Err(e) => warn!("WS TLS handshake: {}", e),
     }
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum Quality { Hi, Lo }
+
+// Ile sekund bez kolejnego zdarzenia Lagged na strumieniu LOW, zanim wracamy
+// na HI. Duzo dluzsze niz reakcja na pogorszenie (natychmiastowa) — łacze
+// musi sie realnie ustabilizowac, inaczej klient migałby HI/LO w kolko.
+const RECOVERY_CLEAN_SECS: u64 = 30;
+
 async fn handle_ws<S>(
     ws:      tokio_tungstenite::WebSocketStream<S>,
-    mut arx: AudioRx,
+    atx_hi:  Arc<AudioTx>,
+    atx_lo:  Arc<AudioTx>,
     mixer:   SharedMixer,
     _cfg:    SharedConfig,
 )
@@ -348,6 +369,20 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
     });
 
     let client_id = mixer.add_client();
+
+    // Adaptacyjny bitrate: kazdy klient zaczyna na HI (dobra jakosc domyslnie).
+    // Zdarzenie Lagged na WLASNYM kanale broadcast (256 slotow = ~5.12s
+    // zaległosci) oznacza ze TEN klient realnie nie nadaza — przelaczamy go
+    // na strumien LOW, bez wplywu na innych (kazdy ma wlasny Receiver).
+    // Powrot na HI dopiero po dluzszym czystym okresie (histereza przeciw
+    // ciaglemu przeskakiwaniu jakosci przy granicznym łaczu).
+    let mut quality: Quality = Quality::Hi;
+    let mut arx: AudioRx = atx_hi.subscribe();
+    let mut lagged_recently = false;
+    let mut lo_since: Option<tokio::time::Instant> = None;
+    let mut recovery_tick = tokio::time::interval(tokio::time::Duration::from_secs(5));
+    recovery_tick.tick().await; // pierwszy tick jest natychmiastowy — pomin go
+
     loop {
         tokio::select! {
             frame = arx.recv() => {
@@ -359,9 +394,30 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
                         pkt.extend_from_slice(&f.opus);
                         let _ = local_tx.send(pkt).await;
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => warn!("WS lagged {}", n),
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("WS client={} lagged {} (quality={})", client_id, n,
+                              if quality == Quality::Hi { "HI" } else { "LO" });
+                        lagged_recently = true;
+                        if quality == Quality::Hi {
+                            quality = Quality::Lo;
+                            arx = atx_lo.subscribe();
+                            lo_since = Some(tokio::time::Instant::now());
+                            warn!("[audio] client={} -> LOW bitrate (slabe lacze)", client_id);
+                        }
+                    }
                     Err(_) => break,
                 }
+            }
+            _ = recovery_tick.tick() => {
+                if quality == Quality::Lo && !lagged_recently {
+                    if lo_since.map_or(false, |t| t.elapsed().as_secs() >= RECOVERY_CLEAN_SECS) {
+                        quality = Quality::Hi;
+                        arx = atx_hi.subscribe();
+                        lo_since = None;
+                        info!("[audio] client={} -> HIGH bitrate (lacze ustabilizowane)", client_id);
+                    }
+                }
+                lagged_recently = false;
             }
             msg = ws_rx.next() => {
                 match msg {

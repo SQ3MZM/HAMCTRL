@@ -4150,7 +4150,6 @@ class App:
                 "enabled": self._fake_split_enabled,
                 "targetHz": 1500,
             }))
-            _audio_sub = False
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     data = msg.data
@@ -4183,8 +4182,7 @@ class App:
                             # Audio przez Rust WSS bezposrednio — Python nie proxy'uje
                             await ws.send_str(json.dumps({"type":"audio_ready","status":{"running":True,"rust":True}}))
                         elif t == "audio_stop":
-                            self.audio.remove_subscriber(ws)
-                            _audio_sub = False
+                            pass  # audio idzie bezposrednio Rust WS, nic po stronie Pythona do zwolnienia
                         else:
                             # Dotknij aktywnosc przy kazdej akcji na radiu
                             if t in ("freq","freqB","mode","ptt","rig_slider","rig_action","vfo","vfo_op",
@@ -4199,8 +4197,6 @@ class App:
             print(f"[ws] connection error: {e}", flush=True)
         finally:
             await self.hub.remove(ws)
-            if _audio_sub:
-                self.audio.remove_subscriber(ws)
             # Usun z listy online i powiadom pozostalych
             self.online_users.pop(ws, None)
             self.radio_requests.pop(uid, None)
@@ -6306,7 +6302,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-ADMIN-LAST-ADMIN-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-AUDIO-CLEANUP, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 

@@ -25,18 +25,7 @@ except Exception as e:
 OPUS_RATE   = 48000
 OPUS_CH     = 1
 OPUS_FRAMES = 960
-RX_TAG      = 0xA1
 TX_TAG      = 0xA2
-
-
-def _make_encoder(bitrate=24000):
-    if not _OPUS: return None
-    try:
-        enc = opuslib.Encoder(OPUS_RATE, OPUS_CH, opuslib.APPLICATION_VOIP)
-        enc.bitrate = bitrate
-        return enc
-    except Exception as e:
-        print(f"[audio] Encoder error: {e}"); return None
 
 
 def _make_decoder():
@@ -54,24 +43,6 @@ def _make_decoder_stereo():
         return opuslib.Decoder(OPUS_RATE, 2)
     except Exception as e:
         print(f"[audio] Decoder stereo error: {e}"); return None
-
-
-def _resample_mono(pcm_bytes, src_rate, src_ch):
-    n_samples = len(pcm_bytes) // 2
-    samples   = list(struct.unpack(f"<{n_samples}h", pcm_bytes))
-    if src_ch == 2:
-        samples = [(samples[i] + samples[i+1]) // 2 for i in range(0, len(samples)-1, 2)]
-    if src_rate != OPUS_RATE:
-        ratio = OPUS_RATE / src_rate
-        n_out = OPUS_FRAMES
-        out   = []
-        for i in range(n_out):
-            src_pos = i / ratio; src_i = int(src_pos); frac = src_pos - src_i
-            s0 = samples[min(src_i, len(samples)-1)]
-            s1 = samples[min(src_i+1, len(samples)-1)]
-            out.append(int(s0 + frac * (s1 - s0)))
-        samples = out
-    return struct.pack(f"<{len(samples)}h", *samples)
 
 
 def _webm_to_pcm(webm_data: bytes, volume: float = 1.0) -> bytes:
@@ -101,8 +72,7 @@ class AudioStream:
         self.rx_active  = False; self.rx_device  = None
         self._rx_stream = None;  self._rx_thread = None
         self._rx_rate   = OPUS_RATE; self._rx_ch = OPUS_CH
-        self._rx_frames = OPUS_FRAMES; self._rx_enc = None
-        self._subscribers = set(); self._sub_lock = threading.Lock()
+        self._rx_frames = OPUS_FRAMES
         self.tx_active  = False
         self._tx_stream = None; self._tx_thread = None
         # Kolejka PCM do TX playback watku.
@@ -124,12 +94,8 @@ class AudioStream:
         self._webm_buf  = b""
         self._pa = None
         self.rx_frames = 0; self.tx_frames = 0; self.tx_frames_received = 0
-        # Bufor RAW PCM (mono, natywna stawka self._rx_rate) do dekodowania FT8.
-        # Osobny od strumienia Opus do przegladarki — nie wplywa na _broadcast.
-        self._ft8_rx_buf = bytearray()
-        self._ft8_rx_buf_lock = threading.Lock()
-        # Bufor surowego PCM dla dekodera CW (DeepCW). Osobny od FT8, bo tamten
-        # jest opriozniany przy kazdym oknie dekodowania.
+        # Bufor surowego PCM dla dekodera CW (DeepCW), niezalezny od buforow
+        # waterfall — kazdy oprozniany na wlasnym cyklu przez swojego konsumenta.
         self._cw_rx_buf = bytearray()
         self._cw_rx_buf_lock = threading.Lock()
         self.cw_rx_enabled = False      # wlaczane gdy operator otworzy dekoder
@@ -163,14 +129,6 @@ class AudioStream:
         except:
             return None, {}
 
-    def add_subscriber(self, ws):
-        with self._sub_lock: self._subscribers.add(ws)
-        print(f"[audio] +sub razem:{len(self._subscribers)}")
-
-    def remove_subscriber(self, ws):
-        with self._sub_lock: self._subscribers.discard(ws)
-        print(f"[audio] -sub razem:{len(self._subscribers)}")
-
     def start_rx(self, device=None, bitrate=24000):
         if not _PA: return False
         if self.rx_active: self.stop_rx()
@@ -186,7 +144,6 @@ class AudioStream:
                 use_rate = native_rate; use_ch = native_ch
             self._rx_rate = use_rate; self._rx_ch = use_ch
             self._rx_frames = int(OPUS_FRAMES * use_rate / OPUS_RATE) if use_rate != OPUS_RATE else OPUS_FRAMES
-            self._rx_enc = _make_encoder(bitrate)
             kw = dict(format=pyaudio.paInt16, channels=use_ch, rate=use_rate,
                       input=True, frames_per_buffer=self._rx_frames)
             if idx is not None: kw["input_device_index"] = idx
@@ -208,26 +165,20 @@ class AudioStream:
         print("[audio] RX STOP")
 
     def _rx_loop(self):
+        """Wlasny odczyt PyAudio, ROWNOLEGLY do niezaleznego przechwytywania
+        Rust/cpal — realne sluchanie idzie bezposrednio przegladarka<->Rust
+        WS (patrz CLAUDE.md), ta petla zasila WYLACZNIE dekoder CW (DeepCW)
+        i podglad waterfall."""
         log_n = int(OPUS_RATE / OPUS_FRAMES * 10)
         while self.rx_active:
             try:
                 raw = self._rx_stream.read(self._rx_frames, exception_on_overflow=False)
-                # Mono PCM przy natywnej self._rx_rate, NIEZALEZNIE od subskrybentow
-                # WS — potrzebne do dekodowania FT8 nawet gdy nikt nie sluchaty audio.
                 mono_native = raw
                 if self._rx_ch == 2:
                     n = len(raw) // 2
                     samples = struct.unpack(f"<{n}h", raw)
                     mono_samples = [(samples[i] + samples[i+1]) // 2 for i in range(0, len(samples)-1, 2)]
                     mono_native = struct.pack(f"<{len(mono_samples)}h", *mono_samples)
-                with self._ft8_rx_buf_lock:
-                    self._ft8_rx_buf.extend(mono_native)
-                    # Bezpiecznik: nie pozwol buforowi rosnac bez ograniczen jesli
-                    # nikt go nie konsumuje (np. dekoder FT8 wylaczony) — trzymaj
-                    # max ok. 20s przy natywnej stawce.
-                    max_bytes = int(self._rx_rate * 20 * 2)
-                    if len(self._ft8_rx_buf) > max_bytes:
-                        del self._ft8_rx_buf[:len(self._ft8_rx_buf) - max_bytes]
 
                 # Bufor dla dekodera CW — SUROWY PCM prosto z karty.
                 #
@@ -237,7 +188,7 @@ class AudioStream:
                 # spadal do 6.4x, podczas gdy model potrzebuje >20x. Stad kasza
                 # w dekodowaniu mimo czystego, mocnego sygnalu — CW Skimmer
                 # sluchajacy MIKROFONEM z powietrza czytal lepiej, bo nigdy nie
-                # przechodzil przez kodek. Osobny bufor (FT8 swoj oprozniaty).
+                # przechodzil przez kodek.
                 if getattr(self, "cw_rx_enabled", False):
                     with self._cw_rx_buf_lock:
                         self._cw_rx_buf.extend(mono_native)
@@ -251,53 +202,18 @@ class AudioStream:
                     if len(self._waterfall_buf) > max_wf_bytes:
                         del self._waterfall_buf[:len(self._waterfall_buf) - max_wf_bytes]
 
-                with self._sub_lock: has_subs = bool(self._subscribers)
-                if not has_subs: continue
-                pcm = _resample_mono(raw, self._rx_rate, self._rx_ch) if (self._rx_rate != OPUS_RATE or self._rx_ch != 1) else raw
-                enc = self._rx_enc
-                if enc:
-                    try: opus = enc.encode(pcm, OPUS_FRAMES)
-                    except: continue
-                else:
-                    opus = pcm
-                if not opus: continue
-                payload = bytes([RX_TAG]) + opus
                 self.rx_frames += 1
                 if self.rx_frames % log_n == 0:
                     # RMS liczone tanio przez numpy (bylo: petla Pythona
                     # sum(s*s) po 960 probkach — zbedna praca co log).
-                    _a = np.frombuffer(pcm, dtype=np.int16)
+                    _a = np.frombuffer(mono_native, dtype=np.int16)
                     rms = int(np.sqrt(np.mean(_a.astype(np.float32)**2))) if _a.size else 0
-                    print(f"[audio] RX {self.rx_frames} ramek | RMS={rms} | {len(self._subscribers)} sub | {len(payload)}B")
-                if self.loop:
-                    asyncio.run_coroutine_threadsafe(self._broadcast(payload), self.loop)
+                    print(f"[audio] RX {self.rx_frames} ramek | RMS={rms}")
             except OSError as e:
                 if self.rx_active: print(f"[audio] RX IO: {e}"); time.sleep(0.1)
             except Exception as e:
                 if self.rx_active: print(f"[audio] RX err: {e}")
         print(f"[audio] Watek RX koniec — {self.rx_frames} ramek")
-
-    async def _broadcast(self, payload):
-        """Rownolegly broadcast audio Opus do wszystkich subskrybentow.
-
-        KRYTYCZNE dla audio: kazda ramka Opus (~20ms) musi dotrzec do wszystkich
-        klientow BEZ czekania na najwolniejszego. Sekwencyjne await ws.send_bytes
-        powodowaloby ze przy N klientach kazda ramka wysylana N razy sequencjalnie
-        = N * czas = drop klatek dla wielu userow rownoczesnie.
-
-        Rownolegly gather: wszystkie wysylki startuja rownoczesnie, kazdy klient
-        dostaje audio na swojej wlasnej scieżce."""
-        with self._sub_lock: subs = list(self._subscribers)
-        if not subs:
-            return
-        results = await asyncio.gather(
-            *[ws.send_bytes(payload) for ws in subs],
-            return_exceptions=True
-        )
-        # Zbierz martwych subskrybentow (wyjatki)
-        for ws, res in zip(subs, results):
-            if isinstance(res, Exception):
-                self.remove_subscriber(ws)
 
     def pop_waterfall_chunk(self):
         """
@@ -343,40 +259,6 @@ class AudioStream:
             return samples, self._rx_rate
         except Exception as e:
             print(f"[audio] pop_cw_rx_audio blad: {e}", flush=True)
-            return None
-
-    def pop_ft8_rx_window(self):
-        """
-        Wyciaga wszystkie zebrane probki RAW PCM (mono, natywna stawka),
-        czysci bufor, i zwraca jako numpy float64 array zresamplowany do
-        12000Hz (wymagane przez ft8_rx_decoder.decode_window). Zwraca None
-        jesli RX nieaktywne lub bufor pusty.
-        """
-        if not self.rx_active:
-            return None
-        with self._ft8_rx_buf_lock:
-            if not self._ft8_rx_buf:
-                return None
-            raw_bytes = bytes(self._ft8_rx_buf)
-            self._ft8_rx_buf = bytearray()
-        try:
-            import numpy as np
-            n = len(raw_bytes) // 2
-            samples = np.frombuffer(raw_bytes, dtype='<i2').astype(np.float64) / 32768.0
-            src_rate = self._rx_rate
-            if src_rate == 12000:
-                return samples
-            # Prosty resampler liniowy (wystarczajacy — dekoder FT8 dziala na
-            # pasmie 200-3000Hz, znacznie ponizej Nyquista nawet dla 8kHz src)
-            duration_s = len(samples) / src_rate
-            n_out = int(round(duration_s * 12000))
-            if n_out < 2:
-                return None
-            src_idx = np.linspace(0, len(samples) - 1, n_out)
-            resampled = np.interp(src_idx, np.arange(len(samples)), samples)
-            return resampled
-        except Exception as e:
-            print(f"[audio] pop_ft8_rx_window blad: {e}")
             return None
 
     def start_tx(self, device=None):
@@ -609,7 +491,7 @@ class AudioStream:
             "rx_active": self.rx_active, "tx_active": self.tx_active,
             "rx_device": self.rx_device, "rx_frames": self.rx_frames,
             "tx_frames": self.tx_frames, "rx_rate": self._rx_rate,
-            "rx_ch": self._rx_ch, "subscribers": len(self._subscribers),
+            "rx_ch": self._rx_ch,
             "opus": _OPUS, "pyaudio": _PA,
             "opus_lib": "opuslib" if _OPUS else "none",
             "sample_rate": OPUS_RATE, "frame_ms": 20,

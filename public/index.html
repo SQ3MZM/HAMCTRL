@@ -177,7 +177,8 @@
         <span id="badge-split" style="display:none;" class="vfo-badge" style="border-color:rgba(212,168,87,0.4);color:var(--amber);cursor:pointer;" onclick="UI.toggleSplit()">SPLIT</span>
         <span id="badge-rx" class="vfo-badge" style="border-color:rgba(184,201,143,0.3);background:rgba(184,201,143,0.1);color:var(--green);">RX</span>
         <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(217,119,106,0.4);background:rgba(217,119,106,0.15);color:var(--red);">TX</span>
-        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">LATENCY</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" title="Kliknij aby odswiezyd polaczenie z serwerem" style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">WS</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" title="Opoznienie polaczenia sterujacego (ping/pong) — NIE opoznienie samego audio. Kliknij aby odswiezyc." style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">AUDIO</span><span id="badge-audio-latency" class="vfo-badge" title="Rzeczywiste opoznienie odsluchu RX: ile audio jest zbuforowane miedzy odbiorem z serwera a odtworzeniem. Cel ok. 180ms, twardy limit 300ms." style="border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
         <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(212,168,87,0.15);border:1px solid rgba(212,168,87,0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
         <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(184,201,143,0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
       </div>
@@ -2556,7 +2557,7 @@
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608160002"></script>
+<script src="js/ws.js?v=202608160003"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
 <script src="js/ui.js?v=202608160003"></script>
 <script src="js/settings.js?v=202606180504"></script>

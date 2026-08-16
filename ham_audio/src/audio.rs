@@ -77,13 +77,14 @@ pub fn list_devices() -> Vec<DeviceInfo> {
 pub async fn run_audio_loop(
     cfg:    SharedConfig,
     tx:     Arc<AudioTx>,
+    tx_lo:  Arc<AudioTx>,
     _mixer: SharedMixer,
     ft8_pcm_tx: std::sync::mpsc::SyncSender<Vec<f32>>,
 ) {
     loop {
-        let (rx_dev, bitrate, vol) = {
+        let (rx_dev, bitrate, bitrate_lo, vol) = {
             let c = cfg.read().await;
-            (c.rx_device.clone(), c.bitrate, c.rx_volume)
+            (c.rx_device.clone(), c.bitrate, c.bitrate_lo, c.rx_volume)
         };
 
         // std::sync::mpsc — działa poprawnie między std thread a tokio.
@@ -101,7 +102,12 @@ pub async fn run_audio_loop(
             }
         });
 
-        // Opus encoder w osobnym wątku blocking — odbiera z std channel
+        // Opus encoder w osobnym wątku blocking — odbiera z std channel.
+        // DWA rownolegle kodery z TEGO SAMEGO PCM: "hi" (jakosc domyslna) i
+        // "lo" (adaptacyjny bitrate dla slabszych lączy — patrz handle_ws w
+        // main.rs, ktory przelacza subskrypcje per-klient po zdarzeniach
+        // Lagged, bez wplywu na klientow z dobrym lączem).
+        let tx_lo2 = tx_lo.clone();
         let enc_handle = tokio::task::spawn_blocking(move || {
             let mut enc = match Encoder::new(OPUS_RATE, Channels::Mono, Application::LowDelay) {
                 Ok(e) => e,
@@ -112,8 +118,18 @@ pub async fn run_audio_loop(
             let _ = enc.set_dtx(false);
             let _ = enc.set_vbr(false);
 
+            let mut enc_lo = match Encoder::new(OPUS_RATE, Channels::Mono, Application::LowDelay) {
+                Ok(e) => e,
+                Err(e) => { error!("[audio] Opus encoder (lo): {}", e); return; }
+            };
+            let _ = enc_lo.set_bitrate(opus::Bitrate::Bits(bitrate_lo as i32));
+            let _ = enc_lo.set_inband_fec(false);
+            let _ = enc_lo.set_dtx(false);
+            let _ = enc_lo.set_vbr(false);
+
             let mut seq: u32 = 0;
             let mut opus_buf = vec![0u8; 4096];
+            let mut opus_buf_lo = vec![0u8; 4096];
             let mut frame_count: u64 = 0;
 
             // Odbieraj PCM ze std channel — blokuje ale to OK bo spawn_blocking
@@ -129,8 +145,7 @@ pub async fn run_audio_loop(
                             opus: Bytes::copy_from_slice(&opus_buf[..n]),
                             seq,
                         };
-                        seq = seq.wrapping_add(1);
-                        let receivers = tx2.receiver_count();
+                    let receivers = tx2.receiver_count();
                     let send_result = tx2.send(frame);
                     if frame_count <= 5 || frame_count % 100 == 0 || receivers > 0 && frame_count <= 20 {
                         println!("[audio] frame #{} receivers={} ok={}", frame_count, receivers, send_result.is_ok());
@@ -140,6 +155,20 @@ pub async fn run_audio_loop(
                     Ok(_) => {}
                     Err(e) => warn!("[audio] Opus encode: {}", e),
                 }
+
+                match enc_lo.encode_float(&pcm, &mut opus_buf_lo) {
+                    Ok(n) if n > 0 => {
+                        let frame_lo = AudioFrame {
+                            opus: Bytes::copy_from_slice(&opus_buf_lo[..n]),
+                            seq,
+                        };
+                        let _ = tx_lo2.send(frame_lo);
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!("[audio] Opus encode (lo): {}", e),
+                }
+
+                seq = seq.wrapping_add(1);
             }
             println!("[audio] encoder loop ended");
         });
@@ -175,20 +204,25 @@ fn run_rx_thread(
         }))
         .unwrap_or(false);
 
+    // Jawny, maly bufor sprzetowy (20ms, ta sama granulacja co reszta toru:
+    // FRAME_SAMP, ramki Opus, jitter-buffer front-endu) zamiast BufferSize::
+    // Default — sterownik/WASAPI mial dowolnosc wyboru okresu, tu zadamy
+    // wprost wartosci zgodnej z budzetem 200-300ms latencji.
     let (cfg, actual_rate) = if supported {
         (StreamConfig {
             channels:    1,
             sample_rate: cpal::SampleRate(OPUS_RATE),
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size: cpal::BufferSize::Fixed(FRAME_SAMP as u32),
         }, OPUS_RATE)
     } else {
         let default_cfg = device.default_input_config()?;
         let rate = default_cfg.sample_rate().0;
         println!("[audio] 48kHz niedostepne, uzyje {}Hz + resample", rate);
+        let frame_native = ((rate as u64 * FRAME_SAMP as u64) / OPUS_RATE as u64) as u32;
         (StreamConfig {
             channels:    1,
             sample_rate: default_cfg.sample_rate(),
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size: cpal::BufferSize::Fixed(frame_native.max(1)),
         }, rate)
     };
     println!("[audio] Stream config: {}Hz", actual_rate);

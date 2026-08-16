@@ -5,6 +5,11 @@ pub struct Config {
     pub rx_device:      String,
     pub tx_device:      String,
     pub bitrate:        u32,
+    /// Bitrate strumienia "LOW" — dla klientow ze slabym lączem, ktorzy nie
+    /// nadazaja za strumieniem glownym (patrz handle_ws w main.rs, przelaczanie
+    /// po zdarzeniach Lagged). Niski, ale wciaz zrozumiały dla mowy/CW na
+    /// waskim pasmie SSB (nie muzyka — tu nie trzeba wysokiej wiernosci).
+    pub bitrate_lo:     u32,
     pub rx_volume:      f32,
     pub ctrl_port:      u16,
     pub ws_port:        u16,
@@ -27,6 +32,7 @@ impl Config {
             rx_device:       env("HAM_RX_DEVICE",   ""),
             tx_device:       env("HAM_TX_DEVICE",   ""),
             bitrate:         env_u32("HAM_BITRATE",  24000),
+            bitrate_lo:      env_u32("HAM_BITRATE_LO", 9000),
             rx_volume:       env_f32("HAM_VOLUME",   1.0),
             ctrl_port:       env_u16("HAM_CTRL_PORT",  9400),
             ws_port:         env_u16("HAM_WS_PORT",    9401),

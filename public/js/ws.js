@@ -205,6 +205,26 @@ const AUDIO_LATENCY = 0.18;  // 180ms cel — maly zapas wiecej niz 150, amortyz
                              // tez OK — RCForb i tak trzyma 200-300ms.
 const _AUDIO_MIN = 0.05;
 const _AUDIO_MAX = 0.30;     // gorna granica — powyzej niej PRZYTNIJ bufor (nie rosnij)
+let _audioBadgeAt = 0;       // throttle aktualizacji DOM (ramki leca co 20ms)
+
+function _updateAudioLatencyBadge() {
+  const now = performance.now();
+  if (now - _audioBadgeAt < 500) return;
+  _audioBadgeAt = now;
+  const badge = document.getElementById('badge-audio-latency');
+  if (!badge) return;
+  if (!window._audioEnabled || _aheadAvg <= 0) {
+    badge.textContent = '--'; badge.style.color = 'var(--dim)';
+    badge.style.borderColor = 'var(--border2)';
+    return;
+  }
+  const ms = Math.round(_aheadAvg * 1000);
+  badge.textContent = ms + ' ms';
+  // Cel 180ms (AUDIO_LATENCY), twardy sufit 300ms (_AUDIO_MAX) — powyzej niego
+  // scheduler i tak przycina bufor, wiec czerwony = bufor stale dobija do sufitu.
+  badge.style.color = ms < 220 ? 'var(--green)' : ms < 300 ? 'var(--amber)' : 'var(--red)';
+  badge.style.borderColor = ms < 220 ? 'var(--green2)' : ms < 300 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
+}
 
 function _scheduleAudioBuffer(audioBuffer) {
   if (!audioCtx) return;
@@ -247,6 +267,7 @@ function _scheduleAudioBuffer(audioBuffer) {
   src.connect(window._masterGain || audioCtx.destination);
   src.start(_nextAudioTime);
   _nextAudioTime += audioBuffer.duration / rate;
+  _updateAudioLatencyBadge();
 }
 
 function playOpusFrame(buffer) {
@@ -1186,6 +1207,8 @@ window.WS = {
         window._audioWs = null;
       }
       this.send({ type: 'audio_stop' });
+      _nextAudioTime = 0; _aheadAvg = 0; _audioBadgeAt = 0;
+      _updateAudioLatencyBadge();
     }
   },
   isConnected:   () => ws && ws.readyState === WebSocket.OPEN,
