@@ -923,6 +923,7 @@
             IMPORT ADIF
             <input type="file" accept=".adi,.adif" style="display:none;" onchange="QSOLog.importADIF(this)">
           </label>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.deleteSelected()">USUŃ ZAZNACZONE</button>
           <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.15);border-color:var(--red);color:var(--red);font-weight:bold;" onclick="QSOLog.deleteAll()">⚠ KASUJ CAŁY LOG</button>
         </div>
       </div>
@@ -956,6 +957,8 @@
             <option>30m</option><option>20m</option><option>17m</option><option>15m</option>
             <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
             <option>2m</option><option>70cm</option>
+            <option>23cm</option><option>13cm</option><option>9cm</option>
+            <option>6cm</option><option>3cm</option><option>1.2cm</option>
           </select>
         </div>
         <div style="display:flex;flex-direction:column;gap:3px;">
@@ -1037,6 +1040,8 @@
           <option>30m</option><option selected>20m</option><option>17m</option><option>15m</option>
           <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
           <option>2m</option><option>70cm</option>
+          <option>23cm</option><option>13cm</option><option>9cm</option>
+          <option>6cm</option><option>3cm</option><option>1.2cm</option>
         </select>
       </div>
       <div class="sg"><label>TRYB *</label>
@@ -1053,6 +1058,36 @@
         <input type="text" id="qso-comment" placeholder="73 de SP3GSK" style="font-family:var(--mono);font-size:12px;">
       </div>
     </div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;
+      font-family:var(--mono);font-size:11px;color:var(--dim);">
+      <input type="checkbox" id="qso-is-sat" onchange="QSOLog.toggleSatFields(this.checked)">
+      🛰 Łączność przez satelitę
+    </label>
+    <!-- PASMO/FREQ wyzej = uplink (nadajesz). Downlink (odbierasz) to osobne
+         pole FREQ_RX/BAND_RX w ADIF - satelity pracuja cross-band (full duplex),
+         wiec jedno pole PASMO nie wystarczy. -->
+    <div id="qso-sat-fields" style="display:none;grid-template-columns:1fr 1fr;gap:10px;
+      margin-top:10px;padding:10px;border:1px solid var(--green2);border-radius:4px;">
+      <div class="sg"><label>SATELITA</label>
+        <input type="text" id="qso-sat-name" placeholder="np. SO-50, QO-100, ISS" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg"><label>TRYB SATELITY</label>
+        <input type="text" id="qso-sat-mode" placeholder="np. U/V, V/U, L/X" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;"></div>
+      <div class="sg"><label>DOWNLINK PASMO</label>
+        <select id="qso-band-rx" style="font-family:var(--mono);font-size:12px;">
+          <option value="">— jak uplink —</option>
+          <option>160m</option><option>80m</option><option>60m</option><option>40m</option>
+          <option>30m</option><option>20m</option><option>17m</option><option>15m</option>
+          <option>12m</option><option>10m</option><option>6m</option><option>4m</option>
+          <option>2m</option><option>70cm</option>
+          <option>23cm</option><option>13cm</option><option>9cm</option>
+          <option>6cm</option><option>3cm</option><option>1.2cm</option>
+        </select>
+      </div>
+      <div class="sg"><label>DOWNLINK FREQ MHz</label>
+        <input type="text" id="qso-freq-rx" placeholder="145.803" style="font-family:var(--mono);font-size:12px;"></div>
+    </div>
+
     <div style="display:flex;gap:8px;margin-top:16px;">
       <button class="save-btn" style="flex:1;" onclick="QSOLog.saveQSO()">ZAPISZ QSO</button>
       <button class="save-btn" style="flex:0 0 auto;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.closeModal()">ANULUJ</button>
@@ -1075,7 +1110,7 @@
             style="text-transform:uppercase;font-family:var(--mono);font-size:14px;letter-spacing:2px;"
             autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
         <div class="field"><label>LOKATOR QTH (np. JO82)</label>
-          <input type="text" id="profile-locator" placeholder="JO82" maxlength="6"
+          <input type="text" id="profile-locator" placeholder="JO82" maxlength="8"
             style="text-transform:uppercase;font-family:var(--mono);"
             autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
         <div class="field"><label>E-MAIL</label>
@@ -2127,7 +2162,7 @@
         <div class="field"><label>ZNAK WYWOŁAWCZY</label>
           <input type="text" id="admin-profile-callsign" placeholder="SP0ABC" style="text-transform:uppercase;" autocomplete="off"></div>
         <div class="field"><label>LOKATOR QTH (np. JO82)</label>
-          <input type="text" id="admin-profile-locator" placeholder="JO82" maxlength="6" style="text-transform:uppercase;" autocomplete="off"></div>
+          <input type="text" id="admin-profile-locator" placeholder="JO82" maxlength="8" style="text-transform:uppercase;" autocomplete="off"></div>
         <div class="field"><label>E-MAIL</label>
           <input type="email" id="admin-profile-email" placeholder="user@example.com" autocomplete="email"></div>
         <button class="save-btn" onclick="saveProfile('admin-profile')">ZAPISZ PROFIL</button>
@@ -2333,7 +2368,7 @@
       </div>
       <div class="sg" id="upass-row"><label>HASŁO *</label><input type="password" id="upass" placeholder="min. 8 znaków" autocomplete="new-password"></div>
       <div class="sg"><label>ZNAK WYWOŁAWCZY</label><input type="text" id="ucallsign" placeholder="SP2ABC" style="text-transform:uppercase"></div>
-      <div class="sg"><label>LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="6" style="text-transform:uppercase"></div>
+      <div class="sg"><label>LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="8" style="text-transform:uppercase"></div>
       <div class="sg full-row"><label>IMIĘ</label><input type="text" id="uname-full" placeholder="Jan"></div>
       <div class="sg full-row"><label>EMAIL</label><input type="email" id="uemail" placeholder="jan@example.com"></div>
     </div>
@@ -2475,7 +2510,7 @@
 <script src="js/cw.js?v=202606250001"></script>
 <script src="js/cloudlog.js?v=202606250001"></script>
 <script src="js/hamlib_ui.js?v=202608160001"></script>
-<script src="js/qsolog.js?v=202608150001"></script>
+<script src="js/qsolog.js?v=202608160001"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

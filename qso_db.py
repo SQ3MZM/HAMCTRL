@@ -66,7 +66,12 @@ CREATE TABLE IF NOT EXISTS qso (
     comment         TEXT DEFAULT '',
     source          TEXT DEFAULT 'manual',
     created_at      TEXT NOT NULL,
-    cloudlog_id     TEXT DEFAULT ''
+    cloudlog_id     TEXT DEFAULT '',
+    prop_mode       TEXT DEFAULT '',
+    sat_name        TEXT DEFAULT '',
+    sat_mode        TEXT DEFAULT '',
+    freq_rx         TEXT DEFAULT '',
+    band_rx         TEXT DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_qso_user      ON qso(user_id);
@@ -111,7 +116,32 @@ def _get_conn() -> sqlite3.Connection:
                 print(f"[qso_db] PRAGMA blad: {e}", flush=True)
             _conn.executescript(_SCHEMA)
             _conn.commit()
+            _migrate(_conn)
         return _conn
+
+
+# Kolumny dopisane PO pierwszym wydaniu — CREATE TABLE IF NOT EXISTS ich nie
+# doda do juz istniejacej bazy (SQLite tworzy tabele tylko raz), wiec trzeba
+# je dolozyc recznie przez ALTER TABLE. Bezpieczne: DEFAULT '' na istniejacych
+# wierszach, zadne dane sie nie rusza. Patrz komentarz przy _db_path() — ten
+# plik to prawdziwy dziennik lacznosci, wiec migracja musi byc addytywna,
+# nigdy destrukcyjna.
+_NEW_COLUMNS = {
+    "prop_mode": "TEXT DEFAULT ''",
+    "sat_name":  "TEXT DEFAULT ''",
+    "sat_mode":  "TEXT DEFAULT ''",
+    "freq_rx":   "TEXT DEFAULT ''",
+    "band_rx":   "TEXT DEFAULT ''",
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(qso)").fetchall()}
+    for col, decl in _NEW_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE qso ADD COLUMN {col} {decl}")
+            print(f"[qso_db] migracja: dodano kolumne '{col}'", flush=True)
+    conn.commit()
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -178,8 +208,9 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
                         id, user_id, call, qso_date, time_on, time_off,
                         band, mode, freq, rst_sent, rst_rcvd,
                         gridsquare, my_call, my_gridsquare,
-                        power, comment, source, created_at
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        power, comment, source, created_at,
+                        prop_mode, sat_name, sat_mode, freq_rx, band_rx
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (
                     qso_id, user_id, call,
                     _date, _time,
@@ -195,6 +226,11 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
                     str(data.get("comment", "")),
                     str(data.get("source", "adif_import")),
                     now,
+                    str(data.get("prop_mode", "")).upper(),
+                    str(data.get("sat_name", "")).upper(),
+                    str(data.get("sat_mode", "")).upper(),
+                    str(data.get("freq_rx", "")),
+                    str(data.get("band_rx", "")),
                 ))
                 inserted += 1
             except Exception:
@@ -236,6 +272,13 @@ def add_qso(user_id: str, data: dict) -> dict:
         "source":        data.get("source", "manual"),
         "created_at":    now_utc,
         "cloudlog_id":   data.get("cloudlog_id", ""),
+        # Lacznosc satelitarna (ADIF): PROP_MODE=SAT, SAT_NAME/SAT_MODE opisuja
+        # satelite, FREQ_RX/BAND_RX to downlink (istniejace freq/band = uplink).
+        "prop_mode":     (data.get("prop_mode") or "").strip().upper(),
+        "sat_name":      (data.get("sat_name") or "").strip().upper(),
+        "sat_mode":      (data.get("sat_mode") or "").strip().upper(),
+        "freq_rx":       data.get("freq_rx", ""),
+        "band_rx":       data.get("band_rx", ""),
     }
 
     conn.execute("""
@@ -243,7 +286,8 @@ def add_qso(user_id: str, data: dict) -> dict:
             :id,:user_id,:call,:qso_date,:time_on,:time_off,
             :band,:mode,:freq,:rst_sent,:rst_rcvd,:gridsquare,
             :my_call,:my_gridsquare,:power,:comment,:source,
-            :created_at,:cloudlog_id
+            :created_at,:cloudlog_id,
+            :prop_mode,:sat_name,:sat_mode,:freq_rx,:band_rx
         )""", row)
     conn.commit()
     return dict(row)
@@ -282,6 +326,11 @@ def update_qso(user_id: str, qso_id: str, data: dict, is_admin: bool = False) ->
         "my_gridsquare": (data.get("my_gridsquare") or "").upper(),
         "power":         data.get("power", ""),
         "comment":       data.get("comment", ""),
+        "prop_mode":     (data.get("prop_mode") or "").strip().upper(),
+        "sat_name":      (data.get("sat_name") or "").strip().upper(),
+        "sat_mode":      (data.get("sat_mode") or "").strip().upper(),
+        "freq_rx":       data.get("freq_rx", ""),
+        "band_rx":       data.get("band_rx", ""),
     }
     set_clause = ", ".join(f"{k}=:{k}" for k in fields)
     fields["id"]      = qso_id
@@ -530,6 +579,14 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
         rec += field("MY_GRIDSQUARE", q["my_gridsquare"])
         rec += field("TX_PWR",        q["power"])
         rec += field("COMMENT",       q["comment"])
+        # Lacznosc satelitarna — standard ADIF: PROP_MODE=SAT, SAT_NAME/
+        # SAT_MODE opisuja satelite, FREQ_RX/BAND_RX to downlink (FREQ/BAND
+        # wyzej to uplink). Puste dla zwyklych QSO — field() pomija puste.
+        rec += field("PROP_MODE",     q.get("prop_mode", ""))
+        rec += field("SAT_NAME",      q.get("sat_name", ""))
+        rec += field("SAT_MODE",      q.get("sat_mode", ""))
+        rec += field("FREQ_RX",       q.get("freq_rx", ""))
+        rec += field("BAND_RX",       q.get("band_rx", ""))
         rec += "<EOR>"
         lines.append(rec)
 
@@ -544,7 +601,8 @@ def export_csv(user_id: str, is_admin: bool = False, **filters) -> str:
     out  = io.StringIO()
     cols = ["call","qso_date","time_on","time_off","band","mode","freq",
             "rst_sent","rst_rcvd","gridsquare","my_call","my_gridsquare",
-            "power","comment","source"]
+            "power","comment","source",
+            "prop_mode","sat_name","sat_mode","freq_rx","band_rx"]
     writer = csv.DictWriter(out, fieldnames=cols, extrasaction="ignore",
                             lineterminator="\r\n")
     writer.writeheader()

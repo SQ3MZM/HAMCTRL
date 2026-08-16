@@ -64,7 +64,7 @@ function sort(col) {
 async function load() {
   const tbody = document.getElementById('log-table-body');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr>';
 
   const filters = _getFilters();
   const token   = localStorage.getItem('token') || '';
@@ -88,7 +88,7 @@ async function load() {
     const cnt = document.getElementById('log-count');
     if (cnt) cnt.textContent = `${_total} QSO`;
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:20px;color:var(--red);">Błąd: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--red);">Błąd: ${e.message}</td></tr>`;
   }
 }
 
@@ -113,7 +113,9 @@ function _renderTable(qsos) {
       <td>${time}</td>
       <td class="log-call">${q.call || ''}</td>
       <td>${q.band || ''}</td>
-      <td class="${modeClass}">${q.mode || ''}</td>
+      <td class="${modeClass}">${q.mode || ''}${q.sat_name
+        ? ` <span title="Satelita: ${q.sat_name}${q.sat_mode ? ' (' + q.sat_mode + ')' : ''}${q.band_rx ? ', downlink ' + q.band_rx : ''}">🛰</span>`
+        : ''}</td>
       <td>${q.freq ? parseFloat(q.freq).toFixed(4) : ''}</td>
       <td>${q.rst_sent || ''}</td>
       <td>${q.rst_rcvd || ''}</td>
@@ -141,6 +143,14 @@ function nextPage() {
 }
 
 // ── Modal: nowe / edytuj QSO ─────────────────────────────────────────────────
+// Sekcja satelitarna (SAT_NAME/SAT_MODE/FREQ_RX/BAND_RX) chowana pod
+// checkboxem - wiekszosc QSO nie jest satelitarna, nie ma sensu zajmowac
+// miejsca na stale. toggleSatFields steruje widocznoscia (grid<->none).
+function toggleSatFields(show) {
+  const box = document.getElementById('qso-sat-fields');
+  if (box) box.style.display = show ? 'grid' : 'none';
+}
+
 function openNew() {
   _editId = null;
   const now = new Date();
@@ -159,6 +169,13 @@ function openNew() {
   _setField('qso-rst-sent', '599');
   _setField('qso-rst-rcvd', '599');
   _setField('qso-comment', '');
+  _setField('qso-sat-name', '');
+  _setField('qso-sat-mode', '');
+  _setField('qso-band-rx', '');
+  _setField('qso-freq-rx', '');
+  const satChk = document.getElementById('qso-is-sat');
+  if (satChk) satChk.checked = false;
+  toggleSatFields(false);
 
   const title = document.getElementById('log-modal-title');
   if (title) title.textContent = 'NOWE QSO';
@@ -186,6 +203,14 @@ async function openEdit(id) {
     _setField('qso-rst-sent', q.rst_sent || '');
     _setField('qso-rst-rcvd', q.rst_rcvd || '');
     _setField('qso-comment', q.comment || '');
+    _setField('qso-sat-name', q.sat_name || '');
+    _setField('qso-sat-mode', q.sat_mode || '');
+    _setField('qso-band-rx', q.band_rx || '');
+    _setField('qso-freq-rx', q.freq_rx || '');
+    const isSat = !!(q.sat_name || q.prop_mode === 'SAT');
+    const satChk = document.getElementById('qso-is-sat');
+    if (satChk) satChk.checked = isSat;
+    toggleSatFields(isSat);
     const title = document.getElementById('log-modal-title');
     if (title) title.textContent = 'EDYTUJ QSO';
     const modal = document.getElementById('log-modal');
@@ -227,6 +252,19 @@ async function saveQSO() {
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
                    || S?.stationLocator || ''),  // lokator OPERATORA
   };
+
+  // Lacznosc satelitarna — tylko gdy checkbox zaznaczony. PASMO/FREQ wyzej
+  // to uplink, band_rx/freq_rx to downlink (patrz komentarz przy polu w HTML).
+  if (document.getElementById('qso-is-sat')?.checked) {
+    qso.prop_mode = 'SAT';
+    qso.sat_name  = document.getElementById('qso-sat-name')?.value?.trim().toUpperCase() || '';
+    qso.sat_mode  = document.getElementById('qso-sat-mode')?.value?.trim().toUpperCase() || '';
+    qso.band_rx   = document.getElementById('qso-band-rx')?.value || '';
+    qso.freq_rx   = document.getElementById('qso-freq-rx')?.value?.trim() || '';
+  } else {
+    qso.prop_mode = '';
+    qso.sat_name = qso.sat_mode = qso.band_rx = qso.freq_rx = '';
+  }
 
   const token  = localStorage.getItem('token') || '';
   const url    = _editId ? `/api/qsolog/${_editId}` : '/api/qsolog';
@@ -320,19 +358,30 @@ function _setField(id, val) {
 
 function _freqToBand(hz) {
   const mhz = hz / 1e6;
-  if (mhz >= 1.8  && mhz <= 2.0)  return '160m';
-  if (mhz >= 3.5  && mhz <= 4.0)  return '80m';
-  if (mhz >= 7.0  && mhz <= 7.3)  return '40m';
-  if (mhz >= 10.1 && mhz <= 10.15)return '30m';
-  if (mhz >= 14.0 && mhz <= 14.35)return '20m';
-  if (mhz >= 18.0 && mhz <= 18.17)return '17m';
-  if (mhz >= 21.0 && mhz <= 21.45)return '15m';
-  if (mhz >= 24.8 && mhz <= 24.99)return '12m';
-  if (mhz >= 28.0 && mhz <= 29.7) return '10m';
-  if (mhz >= 50.0 && mhz <= 54.0) return '6m';
-  if (mhz >= 70.0 && mhz <= 70.5) return '4m';
-  if (mhz >= 144  && mhz <= 148)  return '2m';
-  if (mhz >= 430  && mhz <= 440)  return '70cm';
+  // Zakresy wg planu pasm IARU Region 1 (Europa/Polska) - gorne (mikrofalowe)
+  // pasma dopisane bo uzywane m.in. do QO-100 (13cm uplink / 3cm downlink)
+  // i lacznosci przez satelity ogolnie (patrz tez pola SAT_NAME/SAT_MODE/
+  // FREQ_RX/BAND_RX w qso_db.py).
+  if (mhz >= 1.8    && mhz <= 2.0)    return '160m';
+  if (mhz >= 3.5    && mhz <= 4.0)    return '80m';
+  if (mhz >= 5.3    && mhz <= 5.45)   return '60m';
+  if (mhz >= 7.0    && mhz <= 7.3)    return '40m';
+  if (mhz >= 10.1   && mhz <= 10.15)  return '30m';
+  if (mhz >= 14.0   && mhz <= 14.35)  return '20m';
+  if (mhz >= 18.0   && mhz <= 18.17)  return '17m';
+  if (mhz >= 21.0   && mhz <= 21.45)  return '15m';
+  if (mhz >= 24.8   && mhz <= 24.99)  return '12m';
+  if (mhz >= 28.0   && mhz <= 29.7)   return '10m';
+  if (mhz >= 50.0   && mhz <= 54.0)   return '6m';
+  if (mhz >= 70.0   && mhz <= 70.5)   return '4m';
+  if (mhz >= 144    && mhz <= 148)    return '2m';
+  if (mhz >= 430    && mhz <= 440)    return '70cm';
+  if (mhz >= 1240   && mhz <= 1300)   return '23cm';
+  if (mhz >= 2300   && mhz <= 2450)   return '13cm';
+  if (mhz >= 3400   && mhz <= 3410)   return '9cm';
+  if (mhz >= 5650   && mhz <= 5850)   return '6cm';
+  if (mhz >= 10000  && mhz <= 10500)  return '3cm';
+  if (mhz >= 24000  && mhz <= 24050)  return '1.2cm';
   return '20m';
 }
 
@@ -516,6 +565,11 @@ function _parseADIF(text) {
       my_gridsquare: fields.MY_GRIDSQUARE || '',
       power:         fields.TX_PWR || '',
       comment:       fields.COMMENT || fields.NOTES || '',
+      prop_mode:     fields.PROP_MODE || '',
+      sat_name:      fields.SAT_NAME || '',
+      sat_mode:      fields.SAT_MODE || '',
+      freq_rx:       fields.FREQ_RX || '',
+      band_rx:       fields.BAND_RX || '',
     });
   }
 
@@ -614,7 +668,7 @@ async function checkWorkedBefore() {
 window.QSOLog = {
   load, sort, clearFilters, quickLog, updateRstDefaults, importADIF, selectAll, deleteSelected, deleteAll,
   prevPage, nextPage,
-  openNew, openEdit, closeModal, saveQSO, deleteQSO,
+  openNew, openEdit, closeModal, saveQSO, deleteQSO, toggleSatFields,
   exportADI, exportCSV,
   loadAdminUsers: _loadAdminUsers,
   checkWorkedBefore,

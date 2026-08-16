@@ -405,6 +405,11 @@ def qso_to_adif(qso: dict) -> str:
         _adif_field("my_gridsquare",    qso.get("my_gridsquare", "")),
         _adif_field("tx_pwr",           qso.get("power", "")),
         _adif_field("comment",          qso.get("comment", "")),
+        _adif_field("prop_mode",        qso.get("prop_mode", "")),
+        _adif_field("sat_name",         qso.get("sat_name", "")),
+        _adif_field("sat_mode",         qso.get("sat_mode", "")),
+        _adif_field("freq_rx",          qso.get("freq_rx", "")),
+        _adif_field("band_rx",          qso.get("band_rx", "")),
     ]
     return "".join(p for p in parts if p) + "<eor>"
 
@@ -6123,7 +6128,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-SETTINGS-AUDIT-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-QSOLOG-SAT-BANDS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
