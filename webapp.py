@@ -5718,6 +5718,20 @@ class App:
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_toggle_call_1st":
+            # Gate: Call 1st ON pozwala automatowi samodzielnie ODPOWIADAC na
+            # kazde uslyszane CQ i NADAWAC bez kolejnej akcji operatora (patrz
+            # _process_auto_qso -> 'enqueue' -> start_qso -> _send_auto_tx).
+            # _ft8_tx_sequence_inner sprawdza radio_lock tylko jesli byl JUZ
+            # ustawiony _autoqso_uid (siatka bezpieczenstwa dla przejecia
+            # radia W TRAKCIE automatyki) - bez tego checku tutaj, dowolny
+            # zalogowany viewer (ktory z definicji ma tylko OGLADAC, patrz
+            # _can_control_radio) mogl wlaczyc Call 1st bez trzymania locka
+            # i wywolac realne PTT/TX na pierwszym pasujacym dekodzie, nawet
+            # gdy NIKT nie trzyma radia.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             self._auto_call_1st = bool(msg.get("enabled", not self._auto_call_1st))
             print(f"[autoqso] Call 1st {'WLACZONE' if self._auto_call_1st else 'wylaczone'}")
             # Klikniecie tego checkboxa to akcja operatora - liczy sie jako
@@ -5870,6 +5884,10 @@ class App:
             await self._advance_auto_qso_queue()
 
         elif t == "ft8_set_tx_period":
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             period = int(msg.get("period", 1))
             if period not in (1, 2):
                 return
@@ -5880,6 +5898,10 @@ class App:
         elif t == "ft8_toggle_fake_split":
             # Wlacz/wylacz Fake Split (patrz _apply_fake_split_before_tx).
             # Stan zapamietany w configu — przetrwa restart serwera.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             self._fake_split_enabled = bool(msg.get("enabled", not self._fake_split_enabled))
             self.cfg.setdefault("ft8", {})["fakeSplit"] = self._fake_split_enabled
             save_json(CFG_F, self.cfg)
@@ -5889,6 +5911,10 @@ class App:
                                        "targetHz": 1500})
 
         elif t == "ft8_set_decode_mode":
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             mode = msg.get("mode", "FT8")
             if mode not in ("FT8", "FT4"):
                 return
@@ -6226,7 +6252,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-16-REVERT-FT8-SPLIT-REMOVAL, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-16-FT8-CALL1ST-LOCK-GATE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
