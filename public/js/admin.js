@@ -921,7 +921,29 @@ window.AdminBands = (() => {
     ['selected','available'].forEach(side => {
       const list = document.getElementById(`${widgetId}-${side}`);
       if (!list) return;
+      // _loadBands/_loadModes wolane przy KAZDYM wejsciu na zakladke
+      // KONFIGURACJA, ale to sa STALE wezly DOM (tylko ich .innerHTML jest
+      // podmieniane) - bez tej strazniczki addEventListener stackowalby sie
+      // przy kazdej wizycie (delegacja na rodzicu, wiec przezywa podmiane
+      // dzieci), a klik/dblclick zaczynalby dzialac losowo po paru wizytach
+      // (parzysta/nieparzysta liczba nasluchiwaczy). Wystarczy podpiac raz.
+      if (list.dataset.dndAttached === '1') return;
+      list.dataset.dndAttached = '1';
       const other = document.getElementById(`${widgetId}-${side==='selected'?'available':'selected'}`);
+
+      // Podswietlenie przez klik (ctrl/cmd = multi-select) - bez tego przyciski
+      // "« Dodaj"/"Usun »" (ktore przenosza tylko .tw-item.tw-selected, patrz
+      // _twMoveSelected) nie mialy jak trafic w cokolwiek i byly martwe -
+      // dzialalo tylko podwojne kliknieciem i przeciaganie. _attachTransferEvents
+      // (uzywany przez FUNKCJE RADIA) mial ten handler, ten (PASMA/TRYBY) nie.
+      list.addEventListener('click', e => {
+        const item = e.target.closest('.tw-item');
+        if (!item) return;
+        if (!e.ctrlKey && !e.metaKey) {
+          list.querySelectorAll('.tw-item.tw-selected').forEach(i => i.classList.remove('tw-selected'));
+        }
+        item.classList.toggle('tw-selected');
+      });
 
       list.addEventListener('dblclick', e => {
         const item = e.target.closest('.tw-item');
@@ -946,13 +968,16 @@ window.AdminBands = (() => {
     });
 
     const widget = document.getElementById(widgetId);
-    if (widget) widget.addEventListener('dragstart', e => {
-      const item = e.target.closest('.tw-item');
-      if (!item) return;
-      const uid = Math.random().toString(36).slice(2);
-      item.setAttribute('data-drag-id', uid);
-      e.dataTransfer.setData('tw-item-id', uid);
-    });
+    if (widget && widget.dataset.dndAttached !== '1') {
+      widget.dataset.dndAttached = '1';
+      widget.addEventListener('dragstart', e => {
+        const item = e.target.closest('.tw-item');
+        if (!item) return;
+        const uid = Math.random().toString(36).slice(2);
+        item.setAttribute('data-drag-id', uid);
+        e.dataTransfer.setData('tw-item-id', uid);
+      });
+    }
   }
 
   function _updateCount(widgetId) {

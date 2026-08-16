@@ -2535,7 +2535,7 @@
 <script src="js/com_bridge.js?v=202607040001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
 <script src="js/rotormini.js?v=202608150001"></script>
-<script src="js/admin.js?v=202606180504"></script>
+<script src="js/admin.js?v=202608160001"></script>
 <script src="js/admin_status.js?v=202607020001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
@@ -3176,8 +3176,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Odswiez stan radia przy kazdej zmianie strony
     fetch('/api/radio/state').then(r=>r.json()).then(msg=>window.OpPanel?.handleWS(msg)).catch(()=>{});
     if (name === 'wsjtx')   { window.FT8Timer?.init?.(); }
-    if (name === 'config')   { Admin.loadRotatorConfig?.(); Admin.loadRigFeatures?.(); AdminBands?.load?.(); }
-    if (name === 'settings') { setTimeout(() => { window.Settings?._initCwStatus?.(); window.HamlibUI?.load?.(); }, 500); }
+    if (name === 'config')   {
+      Admin.loadRotatorConfig?.(); Admin.loadRigFeatures?.(); AdminBands?.load?.();
+      // _initCwStatus wypelnia select CW KEYER (AUTO/CAT/DTR/RTS) + port/linie
+      // DTR - te pola zyja w #rigs-settings-container, ktory jest w zakladce
+      // KONFIGURACJA, nie USTAWIENIA. Bylo tu zle dopiete (jak wczesniej
+      // _audioDeviceLoad) - metoda CW Keyer zawsze pokazywala sie na
+      // statycznym HTML "AUTO" niezaleznie od realnie zapisanej.
+      setTimeout(() => { window.Settings?._initCwStatus?.(); }, 500);
+    }
+    if (name === 'settings') { setTimeout(() => { window.HamlibUI?.load?.(); }, 500); }
     if (name === 'wsjtx')    {
       // Ustaw wysokosc wsjtx-layout i zainicjuj po renderze
       setTimeout(() => {
