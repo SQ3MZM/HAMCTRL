@@ -1067,8 +1067,8 @@
     <div class="box">
       <div class="box-header">👤 MÓJ PROFIL</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>IMIĘ / NAZWA</label>
-          <input type="text" id="profile-name" placeholder="Imię i nazwisko" autocomplete="name"></div>
+        <div class="field"><label>IMIĘ</label>
+          <input type="text" id="profile-name" placeholder="Jan" autocomplete="name"></div>
         <div class="field"><label>ZNAK WYWOŁAWCZY</label>
           <input type="text" id="profile-callsign" placeholder="SP0ABC"
             style="text-transform:uppercase;font-family:var(--mono);font-size:14px;letter-spacing:2px;"
@@ -2118,16 +2118,16 @@
     <div class="box">
       <div class="box-header">MÓJ PROFIL</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>IMIĘ / NAZWA</label>
-          <input type="text" id="profile-name" placeholder="Imię i nazwisko" autocomplete="name"></div>
+        <div class="field"><label>IMIĘ</label>
+          <input type="text" id="admin-profile-name" placeholder="Jan" autocomplete="name"></div>
         <div class="field"><label>ZNAK WYWOŁAWCZY</label>
-          <input type="text" id="profile-callsign" placeholder="SP0ABC" style="text-transform:uppercase;" autocomplete="off"></div>
+          <input type="text" id="admin-profile-callsign" placeholder="SP0ABC" style="text-transform:uppercase;" autocomplete="off"></div>
         <div class="field"><label>LOKATOR QTH (np. JO82)</label>
-          <input type="text" id="profile-locator" placeholder="JO82" maxlength="6" style="text-transform:uppercase;" autocomplete="off"></div>
+          <input type="text" id="admin-profile-locator" placeholder="JO82" maxlength="6" style="text-transform:uppercase;" autocomplete="off"></div>
         <div class="field"><label>E-MAIL</label>
-          <input type="email" id="profile-email" placeholder="user@example.com" autocomplete="email"></div>
-        <button class="save-btn" onclick="saveProfile()">ZAPISZ PROFIL</button>
-        <span id="profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:10px;"></span>
+          <input type="email" id="admin-profile-email" placeholder="user@example.com" autocomplete="email"></div>
+        <button class="save-btn" onclick="saveProfile('admin-profile')">ZAPISZ PROFIL</button>
+        <span id="admin-profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:10px;"></span>
       </div>
     </div>
 
@@ -2330,7 +2330,7 @@
       <div class="sg" id="upass-row"><label>HASŁO *</label><input type="password" id="upass" placeholder="min. 8 znaków" autocomplete="new-password"></div>
       <div class="sg"><label>ZNAK WYWOŁAWCZY</label><input type="text" id="ucallsign" placeholder="SP2ABC" style="text-transform:uppercase"></div>
       <div class="sg"><label>LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="6" style="text-transform:uppercase"></div>
-      <div class="sg full-row"><label>IMIĘ I NAZWISKO</label><input type="text" id="uname-full" placeholder="Jan Kowalski"></div>
+      <div class="sg full-row"><label>IMIĘ</label><input type="text" id="uname-full" placeholder="Jan"></div>
       <div class="sg full-row"><label>EMAIL</label><input type="email" id="uemail" placeholder="jan@example.com"></div>
     </div>
 
@@ -2425,7 +2425,7 @@
 <script src="js/radiofunctions.js?v=202606180504"></script>
 <script src="js/ui.js?v=202608160001"></script>
 <script src="js/settings.js?v=202606180504"></script>
-<script src="js/tx_eq.js?v=202606300001"></script>
+<script src="js/tx_eq.js?v=202608160001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
 <script src="js/audio_autodetect.js?v=202606300001"></script>
@@ -3085,30 +3085,40 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ── Zmiana własnego hasła ─────────────────────────────────────────────────────
+// Dwa miejsca pokazuja/zapisuja TE SAME dane wlasnego profilu: zakladka
+// PROFIL (id="profile-*", dla kazdej roli) i box "MOJ PROFIL" w zakladce
+// ADMIN (id="admin-profile-*", wygodny skrot dla admina zeby nie przelaczac
+// zakladki). Oba prefiksy licza sie jeden po drugim - jesli dany element nie
+// istnieje w DOM (bo user nie jest adminem, wiec box w ADMIN nie jest
+// wyrenderowany), po prostu jest pomijany.
+const _PROFILE_PREFIXES = ['profile', 'admin-profile'];
+
 async function loadProfile() {
   try {
     const r = await fetch('/api/auth/me');
     const d = await r.json();
     const u = d.user || d;
-    const _s = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-    _s('profile-name',     u.name || '');
-    _s('profile-callsign', u.callsign || '');
-    _s('profile-locator',  u.locator || '');
-    _s('profile-email',    u.email || '');
-    const st = document.getElementById('profile-status');
-    if (st) { st.textContent = `Zalogowany jako: ${u.username} (${u.role})`; st.style.color='var(--dim)'; }
+    for (const pfx of _PROFILE_PREFIXES) {
+      const _s = (field, val) => { const el = document.getElementById(`${pfx}-${field}`); if (el) el.value = val || ''; };
+      _s('name',     u.name || '');
+      _s('callsign', u.callsign || '');
+      _s('locator',  u.locator || '');
+      _s('email',    u.email || '');
+      const st = document.getElementById(`${pfx}-status`);
+      if (st) { st.textContent = `Zalogowany jako: ${u.username} (${u.role})`; st.style.color='var(--dim)'; }
+    }
   } catch(e) {}
 }
 
-async function saveProfile() {
-  const _g = id => document.getElementById(id)?.value?.trim() || '';
+async function saveProfile(prefix = 'profile') {
+  const _g = field => document.getElementById(`${prefix}-${field}`)?.value?.trim() || '';
   const data = {
-    name:     _g('profile-name'),
-    callsign: _g('profile-callsign').toUpperCase(),
-    locator:  _g('profile-locator').toUpperCase(),
-    email:    _g('profile-email'),
+    name:     _g('name'),
+    callsign: _g('callsign').toUpperCase(),
+    locator:  _g('locator').toUpperCase(),
+    email:    _g('email'),
   };
-  const st = document.getElementById('profile-status');
+  const st = document.getElementById(`${prefix}-status`);
   try {
     const r = await fetch('/api/user/profile', {
       method: 'POST', headers: {'Content-Type':'application/json'},
@@ -3124,6 +3134,9 @@ async function saveProfile() {
         if (window.CurrentUser) window.CurrentUser.callsign = data.callsign;
         if (window.AppState)    window.AppState.callsign    = data.callsign;
       }
+      // Drugie miejsce (PROFIL <-> ADMIN) tez trzyma te dane - przeladuj
+      // oba zeby od razu pokazywaly to co wlasnie zapisano.
+      loadProfile();
     } else {
       if (st) { st.textContent = '✗ ' + (res.error||'Błąd'); st.style.color='var(--red)'; }
     }

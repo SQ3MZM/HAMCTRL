@@ -327,11 +327,21 @@ window.TxEq = (() => {
 
     const src = monitorCtx.createMediaStreamSource(monitorStream);
 
-    monitorGain = monitorCtx.createGain();
-    monitorGain.gain.value = 2.0; // TEST: mocne wzmocnienie, bez EQ
+    // Odsluch ma pokazywac DOKLADNIE to co leci przy nadawaniu - ten sam
+    // lancuch filtrow co _txMic w ws.js (buildFilterChain + registerTxFilters).
+    // Wczesniej tu bylo "TEST: pomijamy EQ chain calkowicie" (mikrofon prosto
+    // do gain -> destination) - resztka po debugowaniu problemu z wykrywaniem
+    // mikrofonu, nigdy nie przywrocona. Efekt: suwaki EQ nie zmienialy tego
+    // co slychac w odsluchu, mimo ze opis obok mowil "Odsluch przepuszcza
+    // mikrofon przez EQ".
+    const chain = buildFilterChain(monitorCtx);
+    monitorFilters = chain.filters;
 
-    // TEST: pomijamy EQ chain calkowicie, mikrofon prosto do gain -> destination
-    src.connect(monitorGain);
+    monitorGain = monitorCtx.createGain();
+    monitorGain.gain.value = monitorVol;
+
+    src.connect(chain.input);
+    chain.output.connect(monitorGain);
     monitorGain.connect(monitorCtx.destination);
 
     // Sprawdz czy analyser widzi jakikolwiek sygnal z mikrofonu
