@@ -358,14 +358,18 @@ function _setField(id, val) {
 
 function _freqToBand(hz) {
   const mhz = hz / 1e6;
-  // Zakresy wg planu pasm IARU Region 1 (Europa/Polska) - gorne (mikrofalowe)
-  // pasma dopisane bo uzywane m.in. do QO-100 (13cm uplink / 3cm downlink)
-  // i lacznosci przez satelity ogolnie (patrz tez pola SAT_NAME/SAT_MODE/
-  // FREQ_RX/BAND_RX w qso_db.py).
+  // Zakresy CELOWO SZEROKIE — suma alokacji amatorskich ze wszystkich 3
+  // regionow ITU (Europa/Afryka/pln.Azja = R1, Ameryki = R2, reszta Azji/
+  // Pacyfik = R3), nie tylko Europy. Ten soft moze trafic gdziekolwiek na
+  // swiecie, wiec lepiej objac szerszy, prawdziwy zakres uzywany przez
+  // ktoregokolwiek hama niz zawezac pod jeden kraj/region. Gorne (mikrofalowe)
+  // pasma dopisane m.in. pod QO-100 (13cm uplink / 3cm downlink) i lacznosci
+  // satelitarne w ogole (patrz pola SAT_NAME/SAT_MODE/FREQ_RX/BAND_RX w
+  // qso_db.py).
   if (mhz >= 1.8    && mhz <= 2.0)    return '160m';
-  if (mhz >= 3.5    && mhz <= 4.0)    return '80m';
-  if (mhz >= 5.3    && mhz <= 5.45)   return '60m';
-  if (mhz >= 7.0    && mhz <= 7.3)    return '40m';
+  if (mhz >= 3.5    && mhz <= 4.0)    return '80m';   // R2 siega do 4.0
+  if (mhz >= 5.06   && mhz <= 5.45)   return '60m';   // rozne kanaly/zakresy wg kraju
+  if (mhz >= 7.0    && mhz <= 7.3)    return '40m';   // R2/R3 siegaja do 7.3
   if (mhz >= 10.1   && mhz <= 10.15)  return '30m';
   if (mhz >= 14.0   && mhz <= 14.35)  return '20m';
   if (mhz >= 18.0   && mhz <= 18.17)  return '17m';
@@ -373,15 +377,17 @@ function _freqToBand(hz) {
   if (mhz >= 24.8   && mhz <= 24.99)  return '12m';
   if (mhz >= 28.0   && mhz <= 29.7)   return '10m';
   if (mhz >= 50.0   && mhz <= 54.0)   return '6m';
-  if (mhz >= 70.0   && mhz <= 70.5)   return '4m';
+  if (mhz >= 70.0   && mhz <= 70.5)   return '4m';    // gl. Europa/Afryka, nieszkodliwe gdzie indziej
   if (mhz >= 144    && mhz <= 148)    return '2m';
-  if (mhz >= 430    && mhz <= 440)    return '70cm';
+  if (mhz >= 220    && mhz <= 225)    return '1.25m'; // R2 (USA/Kanada)
+  if (mhz >= 420    && mhz <= 450)    return '70cm';  // R2 siega do 420-450, nie tylko 430-440
+  if (mhz >= 902     && mhz <= 928)    return '33cm';  // R2 (USA)
   if (mhz >= 1240   && mhz <= 1300)   return '23cm';
   if (mhz >= 2300   && mhz <= 2450)   return '13cm';
   if (mhz >= 3400   && mhz <= 3410)   return '9cm';
-  if (mhz >= 5650   && mhz <= 5850)   return '6cm';
+  if (mhz >= 5650   && mhz <= 5925)   return '6cm';   // R2 siega do 5925
   if (mhz >= 10000  && mhz <= 10500)  return '3cm';
-  if (mhz >= 24000  && mhz <= 24050)  return '1.2cm';
+  if (mhz >= 24000  && mhz <= 24250)  return '1.2cm'; // R2 siega do 24250
   return '20m';
 }
 
