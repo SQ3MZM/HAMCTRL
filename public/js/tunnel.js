@@ -387,7 +387,7 @@ async function genCert() {
 }
 
 async function cleanup() {
-  if (!confirm('Wyczyścić stare procesy i usługę cloudflared?')) return;
+  if (!await window.UI?.confirmModal('Wyczyścić stare procesy i usługę cloudflared?')) return;
   try {
     const r   = await fetch('/api/tunnel/cleanup', {method:'POST'});
     const res = await r.json();

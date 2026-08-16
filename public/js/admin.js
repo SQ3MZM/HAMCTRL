@@ -312,15 +312,15 @@ async function toggleActive(id, isActive) {
 }
 
 async function deleteUser(id, username) {
-  if (!confirm(`Usunąć użytkownika ${username}?`)) return;
+  if (!await UI.confirmModal(`Usunąć użytkownika ${username}?`, { danger: true, okLabel: 'USUŃ' })) return;
   const r   = await fetch(`/api/users/${id}`, { method: 'DELETE' });
   const res = await r.json();
   if (res.ok) { loadUsers(); UI.showToast(`✓ Usunięto ${username}`); }
   else UI.showToast('✗ ' + res.error, 'error');
 }
 
-function resetPwdDialog(id, username) {
-  const pwd = prompt(`Nowe hasło dla ${username} (min. 8 znaków):`);
+async function resetPwdDialog(id, username) {
+  const pwd = await UI.textPrompt(`NOWE HASŁO DLA ${username} (min. 8 znaków)`, '');
   if (!pwd) return;
   if (pwd.length < 8) { UI.showToast('✗ Min. 8 znaków', 'error'); return; }
   fetch(`/api/users/${id}/reset-password`, {
@@ -443,7 +443,7 @@ async function saveRotatorConfig() {
 
 async function testRotator(idx) {
   const cfg = _rotatorsCfg[idx];
-  if (!cfg?.id) { alert('Najpierw zapisz konfigurację'); return; }
+  if (!cfg?.id) { window.UI?.showToast('Najpierw zapisz konfigurację', 'error'); return; }
   const resultEl = document.getElementById(`rot-test-result-${idx}`);
   if (resultEl) resultEl.textContent = 'Testowanie...';
   try {

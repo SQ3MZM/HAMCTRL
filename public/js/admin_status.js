@@ -125,7 +125,7 @@ window.AdminStatus = (function() {
     const status = document.getElementById('admin-backup-status');
     const file = input.files?.[0];
     if (!file) return;
-    if (!confirm(`Przywrócić konfigurację z pliku "${file.name}"?\n\nTo NADPISZE obecną konfigurację i wszystkich użytkowników. Po restore zrestartuj serwer.`)) {
+    if (!await window.UI?.confirmModal(`Przywrócić konfigurację z pliku "${file.name}"?\n\nTo NADPISZE obecną konfigurację i wszystkich użytkowników. Po restore zrestartuj serwer.`, { danger: true, okLabel: 'PRZYWRÓĆ' })) {
       input.value = '';
       return;
     }

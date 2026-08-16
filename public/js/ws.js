@@ -944,11 +944,11 @@ const _txMic = (() => {
   async function start() {
     if (active) return true;
     if (!navigator.mediaDevices?.getUserMedia) {
-      alert('Mikrofon niedostepny (brak getUserMedia w przegladarce)');
+      window.UI?.showToast('Mikrofon niedostepny (brak getUserMedia w przegladarce)', 'error');
       return false;
     }
     if (typeof RTCPeerConnection === 'undefined') {
-      alert('WebRTC niedostepny w tej przegladarce');
+      window.UI?.showToast('WebRTC niedostepny w tej przegladarce', 'error');
       return false;
     }
     try {
@@ -1004,7 +1004,7 @@ const _txMic = (() => {
       stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
     } catch (e) {
       console.warn('[txmic] getUserMedia blad:', e.message);
-      alert('Brak dostepu do mikrofonu: ' + e.message);
+      window.UI?.showToast('Brak dostepu do mikrofonu: ' + e.message, 'error');
       return false;
     }
 

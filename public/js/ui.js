@@ -442,9 +442,95 @@ function toggleSplit() {
   WS.send({ type: 'split', split: S.split, freqB: S.freqB });
 }
 
+// ── Wlasny modal zamiast prompt() ───────────────────────────────────────────────
+// prompt()/confirm()/alert() sa SYNCHRONICZNE - blokuja caly glowny watek JS
+// dopoki user ich nie zamknie, co na zywo zawieszalo streaming audio
+// (WebAudio/WebRTC) do czasu zamkniecia okienka (zglaszone na zywo, ta sama
+// przyczyna co poprawka rotora - patrz WSJTX.rotorGoManual w wsjtx.js).
+// #text-prompt-modal w index.html jest wspolny dla kazdego miejsca ktore
+// wczesniej uzywalo prompt() z pojedynczym polem tekstowym.
+let _textPromptResolve = null;
+
+function textPrompt(title, defaultValue) {
+  return new Promise((resolve) => {
+    const modal   = document.getElementById('text-prompt-modal');
+    const input   = document.getElementById('text-prompt-input');
+    const titleEl = document.getElementById('text-prompt-title');
+    if (!modal || !input) { resolve(null); return; }
+    if (titleEl) titleEl.textContent = title || 'WPISZ WARTOŚĆ';
+    input.value = defaultValue || '';
+    _textPromptResolve = resolve;
+    modal.style.display = 'flex';
+    input.focus();
+    input.select();
+  });
+}
+
+function _textPromptSubmit() {
+  const input = document.getElementById('text-prompt-input');
+  const val = input ? input.value : '';
+  _textPromptClose();
+  _textPromptResolve?.(val);
+  _textPromptResolve = null;
+}
+
+function _textPromptCancel() {
+  _textPromptClose();
+  _textPromptResolve?.(null);
+  _textPromptResolve = null;
+}
+
+function _textPromptClose() {
+  const modal = document.getElementById('text-prompt-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+let _confirmModalResolve = null;
+
+// confirm() zastepstwo — non-blocking, ale nadal wymaga jawnego kliku OK/
+// ANULUJ zanim wywolujacy dostanie odpowiedz (w odroznieniu od alertow
+// zamienionych na showToast() nizej, gdzie nie ma decyzji do podjecia).
+// danger=true koloruje OK na czerwono dla akcji niszczacych dane.
+function confirmModal(message, { title = 'POTWIERDŹ', okLabel = 'OK', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const modal   = document.getElementById('confirm-modal');
+    const msgEl   = document.getElementById('confirm-modal-msg');
+    const titleEl = document.getElementById('confirm-modal-title');
+    const okBtn   = document.getElementById('confirm-modal-ok');
+    if (!modal || !msgEl) { resolve(false); return; }
+    if (titleEl) titleEl.textContent = title;
+    msgEl.textContent = message;
+    if (okBtn) {
+      okBtn.textContent = okLabel;
+      okBtn.style.background = danger ? 'var(--red)' : '';
+      okBtn.style.borderColor = danger ? 'var(--red)' : '';
+    }
+    _confirmModalResolve = resolve;
+    modal.style.display = 'flex';
+    okBtn?.focus();
+  });
+}
+
+function _confirmModalSubmit() {
+  _confirmModalClose();
+  _confirmModalResolve?.(true);
+  _confirmModalResolve = null;
+}
+
+function _confirmModalCancel() {
+  _confirmModalClose();
+  _confirmModalResolve?.(false);
+  _confirmModalResolve = null;
+}
+
+function _confirmModalClose() {
+  const modal = document.getElementById('confirm-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ── Pamięci ───────────────────────────────────────────────────────────────────
-function saveMemory() {
-  const name = prompt('Nazwa częstotliwości (opcjonalnie):') ?? '';
+async function saveMemory() {
+  const name = (await textPrompt('NAZWA CZĘSTOTLIWOŚCI (opcjonalnie)', '')) ?? '';
   S.memories.push({ freq: S.freq, mode: S.mode, name });
   S.saveMemories();
   renderMemories();
@@ -813,10 +899,10 @@ function updateFreqB() {
     : (isSplit ? 'var(--amber)' : 'var(--dim)');
 }
 
-// Wpisz recznie czestotliwosc VFO-B (prompt otwierany przez prawy klik)
-function editVfoB() {
+// Wpisz recznie czestotliwosc VFO-B (modal otwierany przez prawy klik)
+async function editVfoB() {
   const currentMHz = (S.freqB || S.freq) / 1e6;
-  const input = prompt('Częstotliwość VFO-B (MHz):', currentMHz.toFixed(6));
+  const input = await textPrompt('CZĘSTOTLIWOŚĆ VFO-B (MHz)', currentMHz.toFixed(6));
   if (input === null) return;
   // Zaakceptuj format: 14.074000 / 14074000 / 14074 kHz
   let hz;
@@ -996,6 +1082,8 @@ window.UI = {
   setMode, setPTT, setLevel,
   vfoSwap, vfoCopy, toggleSplit, toggleTuner, startAutotune,
   saveMemory, deleteMemory, renderMemories,
+  textPrompt, _textPromptSubmit, _textPromptCancel,
+  confirmModal, _confirmModalSubmit, _confirmModalCancel,
   buildModeGrid, buildBandGrid, updateBandButtons,
   updateTxMeter, setTxMeter,
   initCanvases,

@@ -2524,22 +2524,22 @@
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608160001"></script>
+<script src="js/ws.js?v=202608160002"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
-<script src="js/ui.js?v=202608160001"></script>
+<script src="js/ui.js?v=202608160002"></script>
 <script src="js/settings.js?v=202606180504"></script>
-<script src="js/tx_eq.js?v=202608160001"></script>
+<script src="js/tx_eq.js?v=202608160002"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
 <script src="js/audio_autodetect.js?v=202606300001"></script>
 <script src="js/com_bridge.js?v=202607040001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
 <script src="js/rotormini.js?v=202608150001"></script>
-<script src="js/admin.js?v=202608160001"></script>
-<script src="js/admin_status.js?v=202607020001"></script>
+<script src="js/admin.js?v=202608160002"></script>
+<script src="js/admin_status.js?v=202608160001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
-<script src="js/tunnel.js?v=202606260001"></script>
+<script src="js/tunnel.js?v=202608160001"></script>
 <script src="js/dxcc.js?v=202607030001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
@@ -2571,6 +2571,34 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="confirm-modal" onclick="if(event.target===this)UI._confirmModalCancel()" style="display:none;">
+  <div class="modal" style="min-width:280px;max-width:400px;">
+    <div class="modal-header"><span id="confirm-modal-title">POTWIERDŹ</span><button class="modal-close" onclick="UI._confirmModalCancel()">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding:16px;">
+      <div id="confirm-modal-msg" style="font-family:var(--mono);font-size:13px;color:var(--fg);white-space:pre-line;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button id="confirm-modal-ok" class="save-btn" style="width:auto;" onclick="UI._confirmModalSubmit()">OK</button>
+        <button class="save-btn" style="width:auto;background:transparent;border-color:var(--border);" onclick="UI._confirmModalCancel()">ANULUJ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="text-prompt-modal" onclick="if(event.target===this)UI._textPromptCancel()" style="display:none;">
+  <div class="modal" style="min-width:280px;max-width:360px;">
+    <div class="modal-header"><span id="text-prompt-title">WPISZ WARTOŚĆ</span><button class="modal-close" onclick="UI._textPromptCancel()">✕</button></div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
+      <input type="text" id="text-prompt-input"
+        style="width:100%;font-family:var(--mono);font-size:13px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:3px;box-sizing:border-box;"
+        onkeydown="if(event.key==='Enter')UI._textPromptSubmit(); if(event.key==='Escape')UI._textPromptCancel();">
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="save-btn" style="width:auto;" onclick="UI._textPromptSubmit()">OK</button>
+        <button class="save-btn" style="width:auto;background:transparent;border-color:var(--border);" onclick="UI._textPromptCancel()">ANULUJ</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="rotor-manual-modal" onclick="if(event.target===this)WSJTX.rotorManualClose()" style="display:none;">
   <div class="modal" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span>ROTOR — RĘCZNA POZYCJA</span><button class="modal-close" onclick="WSJTX.rotorManualClose()">✕</button></div>
@@ -2593,7 +2621,7 @@
 <script src="js/cloudlog.js?v=202606250001"></script>
 <script src="js/hamlib_ui.js?v=202608160001"></script>
 <script src="js/callbook.js?v=202608160001"></script>
-<script src="js/qsolog.js?v=202608160004"></script>
+<script src="js/qsolog.js?v=202608160005"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────
@@ -3063,7 +3091,7 @@ function handleRejected(msg) {
 }
 
 async function forceRelease() {
-  if (!confirm('Wymusić zwolnienie radia? Aktywny operator straci dostęp.')) return;
+  if (!await window.UI?.confirmModal('Wymusić zwolnienie radia? Aktywny operator straci dostęp.', { danger: true, okLabel: 'ZWOLNIJ' })) return;
   await _api('/api/radio/force-release', 'POST', {});
 }
 

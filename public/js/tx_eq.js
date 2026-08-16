@@ -224,7 +224,7 @@ window.TxEq = (() => {
     console.log('[txeq] startMonitor called, monitorActive=', monitorActive);
     if (monitorActive) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      alert('Mikrofon niedostepny w tej przegladarce');
+      window.UI?.showToast('Mikrofon niedostepny w tej przegladarce', 'error');
       return;
     }
     console.log('[txeq] proszę o mikrofon...');
@@ -282,7 +282,7 @@ window.TxEq = (() => {
       console.log('[txeq] mikrofon OK, label=', track?.label, 'settings=', track?.getSettings());
     } catch (e) {
       console.error('[txeq] getUserMedia blad:', e);
-      alert('Brak dostepu do mikrofonu: ' + e.message);
+      window.UI?.showToast('Brak dostepu do mikrofonu: ' + e.message, 'error');
       return;
     }
 
@@ -293,7 +293,7 @@ window.TxEq = (() => {
     const ctx = window._audioCtx || window.audioCtx;
     console.log('[txeq] AudioContext:', ctx, 'state=', ctx?.state);
     if (!ctx) {
-      alert('AudioContext niedostepny - kliknij cokolwiek w UI zeby aktywowac audio, potem sprobuj ponownie');
+      window.UI?.showToast('AudioContext niedostepny - kliknij cokolwiek w UI zeby aktywowac audio, potem sprobuj ponownie', 'error');
       monitorStream.getTracks().forEach(t => t.stop());
       monitorStream = null;
       return;

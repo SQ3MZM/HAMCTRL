@@ -390,7 +390,7 @@ async function saveQSO() {
 
 // ── Usuń QSO ──────────────────────────────────────────────────────────────────
 async function deleteQSO(id) {
-  if (!confirm('Usunąć to QSO?')) return;
+  if (!await window.UI?.confirmModal('Usunąć to QSO?', { danger: true, okLabel: 'USUŃ' })) return;
   const token = localStorage.getItem('token') || '';
   try {
     const r = await fetch(`/api/qsolog/${id}`, {
@@ -709,7 +709,7 @@ function selectAll(chk) {
 async function deleteSelected() {
   const ids = [...document.querySelectorAll('.qso-chk:checked')].map(el => el.dataset.id);
   if (!ids.length) { window.UI?.showToast('Zaznacz QSO do usunięcia', 'error'); return; }
-  if (!confirm(`Usunąć ${ids.length} zaznaczonych QSO?`)) return;
+  if (!await window.UI?.confirmModal(`Usunąć ${ids.length} zaznaczonych QSO?`, { danger: true, okLabel: 'USUŃ' })) return;
   const token = localStorage.getItem('token') || '';
   const h = {'Authorization': `Bearer ${token}`};
   let ok = 0;
@@ -728,8 +728,8 @@ async function deleteAll() {
   const userId   = sel?.value || '';
   const userName = sel?.selectedOptions[0]?.text || '';
   const who      = userId ? `użytkownika ${userName}` : 'WSZYSTKICH użytkowników';
-  if (!confirm(`Usunąć WSZYSTKIE QSO ${who}?\nTej operacji nie można cofnąć!`)) return;
-  if (!confirm(`Jesteś PEWIEN? Log ${who} zostanie skasowany!`)) return;
+  if (!await window.UI?.confirmModal(`Usunąć WSZYSTKIE QSO ${who}?\nTej operacji nie można cofnąć!`, { danger: true, okLabel: 'USUŃ' })) return;
+  if (!await window.UI?.confirmModal(`Jesteś PEWIEN? Log ${who} zostanie skasowany!`, { danger: true, okLabel: 'TAK, KASUJ' })) return;
   const token = localStorage.getItem('token') || '';
   const h = {'Authorization': `Bearer ${token}`};
   const url = userId ? `/api/qsolog/all?user_id=${userId}` : '/api/qsolog/all';
