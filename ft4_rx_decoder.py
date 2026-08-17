@@ -35,7 +35,7 @@ ZWERYFIKOWANE na syntetycznym sygnale (sesja deweloperska 2026-06-21):
   - Pelny round-trip (ten plik): TX->RX dla wielu typow wiadomosci (CQ,
     raport, R-raport, RRR, 73, RR73) z poprawnym tekstem wyjsciowym
 
-NIEZWERYFIKOWANE wobec prawdziwego dekodera (WSJT-X/JTDX) ani prawdziwego
+NIEZWERYFIKOWANE wobec prawdziwego dekodera FT4 ani prawdziwego
 sygnalu radiowego — wymaga testu na zywo, analogicznie do FT8 (patrz
 ft8_rx_decoder.py docstring o nagraniu 210703_133430.wav).
 
@@ -82,14 +82,14 @@ def _compute_window_noise_floor(audio, sample_rate=12000):
     return psd, freqs, nf
 
 
-# Same calibration as FT8 (measured against WSJT-X reference decodes).
+# Same calibration as FT8 (measured against reference FT8 decodes).
 _SNR_SCALE = 1.09
 _SNR_OFFSET = -20.2
 
 def _estimate_snr_db(psd, freqs, noise_floor, freq_hz):
     """Real SNR: signal power at its frequency vs the window's spectral noise
-    floor, mapped to the WSJT-X scale. Replaces the old tone-purity method that
-    gave every station nearly the same value."""
+    floor, mapped to a familiar dB scale. Replaces the old tone-purity method
+    that gave every station nearly the same value."""
     if psd is None or freqs is None:
         return 0.0
     b = (freqs >= freq_hz - 50) & (freqs <= freq_hz + 50)

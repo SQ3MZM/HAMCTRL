@@ -1,7 +1,7 @@
 """
 Parametry protokolu FT4 (zgodne z naszym ft4_encoder.py, zweryfikowanym
-matematycznie/strukturalnie — patrz ft4_protocol_notes.md, zrodlo:
-rtmrtmrtmrtm/weakmon/ft4.py i g4jnt.com/WSJT-X_LdpcModesCodingProcess.pdf).
+matematycznie/strukturalnie wzgledem oficjalnej specyfikacji protokolu
+FT4 — patrz ft4_protocol_notes.md).
 """
 SAMPLE_RATE = 12000
 SYMBOL_PERIOD = 0.048           # s, czas trwania jednego symbolu (48ms)

@@ -1,5 +1,6 @@
 """
-qso_engine.py — silnik automatycznego prowadzenia QSO w stylu WSJT-X.
+qso_engine.py — silnik automatycznego prowadzenia QSO wg standardowej
+sekwencji protokolu FT8.
 
 Czysta logika (bez asyncio/sieci), latwa do testowania w izolacji.
 Odpowiada za:
@@ -7,7 +8,7 @@ Odpowiada za:
   2. Maszyne stanow pojedynczego QSO (Tx1..Tx5, klasyczna sekwencja RRR->73).
   3. Kolejke stacji odpowiadajacych na nasze CQ ("Call 1st" / FIFO).
 
-Standardowa sekwencja wiadomosci WSJT-X (gdy MY zaczynamy, odpowiadajac
+Standardowa sekwencja wiadomosci auto-QSO (gdy MY zaczynamy, odpowiadajac
 na cudze CQ — czyli Tx1 jako pierwszy krok):
   Tx1: <ICH_CALL> <NASZ_CALL> <NASZ_GRID>
   Tx2: <ICH_CALL> <NASZ_CALL> <RAPORT_SNR>           (gdy oni nam wysyla raport)
@@ -22,7 +23,7 @@ Ta implementacja uzywa klasycznej (nie skroconej RR73) koncowki: osobne
 Tx4=RRR i Tx5=73, zgodnie z wyborem uzytkownika — RRR wysylane natychmiast
 po otrzymaniu raportu, 73 wysylane dopiero gdy partner potwierdzi (wysle
 RRR lub 73 ze swojej strony). To wierniej odwzorowuje tradycyjna sekwencje
-(patrz WSJT-X User Guide, sekcja 7.3 Auto-Sequencing) niz nowszy skrot RR73.
+auto-sequencing niz nowszy skrot RR73.
 """
 
 import re
@@ -33,11 +34,11 @@ import time
 # Parsowanie wiadomosci FT8
 # ─────────────────────────────────────────────────────────────────────────────
 
-# CQ MODIFIERS - lista wszystkich znanych modyfikatorow uzywanych w WSJT-X.
+# CQ MODIFIERS - lista wszystkich znanych modyfikatorow uzywanych na FT8.
 # Format: "CQ <MODIFIER> <CALL> <GRID>" np. "CQ POTA W1XYZ FN42".
 # Modifiery to slowa 2-6 znakow ktore nie sa callsignami. Wiekszosc to skroty
 # programow zawodowych/aktywacji (POTA, SOTA), regionow (EU, NA, AS) lub
-# kraje (USA, JA, DL). Pelen zestaw z WSJT-X messages guide + praktyki na
+# kraje (USA, JA, DL). Pelen zestaw z powszechnie przyjetej praktyki na
 # pasmie amatorskim.
 _CQ_MODIFIERS = frozenset({
     # Kierunkowe / regionalne (kontynenty i regiony)
@@ -413,9 +414,9 @@ class QsoEngine:
            wysylamy wlasnego Tx1 (partner juz zna nasz grid, bo to MY
            wolalismy CQ z grid w tresci) — od razu przetwarzamy ich
            wiadomosc przez on_decode, co odpowiednio przeskakuje do
-           wyslania raportu (Tx2/Tx3-styl). Odpowiada to udokumentowanemu
-           w WSJT-X zachowaniu "skip Tx1" gdy auto-sequencing jest uzbrojone
-           po stronie odpowiadania na wlasne CQ.
+           wyslania raportu (Tx2/Tx3-styl). Odpowiada to standardowemu
+           zachowaniu "skip Tx1" gdy auto-sequencing jest uzbrojone po
+           stronie odpowiadania na wlasne CQ.
         """
         self.state = ST_CALLING
         self.partner_call = partner_call.upper()
@@ -709,16 +710,15 @@ class QsoEngine:
         naszej ostatniej transmisji bez zadnej nowej odpowiedzi partnera w
         miedzyczasie - czyli czy pora powtorzyc ostatnia wiadomosc.
 
-        Real WSJT-X/JTDX (patrz process_Auto/genStdMsgs w mainwindow.cpp)
-        NIE ma osobnego mechanizmu "powtorki" - po prostu wysyla wiadomosc
-        pasujaca do aktualnego stanu na KAZDYM swoim oknie TX, wiec jesli
-        stan sie nie zmienil (partner nie odpowiedzial), ta sama wiadomosc
-        wychodzi ponownie automatycznie. Nasz silnik jest zdarzeniowy
-        (reaguje tylko na nowy dekod), wiec potrzebuje tego jawnego
-        sprawdzenia zamiast bezwarunkowego okresowego nadawania - bez
-        niego jedna zgubiona transmisja (normalne przy QSB) konczyla sie
-        cisza zamiast powtorki, ktora prawdziwy WSJT-X/JTDX wysylaby
-        automatycznie."""
+        Konwencjonalne implementacje auto-QSO nie maja osobnego mechanizmu
+        "powtorki" - po prostu wysylaja wiadomosc pasujaca do aktualnego
+        stanu na KAZDYM oknie TX, wiec jesli stan sie nie zmienil (partner
+        nie odpowiedzial), ta sama wiadomosc wychodzi ponownie automatycznie.
+        Nasz silnik jest zdarzeniowy (reaguje tylko na nowy dekod), wiec
+        potrzebuje tego jawnego sprawdzenia zamiast bezwarunkowego
+        okresowego nadawania - bez niego jedna zgubiona transmisja (normalne
+        przy QSB) konczyla sie cisza zamiast oczekiwanej automatycznej
+        powtorki."""
         if not self.is_active() or self.last_tx_at is None:
             return False
         return (time.time() - self.last_tx_at) >= period_s
@@ -731,11 +731,9 @@ class QsoEngine:
     def should_give_up(self, max_retries: int) -> bool:
         """Czy wyczerpalismy limit powtorzen bez odpowiedzi partnera.
 
-        JTDX ma analogiczny, ale DOMYSLNIE WYLACZONY licznik (np.
-        SeqSentRReportCounter, domyslna wartosc 3-5 prob, ale flaga
-        wlaczajaca go jest false) - bez recznego wlaczenia prawdziwy
-        WSJT-X/JTDX probuje w nieskonczonosc, bo operator patrzy na ekran
-        i moze sam zdecydowac kiedy przerwac. Nasz automat dziala bez
+        Inne implementacje auto-QSO zazwyczaj maja taki licznik domyslnie
+        wylaczony (probuja w nieskonczonosc, bo operator patrzy na ekran
+        i moze sam zdecydowac kiedy przerwac). Nasz automat dziala bez
         nadzoru (Call 1st ma przejsc do kolejnej stacji w kolejce), wiec
-        limit jest u nas WLACZONY na stale, w przeciwienstwie do JTDX."""
+        limit jest u nas WLACZONY na stale."""
         return self.retry_count >= max_retries

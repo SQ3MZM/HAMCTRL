@@ -282,7 +282,7 @@ def test_frozen_report():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 7. RAPORT PARTNERA (RST_RCVD) — ostatnia wartosc (zgodne z WSJT-X)
+# 7. RAPORT PARTNERA (RST_RCVD) — ostatnia wartosc
 # ════════════════════════════════════════════════════════════════════════════
 def test_partner_report_last_value():
     section("Raport partnera (RST_RCVD) = ostatnia jego wartosc")

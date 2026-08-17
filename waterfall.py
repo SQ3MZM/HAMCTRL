@@ -18,7 +18,7 @@ N_BINS = 200  # liczba slupkow czestotliwosci w jednej kolumnie wodospadu (rozdz
 # inny kolor w kazdej kolejnej kolumnie czasowej — wyglada to jak losowy
 # szum zamiast stabilnych, poziomych linii tonow. Zamiast tego trzymamy
 # wolno aktualizowany (EMA) zakres, ktory zmienia sie dopiero na przestrzeni
-# wielu sekund, dokladnie jak auto-skalowanie w prawdziwym WSJT-X.
+# wielu sekund.
 _ema_db_lo = None
 _ema_db_hi = None
 _EMA_ALPHA = 0.05  # im mniejsze, tym wolniej sie dostosowuje (stabilniejszy obraz)

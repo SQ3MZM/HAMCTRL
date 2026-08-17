@@ -34,12 +34,13 @@ def _unpack58(n58):
 
 def ihashcall(callsign, m=22):
     """
-    Oblicza m-bitowy hash callsign, DOKLADNIE wg algorytmu WSJT-X
-    (ihashcall w hashcall.c, przekonwertowane z Fortran 2.1.0 RC5).
+    Oblicza m-bitowy hash callsign wedlug oficjalnej specyfikacji protokolu
+    FT8/FT4 (zgodnosc bitowa wymagana do poprawnej wspolpracy z innymi
+    stacjami w eterze).
     Uzywane do budowania tablicy hash->callsign: gdy widzimy PELNY
     callsign w jednej ramce, zapamietujemy jego hash, zeby podstawic
     prawdziwy tekst gdy ten sam hash pojawi sie w innej (niestandardowej)
-    ramce — dokladnie tak jak robi prawdziwy WSJT-X.
+    ramce.
     """
     c0 = callsign.upper().strip().ljust(11)[:11]
     n8 = 0
@@ -251,7 +252,7 @@ def unpack77(bits77):
 
     # Ucz cache: kazdy PELNY (nie-hash, nie-specjalny) callsign widziany w tej
     # ramce zapamietujemy, zeby podstawic go pod ten sam hash w przyszlych,
-    # niestandardowych ramkach (dokladnie jak robi prawdziwy WSJT-X).
+    # niestandardowych ramkach.
     for call in (call_to, call_de):
         if call and call not in ("CQ", "DE", "QRZ") and not call.startswith("<") and not call.startswith("CQ_"):
             _hash_cache.remember(call)

@@ -68,18 +68,17 @@ function setPaletteReference(v) { paletteRef  = v; _requestRender(); }
 function setPaletteZero(v)      { paletteZero = v; _requestRender(); }
 function setPaletteGain(v)      { paletteGain = v; _requestRender(); }
 
-// Paleta w stylu WSJT-X/JTDX: ciemny granat (cisza/szum) -> niebieski ->
-// cyjan -> zielony -> zolty -> bialy (silne sygnaly). Wieksza czesc zakresu
-// (szum tla) zostaje ciemna i stonowana, tylko silne sygnaly robia sie jasne.
-// Paleta dostrojona do referencyjnego JTDX (zmierzone bezposrednio z
-// zrzutu ekranu: typowe tlo/szum to NASYCONY niebieski [1,12,144], nie
-// prawie-czarny jak w poprzedniej wersji). Krzywa: czern tylko dla
-// absolutnej ciszy, szybko przechodzi w nasycony niebieski (typowy szum),
-// potem cyjan/zielony/zolty/bialy dla coraz silniejszych sygnalow.
+// Paleta wodospadu: ciemny granat (cisza/szum) -> niebieski -> cyjan ->
+// zielony -> zolty -> bialy (silne sygnaly). Wieksza czesc zakresu (szum
+// tla) zostaje ciemna i stonowana, tylko silne sygnaly robia sie jasne.
+// Typowe tlo/szum to NASYCONY niebieski [1,12,144], nie prawie-czarny jak
+// w poprzedniej wersji. Krzywa: czern tylko dla absolutnej ciszy, szybko
+// przechodzi w nasycony niebieski (typowy szum), potem cyjan/zielony/
+// zolty/bialy dla coraz silniejszych sygnalow.
 const PALETTE_STOPS = [
   [0,   [0,   0,   10]],
   [15,  [0,   5,   60]],
-  [40,  [1,   12,  144]],  // "typowy szum" — zmierzone z referencji JTDX
+  [40,  [1,   12,  144]],  // "typowy szum"
   [90,  [0,   60,  190]],
   [140, [0,   150, 210]],
   [180, [90,  215, 150]],
@@ -169,7 +168,7 @@ void main() {
   float v1 = texture2D(uData, vec2(vUv.x, (texRow1 + 0.5) / uMaxRows)).r;
   float v = mix(v0, v1, frac);
 
-  // Palette Adjust (REF/ZERO/GAIN), w stylu WSJT-X. Przy domyslnych
+  // Palette Adjust (REF/ZERO/GAIN). Przy domyslnych
   // wartosciach (ref=0.15, zero=0, gain=1.0) to no-op — v przechodzi bez
   // zmian, wiec baseline wyglada dokladnie tak jak przed dodaniem tych
   // suwakow. REF: przesuniecie jasnosci wzgledem wbudowanego punktu

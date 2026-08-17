@@ -2033,8 +2033,8 @@ function _houndOnDecode(decoded) {
 function _houndStartCalling() {
   if (!_hound.active || _hound.step !== 1) return;
   // TX1: "KH1/KH7Z SP3GSK KO02" na freq 1000-4000 Hz. Spec nie nakazuje
-  // zmiany freq przy braku odpowiedzi (to opcjonalna decyzja operatora w
-  // prawdziwym WSJT-X) - ponawiamy na TEJ SAMEJ freq co poprzednio.
+  // zmiany freq przy braku odpowiedzi (to opcjonalna decyzja operatora) -
+  // ponawiamy na TEJ SAMEJ freq co poprzednio.
   _hound.lastTxAt = Date.now();
   _houndUpdateUI();
   _houndSendMsg(_hound.foxCall, _myCall, (_myGrid || '').trim(), false, _hound.txFreq);

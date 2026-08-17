@@ -1,8 +1,8 @@
 """
 deepcw_lang.py — warstwa jezykowa dekodera CW
 
-Poprawia wyjscie modelu tak, jak robi to CW Skimmer: wykorzystuje wiedze
-o STRUKTURZE lacznosci CW. Model czyta znak po znaku bez kontekstu, wiec
+Poprawia wyjscie modelu wykorzystujac wiedze o STRUKTURZE lacznosci CW.
+Model czyta znak po znaku bez kontekstu, wiec
 myli podobne litery (KEITH -> KEHTHA). Warstwa jezykowa wie, ze:
   - istnieje skonczony zbior typowych zwrotow (UR, TU, TKS, QSO, RST...),
   - raporty maja ustalony format (599, 5NN),

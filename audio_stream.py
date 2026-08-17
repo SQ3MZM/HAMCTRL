@@ -186,9 +186,9 @@ class AudioStream:
                 # kompresji Opus. Kodek stratny rozmywa krawedzie kluczowania
                 # i podbija szum w przerwach: zmierzony kontrast obwiedni
                 # spadal do 6.4x, podczas gdy model potrzebuje >20x. Stad kasza
-                # w dekodowaniu mimo czystego, mocnego sygnalu — CW Skimmer
-                # sluchajacy MIKROFONEM z powietrza czytal lepiej, bo nigdy nie
-                # przechodzil przez kodek.
+                # w dekodowaniu mimo czystego, mocnego sygnalu — audio nagrane
+                # mikrofonem z powietrza (bez kodeka) czyta sie lepiej wlasnie
+                # dlatego, ze nigdy nie przechodzi przez kompresje stratna.
                 if getattr(self, "cw_rx_enabled", False):
                     with self._cw_rx_buf_lock:
                         self._cw_rx_buf.extend(mono_native)

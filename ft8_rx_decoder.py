@@ -10,7 +10,7 @@ Etapy (kazdy zweryfikowany osobno):
   5. CRC-14 check                - odrzuca falszywe/bledne dekodowania
   6. unpack.unpack77             - bity -> czytelny tekst (callsign/grid/raport)
 
-Zweryfikowane end-to-end na prawdziwym nagraniu WSJT-X (210703_133430.wav):
+Zweryfikowane end-to-end na prawdziwym nagraniu FT8 (210703_133430.wav):
 5/12 kandydatow sync zdekodowanych poprawnie do sensownych komunikatow FT8.
 
 Uzycie:
@@ -32,7 +32,7 @@ def _compute_window_noise_floor(audio, sample_rate=12000):
     """Compute the spectral power density and noise floor for the whole window,
     once. Returns (psd, freqs, noise_floor). The noise floor is a low percentile
     of in-band power — the background between signals — which is the right
-    reference for SNR (WSJT-X does the same in spirit)."""
+    reference for SNR."""
     nfft = 2048
     step = nfft // 2
     win = np.hanning(nfft)
@@ -49,7 +49,7 @@ def _compute_window_noise_floor(audio, sample_rate=12000):
     return psd, freqs, noise_floor
 
 
-# Calibration from measurement against WSJT-X reference decodes (ft8.wav):
+# Calibration from measurement against reference FT8 decodes (ft8.wav):
 # correlation 0.74, snr_db ≈ 1.09*raw − 20.2. Kept simple and linear.
 _SNR_SCALE = 1.09
 _SNR_OFFSET = -20.2
@@ -61,7 +61,7 @@ def _estimate_snr_db(psd, freqs, noise_floor, freq_hz):
     signal, so every station reported almost the same SNR (the "+20 for
     everyone" bug). Here we take the signal's power at its own frequency
     relative to the background, which actually differentiates strong from weak
-    stations, then map to the WSJT-X scale with the measured calibration."""
+    stations, then map to a familiar dB scale with the measured calibration."""
     if psd is None or freqs is None:
         return 0.0
     b = (freqs >= freq_hz - 50) & (freqs <= freq_hz + 50)

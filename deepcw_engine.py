@@ -298,10 +298,10 @@ class DeepCWEngine:
             window = self._buf[-self._win_samp:] if len(self._buf) >= self._win_samp \
                 else self._buf.copy()
 
-        # WASKOFILTROWA ANALIZA wokol wykrytego tonu — zasada z CW Skimmera.
+        # WASKOFILTROWA ANALIZA wokol wykrytego tonu.
         #
-        # Model dostawal cale pasmo 400-1200 Hz z calym szumem w srodku. Skimmer
-        # izoluje pojedynczy sygnal waskim filtrem i dlatego ma lepszy stosunek
+        # Model dostawal cale pasmo 400-1200 Hz z calym szumem w srodku.
+        # Izolacja pojedynczego sygnalu waskim filtrem daje lepszy stosunek
         # sygnal/szum. Przy pracy zdalnej sluchamy JEDNEJ stacji (zmierzone: w
         # nagraniu jeden ton), wiec wystarczy jeden filtr. Szerokosc +-120 Hz
         # nie obcina bocznych wsteg kluczowania nawet przy 40 WPM (potrzeba
@@ -883,9 +883,9 @@ class DeepCWEngine:
 
     # ── Baza znanych znakow (walidacja/korekta dekodow) ───────────────────────
     # Zasilana ze WSZYSTKICH zrodel: dekody FT8, log QSO, spoty DX cluster
-    # wszystkich userow. Sluzy temu samemu, co baza w CW Skimmerze: zdekodowany
-    # ciag porownujemy z realnymi znakami i poprawiamy typowe przekrecenia
-    # (CW przez siec neuronowa myli podobne znaki, np. A/N, U/D, S/H).
+    # wszystkich userow. Zdekodowany ciag porownujemy z realnymi znakami i
+    # poprawiamy typowe przekrecenia (CW przez siec neuronowa myli podobne
+    # znaki, np. A/N, U/D, S/H).
     _known_calls: set = set()
 
     @classmethod

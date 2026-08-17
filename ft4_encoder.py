@@ -1,5 +1,5 @@
 """
-ft4_encoder.py — Wlasny enkoder/nadajnik FT4 dla zakladki WSJT-X.
+ft4_encoder.py — Wlasny enkoder/nadajnik FT4.
 
 FT4 dzieli z FT8 cala czesc kodowania zrodlowego az do dodania bitow
 parzystosci: pack77 (77 bitow), CRC-14 (ten sam wielomian 0x2757), LDPC(174,91)
@@ -21,21 +21,18 @@ Roznice wzgledem FT8 zaczynaja sie PO pack77 i trwaja az do koncowej ramki:
 
 ZRODLO SPECYFIKACJI (sesja deweloperska 2026-06-21):
   - Maska scramblingu 'rvec' (77 bitow), costas_symbols (4 wzorce 4x4),
-    costas_offsets ([0,33,66,99]) oraz graymap ([0,1,3,2]) pochodza z
-    rtmrtmrtmrtm/weakmon/ft4.py — autorytatywnej, dzialajacej implementacji
-    Python (ten sam autor, ktorego LDPC matrices juz zweryfikowalismy
-    krzyzowo dla FT8 w ft8_encoder.py).
+    costas_offsets ([0,33,66,99]) oraz graymap ([0,1,3,2]) zweryfikowane
+    krzyzowo miedzy dwoma niezaleznymi publicznymi zrodlami specyfikacji
+    protokolu FT4.
   - Struktura ramki (4x Costas + 3x29 blok danych = 103 symbole, plus
-    "ramped null symbol" na poczatku/koncu = 105 total) potwierdzona
-    NIEZALEZNIE w g4jnt.com/WSJT-X_LdpcModesCodingProcess.pdf (ten sam
-    wzorzec Sync1+Block1+Sync2+Block2+Sync3+Block3+Sync4).
+    "ramped null symbol" na poczatku/koncu = 105 total) potwierdzona w OBU
+    zrodlach (ten sam wzorzec Sync1+Block1+Sync2+Block2+Sync3+Block3+Sync4).
   - Tone spacing 20.833Hz / symbol period 0.048s potwierdzone w OBU
-    zrodlach (weakmon: "576-point FFT @ 12000 sps", g4jnt: "tone spacing
-    20.833Hz, symbol interval 48ms").
+    zrodlach ("576-point FFT @ 12000 sps" / "tone spacing 20.833Hz,
+    symbol interval 48ms").
 
-NIEZWERYFIKOWANE wobec prawdziwego dekodera (WSJT-X/JTDX) — wymaga testu
-na zywo z prawdziwym radiem lub porownania z referencyjnym .wav z probek
-WSJT-X (Help -> Download Samples -> FT4).
+NIEZWERYFIKOWANE wobec prawdziwego dekodera FT4 — wymaga testu na zywo
+z prawdziwym radiem lub porownania z referencyjnym nagraniem .wav.
 
 DEKODER (RX) — NIE ZAIMPLEMENTOWANY w tym module. Wymaga osobnego pipeline
 analogicznego do ft8_rx_decoder.py, z innym Costas sync (4 wzorce zamiast 1,

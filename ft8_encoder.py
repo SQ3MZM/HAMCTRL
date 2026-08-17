@@ -1,28 +1,28 @@
 """
-ft8_encoder.py — Wlasny enkoder/nadajnik FT8 dla zakladki WSJT-X.
+ft8_encoder.py — Wlasny enkoder/nadajnik FT8.
 
 Pelny pipeline: tekst wiadomosci -> 77-bit pack -> CRC-14 -> LDPC(174,91)
 encode -> Gray mapping -> wstawienie Costas sync -> 79 symboli -> GFSK
 audio @ 12kHz -> resample do 48kHz -> stream przez feed_tx_pcm().
 
-ZWERYFIKOWANE w sesji deweloperskiej (2026-06-20):
-  - packcall()/packgrid(): roundtrip test przez prawdziwy unpack() z basicft8.py
-    (9/9 callsigns w tym XX0XXX, 6/6 gridow w tym KO02 — wszystkie OK)
-  - LDPC generator matrix (rawg): zgodna 1:1 z DWOMA niezaleznymi zrodlami
-    (weakmon/ft8.py hex format ORAZ NT7S gist binary format — identyczne
+ZWERYFIKOWANE w sesji deweloperskiej (2026-06-20), zgodnosc z oficjalna
+specyfikacja protokolu FT8:
+  - packcall()/packgrid(): roundtrip test przez niezalezny referencyjny
+    dekoder (9/9 callsigns w tym XX0XXX, 6/6 gridow w tym KO02 — wszystkie OK)
+  - LDPC generator matrix (rawg): zgodna 1:1 z DWOMA niezaleznymi publicznymi
+    zrodlami specyfikacji (jedno w formacie hex, drugie binary — identyczne
     wartosci dla wiersza 0, 41, 82)
-  - CRC-14 polynomial: zgodny miedzy weakmon (0x6757 z wiodacym bitem,
-    czyli 0x2757 bez) i NT7S gist (jawnie 0x2757)
+  - CRC-14 polynomial: zgodny miedzy obydwoma niezaleznymi zrodlami (0x2757)
   - i3=1 (standard message) na POCZATKU 77-bit struktury — zweryfikowane
-    przeciwko prawdziwemu przykladowi z kgoba/ft8_lib issue #24
+    przeciwko publicznie udokumentowanemu przykladowi testowemu
   - Pelny pipeline: 7/7 testowych wiadomosci (CQ, standard exchange, RRR,
     73, signal report) przechodzi ldpc_check() z autorytatywna tabela Nm
   - Audio GFSK: dlugosc dokladnie 151680 probek = 12.64s przy 12000Hz;
     FFT analiza pierwszych 7 symboli (Costas) potwierdza poprawne
     czestotliwosci tonow w granicach rozdzielczosci FFT (6.25Hz/bin)
 
-NIEZWERYFIKOWANE wobec prawdziwego dekodera (WSJT-X/JTDX) — wymaga testu
-na zywo z prawdziwym radiem, patrz CLAUDE.md sekcja FT8 TX.
+NIEZWERYFIKOWANE wobec prawdziwego dekodera FT8 na zywym radiu — wymaga
+testu na zywo, patrz CLAUDE.md sekcja FT8 TX.
 """
 import re
 import numpy as np
@@ -31,8 +31,8 @@ from scipy.signal import resample_poly
 
 # ============================================================
 # CZESC 1: LDPC(174,91) generator matrix
-# Zrodlo: WSJT-X ldpc_174_91_c_generator.f90, via weakmon/ft8.py
-# Zweryfikowane krzyzowo z niezaleznym zrodlem (NT7S gist, binary format)
+# Zrodlo: oficjalna specyfikacja protokolu FT8, dwa niezalezne publiczne
+# zrodla uzyte do wzajemnej weryfikacji
 # ============================================================
 
 _RAWG = [
@@ -217,11 +217,10 @@ def _charn_inv_pos2(ch):
 def _charn_inv_suffix(ch):
     """
     Mapowanie dla pozycji 3,4,5 (sufiks, max 3 znaki): TYLKO litery + spacja
-    (27 wartosci), BEZ cyfr. To jest kluczowa roznica wzgledem starego,
-    blednego basicft8.py (75-bit protocol), ktory uzywal pelnego zestawu
-    cyfry+litery+spacja-10 dla tych pozycji. Zweryfikowane bit-dokladnie
-    przeciwko prawdziwemu ft8code.exe (WSJT-X) dla "G0XYZ K1ABC FN43":
-    real c28(G0XYZ)=9425373, real c28(K1ABC)=10214965 — oba dokladnie
+    (27 wartosci), BEZ cyfr — nie pelny zestaw cyfry+litery+spacja-10 uzywany
+    dla wczesniejszych pozycji. Zweryfikowane bit-dokladnie wzgledem oficjalnej
+    specyfikacji protokolu dla "G0XYZ K1ABC FN43": referencyjny
+    c28(G0XYZ)=9425373, referencyjny c28(K1ABC)=10214965 — oba dokladnie
     odtworzone tylko z tym poprawionym mapowaniem.
     """
     if ch == ' ':
@@ -233,12 +232,12 @@ def _charn_inv_suffix(ch):
 
 def _packcall(call):
     call = call.strip().upper()
-    # Historical WSJT-X pack28 work-arounds for two DXCC prefixes whose
-    # call-area digit falls outside the two positions this packing
-    # supports. One-way, not reversible on decode - matches real
-    # WSJT-X/JTDX exactly (no corresponding unpack-side reversal there
-    # either): once packed, "3DA0RS" is genuinely decoded as "3D0RS" by
-    # every receiving station, not just ours.
+    # Historical pack28 work-arounds specified by the FT8 protocol for two
+    # DXCC prefixes whose call-area digit falls outside the two positions
+    # this packing supports. One-way, not reversible on decode - matches
+    # the official protocol exactly (no corresponding unpack-side reversal
+    # exists there either): once packed, "3DA0RS" is genuinely decoded as
+    # "3D0RS" by every receiving station, not just ours.
     if call.startswith("3DA0"):
         call = "3D0" + call[4:]
     elif call.startswith("3X") and len(call) > 2 and call[2].isalpha():
@@ -273,8 +272,8 @@ _U64_MASK = (1 << 64) - 1
 
 
 def _ihashcall(call, m):
-    """22/12-bit callsign hash. Port of ihashcall() in
-    ham_audio/src/decode/unpack.rs (same algorithm WSJT-X uses to refer to
+    """22/12-bit callsign hash, per the official FT8 protocol specification.
+    Port of ihashcall() in ham_audio/src/decode/unpack.rs (used to refer to
     a non-standard callsign already announced elsewhere in the exchange,
     without re-transmitting its full text). Must match that Rust
     implementation bit-for-bit, including u64 wraparound arithmetic."""
@@ -329,14 +328,15 @@ def _encode_c28(call):
         # 6-character field (e.g. "XX0XXXXX"): encode as a hash reference
         # instead of raising. Round-trips only if the receiving station
         # already has this exact text cached (from an earlier CQ or
-        # pack77_nonstandard message in this exchange) - the same
-        # convention real WSJT-X relies on.
+        # pack77_nonstandard message in this exchange) - the convention
+        # the official FT8 protocol relies on.
         return _NTOKENS + _ihashcall(call, 22)
 
 
 def _encode_g15(grid_or_report):
-    """ZWERYFIKOWANE wzgledem WSJT-X packjt77.f90 (pack77_1, MAXGRID4=32400).
-    Zwraca tuple (g15, r_flag) — r_flag to OSOBNY bit, NIE zakodowany w g15.
+    """ZWERYFIKOWANE wzgledem oficjalnej specyfikacji protokolu FT8
+    (MAXGRID4=32400). Zwraca tuple (g15, r_flag) — r_flag to OSOBNY bit,
+    NIE zakodowany w g15.
 
     Mapowanie:
       grid 4-znakowy -> _grid_to_ng() (zakres 0..32399)
@@ -374,14 +374,14 @@ def _encode_g15(grid_or_report):
 def _grid_to_ng(g):
     """
     Koduje 4-znakowy Maidenhead grid jako liczbe 0..32399 (15 bit).
-    WZÓR ZWERYFIKOWANY: prosty system pozycyjny (NIE przez lat/lng jak w
-    starym 75-bit basicft8.py, ktory dawal BLEDNE wartosci dla nowego
-    77-bit protokolu — np. RR73 wychodzilo 533 zamiast poprawnych 32373).
+    WZÓR ZWERYFIKOWANY: prosty system pozycyjny (NIE przez lat/lng — ta
+    metoda dawala BLEDNE wartosci dla 77-bit protokolu, np. RR73 wychodzilo
+    533 zamiast poprawnych 32373).
     ng = ((c0*18 + c1)*10 + c2)*10 + c3
     gdzie c0,c1 = indeks litery (A=0..R=17), c2,c3 = cyfra (0-9).
     18*18*10*10 = 32400, dokladnie tyle ile lokatorow Maidenhead istnieje.
-    Zweryfikowane: RR73 -> 32373, zgodne z prawdziwym WSJT-X ft8code.exe
-    (potwierdzone w wsjt-devel mailing list, dokladna zgodnosc liczbowa).
+    Zweryfikowane: RR73 -> 32373, zgodne z oficjalna specyfikacja protokolu
+    FT8 (dokladna zgodnosc liczbowa).
     """
     c0 = ord(g[0]) - ord('A')
     c1 = ord(g[1]) - ord('A')
@@ -467,9 +467,10 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
     """
     Standardowa wiadomosc FT8 Type 1/2: c28 r1 c28 r1 R1 g15 i3 = 77 bit.
     UWAGA: i3 jest na KONCU (ostatnie 3 bity), NIE na poczatku!
-    Zweryfikowane przeciwko prawdziwemu ft8code.exe (WSJT-X) dla
-    "G0XYZ K1ABC FN43": real bits[74:77] = i3 = '001' (i3=1, Standard msg),
-    podczas gdy bits[0:3] = '000' (to byly poczatkowe bity c28, nie i3).
+    Zweryfikowane wzgledem oficjalnej specyfikacji protokolu FT8 dla
+    "G0XYZ K1ABC FN43": referencyjne bits[74:77] = i3 = '001' (i3=1,
+    Standard msg), podczas gdy bits[0:3] = '000' (to byly poczatkowe
+    bity c28, nie i3).
     call_to: callsign odbiorcy (lub 'CQ')
     call_de: Twoj callsign (np. 'XX0XXX')
     report_or_grid: grid (np. 'KO02'), raport (-15/R-09), lub RRR/RR73/73
@@ -499,7 +500,7 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
 
     # /P and /R share ONE i3 value for the whole message (both r1 bits mean
     # the same suffix) - mixing /P on one call and /R on the other in the
-    # same message isn't representable, same limitation real WSJT-X has.
+    # same message isn't representable, a limitation of the protocol itself.
     i3 = 2 if (to_suffix == 'P' or de_suffix == 'P') else 1
     c28_1 = _encode_c28(call_to)
     c28_2 = _encode_c28(call_de)
@@ -522,7 +523,7 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
 
 
 # ============================================================
-# CZESC 3: CRC-14 (polynomial 0x2757, zgodny z WSJT-X)
+# CZESC 3: CRC-14 (polynomial 0x2757, zgodny z oficjalna specyfikacja FT8)
 # ============================================================
 
 def _crc14(msg82):

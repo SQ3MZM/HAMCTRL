@@ -598,7 +598,7 @@ class App:
         self._fake_split_enabled = bool(self.cfg.get("ft8", {}).get("fakeSplit", False))
         self._fake_split_state = None  # dict {dial_hz, audio_hz} do przywrocenia po TX, albo None
 
-        # ── Automatyka QSO (pelna automatyka w stylu WSJT-X) ────────────────
+        # ── Automatyka QSO (pelna automatyka FT8) ────────────────────────────
         self._qso_engine = qso_engine.QsoEngine(my_call=CALLSIGN, my_grid=LOCATOR)
         self._auto_seq_enabled = True    # ZAWSZE aktywne (nie ma juz toggle w UI);
                                           # klik na makro to reczne wymuszenie
@@ -5770,7 +5770,7 @@ class App:
             await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                        "frozen": self._ft8_tx_frozen})
 
-        # ── Automatyka QSO (pelna automatyka w stylu WSJT-X) ──────────────────
+        # ── Automatyka QSO (pelna automatyka FT8) ──────────────────────────────
         elif t == "ft8_toggle_auto_seq":
             # UWAGA: automatyka jest ZAWSZE aktywna od kiedy usunelismy toggle
             # z UI. Ta wiadomosc dostajemy tylko dla kompatybilnosci JS/WS
@@ -7198,9 +7198,8 @@ class App:
                 except Exception:
                     pass
 
-                # Zasil pule znanych znakow dla walidacji dekodow CW
-                # (ta sama zasada co baza w CW Skimmerze — poprawia przekrecone
-                # znaki). Zrodla: dekody FT8, log QSO, spoty DX cluster.
+                # Zasil pule znanych znakow dla walidacji/korekty przekreconych
+                # znakow w dekodach CW. Zrodla: dekody FT8, log QSO, spoty DX cluster.
                 try:
                     _calls = [msg.get("call_de"), msg.get("call_to")]
                     if deepcw_engine is not None:
@@ -7227,7 +7226,7 @@ class App:
         Petla w tle: co WF_INTERVAL_S strumieniuje kompaktowa kolumne widma
         (scope/waterfall) do wszystkich klientow WS. Niezalezna od cyklu
         dekodowania FT8 (ktory trwa 15s) — daje plynnie przewijajacy sie
-        wodospad jak w prawdziwym WSJT-X/JTDX. Dziala TYLKO gdy FT8 RX jest
+        wodospad niezaleznie od tempa dekodowania. Dziala TYLKO gdy FT8 RX jest
         wlaczone (ten sam przelacznik co dekodowanie), zeby nie marnowac
         CPU gdy nikt nie patrzy na zakladke.
         """

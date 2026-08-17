@@ -68,19 +68,19 @@ def test_pr_suffix():
 
 def test_swaziland_guinea_workarounds():
     section("Historyczne wyjatki pack28 (3DA0 Eswatini, 3X Gwinea)")
-    # Jednokierunkowe podstawienie z prawdziwego WSJT-X/JTDX - dzieki niemu
-    # znak pakuje sie jako standardowy (typ 1, z gridem) zamiast wpadac w
-    # wolniejsza sciezke niestandardowa (typ 4, bez gridu). Brak odwrocenia
-    # przy odbiorze to nie nasz blad - dokladnie tak samo dziala prawdziwy
-    # WSJT-X: "3DA0RS" jest odbierane jako "3D0RS" przez KAZDA stacje.
+    # Jednokierunkowe podstawienie z oficjalnej specyfikacji protokolu FT8 -
+    # dzieki niemu znak pakuje sie jako standardowy (typ 1, z gridem) zamiast
+    # wpadac w wolniejsza sciezke niestandardowa (typ 4, bez gridu). Brak
+    # odwrocenia przy odbiorze to nie nasz blad - dokladnie tak samo dziala
+    # protokol: "3DA0RS" jest odbierane jako "3D0RS" przez KAZDA stacje.
     d = roundtrip("CQ", "3DA0RS", "JO72")
     check(d["i3"] == 1, "3DA0RS: pakuje sie jako standardowy typ 1 (nie hash/typ 4)")
-    check(d["call_de"] == "3D0RS", "3DA0RS: podstawienie 3DA0->3D0 zgodne z WSJT-X")
+    check(d["call_de"] == "3D0RS", "3DA0RS: podstawienie 3DA0->3D0 zgodne z protokolem")
     check(d["report_or_grid"] == "JO72", "3DA0RS: grid przenoszony (typ 1 to umozliwia)")
 
     d = roundtrip("CQ", "3XY1AB", "JO72")
     check(d["i3"] == 1, "3XY1AB: pakuje sie jako standardowy typ 1")
-    check(d["call_de"] == "QY1AB", "3XY1AB: podstawienie 3X->Q zgodne z WSJT-X")
+    check(d["call_de"] == "QY1AB", "3XY1AB: podstawienie 3X->Q zgodne z protokolem")
 
     # 3X + cyfra (nie litera) na 3 pozycji juz normalnie pasuje do formatu
     # standardowego - podstawienie NIE powinno sie tu zadzialac.
@@ -102,7 +102,7 @@ def test_nonstandard_prefix_call():
 
     # Po ogloszeniu pelnego znaku (dekoder go zapamietal), dalsza wymiana
     # raportu odbywa sie przez odniesienie hashem w zwyklej wiadomosci
-    # typu 1 - to jest dokladnie ta sama sciezka co prawdziwy WSJT-X.
+    # typu 1 - to jest dokladnie sciezka opisana w specyfikacji protokolu.
     d = roundtrip("WX/SQ3MZM", "SP9XYZ", "-12")
     check(d["i3"] == 1, "WX/SQ3MZM SP9XYZ -12: odpowiedz z raportem = typ 1 (hash)")
     check(d["call_de"] == "SP9XYZ" and d["report_or_grid"] == "-12",
