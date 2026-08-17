@@ -3282,15 +3282,22 @@ class App:
             _py_audio = self.cfg.get("audio", {})
             _py_txvol = float(_py_audio.get("txVolume", 1.0))
             _py_txvol_ssb = float(_py_audio.get("txVolumeSsb", 1.0))
+            # Karty ZAWSZE z configu Pythona (nie z Rusta/nie z self.audio) —
+            # to Python jest zrodlem prawdy dla zapisanych ustawien, w OBU
+            # galeziach ponizej. POPRAWKA: galaz fallback (Rust niedostepny/
+            # blad, np. tuz po zapisie karty gdy Rust wlasnie restartuje
+            # strumien RX) w ogole nie mial "tx_device", a "rx_device" brala
+            # z self.audio.rx_device — atrybutu WLASNEGO, NIEZWIAZANEGO
+            # przechwytywania Pythona (dekoder CW), nie z zapisanej
+            # konfiguracji. UI po odswiezeniu w tym momencie dostawalo
+            # puste/zle karty i wizualnie "zapominalo" wybor mimo poprawnie
+            # zapisanej wartosci w config.json.
+            _rxd = _py_audio.get("rxDevice", "")
+            _txd = _py_audio.get("txDevice", "")
             if rust and rust._connected:
                 try:
                     status = await rust.get_status()
                     if isinstance(status, dict) and "error" not in status:
-                        # Karty i txVolume ZAWSZE z configu Pythona (nie z Rusta) —
-                        # to Python jest zrodlem prawdy dla zapisanych ustawien.
-                        # Rust moze zwracac puste/inne, wiec nadpisujemy.
-                        _rxd = _py_audio.get("rxDevice", "")
-                        _txd = _py_audio.get("txDevice", "")
                         if _rxd: status["rx_device"] = _rxd
                         if _txd: status["tx_device"] = _txd
                         status["txVolume"] = _py_txvol       # nadpisz wartoscia z config.json (FT8/FT4)
@@ -3300,6 +3307,8 @@ class App:
                     print(f"[audio] Rust status error: {e}", flush=True)
             _st = self.audio.get_status()
             if isinstance(_st, dict):
+                if _rxd: _st["rx_device"] = _rxd
+                if _txd: _st["tx_device"] = _txd
                 _st["txVolume"] = _py_txvol
                 _st["txVolumeSsb"] = _py_txvol_ssb
             return 200, _st
@@ -6309,7 +6318,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-17-TXVOL-SSB-SPLIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-17-AUDIO-DEVICE-STATUS-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
