@@ -72,7 +72,7 @@ function handleWS(msg) {
   state = msg.tunnel;
   render();
   if (msg.tunnel.publicUrl && msg.tunnel.status === 'connected') {
-    window.UI?.showToast(`✓ Tunel: ${msg.tunnel.publicUrl}`);
+    window.UI?.showToast(I18n.t('in_toast_tunnel_active').replace('{url}', msg.tunnel.publicUrl));
   }
 }
 
@@ -92,26 +92,26 @@ function renderDuckPanel() {
 
   if (daysEl) {
     if (days === null || days === undefined) {
-      daysEl.textContent = 'brak certyfikatu';
+      daysEl.textContent = I18n.t('in_no_cert');
       daysEl.style.color = 'var(--red)';
     } else if (days < 7) {
-      daysEl.textContent = `⚠ ${days} dni`;
+      daysEl.textContent = I18n.t('in_days_warn').replace('{n}', days);
       daysEl.style.color = 'var(--red)';
     } else if (days < 30) {
-      daysEl.textContent = `⚠ ${days} dni`;
+      daysEl.textContent = I18n.t('in_days_warn').replace('{n}', days);
       daysEl.style.color = 'var(--amber)';
     } else {
-      daysEl.textContent = `✓ ${days} dni`;
+      daysEl.textContent = I18n.t('in_days_ok').replace('{n}', days);
       daysEl.style.color = 'var(--green)';
     }
   }
 
   if (stEl) {
     const map = {
-      connected: { txt: '● AKTYWNY',   color: 'var(--green)' },
-      starting:  { txt: '◌ ŁĄCZENIE…', color: 'var(--amber)' },
-      error:     { txt: '✗ BŁĄD',      color: 'var(--red)'   },
-      stopped:   { txt: '○ STOP',      color: 'var(--dim)'   },
+      connected: { txt: I18n.t('in_active'),          color: 'var(--green)' },
+      starting:  { txt: I18n.t('in_connecting_dots'),  color: 'var(--amber)' },
+      error:     { txt: I18n.t('in_error_badge'),      color: 'var(--red)'   },
+      stopped:   { txt: I18n.t('in_stopped_tunnel'),   color: 'var(--dim)'   },
     };
     const s = map[state.status] || map.stopped;
     stEl.textContent  = s.txt;
@@ -133,10 +133,10 @@ function renderBadge() {
   const dot = document.getElementById('tn-status-dot');
   if (!el) return;
   const map = {
-    connected: { txt:'● AKTYWNY',    color:'var(--green)',  bg:'rgba(184,201,143,0.1)' },
-    starting:  { txt:'◌ ŁĄCZENIE…',  color:'var(--amber)',  bg:'rgba(212,168,87,0.1)' },
-    error:     { txt:'✗ BŁĄD',       color:'var(--red)',    bg:'rgba(217,119,106,0.1)' },
-    stopped:   { txt:'○ WYŁĄCZONY',  color:'var(--dim)',    bg:'transparent' },
+    connected: { txt: I18n.t('in_active'),          color:'var(--green)',  bg:'rgba(184,201,143,0.1)' },
+    starting:  { txt: I18n.t('in_connecting_dots'), color:'var(--amber)',  bg:'rgba(212,168,87,0.1)' },
+    error:     { txt: I18n.t('in_error_badge'),     color:'var(--red)',    bg:'rgba(217,119,106,0.1)' },
+    stopped:   { txt: I18n.t('in_stopped_badge'),   color:'var(--dim)',    bg:'transparent' },
   };
   const st = map[state.status] || map.stopped;
   el.textContent    = st.txt;
@@ -154,7 +154,7 @@ function renderUrl() {
       pubEl.innerHTML = `<a href="${state.publicUrl}" target="_blank"
         style="color:var(--green);text-decoration:none;font-weight:bold;">${state.publicUrl}</a>`;
     } else if (state.status === 'starting') {
-      pubEl.innerHTML = `<span style="color:var(--amber);">Oczekiwanie na adres URL…</span>`;
+      pubEl.innerHTML = `<span style="color:var(--amber);">${I18n.t('in_waiting_url')}</span>`;
     } else {
       pubEl.innerHTML = `<span style="color:var(--dim);">—</span>`;
     }
@@ -178,13 +178,13 @@ function renderError() {
 
 function copyUrl(url) {
   navigator.clipboard?.writeText(url).then(() => {
-    window.UI?.showToast('✓ Adres skopiowany');
+    window.UI?.showToast(I18n.t('in_toast_addr_copied'));
   }).catch(() => {
     const inp = document.createElement('input');
     inp.value = url; document.body.appendChild(inp);
     inp.select(); document.execCommand('copy');
     document.body.removeChild(inp);
-    window.UI?.showToast('✓ Skopiowano');
+    window.UI?.showToast(I18n.t('in_toast_copied_plain'));
   });
 }
 
@@ -237,20 +237,20 @@ async function copyPublic() {
   const link = el.querySelector('a');
   const url = (link ? link.href : el.textContent).trim();
   if (!url || url === '—') {
-    window.UI?.showToast('⚠ Brak adresu do skopiowania - najpierw uruchom tunel', 'error');
+    window.UI?.showToast(I18n.t('in_toast_no_addr'), 'error');
     return;
   }
   try {
     await navigator.clipboard.writeText(url);
-    window.UI?.showToast('✓ Skopiowano: ' + url);
+    window.UI?.showToast(I18n.t('in_toast_copied_prefix') + url);
   } catch (e) {
     // Fallback dla starszych przeglądarek
     const tmp = document.createElement('textarea');
     tmp.value = url;
     document.body.appendChild(tmp);
     tmp.select();
-    try { document.execCommand('copy'); window.UI?.showToast('✓ Skopiowano'); }
-    catch { window.UI?.showToast('✗ Nie mogę skopiować: ' + e.message, 'error'); }
+    try { document.execCommand('copy'); window.UI?.showToast(I18n.t('in_toast_copied_plain')); }
+    catch { window.UI?.showToast(I18n.t('in_toast_copy_failed') + e.message, 'error'); }
     document.body.removeChild(tmp);
   }
 }
@@ -266,23 +266,26 @@ async function startTunnel() {
 
   // Walidacja per tryb
   if (mode === 'named' && !token) {
-    window.UI?.showToast('⚠ Wklej token Cloudflare', 'error'); return;
+    window.UI?.showToast(I18n.t('in_toast_paste_token'), 'error'); return;
   }
   if (mode === 'duckdns' && (!duckDomain || !duckToken)) {
-    window.UI?.showToast('⚠ Wpisz subdomenę i token DuckDNS', 'error'); return;
+    window.UI?.showToast(I18n.t('in_toast_duckdns_fields'), 'error'); return;
   }
   if (mode === 'staticip' && !staticIp) {
-    window.UI?.showToast('⚠ Wpisz adres IP', 'error'); return;
+    window.UI?.showToast(I18n.t('in_toast_enter_ip'), 'error'); return;
   }
   if (mode === 'customcert' && !customHostname) {
-    window.UI?.showToast('⚠ Wpisz domenę', 'error'); return;
+    window.UI?.showToast(I18n.t('in_toast_enter_domain'), 'error'); return;
   }
 
   // Zapisz konfigurację przed uruchomieniem
   await saveTunnelConfig(false);
 
   const btn = document.getElementById('tn-start-btn');
-  if (btn) { btn.textContent = 'Łączenie…'; btn.disabled = true; }
+  // Usun data-i18n statycznego HTML - inaczej kolejny I18n.setLang() nadpisze
+  // ten przycisk z powrotem na "URUCHOM" w trakcie faktycznego laczenia
+  // (patrz ta sama uwaga przy rot-status-badge w rotormini.js).
+  if (btn) { btn.removeAttribute('data-i18n'); btn.textContent = I18n.t('in_connecting_btn'); btn.disabled = true; }
 
   const tkn = localStorage.getItem('token') || '';
   try {
@@ -294,12 +297,12 @@ async function startTunnel() {
     });
     const res = await r.json();
     if (!res.ok) {
-      window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
+      window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
     }
   } catch(e) {
-    window.UI?.showToast('✗ Błąd połączenia', 'error');
+    window.UI?.showToast('✗ ' + I18n.t('cfg_conn_error'), 'error');
   } finally {
-    if (btn) { btn.textContent = '▶ URUCHOM'; btn.disabled = false; }
+    if (btn) { btn.textContent = I18n.t('in_start_btn'); btn.disabled = false; }
   }
 }
 
@@ -307,7 +310,7 @@ async function stopTunnel() {
   await fetch('/api/tunnel/stop', { method:'POST' });
   state.status = 'stopped'; state.publicUrl = '';
   render();
-  window.UI?.showToast('■ Tunel zatrzymany');
+  window.UI?.showToast(I18n.t('in_toast_tunnel_stopped'));
 }
 
 // Zapisz konfigurację tunelu
@@ -338,9 +341,9 @@ async function saveTunnelConfig(showToast = true) {
       body: JSON.stringify({ mode, token, hostname, duckDomain, duckToken, staticIp, staticPort,
         customHostname, customPort, customCertPath, customKeyPath, autoStart }),
     });
-    if (showToast) window.UI?.showToast('✓ Konfiguracja tunelu zapisana');
+    if (showToast) window.UI?.showToast(I18n.t('in_toast_config_saved'));
   } catch(e) {
-    if (showToast) window.UI?.showToast('✗ Błąd zapisu', 'error');
+    if (showToast) window.UI?.showToast(I18n.t('in_toast_save_error'), 'error');
   }
 }
 
@@ -351,7 +354,7 @@ async function checkCF() {
   const svcEl   = document.getElementById('tn-cf-svc');
   if (!el) return;
   el.style.display = 'flex';
-  if (verEl) verEl.textContent = 'cloudflared: sprawdzam...';
+  if (verEl) verEl.textContent = I18n.t('in_cf_checking');
   try {
     const token = localStorage.getItem('token') || '';
     const r   = await fetch('/api/tunnel/check', {
@@ -360,25 +363,25 @@ async function checkCF() {
     const res = await r.json();
     if (verEl) {
       if (res.available) {
-        verEl.innerHTML = `<span style="color:var(--green)">✓ cloudflared ${res.version||''}</span>`;
+        verEl.innerHTML = `<span style="color:var(--green)">${I18n.t('in_cf_available').replace('{ver}', res.version||'')}</span>`;
       } else {
-        verEl.innerHTML = `<span style="color:var(--amber)">⚠ cloudflared brak — zostanie pobrany automatycznie</span>`;
+        verEl.innerHTML = `<span style="color:var(--amber)">${I18n.t('in_cf_missing')}</span>`;
       }
     }
     // Stale procs
     if (staleEl) {
       staleEl.style.display = (res.stale_procs > 0) ? 'inline' : 'none';
-      if (res.stale_procs > 0) staleEl.textContent = `⚠ Stare procesy: ${res.stale_procs}`;
+      if (res.stale_procs > 0) staleEl.textContent = I18n.t('in_stale_procs').replace('{n}', res.stale_procs);
     }
     // Windows service
     if (svcEl) svcEl.style.display = res.svc_installed ? 'inline' : 'none';
   } catch(e) {
-    if (verEl) verEl.textContent = 'Błąd sprawdzania cloudflared';
+    if (verEl) verEl.textContent = I18n.t('in_cf_check_error');
   }
 }
 
 async function installCertbot() {
-  window.UI?.showToast('Instaluję certbot — poczekaj...');
+  window.UI?.showToast(I18n.t('in_toast_installing_certbot'));
   const h = {'Authorization': `Bearer ${localStorage.getItem('token')||''}`};
   try {
     await fetch('/api/tunnel/install-certbot', {method:'POST', headers:h});
@@ -387,7 +390,7 @@ async function installCertbot() {
 
 async function genCert() {
   await saveTunnelConfig(false);
-  window.UI?.showToast('Generuję certyfikat — poczekaj ~2 min...');
+  window.UI?.showToast(I18n.t('in_toast_generating_cert'));
   const h = {'Authorization': `Bearer ${localStorage.getItem('token')||''}`};
   try {
     await fetch('/api/tunnel/gen-cert', {method:'POST', headers:h});
@@ -395,16 +398,16 @@ async function genCert() {
 }
 
 async function cleanup() {
-  if (!await window.UI?.confirmModal('Wyczyścić stare procesy i usługę cloudflared?')) return;
+  if (!await window.UI?.confirmModal(I18n.t('in_confirm_cleanup'))) return;
   try {
     const r   = await fetch('/api/tunnel/cleanup', {method:'POST'});
     const res = await r.json();
     if (res.ok) {
-      window.UI?.showToast('✓ Wyczyszczono: ' + (res.messages?.[0] || 'OK'));
+      window.UI?.showToast(I18n.t('in_toast_cleaned') + (res.messages?.[0] || 'OK'));
       await checkCF();
     }
   } catch(e) {
-    window.UI?.showToast('✗ Błąd: ' + e.message, 'error');
+    window.UI?.showToast(I18n.t('in_toast_cleanup_error') + e.message, 'error');
   }
 }
 
