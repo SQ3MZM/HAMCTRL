@@ -15,6 +15,23 @@ const S = window.AppState;
 let ws = null;
 let reconnectTimer = null;
 
+// DIAGNOSTYKA: PerformanceObserver na 'longtask' - przegladarka sama zglasza
+// KAZDA blokade glownego watku JS >50ms, niezaleznie od przyczyny. Uzyte do
+// rozstrzygniecia sporu "czy skok znacznika WS to jank JS czy realne
+// opoznienie sieci (LTE)" - jesli w chwili skoku WS NIE ma tu wpisu, to
+// watek JS byl wolny i przyczyna jest sieciowa/serwerowa, nie front-end.
+// Porownywac czas z ostrzezeniami "[ws] WYSOKI RTT" (case 'pong' nizej).
+if (window.PerformanceObserver) {
+  try {
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) {
+        const t = new Date();
+        console.warn(`[longtask] ${Math.round(e.duration)}ms o ${t.toLocaleTimeString('pl-PL', {hour12:false})}.${String(t.getMilliseconds()).padStart(3,'0')} (start offset ${Math.round(e.startTime)}ms od nawigacji)`);
+      }
+    }).observe({ entryTypes: ['longtask'] });
+  } catch(e) { /* longtask API niedostepne w tej przegladarce */ }
+}
+
 // ── Audio (Opus RX) ───────────────────────────────────────────────────────────
 let audioCtx = null;
 Object.defineProperty(window, 'audioCtx', { get: () => audioCtx, set: v => { audioCtx = v; } });
@@ -545,6 +562,13 @@ function handleMessage(msg) {
         badge.textContent = rtt + ' ms';
         badge.style.color = rtt < 50 ? 'var(--green)' : rtt < 150 ? 'var(--amber)' : 'var(--red)';
         badge.style.borderColor = rtt < 50 ? 'var(--green2)' : rtt < 150 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
+      }
+      // DIAGNOSTYKA: zapisz kazdy podejrzanie wysoki RTT z dokladnym czasem
+      // zegarowym, zeby dalo sie porownac z logiem konsoli ham_audio.exe
+      // (znaczniki -> LOW/HIGH bitrate) i z longtask obserwerem ponizej -
+      // rozstrzyga czy skok to blokada watku JS czy realne opoznienie sieci.
+      if (rtt >= 150) {
+        console.warn(`[ws] WYSOKI RTT ${rtt}ms o ${new Date().toLocaleTimeString('pl-PL', {hour12:false})}.${String(new Date().getMilliseconds()).padStart(3,'0')}`);
       }
       break;
     }
