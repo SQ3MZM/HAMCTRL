@@ -217,17 +217,40 @@ function initOpusDecoder() {
 // skonczy sie poprzednia ramka.
 let _nextAudioTime = 0;
 let _aheadAvg = 0;
-// POPRAWKA 2026-08-17: 180ms dawalo PRAWIE ZERO zapasu wobec realnego jittera
-// zaobserwowanego na zywo przez usera przez tunel LTE (sq3mzmremote.duckdns.org)
-// - pojedynczy skok RTT 183ms (bez blokady JS, bez reakcji adaptacyjnego
-// bitrate w ham_audio.exe - za maly zeby przepelnic 5.12s bufor Rust) w
-// zupelnosci wystarczal zeby oproznic ten bufor i dac slyszalne przyciecie.
-// Podniesione do 260ms - dalej w udokumentowanym budzecie 200-300ms
-// (RCForb), ale z realnym zapasem na tego typu krotkie skoki.
-const AUDIO_LATENCY = 0.26;
+// POPRAWKA 2026-08-17: staly cel 180ms dawal PRAWIE ZERO zapasu wobec
+// realnego jittera zaobserwowanego na zywo przez usera przez tunel LTE
+// (sq3mzmremote.duckdns.org) - pojedynczy skok RTT 183ms (bez blokady JS,
+// bez reakcji adaptacyjnego bitrate w ham_audio.exe - za maly zeby
+// przepelnic 5.12s bufor Rust) w zupelnosci wystarczal zeby oproznic ten
+// bufor i dac slyszalne przyciecie. Zamiast na sztywno podnosic cel (co
+// placi wyzsza latencja NAWET gdy lacze jest akurat dobre), cel jest teraz
+// ADAPTACYJNY: startuje nisko (baza), rosnie skokowo po kazdym realnym
+// niedoborze (ahead<0 w _scheduleAudioBuffer), i powoli opada z powrotem
+// do bazy gdy lacze jest czyste przez dluzszy czas — ten sam wzorzec
+// histerezy co adaptacyjny bitrate HI/LO w ham_audio.exe (patrz
+// RECOVERY_CLEAN_SECS w main.rs).
+let _audioTarget = 0.18;          // aktualny cel — startuje na bazie
+const _AUDIO_TARGET_BASE = 0.18;  // dolna granica adaptacji (dobre lacze)
+const _AUDIO_TARGET_CEIL = 0.30;  // gorna granica adaptacji (budzet 200-300ms, RCForb)
+const _AUDIO_TARGET_STEP = 0.03;  // krok wzrostu po niedoborze (30ms)
+const _AUDIO_TARGET_DECAY_STEP = 0.02; // krok powrotu w dol przy spokoju
+const _AUDIO_TARGET_CLEAN_MS = 20000;  // ile ms bez niedoboru zanim zaczniemy schodzic
+let _lastUnderrunAt = 0;
 const _AUDIO_MIN = 0.05;
-const _AUDIO_MAX = 0.40;     // gorna granica — powyzej niej PRZYTNIJ bufor (nie rosnij)
+const _AUDIO_MAX = 0.40;     // twardy sufit (poza adaptacja) — powyzej niej PRZYTNIJ bufor
 let _audioBadgeAt = 0;       // throttle aktualizacji DOM (ramki leca co 20ms)
+
+// Powolny powrot do niskiego bufora gdy lacze sie uspokoi. Sprawdzane co 5s,
+// niezalezne od tego czy audio akurat gra (nieszkodliwe gdy wylaczone).
+setInterval(() => {
+  if (_audioTarget <= _AUDIO_TARGET_BASE) return;
+  if (performance.now() - _lastUnderrunAt < _AUDIO_TARGET_CLEAN_MS) return;
+  const before = _audioTarget;
+  _audioTarget = Math.max(_AUDIO_TARGET_BASE, _audioTarget - _AUDIO_TARGET_DECAY_STEP);
+  if (_audioTarget !== before) {
+    console.log(`[audio] lacze spokojne ${Math.round(_AUDIO_TARGET_CLEAN_MS/1000)}s — cel bufora ${Math.round(before*1000)}ms -> ${Math.round(_audioTarget*1000)}ms`);
+  }
+}, 5000);
 
 function _updateAudioLatencyBadge() {
   const now = performance.now();
@@ -242,8 +265,9 @@ function _updateAudioLatencyBadge() {
   }
   const ms = Math.round(_aheadAvg * 1000);
   badge.textContent = ms + ' ms';
-  // Cel 260ms (AUDIO_LATENCY), twardy sufit 400ms (_AUDIO_MAX) — powyzej niego
-  // scheduler i tak przycina bufor, wiec czerwony = bufor stale dobija do sufitu.
+  // Cel adaptacyjny 180-300ms (_audioTarget), twardy sufit 400ms (_AUDIO_MAX)
+  // — powyzej niego scheduler i tak przycina bufor, wiec czerwony = bufor
+  // stale dobija do sufitu niezaleznie od aktualnego celu adaptacji.
   badge.style.color = ms < 300 ? 'var(--green)' : ms < 400 ? 'var(--amber)' : 'var(--red)';
   badge.style.borderColor = ms < 300 ? 'var(--green2)' : ms < 400 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
 }
@@ -253,12 +277,12 @@ function _scheduleAudioBuffer(audioBuffer) {
   const now = audioCtx.currentTime;
   let ahead = _nextAudioTime - now;
 
-  if (_aheadAvg === 0) _aheadAvg = ahead > 0 ? ahead : AUDIO_LATENCY;
+  if (_aheadAvg === 0) _aheadAvg = ahead > 0 ? ahead : _audioTarget;
   _aheadAvg = _aheadAvg * 0.9 + ahead * 0.1;
 
   let rate = 1.0;
   if (ahead > 0) {
-    const err = _aheadAvg - AUDIO_LATENCY;
+    const err = _aheadAvg - _audioTarget;
     // playbackRate changes PITCH as well as tempo, so an audible speed-up sounds
     // like the tone rising — very noticeable on CW/SSB where pitch carries
     // meaning. Keep correction tiny (max 0.3%, inaudible) and only engage it
@@ -274,13 +298,23 @@ function _scheduleAudioBuffer(audioBuffer) {
   // Gdy spadnie za nisko: dolej (przeciw przycieciom).
   // Gdy urosnie za wysoko: PRZYTNIJ (przeciw narastaniu latency do 700ms).
   if (ahead > 0 && ahead < _AUDIO_MIN) {
-    _nextAudioTime = now + AUDIO_LATENCY; ahead = AUDIO_LATENCY; _aheadAvg = AUDIO_LATENCY;
+    _nextAudioTime = now + _audioTarget; ahead = _audioTarget; _aheadAvg = _audioTarget;
   } else if (ahead > _AUDIO_MAX) {
     // bufor spuchl (Python sie dlawil) — zetnij nadmiar, wroc do celu
-    _nextAudioTime = now + AUDIO_LATENCY; ahead = AUDIO_LATENCY; _aheadAvg = AUDIO_LATENCY;
+    _nextAudioTime = now + _audioTarget; ahead = _audioTarget; _aheadAvg = _audioTarget;
   }
   if (ahead < 0) {
-    _nextAudioTime = now + AUDIO_LATENCY; ahead = AUDIO_LATENCY; _aheadAvg = AUDIO_LATENCY; rate = 1.0;
+    // Realny niedobor — bufor calkiem sie oproznil, to jest SLYSZALNE
+    // przyciecie. Dowod ze aktualny cel jest za ciasny na biezacy jitter
+    // lacza — podnies go (do sufitu adaptacji), zamiast czekac na kolejny
+    // taki sam glitch. Powrot w dol obsluguje osobny interval powyzej.
+    const grown = Math.min(_AUDIO_TARGET_CEIL, _audioTarget + _AUDIO_TARGET_STEP);
+    if (grown > _audioTarget) {
+      console.warn(`[audio] niedobor bufora — cel ${Math.round(_audioTarget*1000)}ms -> ${Math.round(grown*1000)}ms`);
+      _audioTarget = grown;
+    }
+    _lastUnderrunAt = performance.now();
+    _nextAudioTime = now + _audioTarget; ahead = _audioTarget; _aheadAvg = _audioTarget; rate = 1.0;
   }
 
   const src = audioCtx.createBufferSource();
