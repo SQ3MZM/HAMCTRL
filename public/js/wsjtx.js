@@ -239,18 +239,18 @@ async function init() {
     const pill = document.getElementById('wj-status-pill');
     if (d.running) {
       if (pill) { pill.textContent = '● ONLINE'; pill.className = 'wsjtx-status-pill online'; }
-      window.UI?.showToast(`✓ WSJT-X monitor aktywny (UDP :${d.port})`);
+      window.UI?.showToast(I18n.t('wj_toast_monitor_active').replace('{port}', d.port));
     } else {
       // Autostart (wsjtxAutostart w config, domyslnie wlaczony) normalnie
       // sam nasluchuje na porcie 2238 - OFFLINE tutaj oznacza ze autostart
       // sie nie udal (np. port zajety), nie ze trzeba cos recznie kliknac
       // (przycisk START usuniety 2026-08-15, nasluch juz zawsze auto-startuje).
-      if (pill) { pill.textContent = '○ OFFLINE (autostart nieudany?)'; pill.className = 'wsjtx-status-pill'; }
+      if (pill) { pill.textContent = I18n.t('wj_offline_autostart_failed'); pill.className = 'wsjtx-status-pill'; }
     }
     // Pokaż liczniki
     if (d.packets_rx > 0 || d.decodes_rx > 0) {
       const countEl = document.getElementById('wj-decode-count');
-      if (countEl) countEl.textContent = `${d.decodes_rx} odebranych dekodowań (sesja)`;
+      if (countEl) { countEl.removeAttribute('data-i18n'); countEl.textContent = I18n.t('wj_decode_count_session').replace('{n}', d.decodes_rx); }
     }
   } catch(e) { console.warn('[wsjtx] init error', e); }
   await _loadMiniLog();
@@ -287,7 +287,7 @@ async function startWsjtx() {
     const d = await r.json();
     if (d.ok) {
       _updateStatus({running:true, text:`Nasłuchuję UDP :${port}`});
-      window.UI?.showToast(`✓ Monitor aktywny na porcie ${port}`);
+      window.UI?.showToast(I18n.t('wj_toast_monitor_on_port').replace('{port}', port));
     }
   } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
 }
@@ -296,7 +296,7 @@ async function stopWsjtx() {
   try {
     await fetch('/api/wsjtx/stop', {method:'POST'});
     _updateStatus({running:false});
-    window.UI?.showToast('Monitor zatrzymany');
+    window.UI?.showToast(I18n.t('wj_toast_monitor_stopped'));
   } catch(e) {}
 }
 
@@ -307,7 +307,7 @@ async function haltTx() {
     await fetch('/api/ft8/halt', {method:'POST'});
   } catch(e) {}
   stopTx();
-  window.UI?.showToast('⛔ TX zatrzymany');
+  window.UI?.showToast(I18n.t('wj_toast_tx_stopped'));
 }
 
 function stopTx() {
@@ -317,7 +317,7 @@ function stopTx() {
   document.querySelectorAll('.wj-tx-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('wj-halt-tx-btn');
   if (btn) btn.style.background = '';
-  window.UI?.showToast('TX wstrzymany');
+  window.UI?.showToast(I18n.t('wj_toast_tx_paused'));
 }
 
 // ── Wlasny dekoder FT8 RX (zamiast fizycznego WSJT-X/JTDX) ────────────────────
@@ -397,7 +397,7 @@ function setDecodeMode(mode) {
   _populateBandSelect(); // lista czestotliwosci zalezy od trybu (FT8 vs FT4)
   window.WSJTXScope?.setScopeDecodeMode(mode);
   window.WS?.send({ type: 'ft8_set_decode_mode', mode });
-  window.UI?.showToast(`Tryb dekodowania: ${mode}`);
+  window.UI?.showToast(I18n.t('wj_toast_decode_mode').replace('{mode}', mode));
 }
 
 // Wypelnia <select> pasm aktualnymi czestotliwosciami dla biezacego trybu
@@ -408,7 +408,7 @@ function _populateBandSelect() {
   const sel = document.getElementById('wj-band-select');
   if (!sel) return;
   const prevValue = sel.value;
-  sel.innerHTML = '<option value="">-- pasmo --</option>';
+  sel.innerHTML = `<option value="">${I18n.t('wj_band_placeholder')}</option>`;
   for (const b of BAND_FREQUENCIES) {
     const hz = _decodeMode === 'FT4' ? b.ft4 : b.ft8;
     if (hz == null) continue;
@@ -441,7 +441,7 @@ function tuneToBand(hzStr) {
   const role  = window.CurrentUser?.role;
   if (role !== 'admin' && (!lock?.locked || String(lock.user_id) !== myUid)) {
     const holder = lock?.callsign || lock?.username || '?';
-    window.UI?.showToast(`⛔ Radio zajęte przez ${holder} — przejmij TRX`, 'error');
+    window.UI?.showToast(I18n.t('wj_toast_radio_busy').replace('{holder}', holder), 'error');
     return;
   }
   // Jedna atomowa komenda — serwer ustawi USB-D + freq w dobrej kolejnosci.
@@ -459,7 +459,7 @@ function setTxPeriod(period) {
   if (btn1) btn1.classList.toggle('active', period === 1);
   if (btn2) btn2.classList.toggle('active', period === 2);
   window.WS?.send({ type: 'ft8_set_tx_period', period });
-  window.UI?.showToast(`Okres nadawania: ${period === 1 ? '1st (xx:00/30)' : '2nd (xx:15/45)'}`);
+  window.UI?.showToast(I18n.t('wj_toast_tx_period_prefix') + (period === 1 ? '1st (xx:00/30)' : '2nd (xx:15/45)'));
 }
 
 function _onTxPeriodUpdate(msg) {
@@ -487,10 +487,10 @@ function _onDecodeModeUpdate(msg) {
 function toggleOwnRx() {
   _ownRxEnabled = !_ownRxEnabled;
   window.WS?.send({ type: 'ft8_rx_enable', enabled: _ownRxEnabled });
-  window.UI?.showToast(_ownRxEnabled ? '✓ Wlasny dekoder FT8 RX aktywny' : 'Wlasny dekoder FT8 RX zatrzymany');
+  window.UI?.showToast(_ownRxEnabled ? I18n.t('wj_toast_own_rx_on') : I18n.t('wj_toast_own_rx_off'));
   const btn = document.getElementById('wj-own-rx-btn');
   if (btn) {
-    btn.textContent = _ownRxEnabled ? '⏹ STOP (własny RX)' : '▶ START (własny RX)';
+    btn.textContent = _ownRxEnabled ? I18n.t('wj_own_rx_stop') : I18n.t('wj_own_rx_start');
     btn.classList.toggle('active', _ownRxEnabled);
   }
 }
@@ -507,7 +507,7 @@ let _rxFreqPanelCleared = false;
 function clearRxFreqPanel() {
   _rxFreqPanelCleared = true;
   const el = document.getElementById('wj-rx-freq-row');
-  if (el) el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+  if (el) el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
 }
 
 // ── Resizer miedzy Band Activity i RX Frequency ────────────────────────────────
@@ -580,7 +580,7 @@ function _onFakeSplitStatus(msg) {
   if (msg.enabled !== undefined) _fakeSplitEnabled = msg.enabled;
   const btn = document.getElementById('wj-fake-split-toggle');
   if (btn) {
-    btn.textContent = _fakeSplitEnabled ? '🎯 FAKE SPLIT: ON' : '⭕ Fake Split: OFF';
+    btn.textContent = _fakeSplitEnabled ? I18n.t('wj_fake_split_on') : I18n.t('wj_fake_split_off');
     btn.classList.toggle('active', _fakeSplitEnabled);
   }
   const tgt = document.getElementById('wj-fake-split-target');
@@ -674,7 +674,7 @@ function _onAutoQsoComplete(msg) {
   const commentEl = document.getElementById('wj-log-comment');
   if (commentEl) commentEl.value = '';
 
-  window.UI?.showToast(`✓ QSO z ${msg.dxCall} zakonczone — sprawdz i zatwierdz w "MÓJ LOG QSO"`);
+  window.UI?.showToast(I18n.t('wj_toast_qso_complete').replace('{call}', msg.dxCall));
 
   // Dopisz OD RAZU do _workedCalls (zamiast czekac do 60s pollingu
   // _loadWorkedCalls) — inaczej ta sama stacja, gdyby zawolala CQ ponownie
@@ -739,23 +739,24 @@ function _renderAutoQsoPanel() {
 
   const statusEl = document.getElementById('wj-autoqso-status');
   if (statusEl) {
+    statusEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
     statusEl.classList.remove('active', 'done', 'error');
     if (!_autoSeqEnabled) {
-      statusEl.textContent = 'Automatyka wylaczona — kliknij wiersz CQ aby odpowiedziec recznie';
+      statusEl.textContent = I18n.t('wj_status_no_decoding');
     } else if (_autoQsoState === 'IDLE' || !_autoQsoPartner) {
       statusEl.textContent = _autoCall1st
-        ? 'Auto-Sequencing aktywne — czekam na wywolanie (Call 1st wlaczone)'
-        : 'Auto-Sequencing aktywne — kliknij wiersz CQ aby rozpoczac QSO';
+        ? I18n.t('wj_status_waiting_call1st')
+        : I18n.t('wj_status_waiting_cq');
     } else if (_autoQsoState === 'DONE') {
-      statusEl.textContent = `✓ QSO z ${_autoQsoPartner} zakonczone`;
+      statusEl.textContent = I18n.t('wj_status_qso_done').replace('{partner}', _autoQsoPartner);
       statusEl.classList.add('done');
     } else {
       const stateLabels = {
-        CALLING: 'wywoluje',
-        REPORT_SENT: 'wyslano raport, czekam na potwierdzenie',
-        RRR_SENT: 'wyslano RRR, czekam na 73',
+        CALLING: I18n.t('wj_status_calling'),
+        REPORT_SENT: I18n.t('wj_status_report_sent'),
+        RRR_SENT: I18n.t('wj_status_rrr_sent'),
       };
-      statusEl.textContent = `QSO z ${_autoQsoPartner}: ${stateLabels[_autoQsoState] || _autoQsoState}`;
+      statusEl.textContent = I18n.t('wj_status_qso_with').replace('{partner}', _autoQsoPartner).replace('{state}', stateLabels[_autoQsoState] || _autoQsoState);
       statusEl.classList.add('active');
     }
   }
@@ -767,7 +768,7 @@ function _renderAutoQsoPanel() {
       queueWrap.style.display = '';
       queueEl.innerHTML = _autoQsoQueue.map((call, i) =>
         `<span class="wj-queue-chip${i===0?' first':''}">${_esc(call)}` +
-        `<span class="wj-queue-chip-x" title="Usuń ${_esc(call)} z kolejki" onclick="WSJTX.removeFromQueue('${_esc(call)}')">✕</span></span>`
+        `<span class="wj-queue-chip-x" title="${I18n.t('wj_queue_remove_title').replace('{call}', _esc(call))}" onclick="WSJTX.removeFromQueue('${_esc(call)}')">✕</span></span>`
       ).join('');
     } else {
       queueWrap.style.display = 'none';
@@ -840,7 +841,7 @@ function _updateStatus(d) {
   if (pill) {
     if (!_status.running)       { pill.textContent='○ OFFLINE';    pill.className='wsjtx-status-pill'; }
     else if (_status.transmit)  { pill.textContent='📡 TX';        pill.className='wsjtx-status-pill tx'; }
-    else if (_status.decoding)  { pill.textContent='⚡ DEKODUJE';  pill.className='wsjtx-status-pill decoding'; }
+    else if (_status.decoding)  { pill.textContent=I18n.t('wj_decoding_status');  pill.className='wsjtx-status-pill decoding'; }
     else                        { pill.textContent='● ONLINE';     pill.className='wsjtx-status-pill online'; }
   }
   document.getElementById('wj-tx-indicator').style.display = _status.transmit ? '' : 'none';
@@ -1042,8 +1043,8 @@ function _renderDecodes() {
     : _decodes;
   if (!visible.length) {
     el.innerHTML = _cqOnly
-      ? '<div class="wj-empty">Brak wywolan CQ</div>'
-      : '<div class="wj-empty">Brak dekodowań — uruchom WSJT-X i kliknij ▶ START</div>';
+      ? `<div class="wj-empty">${I18n.t('wj_no_cq')}</div>`
+      : `<div class="wj-empty">${I18n.t('wj_no_decodes')}</div>`;
     return;
   }
   const reversedVisible = [...visible].reverse();
@@ -1085,13 +1086,13 @@ function _renderRxFreqPanel() {
   if (!el) return;
 
   if (_rxFreqPanelCleared) {
-    el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+    el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
     return;
   }
 
   const rxFreq = window.WSJTXScope?.getRxFreq?.();
   if (rxFreq == null) {
-    el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+    el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
     return;
   }
   // Hold TX (isTxFrozen) intentionally keeps the TX frequency apart from
@@ -1105,7 +1106,7 @@ function _renderRxFreqPanel() {
     return d.is_tx && txHeld;
   });
   if (!matches.length) {
-    el.innerHTML = '<div class="wj-empty">Brak sygnału na czestotliwosci RX</div>';
+    el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
     return;
   }
   const queued = matches.slice(-RX_FREQ_QUEUE_MAX);
@@ -1210,7 +1211,7 @@ function searchDxCall(rawCall) {
       return;
     }
   }
-  window.UI?.showToast(`${call} nie widac aktualnie na pasmie`, 'error');
+  window.UI?.showToast(I18n.t('wj_toast_station_not_visible').replace('{call}', call), 'error');
 }
 
 // ── Namiar anteny + rotor (wiersz ANTENA pod polem DX w SZYBKI ZAPIS QSO) ─────
@@ -1277,15 +1278,15 @@ function _onRotatorUpdate(rot) {
 }
 
 async function _rotorSetAz(az, label) {
-  if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
+  if (!_rotorId) { window.UI?.showToast?.(I18n.t('wj_toast_no_rotor'), 'error'); return; }
   try {
     const r = await fetch(`/api/rotator/${_rotorId}/position`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({az, el: 0})
     });
     const d = await r.json();
-    if (d.ok) window.UI?.showToast?.(`↻ Rotor → ${az}°${label ? ' ('+label+')' : ''}`);
-    else window.UI?.showToast?.(`✗ ${d.error || 'Błąd'}`, 'error');
+    if (d.ok) window.UI?.showToast?.(I18n.t('wj_toast_rotor_moved').replace('{az}', az).replace('{labelPart}', label ? ' ('+label+')' : ''));
+    else window.UI?.showToast?.(`✗ ${d.error || I18n.t('profile_error_fallback')}`, 'error');
   } catch(e) { window.UI?.showToast?.(`✗ ${e.message}`, 'error'); }
 }
 
@@ -1302,7 +1303,7 @@ function rotorGoBeam(which) {
 // blokuje caly glowny watek JS dopoki user go nie zamknie, co na zywo
 // zawieszalo streaming audio (WebAudio/WebRTC) do czasu zamkniecia okienka.
 function rotorGoManual() {
-  if (!_rotorId) { window.UI?.showToast?.('⚠ Brak rotora', 'error'); return; }
+  if (!_rotorId) { window.UI?.showToast?.(I18n.t('wj_toast_no_rotor'), 'error'); return; }
   const modal = document.getElementById('rotor-manual-modal');
   const input = document.getElementById('rotor-manual-input');
   if (!modal || !input) return;
@@ -1329,7 +1330,7 @@ function rotorManualSubmit() {
     const h = window.BeamHeading?.headingFor('', raw.toUpperCase());
     if (h) az = h.azimuth;
   }
-  if (az == null) { window.UI?.showToast?.('⚠ Nieprawidłowy format (stopnie lub lokator)', 'error'); return; }
+  if (az == null) { window.UI?.showToast?.(I18n.t('wj_toast_bad_format'), 'error'); return; }
   _rotorSetAz(az, raw.toUpperCase());
 }
 
@@ -1402,11 +1403,11 @@ function sendTx(n) {
   if (!textEl) return;
   const parts = _txMacroParts(n);
   if (!parts || !parts.callDe) {
-    window.UI?.showToast('Ustaw najpierw swoj znak (MYCALL) w ustawieniach WSJT-X');
+    window.UI?.showToast(I18n.t('wj_toast_no_mycall'));
     return;
   }
   if (!parts.callTo && parts.callTo !== 'CQ') {
-    window.UI?.showToast('Brak DX Call — wybierz stacje z listy dekodowan');
+    window.UI?.showToast(I18n.t('wj_toast_no_dxcall'));
     return;
   }
   let text = textEl.textContent
@@ -1474,7 +1475,7 @@ function _startTxWaitCountdown(waitSeconds, text) {
   el.style.display = '';
   const tick = () => {
     const remain = Math.max(0, (_txWaitTarget - Date.now()) / 1000);
-    el.textContent = `⏳ TX za ${remain.toFixed(1)}s — ${text}`;
+    el.textContent = I18n.t('wj_tx_wait_countdown').replace('{s}', remain.toFixed(1)).replace('{text}', text);
     if (remain <= 0) _stopTxWaitCountdown();
   };
   tick();
@@ -1485,7 +1486,7 @@ function _startTxWaitCountdown(waitSeconds, text) {
 function _onFt8TxStatus(d) {
   const btns = document.querySelectorAll('.wj-tx-btn');
   if (d.status === 'waiting') {
-    window.UI?.showToast(`Czekam na okno 15s (${(d.waitSeconds||0).toFixed(1)}s) — ${d.text}`);
+    window.UI?.showToast(I18n.t('wj_toast_waiting_window').replace('{s}', (d.waitSeconds||0).toFixed(1)).replace('{text}', d.text));
     _startTxWaitCountdown(d.waitSeconds||0, d.text);
     // Podswietl JUZ na etapie oczekiwania (nie dopiero przy starcie nadawania),
     // zeby bylo widac co poleci w eter zanim faktycznie zacznie sie PTT —
@@ -1495,15 +1496,15 @@ function _onFt8TxStatus(d) {
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'starting') {
-    window.UI?.showToast(`Nadaje: ${d.text}`);
+    window.UI?.showToast(I18n.t('wj_toast_transmitting').replace('{text}', d.text));
     _stopTxWaitCountdown();
     const el = document.getElementById('wj-tx-wait-status');
-    if (el) { el.style.display = ''; el.textContent = `📡 NADAJE — ${d.text}`; }
+    if (el) { el.style.display = ''; el.textContent = I18n.t('wj_tx_transmitting_status').replace('{text}', d.text); }
     const n = _macroNumberForText(d.text);
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'error') {
-    window.UI?.showToast(`Blad TX FT8: ${d.error}`);
+    window.UI?.showToast(I18n.t('wj_toast_tx_error').replace('{error}', d.error));
     _stopTxWaitCountdown();
     btns.forEach(b=>b.classList.remove('active'));
   } else if (d.status === 'done') {
@@ -1558,7 +1559,7 @@ function _renderMiniLog() {
   const el = document.getElementById('wj-minilog-body');
   if (!el) return;
   if (!_miniLogEntries.length) {
-    el.innerHTML = '<tr><td colspan="4" style="color:#333;text-align:center;padding:8px;">Brak zalogowanych QSO</td></tr>';
+    el.innerHTML = `<tr><td colspan="4" style="color:#333;text-align:center;padding:8px;">${I18n.t('wj_no_logged_qso')}</td></tr>`;
     return;
   }
   el.innerHTML = _miniLogEntries.slice(0, MINI_LOG_MAX).map(e => `<tr>
@@ -1571,7 +1572,7 @@ function _renderMiniLog() {
 
 async function addLog() {
   const call = document.getElementById('wj-log-call')?.value.trim().toUpperCase();
-  if (!call) { window.UI?.showToast('✗ Wpisz callsign DX', 'error'); return; }
+  if (!call) { window.UI?.showToast(I18n.t('wj_toast_enter_callsign_dx'), 'error'); return; }
 
   const now    = new Date();
   const freq   = S?.freq || 0;
@@ -1606,7 +1607,7 @@ async function addLog() {
     });
     const d = await r.json();
     if (d.ok) {
-      window.UI?.showToast(`✓ QSO zalogowane: ${call}`);
+      window.UI?.showToast(I18n.t('wj_toast_qso_logged').replace('{call}', call));
       // Dopisz OD RAZU do _workedCalls (zamiast czekac na 60s polling)
       // — inaczej ta sama stacja wygladalaby jak niezrobiona w Band
       // Activity jeszcze przez chwile (patrz identyczny komentarz w
@@ -1619,9 +1620,9 @@ async function addLog() {
         const el=document.getElementById(id); if(el) el.value='';
       });
     } else {
-      window.UI?.showToast(`✗ ${d.error || 'Błąd logowania'}`, 'error');
+      window.UI?.showToast(`✗ ${d.error || I18n.t('wj_log_error_fallback')}`, 'error');
     }
-  } catch(e) { window.UI?.showToast('✗ Błąd logowania', 'error'); }
+  } catch(e) { window.UI?.showToast(I18n.t('wj_toast_log_error_generic'), 'error'); }
 }
 
 async function exportAdif() {
@@ -1638,8 +1639,8 @@ async function exportAdif() {
     a.download = `log_${(_myCall||'unknown').replace('/','_')}_${new Date().toISOString().slice(0,10)}.adi`;
     a.click();
     URL.revokeObjectURL(url);
-    window.UI?.showToast('✓ Wyeksportowano log (ADIF)');
-  } catch(e) { window.UI?.showToast('✗ Błąd eksportu', 'error'); }
+    window.UI?.showToast(I18n.t('wj_toast_export_success'));
+  } catch(e) { window.UI?.showToast(I18n.t('wj_toast_export_error'), 'error'); }
 }
 
 // QSO zalogowane przez WSJT-X automatycznie (z pakietu UDP)
@@ -1672,7 +1673,7 @@ function _onWsjtxQsoLogged(d) {
     body: JSON.stringify(qso),
   }).then(r => r.json()).then(res => {
     if (res.ok) {
-      window.UI?.showToast(`✓ QSO zalogowane: ${qso.call} ${qso.band} ${qso.mode}`);
+      window.UI?.showToast(I18n.t('wj_toast_qso_logged_full').replace('{call}', qso.call).replace('{band}', qso.band).replace('{mode}', qso.mode));
       // Odswiez tabele jezeli jestesmy na stronie LOG
       if (document.getElementById('page-log')?.classList.contains('active')) {
         window.QSOLog?.load?.();
@@ -1749,7 +1750,7 @@ window.FT8Timer = (() => {
     if (btn) btn.style.display = 'none';
     _updateDisplay();
     window.WS?.send({ type: 'ft8_timer_confirm' });
-    window.UI?.showToast('✓ Timer zresetowany');
+    window.UI?.showToast(I18n.t('wj_toast_timer_reset'));
   }
 
   function reset() {
@@ -1776,7 +1777,7 @@ window.FT8Timer = (() => {
     // Ostrzezenie przy 1 min pozostalej
     if (_remaining <= 60000 && !_warnShown) {
       _warnShown = true;
-      window.UI?.showToast('⚠️ FT8 Timer: 1 minuta do zatrzymania TX!', 'error');
+      window.UI?.showToast(I18n.t('wj_toast_timer_warning'), 'error');
       // Pokaz przycisk potwierdzenia
       const btn = document.getElementById('ft8-timer-confirm');
       if (btn) btn.style.display = 'inline-block';
@@ -1787,7 +1788,7 @@ window.FT8Timer = (() => {
       stop();
       _expired = true;
       _stopTX();
-      window.UI?.showToast('⛔ FT8 Timer: TX zatrzymany — potwierdź obecność!', 'error');
+      window.UI?.showToast(I18n.t('wj_toast_timer_expired'), 'error');
       return;
     }
 
@@ -1878,7 +1879,7 @@ function toggleHound(enabled) {
 
   if (enabled) {
     if (!foxCall) {
-      window.UI?.showToast('Wpisz znak Foxa w polu DX!', 'error');
+      window.UI?.showToast(I18n.t('wj_toast_no_foxcall'), 'error');
       document.getElementById('wj-hound-toggle').checked = false;
       _hound.active = false;
       return;
@@ -1902,7 +1903,7 @@ function toggleHound(enabled) {
     // "tryb byl dzialajacym TX", wiec to realna regresja funkcjonalna.
     clearInterval(_hound.cycleTimer);
     _hound.cycleTimer = setInterval(_houndCycleCheck, 3000);
-    window.UI?.showToast(`🦊 Hound mode: szukam ${foxCall} — TX ${_hound.txFreq} Hz`);
+    window.UI?.showToast(I18n.t('wj_toast_hound_searching').replace('{call}', foxCall).replace('{freq}', _hound.txFreq));
   } else {
     houndStop();
   }
@@ -1918,7 +1919,7 @@ function houndStop() {
   const _ht = document.getElementById('wj-hound-toggle');
   if (_ht) _ht.checked = false;
   _houndUpdateUI();
-  window.UI?.showToast('Hound mode wyłączony');
+  window.UI?.showToast(I18n.t('wj_toast_hound_off'));
 }
 
 // Potwierdzenie operatora co 2 min (wymóg protokołu)
@@ -1930,7 +1931,7 @@ function _houndCheckConfirm() {
   if (!_hound.active) return;
   const elapsed = Date.now() - _hound.lastConfirm;
   if (elapsed > 120000) {  // 2 minuty
-    window.UI?.showToast('⚠️ Hound: potwierdź obecność (2 min) — TX wstrzymany', 'error');
+    window.UI?.showToast(I18n.t('wj_toast_hound_confirm'), 'error');
     _hound.step = 0;
     _houndUpdateUI();
   }
@@ -2060,7 +2061,7 @@ function _houndQSOComplete() {
   houndStop();
   // Auto-log QSO
   window.QSOLog?.quickLog && _houndAutoLog(foxCall);
-  window.UI?.showToast(`✓ QSO z ${foxCall} zaliczone! RR73 odebrane.`);
+  window.UI?.showToast(I18n.t('wj_toast_qso_complete_fox').replace('{call}', foxCall));
 }
 
 function _houndAutoLog(foxCall) {
@@ -2104,16 +2105,17 @@ function _houndUpdateUI() {
   }
 
   if (!statusEl) return;
+  statusEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
   if (!active) {
     statusEl.style.color = '';
-    statusEl.textContent = 'Automatyka wylaczona — kliknij wiersz CQ aby odpowiedziec recznie';
+    statusEl.textContent = I18n.t('wj_status_no_decoding');
     return;
   }
 
-  const stepNames = ['', 'Wołanie Foxa', '', 'Wysyłam R+rpt', 'Czekam na RR73'];
+  const stepNames = ['', I18n.t('wj_hound_step_calling'), '', I18n.t('wj_hound_step_report'), I18n.t('wj_hound_step_waiting')];
   const freq = _hound.step === 3 ? _hound.reportFreq : _hound.txFreq;
   const step = stepNames[_hound.step] || '...';
-  const attemptTxt = _hound.step === 3 ? ` | próba ${_hound.attempts}` : '';
+  const attemptTxt = _hound.step === 3 ? I18n.t('wj_hound_attempt').replace('{n}', _hound.attempts) : '';
   statusEl.style.color = '#f90';
   statusEl.textContent = `🦊 HOUND: ${_hound.foxCall} | ${step} | TX:${freq}Hz${attemptTxt}`;
 }
@@ -2145,7 +2147,7 @@ function _esc(s) {
 }
 function _updateCount() {
   const el = document.getElementById('wj-decode-count');
-  if (el) el.textContent = _decodeCount + ' dekodowań';
+  if (el) { el.removeAttribute('data-i18n'); el.textContent = I18n.t('wj_decode_count_n').replace('{n}', _decodeCount); }
 }
 
 // ── Export ────────────────────────────────────────────────────────────────────

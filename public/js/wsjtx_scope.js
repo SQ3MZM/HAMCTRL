@@ -481,7 +481,7 @@ function _onMouseDown(ev) {
   // kontynuowac przeciaganie jako nowy punkt startowy dla obu.
   if (distTx <= DRAG_HIT_PX && distTx <= distRx) {
     if (txFrozen) {
-      window.UI?.showToast('🧊 TX zamrozone — odmrozy zeby recznie zmienic czestotliwosc');
+      window.UI?.showToast(I18n.t('wj_toast_tx_frozen'));
       return;
     }
     _dragging = 'tx';
@@ -522,7 +522,7 @@ function setTxFreqManual(val) {
   const freq = parseFloat(val);
   if (Number.isNaN(freq)) return;
   if (txFrozen) {
-    window.UI?.showToast('🧊 TX zamrozone — odmrozy zeby recznie zmienic czestotliwosc');
+    window.UI?.showToast(I18n.t('wj_toast_tx_frozen'));
     return;
   }
   window.WS?.send({ type: 'ft8_set_tx_freq', freqHz: Math.round(freq) });
@@ -571,7 +571,7 @@ function _updateLabels() {
   }
   const freezeBtn = document.getElementById('wj-tx-freeze-btn');
   if (freezeBtn) {
-    freezeBtn.textContent = txFrozen ? '📌 TX ZABLOKOWANY' : '🔓 TX WOLNY';
+    freezeBtn.textContent = txFrozen ? I18n.t('wj_tx_locked_btn') : I18n.t('wj_tx_free_btn');
     freezeBtn.classList.toggle('active', txFrozen);
   }
 }

@@ -505,23 +505,23 @@
   <!-- ── GÓRNY PASEK STATUSU ── -->
   <div class="wsjtx-topbar">
     <div class="wsjtx-freq" id="wj-freq">14.074.000</div>
-    <div class="wj-mode-switch" id="wj-mode-switch" title="Tryb dekodowania">
+    <div class="wj-mode-switch" id="wj-mode-switch" data-i18n-title="wj_decode_mode_title" title="Tryb dekodowania">
       <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
       <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
     </div>
-    <select id="wj-band-select" class="wj-band-select" title="Wybierz pasmo i przestrój radio na standardowa czestotliwosc"
+    <select id="wj-band-select" class="wj-band-select" data-i18n-title="wj_band_select_title" title="Wybierz pasmo i przestrój radio na standardowa czestotliwosc"
             onchange="WSJTX.tuneToBand(this.value)">
-      <option value="">-- pasmo --</option>
+      <option value="" data-i18n="wj_band_placeholder">-- pasmo --</option>
     </select>
-    <label class="wj-topbar-check" title="Pokazuj tylko wywolania CQ w Band Activity">
+    <label class="wj-topbar-check" data-i18n-title="wj_cq_only_title" title="Pokazuj tylko wywolania CQ w Band Activity">
       <input type="checkbox" id="wj-cq-only-toggle" onchange="WSJTX.toggleCqOnly()"> CQ
     </label>
-    <label class="wj-topbar-check" title="Fox/Hound DXpedition mode — wpisz znak Foxa w polu DX"
+    <label class="wj-topbar-check" data-i18n-title="wj_hound_title" title="Fox/Hound DXpedition mode — wpisz znak Foxa w polu DX"
       style="color:#f90;border:1px solid rgba(255,140,0,0.3);border-radius:2px;padding:1px 6px;">
       <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"
         style="accent-color:#f90;"> HOUND
     </label>
-    <div class="wj-period-switch" id="wj-period-switch" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
+    <div class="wj-period-switch" id="wj-period-switch" data-i18n-title="wj_period_title" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
       <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
       <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
     </div>
@@ -531,7 +531,7 @@
     </div>
     <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
     <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;"
-         title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
+         data-i18n-title="wj_tx_wait_title" title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
     <div style="flex:1"></div>
     <div style="display:flex;gap:6px;margin-left:12px;">
       <!-- Kontrolki palety wodospadu (Reference/Zero/Gain) w stylu WSJT-X —
@@ -541,35 +541,35 @@
            zawijania). Ten gorny pasek ma flex-wrap, wiec jest tu bezpiecznie. -->
       <div style="display:flex;align-items:center;gap:6px;padding-right:10px;margin-right:6px;
         border-right:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">
-        <label title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
+        <label data-i18n-title="wj_ref_title" title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
           <input type="range" id="wj-palette-ref" min="0" max="100" value="15" step="1"
             oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value"
             style="width:50px;accent-color:var(--green);vertical-align:middle;">
           <span id="wj-palette-ref-val" style="width:20px;display:inline-block;text-align:right;">15</span>
         </label>
-        <label title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
+        <label data-i18n-title="wj_zero_title" title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
           <input type="range" id="wj-palette-zero" min="0" max="60" value="0" step="1"
             oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value"
             style="width:50px;accent-color:var(--amber);vertical-align:middle;">
           <span id="wj-palette-zero-val" style="width:20px;display:inline-block;text-align:right;">0</span>
         </label>
-        <label title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
+        <label data-i18n-title="wj_gain_title" title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
           <input type="range" id="wj-palette-gain" min="30" max="300" value="100" step="5"
             oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)"
             style="width:50px;accent-color:var(--red);vertical-align:middle;">
           <span id="wj-palette-gain-val" style="width:22px;display:inline-block;text-align:right;">1.0</span>
         </label>
-        <button onclick="WSJTX.resetPaletteAdjust()" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
+        <button onclick="WSJTX.resetPaletteAdjust()" data-i18n-title="wj_reset_palette_title" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
       </div>
-      <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
-      <button onclick="WSJTX.clearDecodes()" class="wj-btn">WYCZYŚĆ</button>
-      <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" title="Ukryj stacje już zaliczone w logu QSO">
+      <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" data-i18n-title="wj_tune_title" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
+      <button onclick="WSJTX.clearDecodes()" class="wj-btn" data-i18n="wj_clear_btn">WYCZYŚĆ</button>
+      <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" data-i18n-title="wj_hide_worked_title" title="Ukryj stacje już zaliczone w logu QSO">
         <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)"
           style="accent-color:var(--amber);cursor:pointer;">
         HIDE WORKED
       </label>
       <span style="width:1px;background:#333;margin:2px 4px;"></span>
-      <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="wj-btn" title="Wlasny dekoder FT8 (audio z radia, bez zewnetrznego WSJT-X)">▶ START (własny RX)</button>
+      <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="wj-btn" data-i18n-title="wj_own_rx_title" title="Wlasny dekoder FT8 (audio z radia, bez zewnetrznego WSJT-X)">▶ START (własny RX)</button>
     </div>
   </div>
 
@@ -585,18 +585,18 @@
         <input type="number" id="wj-tx-freq-input" class="wj-freq-input" step="1"
                onchange="WSJTX.setTxFreqManual(this.value)">Hz
       </span>
-      <button id="wj-rx-eq-tx-btn" onclick="WSJTX.rxEqTx()" class="wj-btn" title="Ustaw znacznik RX na biezaca czestotliwosc TX" style="margin-left:6px;">RX=TX</button>
-      <button id="wj-tx-eq-rx-btn" onclick="WSJTX.txEqRx()" class="wj-btn" title="Ustaw znacznik TX na biezaca czestotliwosc RX" style="margin-left:4px;">TX=RX</button>
+      <button id="wj-rx-eq-tx-btn" onclick="WSJTX.rxEqTx()" class="wj-btn" data-i18n-title="wj_rx_eq_tx_title" title="Ustaw znacznik RX na biezaca czestotliwosc TX" style="margin-left:6px;">RX=TX</button>
+      <button id="wj-tx-eq-rx-btn" onclick="WSJTX.txEqRx()" class="wj-btn" data-i18n-title="wj_tx_eq_rx_title" title="Ustaw znacznik TX na biezaca czestotliwosc RX" style="margin-left:4px;">TX=RX</button>
       <span class="wj-freq-field" style="color:#5c5; margin-left:10px;">
         RX:
         <input type="number" id="wj-rx-freq-input" class="wj-freq-input" step="1"
                onchange="WSJTX.setRxFreqManual(this.value)">Hz
       </span>
       <div style="flex:1"></div>
-      <button onclick="WSJTX.haltTx()" class="wj-btn wj-btn-red" id="wj-halt-tx-btn" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
-      <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" style="margin-left:6px;" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
+      <button onclick="WSJTX.haltTx()" class="wj-btn wj-btn-red" id="wj-halt-tx-btn" data-i18n-title="wj_halt_tx_title" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
+      <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" style="margin-left:6px;" data-i18n-title="wj_tx_freeze_title" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
       <button id="wj-fake-split-toggle" onclick="WSJTX.toggleFakeSplit()" class="wj-btn" style="margin-left:6px;"
-        title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
+        data-i18n-title="wj_fake_split_title" title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
       <span id="wj-fake-split-target" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-left:4px;"></span>
     </div>
     <div id="wj-scope-axis" class="wsjtx-scope-axis"></div>
@@ -614,23 +614,23 @@
     <div class="wsjtx-decodes-wrap" id="wj-decodes-wrap">
       <div class="wj-split-pane" id="wj-pane-activity" style="flex-basis:50%;">
         <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
-          BAND ACTIVITY
+          <span data-i18n="wj_band_activity_hdr">BAND ACTIVITY</span>
           <div style="flex:1"></div>
           <button class="wj-btn wj-btn-xs wj-country-mode-btn" onclick="WSJTX.toggleCountryMode()"
-            title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
-          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearDecodes()" title="Wyczysc Band Activity">🗑</button>
+            data-i18n-title="wj_country_col_title" title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
+          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearDecodes()" data-i18n-title="wj_clear_band_activity_title" title="Wyczysc Band Activity">🗑</button>
         </div>
         <div class="wsjtx-decode-header">
           <span class="wjh">UTC</span>
           <span class="wjh wjh-r">dB</span>
           <span class="wjh wjh-r">DT</span>
           <span class="wjh wjh-r">Freq</span>
-          <span class="wjh" style="flex:1;">Wiadomość</span>
-          <span class="wjh">Siatka</span>
-          <span class="wjh">Kraj</span>
+          <span class="wjh" style="flex:1;" data-i18n="wj_th_message">Wiadomość</span>
+          <span class="wjh" data-i18n="wj_th_grid">Siatka</span>
+          <span class="wjh" data-i18n="wj_th_country">Kraj</span>
         </div>
         <div id="wj-decodes" class="wsjtx-decode-list">
-          <div class="wj-empty">Brak dekodowań — uruchom WSJT-X i kliknij ▶ START</div>
+          <div class="wj-empty" data-i18n="wj_no_decodes">Brak dekodowań — uruchom WSJT-X i kliknij ▶ START</div>
         </div>
       </div>
 
@@ -638,23 +638,23 @@
 
       <div class="wj-split-pane" id="wj-pane-rxfreq" style="flex-basis:50%;">
         <div class="wj-panel-title" style="padding:4px 8px;font-size:10px;display:flex;align-items:center;">
-          RX FREQUENCY
+          <span data-i18n="wj_rxfreq_hdr">RX FREQUENCY</span>
           <div style="flex:1"></div>
           <button class="wj-btn wj-btn-xs wj-country-mode-btn" onclick="WSJTX.toggleCountryMode()"
-            title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
-          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearRxFreqPanel()" title="Wyczysc Rx Frequency">🗑</button>
+            data-i18n-title="wj_country_col_title" title="Kolumna Kraj: flaga (klik: przelacz na nazwe)">🏳️</button>
+          <button class="wj-btn wj-btn-xs" onclick="WSJTX.clearRxFreqPanel()" data-i18n-title="wj_clear_rxfreq_title" title="Wyczysc Rx Frequency">🗑</button>
         </div>
         <div class="wsjtx-decode-header">
           <span class="wjh">UTC</span>
           <span class="wjh wjh-r">dB</span>
           <span class="wjh wjh-r">DT</span>
           <span class="wjh wjh-r">Freq</span>
-          <span class="wjh" style="flex:1;">Wiadomość</span>
-          <span class="wjh">Siatka</span>
-          <span class="wjh">Kraj</span>
+          <span class="wjh" style="flex:1;" data-i18n="wj_th_message">Wiadomość</span>
+          <span class="wjh" data-i18n="wj_th_grid">Siatka</span>
+          <span class="wjh" data-i18n="wj_th_country">Kraj</span>
         </div>
         <div id="wj-rx-freq-row" class="wsjtx-decode-list">
-          <div class="wj-empty">Brak sygnału na czestotliwosci RX</div>
+          <div class="wj-empty" data-i18n="wj_no_rxfreq_signal">Brak sygnału na czestotliwosci RX</div>
         </div>
       </div>
     </div>
@@ -664,17 +664,17 @@
 
   <!-- ── DOLNY PASEK: RX/TX DF + PASEK AKTYWNOŚCI ── -->
   <div class="wsjtx-bottombar">
-    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">RX DF:</span>
+    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);" data-i18n="wj_rx_df_lbl">RX DF:</span>
     <span id="wj-rx-df" style="font-family:var(--mono);font-size:11px;color:#8be;">--</span>
-    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;">TX DF:</span>
+    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;" data-i18n="wj_tx_df_lbl">TX DF:</span>
     <span id="wj-tx-df" style="font-family:var(--mono);font-size:11px;color:#f80;">--</span>
     <div style="flex:1"></div>
-    <canvas id="wj-timeline" width="180" height="20" title="Histogram dekodowań w ostatnich 30 min (1 pasek = 1 min)"
+    <canvas id="wj-timeline" width="180" height="20" data-i18n-title="wj_timeline_title" title="Histogram dekodowań w ostatnich 30 min (1 pasek = 1 min)"
       style="background:rgba(0,0,0,0.3);border:1px solid rgba(184,201,143,0.15);border-radius:2px;cursor:help;margin-right:10px;"></canvas>
-    <span id="wj-signal-stats" style="font-family:var(--mono);font-size:10px;color:rgba(184,201,143,0.7);margin-right:12px;" title="Statystyki sygnału w ostatnich 5 minutach">
-      SNR: <span id="wj-stats-snr">—</span> • <span id="wj-stats-dpm">0</span>/min • <span id="wj-stats-unique">0</span> stacji
+    <span id="wj-signal-stats" style="font-family:var(--mono);font-size:10px;color:rgba(184,201,143,0.7);margin-right:12px;" data-i18n-title="wj_signal_stats_title" title="Statystyki sygnału w ostatnich 5 minutach">
+      SNR: <span id="wj-stats-snr">—</span> • <span id="wj-stats-dpm">0</span>/min • <span id="wj-stats-unique">0</span> <span data-i18n="wj_stations_word">stacji</span>
     </span>
-    <span id="wj-decode-count" style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">0 dekodowań</span>
+    <span id="wj-decode-count" data-i18n="wj_decode_count_default" style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">0 dekodowań</span>
     <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;" id="wj-version"></span>
   </div>
 
@@ -687,20 +687,20 @@
     <!-- AUTOMATYKA QSO — ZAWSZE AKTYWNA. Klik na makro = ręczne wymuszenie -->
     <div class="wsjtx-tx-panel" id="wj-autoqso-panel">
       <div class="wj-panel-title" style="display:flex;align-items:center;">
-        AUTOMATYKA QSO
-        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(184,201,143,0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości.">● AUTO</span>
+        <span data-i18n="wj_autoqso_hdr">AUTOMATYKA QSO</span>
+        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(184,201,143,0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
         <div style="flex:1"></div>
         <label style="font-family:var(--mono);font-size:10px;"><input type="checkbox" id="wj-call1st-toggle" onchange="WSJTX.toggleCall1st()"> Call 1st</label>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
-        <div id="wj-autoqso-status" style="flex:1;font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
-        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;font-family:var(--mono);font-size:9px;padding:2px 6px;white-space:nowrap;" title="Porzuć bieżącą stację i przejdź od razu do następnej z kolejki (bez czekania 60s)">⏭ Pomiń</button>
+        <div id="wj-autoqso-status" data-i18n="wj_autoqso_ready" style="flex:1;font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
+        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;font-family:var(--mono);font-size:9px;padding:2px 6px;white-space:nowrap;" data-i18n-title="wj_skip_title" title="Porzuć bieżącą stację i przejdź od razu do następnej z kolejki (bez czekania 60s)" data-i18n="wj_skip_btn">⏭ Pomiń</button>
       </div>
       <div id="wj-autoqso-queue-wrap" style="display:none;">
         <div style="display:flex;align-items:center;margin-bottom:3px;">
-          <div style="font-size:9px;color:#666;text-transform:uppercase;">Kolejka (Call 1st):</div>
+          <div style="font-size:9px;color:#666;text-transform:uppercase;" data-i18n="wj_queue_lbl">Kolejka (Call 1st):</div>
           <div style="flex:1"></div>
-          <span id="wj-autoqso-queue-clear" style="font-family:var(--mono);font-size:9px;color:#888;cursor:pointer;text-decoration:underline;" title="Usuń wszystkie stacje z kolejki" onclick="WSJTX.clearAutoQsoQueue()">wyczyść</span>
+          <span id="wj-autoqso-queue-clear" style="font-family:var(--mono);font-size:9px;color:#888;cursor:pointer;text-decoration:underline;" data-i18n-title="wj_clear_queue_title" title="Usuń wszystkie stacje z kolejki" onclick="WSJTX.clearAutoQsoQueue()" data-i18n="wj_clear_queue_btn">wyczyść</span>
         </div>
         <div id="wj-autoqso-queue"></div>
       </div>
@@ -728,15 +728,15 @@
     <!-- NADAWANIE TX -->
     <div class="wsjtx-tx-panel">
       <div class="wj-panel-title" style="display:flex;align-items:center;">
-        NADAWANIE TX
+        <span data-i18n="wj_tx_panel_hdr">NADAWANIE TX</span>
         <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">TIMER:</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);" data-i18n="wj_timer_lbl">TIMER:</span>
           <span id="ft8-timer-display" style="font-family:var(--mono);font-size:11px;
             color:var(--green);min-width:42px;text-align:right;">--:--</span>
           <button id="ft8-timer-confirm" onclick="FT8Timer.confirm()"
             style="display:none;font-family:var(--mono);font-size:9px;padding:2px 8px;
             background:rgba(255,140,0,0.2);border:1px solid #f90;border-radius:2px;
-            color:#f90;cursor:pointer;animation:wj-tx-pulse 0.5s ease infinite alternate;">
+            color:#f90;cursor:pointer;animation:wj-tx-pulse 0.5s ease infinite alternate;" data-i18n="wj_confirm_btn">
             POTWIERDŹ ▶
           </button>
         </div>
@@ -769,7 +769,7 @@
       </div>
       <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
         <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">DX:</span>
-        <input id="wj-dx-call" type="text" placeholder="-- KLIKNIJ WIERSZ LUB WPISZ --"
+        <input id="wj-dx-call" type="text" data-i18n-placeholder="wj_dx_call_ph" placeholder="-- KLIKNIJ WIERSZ LUB WPISZ --"
           onkeydown="if(event.key==='Enter'){WSJTX.searchDxCall(this.value)}"
           onblur="WSJTX.searchDxCall(this.value)"
           style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;
@@ -791,7 +791,7 @@
 
     <!-- MÓJ LOG QSO -->
     <div class="wsjtx-log-panel">
-      <div class="wj-panel-title">
+      <div class="wj-panel-title" data-i18n="wj_quicklog_hdr">
         SZYBKI ZAPIS QSO
       </div>
       <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
@@ -818,7 +818,7 @@
              pozycji rotora zniknal jak tylko wybralem stacje do QSO". -->
         <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
              min-width:0;flex-shrink:1;">
-          <span style="color:#666;">ANTENA</span>
+          <span style="color:#666;" data-i18n="wj_antenna_lbl">ANTENA</span>
           <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
                 margin:0 4px;">---°</span>
           <span id="wj-beam-dist" style="color:#4cf;"></span>
@@ -829,26 +829,26 @@
         <div style="display:flex;align-items:center;flex-shrink:0;white-space:nowrap;">
           <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
           <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
-            title="Ustaw rotor na azymut SP (krotka droga)"
+            data-i18n-title="wj_rotor_sp_title" title="Ustaw rotor na azymut SP (krotka droga)"
             style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
             background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
           <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
-            title="Ustaw rotor na azymut LP (dluga droga)"
+            data-i18n-title="wj_rotor_lp_title" title="Ustaw rotor na azymut LP (dluga droga)"
             style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
             background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
           <button id="wj-rotor-manual-btn" onclick="WSJTX.rotorGoManual()" disabled
-            title="Recznie: wpisz azymut w stopniach lub lokator"
+            data-i18n-title="wj_rotor_manual_title" title="Recznie: wpisz azymut w stopniach lub lokator"
             style="font-family:var(--mono);font-size:9px;padding:1px 5px;
             background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">🎯</button>
         </div>
       </div>
       <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
-          <input id="wj-log-call" type="text" placeholder="CALLSIGN DX *"
+          <input id="wj-log-call" type="text" data-i18n-placeholder="wj_call_dx_ph" placeholder="CALLSIGN DX *"
             oninput="WSJTX.updateBeamRow()"
             style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
             background:#0a0a0a;border:1px solid #2a2a2a;color:#4cf;padding:3px 5px;border-radius:2px;">
-          <input id="wj-log-grid" type="text" placeholder="Grid DX"
+          <input id="wj-log-grid" type="text" data-i18n-placeholder="wj_grid_dx_ph" placeholder="Grid DX"
             oninput="WSJTX.updateBeamRow()"
             style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
             background:#0a0a0a;border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
@@ -866,12 +866,12 @@
             style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
             border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
         </div>
-        <input id="wj-log-comment" type="text" placeholder="Komentarz (opcjonalnie)"
+        <input id="wj-log-comment" type="text" data-i18n-placeholder="wj_comment_ph" placeholder="Komentarz (opcjonalnie)"
           style="width:100%;font-family:var(--mono);font-size:10px;background:#0a0a0a;
           border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;margin-bottom:3px;">
         <div style="display:flex;gap:4px;">
-          <button onclick="WSJTX.addLog()" class="wj-btn wj-btn-green" style="flex:1;padding:4px;">+ LOG QSO</button>
-          <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:4px 8px;" title="Eksport ADIF">⬇ ADIF</button>
+          <button onclick="WSJTX.addLog()" class="wj-btn wj-btn-green" style="flex:1;padding:4px;" data-i18n="wj_addlog_btn">+ LOG QSO</button>
+          <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:4px 8px;" data-i18n-title="wj_adif_btn_title" title="Eksport ADIF">⬇ ADIF</button>
         </div>
       </div>
       <!-- Mini-log: czysto informacyjny podglad tego co wyladowalo w logu -->
@@ -880,7 +880,7 @@
       <div style="flex:1;overflow-y:auto;padding:2px 6px;">
         <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;">
           <tbody id="wj-minilog-body">
-            <tr><td colspan="4" style="color:#333;text-align:center;padding:8px;">Brak zalogowanych QSO</td></tr>
+            <tr><td colspan="4" style="color:#333;text-align:center;padding:8px;" data-i18n="wj_no_logged_qso">Brak zalogowanych QSO</td></tr>
           </tbody>
         </table>
       </div>
@@ -888,13 +888,13 @@
 
     <!-- KONFIGURACJA WSJT-X -->
     <div class="wsjtx-config-panel">
-      <div class="wj-panel-title">KONFIGURACJA WSJT-X</div>
+      <div class="wj-panel-title" data-i18n="wj_wsjtx_config_hdr">KONFIGURACJA WSJT-X</div>
       <div style="font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.35);line-height:2;">
         Settings → Radio → Rig: <span style="color:#fa0">Hamlib NET rigctl</span><br>
         Network Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">4532</span><br>
         Settings → Reporting → UDP Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">2238</span><br>
         ✓ Accept UDP requests<br>
-        <span style="color:rgba(255,100,100,0.7);font-size:8px;">⚠ Port 2237 jest zarezerwowany przez WSJT-X — używamy 2238</span>
+        <span style="color:rgba(255,100,100,0.7);font-size:8px;" data-i18n="wj_port_note">⚠ Port 2237 jest zarezerwowany przez WSJT-X — używamy 2238</span>
       </div>
     </div>
 
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608180002"></script>
+<script src="js/i18n.js?v=202608180003"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
@@ -2581,8 +2581,8 @@
 <script src="js/dxcc.js?v=202608160001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608160005"></script>
-<script src="js/wsjtx_scope.js?v=202608150001"></script>
+<script src="js/wsjtx.js?v=202608180001"></script>
+<script src="js/wsjtx_scope.js?v=202608180001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
 <script src="js/waterfall.js?v=202608170002"></script>
@@ -2639,17 +2639,17 @@
 
 <div class="modal-overlay" id="rotor-manual-modal" onclick="if(event.target===this)WSJTX.rotorManualClose()" style="display:none;">
   <div class="modal" style="min-width:280px;max-width:360px;">
-    <div class="modal-header"><span>ROTOR — RĘCZNA POZYCJA</span><button class="modal-close" onclick="WSJTX.rotorManualClose()">✕</button></div>
+    <div class="modal-header"><span data-i18n="wj_rotor_modal_hdr">ROTOR — RĘCZNA POZYCJA</span><button class="modal-close" onclick="WSJTX.rotorManualClose()">✕</button></div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
       <div>
-        <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-bottom:4px;">AZYMUT (°) LUB LOKATOR</label>
-        <input type="text" id="rotor-manual-input" placeholder="np. 272 lub KO02"
+        <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:block;margin-bottom:4px;" data-i18n="wj_rotor_azimuth_lbl">AZYMUT (°) LUB LOKATOR</label>
+        <input type="text" id="rotor-manual-input" data-i18n-placeholder="wj_rotor_input_ph" placeholder="np. 272 lub KO02"
           style="width:100%;font-family:var(--mono);font-size:13px;text-transform:uppercase;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);padding:6px 8px;border-radius:3px;box-sizing:border-box;"
           onkeydown="if(event.key==='Enter')WSJTX.rotorManualSubmit()">
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;">
-        <button class="save-btn" style="width:auto;" onclick="WSJTX.rotorManualSubmit()">USTAW</button>
-        <button class="save-btn" style="width:auto;background:transparent;border-color:var(--border);" onclick="WSJTX.rotorManualClose()">ANULUJ</button>
+        <button class="save-btn" style="width:auto;" onclick="WSJTX.rotorManualSubmit()" data-i18n="wj_set_btn">USTAW</button>
+        <button class="save-btn" style="width:auto;background:transparent;border-color:var(--border);" onclick="WSJTX.rotorManualClose()" data-i18n="common_cancel_btn">ANULUJ</button>
       </div>
     </div>
   </div>
