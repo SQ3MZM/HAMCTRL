@@ -91,7 +91,11 @@ body { padding-top: 52px; }
 
 /* Presence bar usunieta — funkcje przeniesione do panelu OPERATORZY w tile-cw */
 
-.logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); }
+/* white-space:nowrap + flex-shrink:0 — bez tego na waskim realnym viewport
+   (topbar nie skaluje sie z #app-scale, patrz komentarz przy .nav-tabs) tekst
+   logo lamal sie na 3 linie i byl ucinany, bo .topbar to flex z ograniczona
+   szerokoscia a przegladarka domyslnie zawija tekst zamiast go przycinac. */
+.logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); white-space: nowrap; flex-shrink: 0; }
 .logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(184,201,143,0.4); }
 /* .topbar sits outside #app-scale (position:fixed, real unscaled px) so it
    does not shrink with the rest of the page on narrow real viewports.

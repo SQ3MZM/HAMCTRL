@@ -448,7 +448,7 @@ class App:
         _saved_model = str(_rigs[0].get("model", ""))
         if _saved_model in SCOPE_MODELS:
             self.rig = CivRig(self.cfg, self._rig_bcast, log=print)
-            print(f"[rig] start backend → CI-V bezposredni (zapisany model {_saved_model})")
+            print(f"[rig] start backend -> CI-V bezposredni (zapisany model {_saved_model})")
         else:
             self.rig = RigCAT()
         self.rotators: list[Rotator] = []
@@ -2686,7 +2686,7 @@ class App:
                 # (terminate() procesu rigctld nie jest natychmiastowy)
                 await asyncio.sleep(0.5)
                 self.rig = CivRig(self.cfg, self._rig_bcast, log=print) if want_civ else RigCAT()
-                print(f"[rig] backend → {'CI-V bezpośredni' if want_civ else 'rigctld'} (model {sel_model})")
+                print(f"[rig] backend -> {'CI-V bezposredni' if want_civ else 'rigctld'} (model {sel_model})")
                 # WAZNE: ComBridgeWs trzymal referencje do STAREGO CivRig.
                 # Po utworzeniu nowego trzeba przepiac listener, inaczej
                 # klienci COM Bridge (CW Skimmer/HRD) nie dostaja odpowiedzi
@@ -5443,7 +5443,7 @@ class App:
                 print(f"[autoqso] ft8_tx check: auto_seq={self._auto_seq_enabled} call_to={call_to} report={report!r} is_grid={is_grid} state={self._qso_engine.state}")
                 if is_grid and self._qso_engine.state == "IDLE":
                     self._qso_engine.start_qso(call_to)
-                    print(f"[autoqso] Reczny TX grid → auto-start QSO z {call_to}")
+                    print(f"[autoqso] Reczny TX grid -> auto-start QSO z {call_to}")
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,
                                                "partner": self._qso_engine.partner_call})
@@ -6318,7 +6318,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-17-TUNNEL-MODES-FLAT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-17-TOPBAR-RESPONSIVE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
