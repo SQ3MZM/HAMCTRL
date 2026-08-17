@@ -209,18 +209,21 @@ function drawFrame(data) {
   specCtx.fill();
 
   // Linia spektrum — jasna zielona jak IC-7300
+  // KRYTYCZNE dla latency: shadowBlur wlaczal sie na KAZDEJ z 15 ramek/s
+  // scope_frame ilekroc source==='radio' (czyli caly czas przy realnym
+  // nasluchu) - renderowanie rozmycia calej ~900-punktowej linii to jeden z
+  // najkosztowniejszych efektow Canvas 2D, na tym samym watku JS co
+  // ping/pong (WS) i dekodowanie audio (_audioWs). Usuniete - sama grubsza
+  // jasna linia daje podobny wizualny efekt "swiecenia" bez kosztu.
   specCtx.beginPath();
   specCtx.strokeStyle = source === 'radio' ? '#00e040' : 'rgba(0,200,60,0.5)';
-  specCtx.lineWidth   = 1.5;
-  specCtx.shadowBlur  = source === 'radio' ? 3 : 0;
-  specCtx.shadowColor = '#00ff60';
+  specCtx.lineWidth   = source === 'radio' ? 2 : 1.5;
   for (let i = 0; i < W; i++) {
     const v  = interpolate(data, i) / 255;
     const y  = Hs - v * (Hs - 4) - 2;
     i === 0 ? specCtx.moveTo(i, y) : specCtx.lineTo(i, y);
   }
   specCtx.stroke();
-  specCtx.shadowBlur = 0;
 
   // Peak-hold — cienka pomarańczowa linia (jesli wlaczony)
   if (_peakEnabled !== false && _peakHold) {
