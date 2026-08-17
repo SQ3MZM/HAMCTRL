@@ -350,7 +350,14 @@ class AudioStream:
             if not self._tx_stream:
                 continue
             try:
-                vol_scale = min(float(self.cfg.get("txVolume", 1.0)), 8.0)
+                # bulk_tx=True -> to jest PCM z enkodera FT8/FT4 (ton o stalej
+                # amplitudzie, wlasny mnoznik). bulk_tx=False -> to jest zdekodowane
+                # audio z mikrofonu WebRTC (SSB/glos) - inna charakterystyka
+                # sygnalu (juz blisko pelnej skali), wlasny, osobny mnoznik. Bez
+                # tego rozdzielenia jeden suwak musial kompromisowo obslugiwac
+                # oba tak rozne sygnaly, utrudniajac trafienie w prawidlowe ALC.
+                _vol_key = "txVolume" if self.bulk_tx else "txVolumeSsb"
+                vol_scale = min(float(self.cfg.get(_vol_key, 1.0)), 8.0)
                 if vol_scale != 1.0:
                     try:
                         import numpy as np
@@ -375,7 +382,9 @@ class AudioStream:
     def _flush_webm(self):
         webm = self._webm_buf
         self._webm_buf = b""
-        vol = float(self.cfg.get("txVolume", 1.0))
+        # Ta sciezka to WYLACZNIE zdekodowane audio z mikrofonu WebRTC (FT8/FT4
+        # idzie inna droga - feed_tx_pcm, patrz webapp.py) - zawsze txVolumeSsb.
+        vol = float(self.cfg.get("txVolumeSsb", 1.0))
         print(f"[audio] TX flush: {len(webm)}B WebM, volume={vol}x")
         pcm_data = _webm_to_pcm(webm, vol)
         if not pcm_data:
@@ -421,7 +430,8 @@ class AudioStream:
             return
 
         dec       = self._tx_dec
-        vol_scale = min(float(self.cfg.get("txVolume", 1.0)), 8.0)
+        # feed_tx() dekoduje Opus z WebM od mikrofonu WebRTC - to zawsze SSB/glos.
+        vol_scale = min(float(self.cfg.get("txVolumeSsb", 1.0)), 8.0)
 
         for opus_frame in frames:
             if not self.tx_active or not self._tx_stream:
@@ -496,6 +506,7 @@ class AudioStream:
             "opus_lib": "opuslib" if _OPUS else "none",
             "sample_rate": OPUS_RATE, "frame_ms": 20,
             "txVolume": self.cfg.get("txVolume", 1.0),
+            "txVolumeSsb": self.cfg.get("txVolumeSsb", 1.0),
         }
 
     def stop_all(self):

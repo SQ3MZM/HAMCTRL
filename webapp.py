@@ -3281,6 +3281,7 @@ class App:
             # (i karty) z configu Pythona do zwracanego statusu.
             _py_audio = self.cfg.get("audio", {})
             _py_txvol = float(_py_audio.get("txVolume", 1.0))
+            _py_txvol_ssb = float(_py_audio.get("txVolumeSsb", 1.0))
             if rust and rust._connected:
                 try:
                     status = await rust.get_status()
@@ -3292,13 +3293,15 @@ class App:
                         _txd = _py_audio.get("txDevice", "")
                         if _rxd: status["rx_device"] = _rxd
                         if _txd: status["tx_device"] = _txd
-                        status["txVolume"] = _py_txvol   # nadpisz wartoscia z config.json
+                        status["txVolume"] = _py_txvol       # nadpisz wartoscia z config.json (FT8/FT4)
+                        status["txVolumeSsb"] = _py_txvol_ssb  # osobny mnoznik dla mikrofonu SSB
                         return 200, status
                 except Exception as e:
                     print(f"[audio] Rust status error: {e}", flush=True)
             _st = self.audio.get_status()
             if isinstance(_st, dict):
                 _st["txVolume"] = _py_txvol
+                _st["txVolumeSsb"] = _py_txvol_ssb
             return 200, _st
 
         if p == "/api/audio/detect" and method == "GET":
@@ -3935,12 +3938,16 @@ class App:
             tx = body.get("txDevice")
             br = body.get("bitrate", 24000)
             tv = body.get("txVolume")
+            tv_ssb = body.get("txVolumeSsb")
             if "audio" not in self.cfg: self.cfg["audio"] = {}
             if rx is not None: self.cfg["audio"]["rxDevice"] = rx
             if tx is not None: self.cfg["audio"]["txDevice"] = tx
             if br: self.cfg["audio"]["bitrate"] = int(br)
             if tv is not None:
                 self.cfg["audio"]["txVolume"] = float(tv)
+                self.audio.cfg = self.cfg["audio"]
+            if tv_ssb is not None:
+                self.cfg["audio"]["txVolumeSsb"] = float(tv_ssb)
                 self.audio.cfg = self.cfg["audio"]
             save_json(CFG_F, self.cfg)
             # Gdy Rust aktywny — wyslij nowe urzadzenia do ham_audio
@@ -6302,7 +6309,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-17-VOLT-FIX-WS-JANK, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-17-TXVOL-SSB-SPLIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
