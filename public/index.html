@@ -2053,34 +2053,34 @@
     <!-- PASEK GÓRNY: status + filtry + akcje (jeden wiersz) -->
     <div class="box" style="flex-shrink:0;">
       <div style="padding:6px 10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-        <span style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:1px;">📡 DX CLUSTER</span>
+        <span style="font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:1px;" data-i18n="dx_hdr">📡 DX CLUSTER</span>
         <span id="dx-status-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);">○ ROZŁĄCZONY</span>
 
         <span style="width:1px;height:16px;background:var(--border);margin:0 4px;"></span>
 
-        <button id="dx-connect-btn" onclick="DXCluster.connect()"
+        <button id="dx-connect-btn" onclick="DXCluster.connect()" data-i18n="dx_connect_btn"
           style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
           ▶ POŁĄCZ
         </button>
         <button id="dx-disconnect-btn" onclick="DXCluster.disconnect()" style="display:none;
-          font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);color:var(--red);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+          font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);color:var(--red);border-radius:3px;cursor:pointer;letter-spacing:1px;" data-i18n="dx_disconnect_btn">
           ✕ ROZŁĄCZ
         </button>
-        <button onclick="DXCluster.toggleConfig()" title="Pokaż/ukryj konfigurację"
+        <button onclick="DXCluster.toggleConfig()" data-i18n-title="dx_config_title" title="Pokaż/ukryj konfigurację" data-i18n="dx_config_btn"
           style="font-family:var(--mono);font-size:10px;padding:3px 8px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;">
           ⚙ KONFIG
         </button>
-        <button id="dx-spot-btn" onclick="DXCluster.openSpotDialog()" title="Wyślij spota na klaster (wypełni aktualną częstotliwość i tryb)"
+        <button id="dx-spot-btn" onclick="DXCluster.openSpotDialog()" data-i18n-title="dx_send_spot_title" title="Wyślij spota na klaster (wypełni aktualną częstotliwość i tryb)" data-i18n="dx_send_spot_btn"
           style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(212,153,34,0.12);border:1px solid rgba(212,153,34,0.45);color:var(--amber);border-radius:3px;cursor:pointer;letter-spacing:1px;">
           📤 WYŚLIJ SPOT
         </button>
 
         <span style="width:1px;height:16px;background:var(--border);margin:0 4px;"></span>
 
-        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);">PASMO:</label>
+        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);" data-i18n="dx_band_lbl">PASMO:</label>
         <select id="dx-filter-band" onchange="DXCluster.renderSpots()"
           style="font-family:var(--mono);font-size:10px;padding:2px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
-          <option value="">wszystkie</option>
+          <option value="" data-i18n="dx_all_bands">wszystkie</option>
           <option value="160m">160m</option><option value="80m">80m</option>
           <option value="60m">60m</option><option value="40m">40m</option>
           <option value="30m">30m</option><option value="20m">20m</option>
@@ -2089,22 +2089,22 @@
           <option value="6m">6m</option><option value="2m">2m</option>
           <option value="70cm">70cm</option>
         </select>
-        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);">TRYB:</label>
+        <label style="font-family:var(--mono);font-size:9px;color:var(--dim);" data-i18n="dx_mode_lbl">TRYB:</label>
         <select id="dx-filter-mode" onchange="DXCluster.renderSpots()"
           style="font-family:var(--mono);font-size:10px;padding:2px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
-          <option value="">wszystkie</option>
+          <option value="" data-i18n="dx_all_bands">wszystkie</option>
           <option value="SSB">SSB</option><option value="CW">CW</option>
           <option value="FT8">FT8</option><option value="FT4">FT4</option>
           <option value="RTTY">RTTY</option><option value="DIGI">DIGI</option>
         </select>
         <input type="text" id="dx-filter-call" oninput="DXCluster.renderSpots()"
-          placeholder="szukaj (call/spotter)"
+          data-i18n-placeholder="dx_search_ph" placeholder="szukaj (call/spotter)"
           style="font-family:var(--mono);font-size:10px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;width:150px;">
 
         <span style="margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--dim);">
-          Spoty: <span id="dx-spot-count" style="color:var(--green);">0</span>
+          <span data-i18n="dx_spots_lbl">Spoty:</span> <span id="dx-spot-count" style="color:var(--green);">0</span>
         </span>
-        <button onclick="DXCluster.clearSpots()" title="Wyczyść listę"
+        <button onclick="DXCluster.clearSpots()" data-i18n-title="dx_clear_list_title" title="Wyczyść listę"
           style="font-family:var(--mono);font-size:10px;padding:2px 8px;background:none;border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;">
           🗑
         </button>
@@ -2112,37 +2112,37 @@
 
       <!-- KONFIGURACJA (zwijana - domyslnie schowana) -->
       <div id="dx-config-panel" style="display:none;border-top:1px solid var(--border);padding:8px 10px;background:var(--panel2);">
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;margin-bottom:6px;">
+        <div data-i18n-html="dx_config_desc" style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;margin-bottom:6px;">
           Adres serwera Telnet (np. <code>dxcluster.sq3mzm.ovh:7300</code>). Login = znak. Hasło opcjonalne.
         </div>
         <div style="display:grid;grid-template-columns:2fr 80px 1fr 1fr auto;gap:6px;align-items:end;">
           <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">ADRES</label>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="dx_address_lbl">ADRES</label>
             <input type="text" id="dx-host" placeholder="dxcluster.sq3mzm.ovh"
               style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
           </div>
           <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">PORT</label>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="dx_port_lbl">PORT</label>
             <input type="number" id="dx-port" value="7300" min="1" max="65535"
               style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
           </div>
           <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">LOGIN</label>
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="dx_login_lbl">LOGIN</label>
             <input type="text" id="dx-login" placeholder="SP3GSK" maxlength="12"
               style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
           </div>
           <div>
-            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">HASŁO</label>
-            <input type="password" id="dx-password" placeholder="opcjonalne" autocomplete="new-password"
+            <label style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="dx_password_lbl">HASŁO</label>
+            <input type="password" id="dx-password" data-i18n-placeholder="dx_optional_ph" placeholder="opcjonalne" autocomplete="new-password"
               style="width:100%;font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
           </div>
-          <button onclick="DXCluster.save()" class="save-btn"
+          <button onclick="DXCluster.save()" class="save-btn" data-i18n="dx_save_btn"
             style="font-family:var(--mono);font-size:10px;padding:5px 12px;letter-spacing:1px;">💾 ZAPISZ</button>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
           <label style="font-family:var(--mono);font-size:10px;color:var(--dim);display:flex;align-items:center;gap:6px;cursor:pointer;">
             <input type="checkbox" id="dx-auto-connect" style="width:12px;height:12px;">
-            Auto-łącz przy logowaniu
+            <span data-i18n="dx_autoconnect_lbl">Auto-łącz przy logowaniu</span>
           </label>
           <span id="dx-save-status" style="font-family:var(--mono);font-size:9px;color:var(--dim);"></span>
         </div>
@@ -2157,16 +2157,16 @@
             <tr>
               <th style="width:60px;font-size:9px;">UTC</th>
               <th style="width:90px;font-size:9px;">MHz</th>
-              <th style="width:110px;font-size:9px;">CALL (DX)</th>
+              <th style="width:110px;font-size:9px;" data-i18n="dx_th_call">CALL (DX)</th>
               <th style="width:50px;font-size:9px;">BAND</th>
-              <th style="width:50px;font-size:9px;">TRYB</th>
-              <th style="font-size:9px;">KOMENTARZ</th>
+              <th style="width:50px;font-size:9px;" data-i18n="dx_th_mode">TRYB</th>
+              <th style="font-size:9px;" data-i18n="log_th_comment">KOMENTARZ</th>
               <th style="width:100px;font-size:9px;">SPOTTER</th>
               <th style="width:50px;font-size:9px;">QSY</th>
             </tr>
           </thead>
           <tbody id="dx-spot-list">
-            <tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim);font-family:var(--mono);font-size:10px;">
+            <tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim);font-family:var(--mono);font-size:10px;" data-i18n-html="dx_empty_initial">
               Brak spotów. Kliknij <strong>⚙ KONFIG</strong> żeby wpisać adres serwera, potem <strong>▶ POŁĄCZ</strong>.
             </td></tr>
           </tbody>
@@ -2175,7 +2175,7 @@
 
       <!-- CLI - kompaktowy pasek na dole -->
       <div style="flex-shrink:0;border-top:1px solid var(--border);padding:4px 8px;display:flex;gap:6px;align-items:center;background:var(--panel2);">
-        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">CMD:</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="dx_cmd_lbl">CMD:</span>
         <input type="text" id="dx-cmd" placeholder="sh/dx 20m, set/qth JO72..."
           onkeydown="if(event.key==='Enter')DXCluster.sendCommand()"
           style="flex:1;font-family:var(--mono);font-size:10px;padding:3px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;">
@@ -2396,33 +2396,33 @@
 <div class="modal-overlay" id="dx-spot-modal" onclick="if(event.target===this)DXCluster.closeSpotDialog()">
   <div class="modal-box" style="max-width:440px;">
     <div class="modal-header">
-      <span>📤 WYŚLIJ SPOT NA KLASTER</span>
+      <span data-i18n="dx_spot_modal_hdr">📤 WYŚLIJ SPOT NA KLASTER</span>
       <button class="modal-close" onclick="DXCluster.closeSpotDialog()">✕</button>
     </div>
 
-    <div style="padding:0 4px 8px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;">
+    <div style="padding:0 4px 8px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;" data-i18n="dx_spot_modal_desc">
       Spot zostanie wysłany pod Twoim znakiem (loginem klastra) i będzie
       widoczny dla wszystkich operatorów na świecie.
     </div>
 
     <div class="modal-grid">
       <div class="sg">
-        <label>ZNAK STACJI *</label>
+        <label data-i18n="dx_spot_call_lbl">ZNAK STACJI *</label>
         <input type="text" id="dx-spot-call" placeholder="SP1ABC" maxlength="16"
                style="text-transform:uppercase;font-family:var(--mono);letter-spacing:1px;"
                oninput="this.value=this.value.toUpperCase()">
       </div>
       <div class="sg">
-        <label>CZĘSTOTLIWOŚĆ (kHz) *</label>
+        <label data-i18n="dx_spot_freq_lbl">CZĘSTOTLIWOŚĆ (kHz) *</label>
         <input type="text" id="dx-spot-freq" placeholder="14074.0"
                style="font-family:var(--mono);">
       </div>
     </div>
 
     <div class="sg" style="margin-top:6px;">
-      <label>KOMENTARZ (max 30 znaków)</label>
+      <label data-i18n="dx_spot_comment_lbl">KOMENTARZ (max 30 znaków)</label>
       <input type="text" id="dx-spot-comment" maxlength="30"
-             placeholder="np. FT8 CQ DX / 599 TNX QSO"
+             data-i18n-placeholder="dx_spot_comment_ph" placeholder="np. FT8 CQ DX / 599 TNX QSO"
              style="font-family:var(--mono);">
     </div>
 
@@ -2430,7 +2430,7 @@
     <div style="margin-top:10px;padding:8px 10px;background:var(--panel3);
                 border:1px solid var(--border);border-radius:3px;">
       <div style="font-family:var(--mono);font-size:9px;color:var(--dim);
-                  letter-spacing:1px;margin-bottom:4px;">PODGLĄD KOMENDY:</div>
+                  letter-spacing:1px;margin-bottom:4px;" data-i18n="dx_preview_lbl">PODGLĄD KOMENDY:</div>
       <div id="dx-spot-preview" style="font-family:var(--mono);font-size:11px;
                   color:var(--green);word-break:break-all;">DX 14074.0 SP1ABC</div>
     </div>
@@ -2440,7 +2440,7 @@
          border-radius:3px;font-family:var(--mono);font-size:10px;color:var(--red);"></div>
 
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
-      <button onclick="DXCluster.closeSpotDialog()"
+      <button onclick="DXCluster.closeSpotDialog()" data-i18n="common_cancel_btn"
         style="font-family:var(--mono);font-size:10px;padding:6px 14px;background:var(--panel3);
                border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;
                letter-spacing:1px;">ANULUJ</button>
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608180003"></script>
+<script src="js/i18n.js?v=202608180004"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
@@ -2568,7 +2568,7 @@
 <script src="js/settings.js?v=202608180001"></script>
 <script src="js/tx_eq.js?v=202608170001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
-<script src="js/dxcluster.js?v=202606300001"></script>
+<script src="js/dxcluster.js?v=202608180001"></script>
 <script src="js/audio_autodetect.js?v=202608180001"></script>
 <script src="js/com_bridge.js?v=202608180001"></script>
 <script src="js/rotator.js?v=202608150001"></script>

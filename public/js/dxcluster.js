@@ -39,7 +39,7 @@ window.DXCluster = (function() {
       document.getElementById('dx-login').value = cfg.login || '';
       // Hasla nie zwracamy - placeholder pokazuje ze jest zapisane
       const pwEl = document.getElementById('dx-password');
-      if (pwEl) pwEl.placeholder = cfg.has_password ? '•••• (zapisane)' : 'opcjonalne';
+      if (pwEl) pwEl.placeholder = cfg.has_password ? I18n.t('dx_password_saved_ph') : I18n.t('dx_optional_ph');
       document.getElementById('dx-auto-connect').checked = !!cfg.auto_connect;
 
       // Auto-pokaz konfiguracje jesli nie ma adresu (pierwszy raz)
@@ -62,7 +62,7 @@ window.DXCluster = (function() {
 
   async function save() {
     const status = document.getElementById('dx-save-status');
-    if (status) { status.textContent = '⏳ Zapisywanie...'; status.style.color = 'var(--dim)'; }
+    if (status) { status.textContent = I18n.t('dx_saving'); status.style.color = 'var(--dim)'; }
     const password = document.getElementById('dx-password').value;
     const payload = {
       host: document.getElementById('dx-host').value.trim(),
@@ -81,12 +81,12 @@ window.DXCluster = (function() {
       });
       const data = await r.json();
       if (r.ok && data.ok) {
-        if (status) { status.textContent = '✓ Zapisano'; status.style.color = 'var(--green)'; }
+        if (status) { status.textContent = I18n.t('dx_saved'); status.style.color = 'var(--green)'; }
         // Wyczyść pole hasła (nie chcemy go trzymać w DOM)
         document.getElementById('dx-password').value = '';
         setTimeout(loadConfig, 500);
       } else {
-        if (status) { status.textContent = '✕ ' + (data.error || 'Błąd'); status.style.color = 'var(--red)'; }
+        if (status) { status.textContent = '✕ ' + (data.error || I18n.t('profile_error_fallback')); status.style.color = 'var(--red)'; }
       }
     } catch(e) {
       if (status) { status.textContent = '✕ ' + e.message; status.style.color = 'var(--red)'; }
@@ -102,7 +102,7 @@ window.DXCluster = (function() {
       });
       const data = await r.json();
       if (!r.ok || !data.ok) {
-        window.UI?.showToast?.('⛔ ' + (data.error || 'Błąd połączenia'), 'error');
+        window.UI?.showToast?.('⛔ ' + (data.error || I18n.t('cfg_conn_error')), 'error');
       }
     } catch(e) { window.UI?.showToast?.('⛔ ' + e.message, 'error'); }
   }
@@ -129,7 +129,7 @@ window.DXCluster = (function() {
       if (data.ok) {
         el.value = '';
       } else {
-        window.UI?.showToast?.('Nie mozna wyslac komendy (brak polaczenia?)', 'error');
+        window.UI?.showToast?.(I18n.t('dx_cmd_send_fail'), 'error');
       }
     } catch(e) { window.UI?.showToast?.('⛔ ' + e.message, 'error'); }
   }
@@ -156,12 +156,12 @@ window.DXCluster = (function() {
     const countEl = document.getElementById('dx-spot-count');
     if (countEl) {
       countEl.textContent = totalCount > 30 ? `${shownCount}/${totalCount}` : String(totalCount);
-      countEl.title = totalCount > 30 ? `Widoczne ${shownCount} z ${totalCount} — użyj filtrów żeby zawęzić` : '';
+      countEl.title = totalCount > 30 ? I18n.t('dx_spot_count_title').replace('{shown}', shownCount).replace('{total}', totalCount) : '';
     }
 
     if (!filtered.length) {
       tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--dim);font-family:var(--mono);font-size:10px;">
-        ${_spots.length ? 'Brak spotów pasujących do filtrów' : 'Brak spotów. Połącz się z DX Cluster żeby zobaczyć na żywo.'}
+        ${_spots.length ? I18n.t('dx_empty_filtered') : I18n.t('dx_empty_connect')}
       </td></tr>`;
       return;
     }
@@ -262,7 +262,7 @@ window.DXCluster = (function() {
     // Zabezpieczenie przed nieprawidlowymi argumentami z HTML onclick
     freq_hz = parseInt(freq_hz, 10);
     if (!freq_hz || freq_hz < 100000) {
-      window.UI?.showToast?.('✗ Nieprawidłowa częstotliwość spota', 'error');
+      window.UI?.showToast?.(I18n.t('dx_invalid_freq'), 'error');
       return;
     }
 
@@ -276,9 +276,9 @@ window.DXCluster = (function() {
     if (!canControl) {
       const holder = lock?.callsign || lock?.username || '';
       const reason = lock?.locked && holder
-        ? `TRX jest zajęty przez ${holder}`
-        : 'Najpierw przejmij TRX (zakładka Radio → panel OPERATORZY → PRZEJMIJ TRX)';
-      window.UI?.showToast?.(`⛔ Nie mogę wykonać QSY: ${reason}`, 'error');
+        ? I18n.t('dx_trx_busy').replace('{holder}', holder)
+        : I18n.t('dx_take_trx_first');
+      window.UI?.showToast?.(I18n.t('dx_cant_qsy').replace('{reason}', reason), 'error');
       return;
     }
 
@@ -339,7 +339,7 @@ window.DXCluster = (function() {
     if (!badge) return;
 
     if (status === 'connected') {
-      badge.textContent = '● POŁĄCZONY';
+      badge.textContent = I18n.t('dx_connected');
       badge.style.color = 'var(--green)';
       badge.style.background = 'rgba(184,201,143,0.15)';
       if (connectBtn) connectBtn.style.display = 'none';
@@ -349,17 +349,17 @@ window.DXCluster = (function() {
       const cfgPanel = document.getElementById('dx-config-panel');
       if (cfgPanel) cfgPanel.style.display = 'none';
     } else if (status === 'connecting') {
-      badge.textContent = '⏳ ŁĄCZENIE...';
+      badge.textContent = I18n.t('dx_connecting');
       badge.style.color = 'var(--amber)';
       badge.style.background = 'rgba(212,168,87,0.15)';
     } else if (status === 'error') {
-      badge.textContent = '✕ BŁĄD: ' + (message || 'Nieznany');
+      badge.textContent = I18n.t('dx_error_prefix') + (message || I18n.t('dx_unknown'));
       badge.style.color = 'var(--red)';
       badge.style.background = 'rgba(217,119,106,0.15)';
       if (connectBtn) connectBtn.style.display = '';
       if (disconnectBtn) disconnectBtn.style.display = 'none';
     } else {
-      badge.textContent = '○ ROZŁĄCZONY' + (message ? ' — ' + message : '');
+      badge.textContent = I18n.t('dx_disconnected') + (message ? ' — ' + message : '');
       badge.style.color = 'var(--dim)';
       badge.style.background = 'var(--panel3)';
       if (connectBtn) connectBtn.style.display = '';
@@ -492,18 +492,18 @@ window.DXCluster = (function() {
 
     // Walidacja po stronie klienta (backend i tak sprawdza ponownie)
     if (!call || !/^[A-Z0-9/]{3,16}$/.test(call)) {
-      _spotError('Podaj poprawny znak stacji (litery, cyfry, /)');
+      _spotError(I18n.t('dx_spot_call_invalid'));
       return;
     }
     const khz = parseFloat(freqKhz);
     if (!khz || khz < 1800 || khz > 1300000) {
-      _spotError('Podaj częstotliwość w kHz (np. 14074.0)');
+      _spotError(I18n.t('dx_spot_freq_invalid'));
       return;
     }
     _spotError('');
 
     const btn = document.getElementById('dx-spot-send-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'WYSYŁANIE...'; }
+    if (btn) { btn.disabled = true; btn.textContent = I18n.t('dx_sending'); }
 
     try {
       const r = await fetch('/api/dxcluster/spot', {
@@ -517,15 +517,15 @@ window.DXCluster = (function() {
       });
       const res = await r.json();
       if (res.ok) {
-        window.UI?.showToast?.(`✓ Spot wysłany: ${call} na ${freqKhz} kHz`, 'info');
+        window.UI?.showToast?.(I18n.t('dx_spot_sent').replace('{call}', call).replace('{freq}', freqKhz), 'info');
         closeSpotDialog();
       } else {
-        _spotError(res.error || 'Nie udało się wysłać spota');
+        _spotError(res.error || I18n.t('dx_spot_send_fail'));
       }
     } catch (e) {
-      _spotError(`Błąd połączenia: ${e.message}`);
+      _spotError(I18n.t('dx_spot_conn_error').replace('{msg}', e.message));
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '📤 WYŚLIJ SPOT'; }
+      if (btn) { btn.disabled = false; btn.textContent = I18n.t('dx_send_spot_modal_btn'); }
     }
   }
 
