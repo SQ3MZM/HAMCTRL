@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202608170003">
+<link rel="stylesheet" href="css/style.css?v=202608170004">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -21,15 +21,15 @@
   <div class="logo">HAM RADIO <span class="logo-accent">CTRL</span></div>
 
   <div class="nav-tabs">
-    <button class="tab-btn active" onclick="UI.setPage('radio')">RADIO</button>
-    <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="settings">USTAWIENIA</button>
-    <button class="tab-btn" onclick="UI.setPage('profile')" data-perm="view" id="tab-profile">👤 PROFIL</button>
-    <button class="tab-btn" onclick="UI.setPage('log')" data-perm="view" id="tab-log">LOG QSO</button>
-    <button class="tab-btn" onclick="UI.setPage('config')" data-perm="settings" id="tab-config">KONFIGURACJA</button>
+    <button class="tab-btn active" onclick="UI.setPage('radio')" data-i18n="tab_radio">RADIO</button>
+    <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="settings" data-i18n="tab_settings">USTAWIENIA</button>
+    <button class="tab-btn" onclick="UI.setPage('profile')" data-perm="view" id="tab-profile" data-i18n="tab_profile">👤 PROFIL</button>
+    <button class="tab-btn" onclick="UI.setPage('log')" data-perm="view" id="tab-log" data-i18n="tab_log">LOG QSO</button>
+    <button class="tab-btn" onclick="UI.setPage('config')" data-perm="settings" id="tab-config" data-i18n="tab_config">KONFIGURACJA</button>
       <button class="tab-btn" id="tab-wsjtx" onclick="UI.setPage('wsjtx')" data-perm="view">FT8/WSJT-X</button>
     <button class="tab-btn" id="tab-dxcluster" onclick="UI.setPage('dxcluster')" data-perm="view">📡 DX CLUSTER</button>
     <button class="tab-btn" id="tab-internet" onclick="UI.setPage('internet')" data-perm="admin">🌐 INTERNET</button>
-    <button class="tab-btn" id="tab-admin" onclick="UI.setPage('admin')" style="display:none">ADMIN</button>
+    <button class="tab-btn" id="tab-admin" onclick="UI.setPage('admin')" style="display:none" data-i18n="tab_admin">ADMIN</button>
   </div>
 
   <div class="status-row">
@@ -38,8 +38,9 @@
     <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
     <span id="user-role" class="role-badge"></span>
     <span id="callsign-display" style="font-family:var(--mono);font-size:13px;color:var(--green);font-weight:bold;letter-spacing:2px;">--</span>
+    <button class="lang-switch-btn" id="lang-switch" onclick="I18n.toggle()" title="Switch language / Zmien jezyk">PL</button>
   </div>
-  <button class="logout-btn" onclick="Auth.logout()" title="Wyloguj">⏻ WYLOGUJ</button>
+  <button class="logout-btn" onclick="Auth.logout()" title="Wyloguj" data-i18n-title="logout_title" data-i18n="logout_btn">⏻ WYLOGUJ</button>
 </div>
 
 <div id="app-scale">
@@ -2558,6 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
+<script src="js/i18n.js?v=202608170001"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>

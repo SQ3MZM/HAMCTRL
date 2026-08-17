@@ -123,6 +123,13 @@ body { padding-top: 52px; }
   cursor: pointer; transition: all 0.2s;
 }
 .logout-btn:hover { border-color: var(--red); color: var(--red); }
+.lang-switch-btn {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--dim); font-family: var(--mono); font-size: 10px; font-weight: 700;
+  padding: 5px 8px; cursor: pointer; transition: all 0.2s; letter-spacing: 1px;
+  min-width: 28px;
+}
+.lang-switch-btn:hover { border-color: var(--green2); color: var(--green); }
 
 /* ── RADIO PAGE WRAPPER ── */
 #page-radio { padding: 0; position: relative; }
