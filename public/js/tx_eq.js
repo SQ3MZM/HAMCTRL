@@ -224,7 +224,7 @@ window.TxEq = (() => {
     console.log('[txeq] startMonitor called, monitorActive=', monitorActive);
     if (monitorActive) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      window.UI?.showToast('Mikrofon niedostepny w tej przegladarce', 'error');
+      window.UI?.showToast(I18n.t('profile_toast_mic_unavailable'), 'error');
       return;
     }
     console.log('[txeq] proszę o mikrofon...');
@@ -282,7 +282,7 @@ window.TxEq = (() => {
       console.log('[txeq] mikrofon OK, label=', track?.label, 'settings=', track?.getSettings());
     } catch (e) {
       console.error('[txeq] getUserMedia blad:', e);
-      window.UI?.showToast('Brak dostepu do mikrofonu: ' + e.message, 'error');
+      window.UI?.showToast(I18n.t('profile_toast_mic_no_access') + e.message, 'error');
       return;
     }
 
@@ -293,7 +293,7 @@ window.TxEq = (() => {
     const ctx = window._audioCtx || window.audioCtx;
     console.log('[txeq] AudioContext:', ctx, 'state=', ctx?.state);
     if (!ctx) {
-      window.UI?.showToast('AudioContext niedostepny - kliknij cokolwiek w UI zeby aktywowac audio, potem sprobuj ponownie', 'error');
+      window.UI?.showToast(I18n.t('profile_toast_audioctx_unavailable'), 'error');
       monitorStream.getTracks().forEach(t => t.stop());
       monitorStream = null;
       return;
@@ -378,7 +378,7 @@ window.TxEq = (() => {
     monitorActive = true;
     const btn = document.getElementById('eq-monitor-btn');
     if (btn) {
-      btn.textContent = '⏹ STOP ODSŁUCH';
+      btn.textContent = I18n.t('profile_eq_monitor_stop_btn');
       btn.style.background = 'var(--red)';
       btn.style.color = 'white';
     }
@@ -403,7 +403,7 @@ window.TxEq = (() => {
     monitorActive = false;
     const btn = document.getElementById('eq-monitor-btn');
     if (btn) {
-      btn.textContent = '▶ START ODSŁUCH';
+      btn.textContent = I18n.t('profile_eq_monitor_start_btn');
       btn.style.background = 'var(--panel3)';
       btn.style.color = 'var(--green)';
     }

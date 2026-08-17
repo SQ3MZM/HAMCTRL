@@ -1114,38 +1114,38 @@
 
     <div class="profile-row">
     <div class="box">
-      <div class="box-header">👤 MÓJ PROFIL</div>
+      <div class="box-header" data-i18n="profile_myprofile_hdr">👤 MÓJ PROFIL</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>IMIĘ</label>
-          <input type="text" id="profile-name" placeholder="Jan" autocomplete="name"></div>
-        <div class="field"><label>ZNAK WYWOŁAWCZY</label>
+        <div class="field"><label data-i18n="profile_name_lbl">IMIĘ</label>
+          <input type="text" id="profile-name" data-i18n-placeholder="profile_name_ph" placeholder="Jan" autocomplete="name"></div>
+        <div class="field"><label data-i18n="profile_callsign_lbl">ZNAK WYWOŁAWCZY</label>
           <input type="text" id="profile-callsign" placeholder="SP0ABC"
             style="text-transform:uppercase;font-family:var(--mono);font-size:14px;letter-spacing:2px;"
             autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
-        <div class="field"><label>LOKATOR QTH (np. JO82)</label>
+        <div class="field"><label data-i18n="profile_locator_lbl">LOKATOR QTH (np. JO82)</label>
           <input type="text" id="profile-locator" placeholder="JO82" maxlength="8"
             style="text-transform:uppercase;font-family:var(--mono);"
             autocomplete="off" oninput="this.value=this.value.toUpperCase()"></div>
         <div class="field"><label>E-MAIL</label>
           <input type="email" id="profile-email" placeholder="user@example.com" autocomplete="email"></div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-          <button class="save-btn" onclick="saveProfile()">💾 ZAPISZ PROFIL</button>
+          <button class="save-btn" onclick="saveProfile()" data-i18n="profile_save_btn">💾 ZAPISZ PROFIL</button>
           <span id="profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
         </div>
       </div>
     </div>
 
     <div class="box">
-      <div class="box-header">🔑 ZMIANA HASŁA</div>
+      <div class="box-header" data-i18n="profile_changepwd_hdr">🔑 ZMIANA HASŁA</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>STARE HASŁO</label>
+        <div class="field"><label data-i18n="profile_old_pwd_lbl">STARE HASŁO</label>
           <input type="password" id="profile-old-pwd" autocomplete="current-password"></div>
-        <div class="field"><label>NOWE HASŁO (min. 8 znaków)</label>
+        <div class="field"><label data-i18n="profile_new_pwd_lbl">NOWE HASŁO (min. 8 znaków)</label>
           <input type="password" id="profile-new-pwd" autocomplete="new-password"></div>
-        <div class="field"><label>POWTÓRZ NOWE HASŁO</label>
+        <div class="field"><label data-i18n="profile_new_pwd2_lbl">POWTÓRZ NOWE HASŁO</label>
           <input type="password" id="profile-new-pwd2" autocomplete="new-password"></div>
         <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
-          <button class="save-btn" onclick="changeProfilePassword()">🔑 ZMIEŃ HASŁO</button>
+          <button class="save-btn" onclick="changeProfilePassword()" data-i18n="profile_changepwd_btn">🔑 ZMIEŃ HASŁO</button>
           <span id="profile-pwd-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
         </div>
       </div>
@@ -1154,65 +1154,65 @@
 
     <div class="profile-row">
     <div class="box">
-      <div class="box-header">🔊 AUDIO — MOJE URZĄDZENIA (przeglądarka)</div>
+      <div class="box-header" data-i18n="profile_audio_hdr">🔊 AUDIO — MOJE URZĄDZENIA (przeglądarka)</div>
       <div class="box-body" style="display:flex;flex-direction:column;gap:10px;">
-        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+        <div data-i18n="profile_audio_desc" style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
           Wybierz gdzie słyszysz odbiór (RX) i skąd nadajesz głos (TX mikrofon).
           Ustawienia zapisywane lokalnie w Twojej przeglądarce.
         </div>
         <div class="field">
-          <label>GŁOŚNIK RX (odbiór radia → Twoje słuchawki)</label>
+          <label data-i18n="profile_audio_out_lbl">GŁOŚNIK RX (odbiór radia → Twoje słuchawki)</label>
           <div style="display:flex;gap:6px;">
             <select id="profile-audio-out" onchange="ProfileAudio.setOutput(this.value)"
               style="flex:1;font-family:var(--mono);font-size:12px;padding:6px;">
-              <option value="">— ładowanie... —</option>
+              <option value="" data-i18n="profile_loading_option">— ładowanie... —</option>
             </select>
-            <button onclick="ProfileAudio.testOutput()" title="Odtwórz ton testowy"
+            <button onclick="ProfileAudio.testOutput()" data-i18n-title="profile_audio_test_out_title" title="Odtwórz ton testowy"
               style="font-family:var(--mono);font-size:10px;padding:6px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;white-space:nowrap;">
               🔉 TEST
             </button>
           </div>
         </div>
         <div class="field">
-          <label>MIKROFON TX (Twój głos → radio)</label>
+          <label data-i18n="profile_audio_in_lbl">MIKROFON TX (Twój głos → radio)</label>
           <div style="display:flex;gap:6px;">
             <select id="profile-audio-in" onchange="ProfileAudio.setInput(this.value)"
               style="flex:1;font-family:var(--mono);font-size:12px;padding:6px;">
-              <option value="">— ładowanie... —</option>
+              <option value="" data-i18n="profile_loading_option">— ładowanie... —</option>
             </select>
-            <button onclick="ProfileAudio.testInput()" title="Zmierz poziom mikrofonu (5s)"
+            <button onclick="ProfileAudio.testInput()" data-i18n-title="profile_audio_test_in_title" title="Zmierz poziom mikrofonu (5s)"
               style="font-family:var(--mono);font-size:10px;padding:6px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;white-space:nowrap;">
               🎤 TEST
             </button>
           </div>
         </div>
         <div id="profile-audio-meter" style="display:none;">
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">POZIOM MIKROFONU:</div>
+          <div data-i18n="profile_mic_level_lbl" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">POZIOM MIKROFONU:</div>
           <div style="height:14px;background:var(--panel3);border:1px solid var(--border);border-radius:3px;overflow:hidden;">
             <div id="profile-audio-level" style="height:100%;width:0%;background:linear-gradient(90deg,var(--green),var(--amber),var(--red));transition:width 0.05s;"></div>
           </div>
           <div id="profile-audio-hint" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:3px;"></div>
         </div>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;padding-top:4px;border-top:1px solid var(--border);">
+        <div data-i18n="profile_audio_footnote" style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;padding-top:4px;border-top:1px solid var(--border);">
           💡 Unikaj urządzeń "CABLE"/"Virtual" — to wirtualne kable dla programów (WSJT-X), nie Twój sprzęt.
         </div>
       </div>
     </div>
 
     <div class="box">
-      <div class="box-header">🎨 WYGLĄD (motyw kolorów)</div>
+      <div class="box-header" data-i18n="profile_theme_hdr">🎨 WYGLĄD (motyw kolorów)</div>
       <div class="box-body" style="display:flex;flex-direction:column;gap:8px;">
-        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+        <div data-i18n="profile_theme_desc" style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
           Motyw zmienia kolory akcentów w interfejsie. Zapisywany lokalnie w przeglądarce.
         </div>
         <div class="field">
-          <label>MOTYW</label>
+          <label data-i18n="profile_theme_lbl">MOTYW</label>
           <select id="profile-theme" onchange="UI.setTheme(this.value)"
             style="font-family:var(--mono);font-size:12px;padding:6px;width:100%;">
-            <option value="default">Zielony + bursztyn (klasyczny IC-7300)</option>
-            <option value="blue">Niebieski (nowoczesny)</option>
-            <option value="mono">Monochromatyczny (dyskretny)</option>
-            <option value="amber-classic">Bursztyn klasyczny (retro CRT)</option>
+            <option value="default" data-i18n="profile_theme_opt_default">Zielony + bursztyn (klasyczny IC-7300)</option>
+            <option value="blue" data-i18n="profile_theme_opt_blue">Niebieski (nowoczesny)</option>
+            <option value="mono" data-i18n="profile_theme_opt_mono">Monochromatyczny (dyskretny)</option>
+            <option value="amber-classic" data-i18n="profile_theme_opt_amber">Bursztyn klasyczny (retro CRT)</option>
           </select>
         </div>
       </div>
@@ -1220,72 +1220,72 @@
     </div>
 
     <div class="box">
-      <div class="box-header">🎤 TX MIKROFON — KOREKCJA AUDIO (EQ)</div>
+      <div class="box-header" data-i18n="profile_eq_hdr">🎤 TX MIKROFON — KOREKCJA AUDIO (EQ)</div>
       <div class="box-body" style="display:flex;flex-direction:column;gap:10px;">
-        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+        <div data-i18n="profile_eq_desc" style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
           Korekcja audio dopasowuje sygnał mikrofonu do pasma SSB (300-2700 Hz).
           Wybierz preset pasujący do Twojego głosu i sprawdź odsłuchem
           jak będzie brzmieć w eterze. Ustawienia zapisują się lokalnie w przeglądarce.
         </div>
 
         <div class="field">
-          <label>PRESET EQ</label>
+          <label data-i18n="profile_eq_preset_lbl">PRESET EQ</label>
           <select id="profile-eq-preset" onchange="TxEq.applyPreset(this.value)"
             style="font-family:var(--mono);font-size:12px;padding:6px;width:100%;">
-            <option value="default">Standardowy (zbalansowany)</option>
-            <option value="dark">Ciemny głos (męski/gruby) — więcej klarowności</option>
-            <option value="bright">Jasny głos (kobiecy/dziecięcy) — mniej wysokich</option>
-            <option value="dx">DX/Contest — maksymalny punch</option>
-            <option value="ragchew">Ragchew — naturalny, mniej agresywny</option>
-            <option value="flat">Flat (bez EQ, tylko limiter)</option>
-            <option value="custom">Custom (ręcznie)</option>
+            <option value="default" data-i18n="profile_eq_opt_default">Standardowy (zbalansowany)</option>
+            <option value="dark" data-i18n="profile_eq_opt_dark">Ciemny głos (męski/gruby) — więcej klarowności</option>
+            <option value="bright" data-i18n="profile_eq_opt_bright">Jasny głos (kobiecy/dziecięcy) — mniej wysokich</option>
+            <option value="dx" data-i18n="profile_eq_opt_dx">DX/Contest — maksymalny punch</option>
+            <option value="ragchew" data-i18n="profile_eq_opt_ragchew">Ragchew — naturalny, mniej agresywny</option>
+            <option value="flat" data-i18n="profile_eq_opt_flat">Flat (bez EQ, tylko limiter)</option>
+            <option value="custom" data-i18n="profile_eq_opt_custom">Custom (ręcznie)</option>
           </select>
         </div>
 
         <div id="profile-eq-custom" style="display:none;flex-direction:column;gap:6px;border:1px solid var(--panel3);padding:8px;border-radius:4px;">
-          <div style="font-family:var(--mono);font-size:10px;color:var(--amber);">CUSTOM EQ — ręczna regulacja</div>
+          <div data-i18n="profile_eq_custom_hdr" style="font-family:var(--mono);font-size:10px;color:var(--amber);">CUSTOM EQ — ręczna regulacja</div>
           <div class="field">
-            <label style="font-size:10px;">BAS (200 Hz): <span id="eq-bass-val">-3</span> dB</label>
+            <label style="font-size:10px;"><span data-i18n="profile_eq_bass_lbl">BAS (200 Hz):</span> <span id="eq-bass-val">-3</span> dB</label>
             <input type="range" id="eq-bass" min="-10" max="6" step="1" value="-3"
               oninput="TxEq.setBand('bass', parseFloat(this.value))" style="width:100%;">
           </div>
           <div class="field">
-            <label style="font-size:10px;">MUD (700 Hz): <span id="eq-mud-val">-5</span> dB</label>
+            <label style="font-size:10px;"><span data-i18n="profile_eq_mud_lbl">MUD (700 Hz):</span> <span id="eq-mud-val">-5</span> dB</label>
             <input type="range" id="eq-mud" min="-10" max="0" step="1" value="-5"
               oninput="TxEq.setBand('mud', parseFloat(this.value))" style="width:100%;">
           </div>
           <div class="field">
-            <label style="font-size:10px;">KLAROWNOŚĆ (1800 Hz): <span id="eq-clarity-val">6</span> dB</label>
+            <label style="font-size:10px;"><span data-i18n="profile_eq_clarity_lbl">KLAROWNOŚĆ (1800 Hz):</span> <span id="eq-clarity-val">6</span> dB</label>
             <input type="range" id="eq-clarity" min="0" max="12" step="1" value="6"
               oninput="TxEq.setBand('clarity', parseFloat(this.value))" style="width:100%;">
           </div>
           <div class="field">
-            <label style="font-size:10px;">PUNCH (2400 Hz): <span id="eq-punch-val">8</span> dB</label>
+            <label style="font-size:10px;"><span data-i18n="profile_eq_punch_lbl">PUNCH (2400 Hz):</span> <span id="eq-punch-val">8</span> dB</label>
             <input type="range" id="eq-punch" min="0" max="12" step="1" value="8"
               oninput="TxEq.setBand('punch', parseFloat(this.value))" style="width:100%;">
           </div>
           <div class="field">
-            <label style="font-size:10px;">POWIETRZE (2700 Hz): <span id="eq-air-val">3</span> dB</label>
+            <label style="font-size:10px;"><span data-i18n="profile_eq_air_lbl">POWIETRZE (2700 Hz):</span> <span id="eq-air-val">3</span> dB</label>
             <input type="range" id="eq-air" min="0" max="8" step="1" value="3"
               oninput="TxEq.setBand('air', parseFloat(this.value))" style="width:100%;">
           </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:6px;border:1px solid var(--green2);padding:8px;border-radius:4px;">
-          <div style="font-family:var(--mono);font-size:10px;color:var(--green);">🎧 ODSŁUCH (Monitor) — usłysz jak EQ zmienia Twój głos</div>
+          <div data-i18n="profile_eq_monitor_hdr" style="font-family:var(--mono);font-size:10px;color:var(--green);">🎧 ODSŁUCH (Monitor) — usłysz jak EQ zmienia Twój głos</div>
           <div style="display:flex;gap:8px;">
-            <button id="eq-monitor-btn" onclick="TxEq.toggleMonitor()"
+            <button id="eq-monitor-btn" onclick="TxEq.toggleMonitor()" data-i18n="profile_eq_monitor_start_btn"
               style="flex:1;font-family:var(--mono);font-size:11px;padding:8px;background:var(--panel3);
               border:1px solid var(--green2);color:var(--green);cursor:pointer;border-radius:4px;">
               ▶ START ODSŁUCH
             </button>
           </div>
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);">
+          <div data-i18n="profile_eq_monitor_desc" style="font-family:var(--mono);font-size:9px;color:var(--dim);">
             Odsłuch przepuszcza mikrofon przez EQ i odtwarza w słuchawkach lokalnie
             (nie nadaje przez radio). Używaj słuchawek żeby uniknąć sprzężenia!
           </div>
           <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;">
-            <span>Głośność:</span>
+            <span data-i18n="profile_eq_monitor_vol_lbl">Głośność:</span>
             <input type="range" id="eq-monitor-vol" min="0" max="1" step="0.05" value="0.3"
               oninput="TxEq.setMonitorVol(parseFloat(this.value))" style="flex:1;">
             <span id="eq-monitor-vol-val" style="width:40px;text-align:right;">0.30</span>
@@ -2559,14 +2559,14 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608170004"></script>
+<script src="js/i18n.js?v=202608170005"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
 <script src="js/ui.js?v=202608170001"></script>
 <script src="js/settings.js?v=202606180504"></script>
-<script src="js/tx_eq.js?v=202608160002"></script>
+<script src="js/tx_eq.js?v=202608170001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
 <script src="js/audio_autodetect.js?v=202608170001"></script>
@@ -2575,7 +2575,7 @@
 <script src="js/rotormini.js?v=202608170001"></script>
 <script src="js/admin.js?v=202608160003"></script>
 <script src="js/admin_status.js?v=202608160001"></script>
-<script src="js/profile_audio.js?v=202607020001"></script>
+<script src="js/profile_audio.js?v=202608170001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
 <script src="js/tunnel.js?v=202608170001"></script>
 <script src="js/dxcc.js?v=202608160001"></script>
@@ -3301,7 +3301,7 @@ async function loadProfile() {
       _s('locator',  u.locator || '');
       _s('email',    u.email || '');
       const st = document.getElementById(`${pfx}-status`);
-      if (st) { st.textContent = `Zalogowany jako: ${u.username} (${u.role})`; st.style.color='var(--dim)'; }
+      if (st) { st.textContent = I18n.t('profile_logged_in_as').replace('{user}', u.username).replace('{role}', u.role); st.style.color='var(--dim)'; }
     }
   } catch(e) {}
 }
@@ -3322,8 +3322,8 @@ async function saveProfile(prefix = 'profile') {
     });
     const res = await r.json();
     if (res.ok) {
-      if (st) { st.textContent = '✓ Profil zapisany'; st.style.color='var(--green)'; }
-      window.UI?.showToast('✓ Profil zapisany');
+      if (st) { st.textContent = I18n.t('profile_saved_short'); st.style.color='var(--green)'; }
+      window.UI?.showToast(I18n.t('profile_saved_short'));
       if (data.callsign) {
         const el = document.getElementById('callsign-display');
         if (el) el.textContent = data.callsign;
@@ -3334,7 +3334,7 @@ async function saveProfile(prefix = 'profile') {
       // oba zeby od razu pokazywaly to co wlasnie zapisano.
       loadProfile();
     } else {
-      if (st) { st.textContent = '✗ ' + (res.error||'Błąd'); st.style.color='var(--red)'; }
+      if (st) { st.textContent = '✗ ' + (res.error||I18n.t('profile_error_fallback')); st.style.color='var(--red)'; }
     }
   } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
 }
@@ -3344,9 +3344,9 @@ async function changeProfilePassword() {
   const np   = document.getElementById('profile-new-pwd')?.value;
   const np2  = document.getElementById('profile-new-pwd2')?.value;
   const st   = document.getElementById('profile-pwd-status');
-  if (!old || !np) { if(st){st.textContent='Uzupełnij pola';st.style.color='var(--red)';} return; }
-  if (np !== np2)  { if(st){st.textContent='Hasła nie pasują';st.style.color='var(--red)';} return; }
-  if (np.length < 8){ if(st){st.textContent='Min. 8 znaków';st.style.color='var(--red)';} return; }
+  if (!old || !np) { if(st){st.textContent=I18n.t('profile_fill_fields');st.style.color='var(--red)';} return; }
+  if (np !== np2)  { if(st){st.textContent=I18n.t('profile_pwd_mismatch');st.style.color='var(--red)';} return; }
+  if (np.length < 8){ if(st){st.textContent=I18n.t('profile_pwd_min_len');st.style.color='var(--red)';} return; }
   try {
     const r = await fetch('/api/auth/change-password', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -3360,13 +3360,13 @@ async function changeProfilePassword() {
         localStorage.setItem('token', res.token);
         sessionStorage.setItem('ham_token', res.token);
       }
-      if(st){st.textContent='✓ Hasło zmienione';st.style.color='var(--green)';}
+      if(st){st.textContent=I18n.t('profile_pwd_changed_short');st.style.color='var(--green)';}
       ['profile-old-pwd','profile-new-pwd','profile-new-pwd2'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.value='';
       });
-      window.UI?.showToast('✓ Hasło zmienione (inne urządzenia wylogowane)');
+      window.UI?.showToast(I18n.t('profile_pwd_changed_toast'));
     } else {
-      if(st){st.textContent='✗ '+(res.error||'Błąd');st.style.color='var(--red)';}
+      if(st){st.textContent='✗ '+(res.error||I18n.t('profile_error_fallback'));st.style.color='var(--red)';}
     }
   } catch(e) { window.UI?.showToast('✗ '+e.message,'error'); }
 }

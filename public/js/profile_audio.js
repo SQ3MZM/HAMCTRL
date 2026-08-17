@@ -41,15 +41,15 @@ window.ProfileAudio = (function() {
         outSel.innerHTML = outputs.map(d => {
           const virt = _isVirtual(d.label) ? ' ⚠' : '';
           const sel = d.deviceId === savedOut ? 'selected' : '';
-          return `<option value="${d.deviceId}" ${sel}>${_escape(d.label || 'Urządzenie ' + d.deviceId.slice(0,6))}${virt}</option>`;
-        }).join('') || '<option value="">brak urządzeń</option>';
+          return `<option value="${d.deviceId}" ${sel}>${_escape(d.label || I18n.t('profile_device_fallback') + ' ' + d.deviceId.slice(0,6))}${virt}</option>`;
+        }).join('') || `<option value="">${I18n.t('profile_no_devices')}</option>`;
       }
       if (inSel) {
         inSel.innerHTML = inputs.map(d => {
           const virt = _isVirtual(d.label) ? ' ⚠' : '';
           const sel = d.deviceId === savedIn ? 'selected' : '';
-          return `<option value="${d.deviceId}" ${sel}>${_escape(d.label || 'Mikrofon ' + d.deviceId.slice(0,6))}${virt}</option>`;
-        }).join('') || '<option value="">brak urządzeń</option>';
+          return `<option value="${d.deviceId}" ${sel}>${_escape(d.label || I18n.t('profile_mic_fallback') + ' ' + d.deviceId.slice(0,6))}${virt}</option>`;
+        }).join('') || `<option value="">${I18n.t('profile_no_devices')}</option>`;
       }
     } catch(e) {
       console.warn('[profile-audio] load blad:', e);
@@ -64,13 +64,13 @@ window.ProfileAudio = (function() {
     if (ctx && ctx.setSinkId) {
       ctx.setSinkId(deviceId).catch(e => console.warn('[profile-audio] setSinkId:', e));
     }
-    window.UI?.showToast?.('✓ Głośnik RX zapisany', 'info');
+    window.UI?.showToast?.(I18n.t('profile_toast_speaker_saved'), 'info');
   }
 
   function setInput(deviceId) {
     if (!deviceId) return;
     localStorage.setItem('ham_audio_micId', deviceId);
-    window.UI?.showToast?.('✓ Mikrofon TX zapisany (aktywny przy następnym TX)', 'info');
+    window.UI?.showToast?.(I18n.t('profile_toast_mic_saved'), 'info');
   }
 
   // Test glosnika — odtworz krotki ton (1 kHz, 0.5s) na wybranym wyjsciu
@@ -92,9 +92,9 @@ window.ProfileAudio = (function() {
       osc.connect(gain); gain.connect(_testCtx.destination);
       osc.start();
       osc.stop(_testCtx.currentTime + 0.5);
-      window.UI?.showToast?.('🔉 Ton testowy 1 kHz', 'info');
+      window.UI?.showToast?.(I18n.t('profile_toast_test_tone'), 'info');
     } catch(e) {
-      window.UI?.showToast?.('✕ Błąd testu głośnika: ' + e.message, 'error');
+      window.UI?.showToast?.(I18n.t('profile_toast_speaker_test_err') + e.message, 'error');
     }
   }
 
@@ -138,19 +138,19 @@ window.ProfileAudio = (function() {
 
         const elapsed = (Date.now() - startTs) / 1000;
         if (elapsed < 5) {
-          if (hint) hint.textContent = `Mów do mikrofonu... (${(5-elapsed).toFixed(0)}s) — szczyt: ${peak.toFixed(0)}%`;
+          if (hint) hint.textContent = I18n.t('profile_mic_hint_speaking').replace('{s}', (5-elapsed).toFixed(0)).replace('{peak}', peak.toFixed(0));
           _meterRaf = requestAnimationFrame(tick);
         } else {
           // Podsumowanie
           if (hint) {
             if (peak < 5) {
-              hint.textContent = `⚠ Szczyt tylko ${peak.toFixed(0)}% — mikrofon za cichy lub zły wybór urządzenia`;
+              hint.textContent = I18n.t('profile_mic_hint_low').replace('{peak}', peak.toFixed(0));
               hint.style.color = 'var(--red)';
             } else if (peak > 90) {
-              hint.textContent = `⚠ Szczyt ${peak.toFixed(0)}% — za głośno, może przesterować`;
+              hint.textContent = I18n.t('profile_mic_hint_high').replace('{peak}', peak.toFixed(0));
               hint.style.color = 'var(--amber)';
             } else {
-              hint.textContent = `✓ Szczyt ${peak.toFixed(0)}% — poziom OK`;
+              hint.textContent = I18n.t('profile_mic_hint_ok').replace('{peak}', peak.toFixed(0));
               hint.style.color = 'var(--green)';
             }
           }
@@ -161,8 +161,8 @@ window.ProfileAudio = (function() {
       }
       tick();
     } catch(e) {
-      if (hint) { hint.textContent = '✕ Błąd: ' + e.message; hint.style.color = 'var(--red)'; }
-      window.UI?.showToast?.('✕ Nie można otworzyć mikrofonu: ' + e.message, 'error');
+      if (hint) { hint.textContent = I18n.t('profile_mic_hint_error') + e.message; hint.style.color = 'var(--red)'; }
+      window.UI?.showToast?.(I18n.t('profile_toast_mic_open_err') + e.message, 'error');
     }
   }
 
