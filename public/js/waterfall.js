@@ -63,7 +63,7 @@ function init() {
 
   resize();
   specCtx = specCanvas.getContext('2d');
-  wfCtx   = wfCanvas.getContext('2d', { willReadFrequently: true });
+  wfCtx   = wfCanvas.getContext('2d');
   axisCtx = axisCanvas.getContext('2d');
 
   attachClickToTune();
@@ -256,9 +256,15 @@ function drawFrame(data) {
   }
 
   // ── WATERFALL ─────────────────────────────────────────────────────────────
-  // Przesun caly waterfall o 1 piksel w dol (najstarsze linie schodza)
-  const img = wfCtx.getImageData(0, 0, Ww, Hw - 1);
-  wfCtx.putImageData(img, 0, 1);
+  // Przesun caly waterfall o 1 piksel w dol (najstarsze linie schodza).
+  // KRYTYCZNE dla latency: to leci 15x/s (scope_frame z backendu) w tym samym
+  // watku JS co ping/pong (badge WS) i dekodowanie audio (_audioWs). Poprzednio
+  // getImageData/putImageData alokowaly nowa tablice ~kilkaset KB PRZY KAZDEJ
+  // ramce (15x/s) - okresowe pauzy GC blokowaly watek na tyle dlugo, ze pong
+  // przychodzil z opoznieniem (falszywy skok "WS") a audio realnie sie
+  // przycinalo (opoznione playOpusFrame/planowanie bufora). drawImage kopiuje
+  // canvas na siebie samego bez zadnej alokacji widocznej z JS.
+  wfCtx.drawImage(wfCanvas, 0, 0, Ww, Hw - 1, 0, 1, Ww, Hw - 1);
 
   // Narysuj nowa linie z INTERPOLACJA — kazdy piksel canvasa dostaje
   // interpolowana wartosc, zamiast dyskretnego "step" na Math.floor

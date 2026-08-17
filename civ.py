@@ -1611,13 +1611,15 @@ class CivRig:
                     self.log(f"[civ] S-metr transact fail: p={p.hex() if p else None}")
                     self._smeter_fail_logged = getattr(self, '_smeter_fail_logged', 0) + 1
 
-                # TX Metery: ALC (15 11), PWR (15 14), SWR (15 12), VOLT (15 16)
+                # TX Metery: ALC (15 13), PWR (15 11), SWR (15 12), VOLT (15 15)
                 # Odpytywane tylko gdy PTT aktywne (lub gdy wskaznik wybrany przez usera)
-                # BCD 2 bajty -> wartości:
-                #   ALC:  0-241 -> 0..120 (skala ALC 0..100%)
-                #   PWR:  0-241 -> 0..100 (moc w %)
-                #   SWR:  0-241 -> SWR 1.0..50 (logska skala)
-                #   VOLT: 0-241 -> 0..20V
+                # BCD 2 bajty -> wartości (punkty kalibracji z oficjalnego
+                # IC-7300MK2 CI-V Reference Guide, patrz komentarze przy kazdym
+                # mierniku ponizej):
+                #   ALC:  0..120 -> 0..100% (liniowo)
+                #   PWR:  0=0%, 143=50%, 213=100% (nieliniowo)
+                #   SWR:  0=1.0, 48=1.5, 80=2.0, 120=3.0 (nieliniowo)
+                #   VOLT: 0=0V, 13=10V, 241=16V (mocno nieliniowo)
                 if self.ptt or n % 8 == 0:
                     _dbg_alc = None
                     _dbg_pwr = None
@@ -1697,20 +1699,21 @@ class CivRig:
                                     "value": swr_val,
                                     "pct": min(1.0, swr_raw / 120)})  # skala do SWR=3
                     # Napięcie zasilania (Vd — drain voltage / napiecie zasilania
-                    # koncowki mocy). POPRAWKA: poprzedni kod uzywal komendy
-                    # "15 16", ktora wg oficjalnej dokumentacji CI-V IC-7300
-                    # to w rzeczywistosci "Id" (PRAD koncowki mocy w A), NIE
-                    # napiecie — dlatego zawsze zwracalo 0 przy PTT wylaczonym
-                    # (brak nadawania = brak poboru pradu). Wlasciwa komenda
-                    # dla napiecia (Vd) to "15 15". Potwierdzone w dwoch
-                    # niezaleznych zrodlach dokumentacji CI-V IC-7300.
-                    # Kalibracja tez poprawiona: skala NIE jest liniowa
-                    # 0-241->0-20V (jak poprzednio), tylko ma udokumentowane
-                    # punkty 0=0V, 151=10V, 211=16V (plaskowyz powyzej 211).
+                    # koncowki mocy). Komenda "15 15" (NIE "15 16" — to Id, prad,
+                    # inny miernik). Kalibracja zweryfikowana wprost z oficjalnego
+                    # IC-7300MK2 CI-V Reference Guide (icomuk.co.uk), tabela
+                    # komend, wpis "15 15": 0000=0V, 0013=10V, 0241=16V.
+                    # POPRAWKA: poprzednie punkty (0=0V, 151=10V, 211=16V) byly
+                    # bledne — skala realnie jest mocno nieliniowa (pierwsze 10V
+                    # to tylko 13 jednostek raw, reszta 10-16V rozciaga sie na
+                    # pozostale 228 jednostek, bo to zakres w ktorym realnie
+                    # pracuje zasilanie 12-13.8V). Bledne punkty dawaly np. dla
+                    # realnych 13.8V (raw~157) odczyt ~10.6V — dokladnie taki
+                    # zanizony wynik jaki byl zgłaszany na zywo.
                     vp = self._transact(bytes([0x15, 0x15]), {0x15}, 0.25)
                     if vp and len(vp) >= 3 and vp[0] == 0x15:
                         v_raw = bcd2(vp[1:3])
-                        _vd_points = [(0, 0.0), (151, 10.0), (211, 16.0)]
+                        _vd_points = [(0, 0.0), (13, 10.0), (241, 16.0)]
                         if v_raw <= _vd_points[0][0]:
                             volt = _vd_points[0][1]
                         elif v_raw >= _vd_points[-1][0]:

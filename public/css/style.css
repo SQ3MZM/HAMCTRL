@@ -392,7 +392,12 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .txmeter-fill {
   height: 100%; width: 0%;
-  border-radius: 2px; transition: width 0.12s ease;
+  border-radius: 2px;
+  /* Backend odswieza te mierniki co ~300ms (civ.py, petla pollera) — czas
+     przejscia dobrany blisko tego odstepu (nie krotszy), zeby pasek byl w
+     ciaglym ruchu miedzy odczytami zamiast skoku + zamrożenia (co dawalo
+     wrazenie "szarpanego" bargrafu przy krotszym 0.12s). */
+  transition: width 0.28s linear;
   background: linear-gradient(90deg, #7a8f5a 0%, #d4a857 60%, #d9776a 85%);
 }
 /* Kolor bargrafów wg metra */

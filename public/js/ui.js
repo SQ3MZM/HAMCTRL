@@ -558,58 +558,6 @@ function renderMemories() {
     </li>`).join('');
 }
 
-// ── Spektrum + Waterfall ──────────────────────────────────────────────────────
-let specCtx = null, wfCtx = null;
-
-function initCanvases() {
-  const spec = document.getElementById('spectrum');
-  const wf   = document.getElementById('waterfall');
-  if (!spec || !wf) return;
-  spec.width = spec.offsetWidth || 600; spec.height = 60;
-  wf.width   = wf.offsetWidth   || 600; wf.height   = 100;
-  specCtx = spec.getContext('2d');
-  wfCtx   = wf.getContext('2d');
-}
-
-function drawSpectrum() {
-  if (!specCtx) return;
-  const W = specCtx.canvas.width, H = specCtx.canvas.height;
-  specCtx.fillStyle = '#060806';
-  specCtx.fillRect(0, 0, W, H);
-
-  const sig = S.ptt ? 0.9 : (S.sMeter / 9) * 0.8;
-  specCtx.beginPath();
-  specCtx.strokeStyle = S.ptt ? '#e05252' : '#4cdb6a';
-  specCtx.lineWidth = 1.5;
-  for (let i = 0; i < W; i++) {
-    const dist = Math.abs(i - W / 2) / (W / 2);
-    const y    = H - (Math.exp(-dist * 12) * sig + Math.random() * 0.06) * H * 0.9;
-    i === 0 ? specCtx.moveTo(i, y) : specCtx.lineTo(i, y);
-  }
-  specCtx.stroke();
-
-  // Marker środka
-  specCtx.strokeStyle = 'rgba(240,180,41,0.5)';
-  specCtx.lineWidth = 1;
-  specCtx.beginPath();
-  specCtx.moveTo(W/2, 0); specCtx.lineTo(W/2, H);
-  specCtx.stroke();
-
-  // Waterfall — przesuń w dół o 1px i dorysuj nową linię
-  if (wfCtx) {
-    const Ww = wfCtx.canvas.width, Hw = wfCtx.canvas.height;
-    const img = wfCtx.getImageData(0, 0, Ww, Hw - 1);
-    wfCtx.putImageData(img, 0, 1);
-    for (let i = 0; i < Ww; i++) {
-      const x    = Math.floor(i * W / Ww);
-      const dist = Math.abs(x - W / 2) / (W / 2);
-      const v    = Math.min(1, Math.exp(-dist * 12) * sig + Math.random() * 0.05);
-      wfCtx.fillStyle = `rgb(${Math.floor(v*100)},${Math.floor(v*200)},${Math.floor(30 + v*180)})`;
-      wfCtx.fillRect(i, 0, 1, 1);
-    }
-  }
-}
-
 // ── Strony ────────────────────────────────────────────────────────────────────
 function setPage(name) {
   // Podswietl aktywna zakladke
@@ -990,13 +938,6 @@ function startAutotune() {
   }
 }
 
-// ── Animacja ──────────────────────────────────────────────────────────────────
-let _specFrame = null;
-(function _specLoop() {
-  drawSpectrum();
-  _specFrame = requestAnimationFrame(_specLoop);
-})();
-
 // ── Klawiatura ────────────────────────────────────────────────────────────────
 // Skroty klawiszowe w zakladce Radio:
 //   Spacja      — PTT (hold to transmit)
@@ -1069,11 +1010,6 @@ document.addEventListener('wheel', (e) => {
   }
 }, { passive: false });
 
-// Init canvases po załadowaniu
-document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(initCanvases, 100);
-});
-
 // ── Eksport ───────────────────────────────────────────────────────────────────
 window.UI = {
   updateConnectionStatus, updateFreqDisplay, updateModeButtons, updatePTT,
@@ -1089,7 +1025,6 @@ window.UI = {
   confirmModal, _confirmModalSubmit, _confirmModalCancel,
   buildModeGrid, buildBandGrid, updateBandButtons,
   updateTxMeter, setTxMeter,
-  initCanvases,
   getBandName,
 };
 
