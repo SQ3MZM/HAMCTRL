@@ -3509,6 +3509,18 @@ async function _audioDeviceRefresh() {
       return;
     }
 
+    const rxList = d.devices?.rx || [], txList = d.devices?.tx || [];
+    // ZABEZPIECZENIE: backend potrafi (rzadko, mimo wewnetrznego retry —
+    // patrz audio_rust_bridge.py list_devices) oddac chwilowo PUSTA liste
+    // (WASAPI/cpal zajete). Jesli lista juz ma prawdziwe opcje (nie tylko
+    // placeholder "domyslna"), NIE czyscimy jej pusta odpowiedzia - to by
+    // wygladalo jak "zapomniana" karta mimo ze config.json ma ja poprawnie.
+    if (!rxList.length && !txList.length && (rx.options.length > 1 || tx.options.length > 1)) {
+      console.warn('[audio-cfg] _audioDeviceRefresh: pusta odpowiedz enumerate mimo istniejacej listy - zachowuje poprzednia liste, pomijam wyczyszczenie');
+      if (st) st.textContent = `${d.source} — 0 RX, 0 TX (odpowiedz pusta, zachowano poprzednia liste)`;
+      return;
+    }
+
     const curRx = rx.value, curTx = tx.value;
     rx.innerHTML = '<option value="">— domyślna —</option>';
     tx.innerHTML = '<option value="">— domyślna —</option>';

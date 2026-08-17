@@ -174,7 +174,20 @@ class RustAudioBridge:
         return await self._send_ctrl({"cmd": "GetStatus"})
 
     async def list_devices(self) -> list:
-        r = await self._send_ctrl({"cmd": "ListDevices"})
+        # ZYWY PRZYPADEK 2026-08-17: ListDevices bywa niestabilne — zwraca
+        # czasem pusta liste (WASAPI/cpal chwilowo zajete, np. w trakcie
+        # hot-swap urzadzenia RX) mimo ze karty realnie istnieja. Potwierdzone
+        # logami z frontu: to samo wywolanie chwile pozniej zwraca poprawne
+        # 3+ karty. Zamiast oddawac pusta liste (ktora front interpretuje jako
+        # "brak kart" i cichnie traci zaznaczenie zapisanej karty w UI mimo ze
+        # config.json ma ja poprawnie), probujemy ponownie 2x z krotkim
+        # odstepem zanim uznamy ze kart faktycznie nie ma.
+        for attempt in range(3):
+            r = await self._send_ctrl({"cmd": "ListDevices"})
+            if isinstance(r, list) and r:
+                return r
+            if attempt < 2:
+                await asyncio.sleep(0.3)
         return r if isinstance(r, list) else []
 
     async def set_rx_device(self, name: str):
