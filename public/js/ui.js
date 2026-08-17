@@ -491,7 +491,7 @@ let _confirmModalResolve = null;
 // ANULUJ zanim wywolujacy dostanie odpowiedz (w odroznieniu od alertow
 // zamienionych na showToast() nizej, gdzie nie ma decyzji do podjecia).
 // danger=true koloruje OK na czerwono dla akcji niszczacych dane.
-function confirmModal(message, { title = 'POTWIERDŹ', okLabel = 'OK', danger = false } = {}) {
+function confirmModal(message, { title = I18n.t('common_confirm_title'), okLabel = 'OK', danger = false } = {}) {
   return new Promise((resolve) => {
     const modal   = document.getElementById('confirm-modal');
     const msgEl   = document.getElementById('confirm-modal-msg');

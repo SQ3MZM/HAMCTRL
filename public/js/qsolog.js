@@ -37,7 +37,7 @@ async function _loadAdminUsers() {
     const data = await r.json();
     // /api/users zwraca tablice bezposrednio
     const users = Array.isArray(data) ? data : (data.users || []);
-    sel.innerHTML = '<option value="">Wszyscy</option>' +
+    sel.innerHTML = `<option value="">${I18n.t('log_filter_all_users')}</option>` +
       users.map(u => `<option value="${u.id}">${u.callsign || u.username}</option>`).join('');
   } catch(e) { console.warn('[qsolog] loadAdminUsers:', e); }
 }
@@ -64,7 +64,7 @@ function sort(col) {
 async function load() {
   const tbody = document.getElementById('log-table-body');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr>';
+  tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">${I18n.t('settings_loading')}</td></tr>`;
 
   const filters = _getFilters();
   const token   = localStorage.getItem('token') || '';
@@ -88,7 +88,7 @@ async function load() {
     const cnt = document.getElementById('log-count');
     if (cnt) cnt.textContent = `${_total} QSO`;
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--red);">Błąd: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--red);">${I18n.t('log_error_prefix')}${e.message}</td></tr>`;
   }
 }
 
@@ -97,7 +97,7 @@ function _renderTable(qsos) {
   const tbody = document.getElementById('log-table-body');
   if (!tbody) return;
   if (!qsos.length) {
-    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">Brak QSO</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--dim);">${I18n.t('log_no_qso')}</td></tr>`;
     return;
   }
   tbody.innerHTML = qsos.map(q => {
@@ -116,7 +116,7 @@ function _renderTable(qsos) {
         : ''}</td>
       <td>${q.band || ''}</td>
       <td class="${modeClass}">${q.mode || ''}${q.sat_name
-        ? ` <span title="Satelita: ${q.sat_name}${q.sat_mode ? ' (' + q.sat_mode + ')' : ''}${q.band_rx ? ', downlink ' + q.band_rx : ''}">🛰</span>`
+        ? ` <span title="${I18n.t('log_sat_tooltip_prefix')}${q.sat_name}${q.sat_mode ? ' (' + q.sat_mode + ')' : ''}${q.band_rx ? ', downlink ' + q.band_rx : ''}">🛰</span>`
         : ''}</td>
       <td>${q.freq ? parseFloat(q.freq).toFixed(4) : ''}</td>
       <td>${q.rst_sent || ''}</td>
@@ -124,8 +124,8 @@ function _renderTable(qsos) {
       <td>${q.gridsquare || ''}</td>
       <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;">${q.comment || ''}</td>
       <td style="display:flex;gap:4px;">
-        <button class="log-action-btn" onclick="QSOLog.openEdit('${q.id}')">EDYTUJ</button>
-        <button class="log-action-btn del" onclick="QSOLog.deleteQSO('${q.id}')">USUŃ</button>
+        <button class="log-action-btn" onclick="QSOLog.openEdit('${q.id}')">${I18n.t('log_row_edit_btn')}</button>
+        <button class="log-action-btn del" onclick="QSOLog.deleteQSO('${q.id}')">${I18n.t('common_delete_btn')}</button>
       </td>
     </tr>`;
   }).join('');
@@ -135,7 +135,7 @@ function _renderTable(qsos) {
 function _renderPagination() {
   const totalPages = Math.max(1, Math.ceil(_total / _perPage));
   const el = document.getElementById('log-page-info');
-  if (el) el.textContent = `Strona ${_page} z ${totalPages} (${_total} QSO)`;
+  if (el) el.textContent = I18n.t('log_page_info_full').replace('{page}', _page).replace('{total}', totalPages).replace('{count}', _total);
 }
 
 function prevPage() { if (_page > 1) { _page--; load(); } }
@@ -185,12 +185,12 @@ async function lookupCall() {
   const callEl = document.getElementById('qso-call');
   const btn    = document.getElementById('qso-lookup-btn');
   const call   = callEl?.value?.trim().toUpperCase();
-  if (!call) { window.UI?.showToast('Wpisz znak', 'error'); return; }
+  if (!call) { window.UI?.showToast(I18n.t('log_enter_callsign'), 'error'); return; }
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   try {
     const res = await window.Callbook?.lookup?.(call);
     if (!res) {
-      window.UI?.showToast('✗ Nie znaleziono albo brak konfiguracji QRZ/HamQTH (USTAWIENIA)', 'error');
+      window.UI?.showToast(I18n.t('log_lookup_not_found'), 'error');
       return;
     }
     if (res.name)       _setField('qso-name', res.name);
@@ -208,7 +208,7 @@ async function lookupCall() {
       countryEl.dataset.cont  = window.DXCC?.lookup?.(call)?.continent || countryEl.dataset.cont || '';
     }
     if (flagEl) flagEl.textContent = window.DXCC?.lookup?.(call)?.flag || '';
-    window.UI?.showToast(`✓ Dane pobrane z ${res.source}`);
+    window.UI?.showToast(I18n.t('log_data_fetched_from').replace('{source}', res.source));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔍'; }
   }
@@ -251,7 +251,7 @@ function openNew() {
   toggleSatFields(false);
 
   const title = document.getElementById('log-modal-title');
-  if (title) title.textContent = 'NOWE QSO';
+  if (title) title.textContent = I18n.t('log_modal_new_title');
   const modal = document.getElementById('log-modal');
   if (modal) modal.style.display = 'flex';
   document.getElementById('qso-call')?.focus();
@@ -299,11 +299,11 @@ async function openEdit(id) {
     if (satChk) satChk.checked = isSat;
     toggleSatFields(isSat);
     const title = document.getElementById('log-modal-title');
-    if (title) title.textContent = 'EDYTUJ QSO';
+    if (title) title.textContent = I18n.t('log_modal_edit_title');
     const modal = document.getElementById('log-modal');
     if (modal) modal.style.display = 'flex';
   } catch(e) {
-    window.UI?.showToast('Błąd ładowania QSO: ' + e.message, 'error');
+    window.UI?.showToast(I18n.t('log_load_qso_error') + e.message, 'error');
   }
 }
 
@@ -315,7 +315,7 @@ function closeModal() {
 // ── Zapis QSO ─────────────────────────────────────────────────────────────────
 async function saveQSO() {
   const call = document.getElementById('qso-call')?.value?.trim().toUpperCase();
-  if (!call) { window.UI?.showToast('Brak znaku wywoławczego', 'error'); return; }
+  if (!call) { window.UI?.showToast(I18n.t('log_missing_callsign'), 'error'); return; }
 
   const dateVal = document.getElementById('qso-date')?.value || '';
   const timeVal = document.getElementById('qso-time')?.value || '';
@@ -377,20 +377,20 @@ async function saveQSO() {
     });
     const res = await r.json();
     if (res.ok) {
-      window.UI?.showToast(_editId ? '✓ QSO zaktualizowane' : '✓ QSO zapisane');
+      window.UI?.showToast(_editId ? I18n.t('log_qso_updated') : I18n.t('log_qso_saved'));
       closeModal();
       load();
     } else {
-      window.UI?.showToast('✗ Błąd: ' + (res.error || 'nieznany'), 'error');
+      window.UI?.showToast('✗ ' + I18n.t('log_error_prefix') + (res.error || I18n.t('log_unknown_fallback')), 'error');
     }
   } catch(e) {
-    window.UI?.showToast('✗ Błąd zapisu: ' + e.message, 'error');
+    window.UI?.showToast(I18n.t('log_save_error_prefix') + e.message, 'error');
   }
 }
 
 // ── Usuń QSO ──────────────────────────────────────────────────────────────────
 async function deleteQSO(id) {
-  if (!await window.UI?.confirmModal('Usunąć to QSO?', { danger: true, okLabel: 'USUŃ' })) return;
+  if (!await window.UI?.confirmModal(I18n.t('log_confirm_delete_one'), { danger: true, okLabel: I18n.t('common_delete_btn') })) return;
   const token = localStorage.getItem('token') || '';
   try {
     const r = await fetch(`/api/qsolog/${id}`, {
@@ -398,8 +398,8 @@ async function deleteQSO(id) {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {},
     });
     const res = await r.json();
-    if (res.ok) { window.UI?.showToast('✓ QSO usunięte'); load(); }
-    else window.UI?.showToast('✗ ' + (res.error || 'Błąd'), 'error');
+    if (res.ok) { window.UI?.showToast(I18n.t('log_qso_deleted')); load(); }
+    else window.UI?.showToast('✗ ' + (res.error || I18n.t('profile_error_fallback')), 'error');
   } catch(e) {
     window.UI?.showToast('✗ ' + e.message, 'error');
   }
@@ -439,10 +439,10 @@ async function _exportFetch(format) {
     a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
     if (selectedIds.length) {
-      window.UI?.showToast(`✓ Wyeksportowano ${selectedIds.length} zaznaczonych QSO`, 'success');
+      window.UI?.showToast(I18n.t('log_exported_selected').replace('{n}', selectedIds.length), 'success');
     }
   } catch(e) {
-    window.UI?.showToast('✗ Export błąd: ' + e.message, 'error');
+    window.UI?.showToast(I18n.t('log_export_error_prefix') + e.message, 'error');
   }
 }
 
@@ -513,7 +513,7 @@ function updateRstDefaults(mode) {
 async function quickLog() {
   const call = document.getElementById('qlog-call')?.value?.trim().toUpperCase();
   if (!call) {
-    _setStatus('Wpisz znak!', 'red');
+    _setStatus(I18n.t('log_enter_callsign_excl'), 'red');
     document.getElementById('qlog-call')?.focus();
     return;
   }
@@ -556,7 +556,7 @@ async function quickLog() {
       // Jesli jestesmy na stronie LOG — odswiez tabele
       if (document.getElementById('page-log')?.classList.contains('active')) load();
     } else {
-      _setStatus('✗ ' + (res.error || 'błąd'), 'red');
+      _setStatus('✗ ' + (res.error || I18n.t('status_error_generic')), 'red');
     }
   } catch(e) {
     _setStatus('✗ ' + e.message, 'red');
@@ -583,12 +583,12 @@ async function importADIF(input) {
 
   let text;
   try { text = await file.text(); }
-  catch(e) { window.UI?.showToast('✗ Nie można odczytać pliku: ' + e.message, 'error'); return; }
+  catch(e) { window.UI?.showToast(I18n.t('log_cant_read_file') + e.message, 'error'); return; }
 
   const qsos = _parseADIF(text);
-  if (!qsos.length) { window.UI?.showToast('✗ Brak QSO w pliku ADIF', 'error'); return; }
+  if (!qsos.length) { window.UI?.showToast(I18n.t('log_no_qso_in_adif'), 'error'); return; }
 
-  window.UI?.showToast(`Importuję ${qsos.length} QSO — proszę czekać...`);
+  window.UI?.showToast(I18n.t('log_importing').replace('{n}', qsos.length));
 
   const token   = localStorage.getItem('token') || '';
   const headers = {'Content-Type':'application/json',
@@ -618,14 +618,14 @@ async function importADIF(input) {
     }
     // Aktualizuj toast postępu
     const done = Math.min(i + CHUNK, qsos.length);
-    window.UI?.showToast(`Importuję... ${done}/${qsos.length} QSO`);
+    window.UI?.showToast(I18n.t('log_importing_progress').replace('{done}', done).replace('{total}', qsos.length));
   }
 
   // Komunikat: wczytane + osobno duplikaty (pominiete jako juz w logu)
   // i ewentualne bledne wpisy.
-  let msg = `✓ Import ADIF: ${inserted} QSO wczytano`;
-  if (duplicates) msg += `, ${duplicates} duplikatów pominięto`;
-  if (skipped)    msg += `, ${skipped} błędnych`;
+  let msg = I18n.t('log_import_done').replace('{n}', inserted);
+  if (duplicates) msg += I18n.t('log_import_duplicates_skipped').replace('{n}', duplicates);
+  if (skipped)    msg += I18n.t('log_import_errors').replace('{n}', skipped);
   window.UI?.showToast(msg, (skipped > 0) ? 'error' : 'info');
   load();
 }
@@ -708,8 +708,8 @@ function selectAll(chk) {
 
 async function deleteSelected() {
   const ids = [...document.querySelectorAll('.qso-chk:checked')].map(el => el.dataset.id);
-  if (!ids.length) { window.UI?.showToast('Zaznacz QSO do usunięcia', 'error'); return; }
-  if (!await window.UI?.confirmModal(`Usunąć ${ids.length} zaznaczonych QSO?`, { danger: true, okLabel: 'USUŃ' })) return;
+  if (!ids.length) { window.UI?.showToast(I18n.t('log_select_qso_to_delete'), 'error'); return; }
+  if (!await window.UI?.confirmModal(I18n.t('log_confirm_delete_selected').replace('{n}', ids.length), { danger: true, okLabel: I18n.t('common_delete_btn') })) return;
   const token = localStorage.getItem('token') || '';
   const h = {'Authorization': `Bearer ${token}`};
   let ok = 0;
@@ -719,7 +719,7 @@ async function deleteSelected() {
       if ((await r.json()).ok) ok++;
     } catch(e) {}
   }
-  window.UI?.showToast(`✓ Usunięto ${ok} QSO`);
+  window.UI?.showToast(I18n.t('log_deleted_count').replace('{n}', ok));
   load();
 }
 
@@ -727,17 +727,17 @@ async function deleteAll() {
   const sel      = document.getElementById('log-filter-user');
   const userId   = sel?.value || '';
   const userName = sel?.selectedOptions[0]?.text || '';
-  const who      = userId ? `użytkownika ${userName}` : 'WSZYSTKICH użytkowników';
-  if (!await window.UI?.confirmModal(`Usunąć WSZYSTKIE QSO ${who}?\nTej operacji nie można cofnąć!`, { danger: true, okLabel: 'USUŃ' })) return;
-  if (!await window.UI?.confirmModal(`Jesteś PEWIEN? Log ${who} zostanie skasowany!`, { danger: true, okLabel: 'TAK, KASUJ' })) return;
+  const who      = userId ? I18n.t('log_delete_all_specific_user').replace('{name}', userName) : I18n.t('log_delete_all_everyone');
+  if (!await window.UI?.confirmModal(I18n.t('log_confirm_delete_all_1').replace('{who}', who), { danger: true, okLabel: I18n.t('common_delete_btn') })) return;
+  if (!await window.UI?.confirmModal(I18n.t('log_confirm_delete_all_2').replace('{who}', who), { danger: true, okLabel: I18n.t('log_yes_delete_btn') })) return;
   const token = localStorage.getItem('token') || '';
   const h = {'Authorization': `Bearer ${token}`};
   const url = userId ? `/api/qsolog/all?user_id=${userId}` : '/api/qsolog/all';
   try {
     const r = await fetch(url, {method:'DELETE', headers:h});
     const res = await r.json();
-    if (res.ok) { window.UI?.showToast(`✓ Usunięto ${res.count || ''} QSO`); load(); }
-    else window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
+    if (res.ok) { window.UI?.showToast(I18n.t('log_deleted_count').replace('{n}', res.count || '')); load(); }
+    else window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
   } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
 }
 
