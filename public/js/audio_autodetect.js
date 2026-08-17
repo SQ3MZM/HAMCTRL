@@ -100,6 +100,7 @@ window.AudioAutoDetect = (function() {
 
   function toggleExpert() {
     _expertMode = !_expertMode;
+    console.log('[audio-cfg] toggleExpert() ->', _expertMode);
     const el = document.getElementById('audio-manual-config');
     if (el) el.style.display = _expertMode ? '' : 'none';
     // Gdy pokazujemy tryb ekspert, zaladuj karty ORAZ zapisane wartosci

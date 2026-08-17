@@ -2572,7 +2572,7 @@
 <script src="js/tx_eq.js?v=202608160002"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
-<script src="js/audio_autodetect.js?v=202606300001"></script>
+<script src="js/audio_autodetect.js?v=202608170001"></script>
 <script src="js/com_bridge.js?v=202607040001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
 <script src="js/rotormini.js?v=202608150001"></script>
@@ -3495,14 +3495,19 @@ function _selectByFuzzyName(selectEl, wanted) {
 }
 
 async function _audioDeviceRefresh() {
+  console.log('[audio-cfg] _audioDeviceRefresh() start');
   const st = document.getElementById('cfg-audio-status');
   if (st) st.textContent = 'Ładowanie kart...';
   try {
     const r = await fetch('/api/audio/enumerate');
     const d = await r.json();
+    console.log('[audio-cfg] /api/audio/enumerate ->', d);
     const rx = document.getElementById('cfg-audio-rx');
     const tx = document.getElementById('cfg-audio-tx');
-    if (!rx || !tx) return;
+    if (!rx || !tx) {
+      console.warn('[audio-cfg] _audioDeviceRefresh: brak elementow #cfg-audio-rx/#cfg-audio-tx w DOM, przerywam');
+      return;
+    }
 
     const curRx = rx.value, curTx = tx.value;
     rx.innerHTML = '<option value="">— domyślna —</option>';
@@ -3522,23 +3527,30 @@ async function _audioDeviceRefresh() {
     _selectByFuzzyName(tx, curTx);
 
     if (st) st.textContent = `${d.source} — ${(d.devices?.rx||[]).length} RX, ${(d.devices?.tx||[]).length} TX`;
+    console.log('[audio-cfg] _audioDeviceRefresh() koniec: rx.value=', rx.value, 'tx.value=', tx.value,
+                'opcje rx=', Array.from(rx.options).map(o=>o.value), 'opcje tx=', Array.from(tx.options).map(o=>o.value));
   } catch(e) {
+    console.warn('[audio-cfg] _audioDeviceRefresh() blad:', e);
     if (st) st.textContent = '✗ ' + e.message;
   }
 }
 
 async function _audioDeviceLoad() {
+  console.log('[audio-cfg] _audioDeviceLoad() start');
   // Załaduj listę kart najpierw
   await _audioDeviceRefresh();
   // Zaznacz zapisane urządzenia z audio/status
   try {
     const r = await fetch('/api/audio/status');
     const d = await r.json();
+    console.log('[audio-cfg] /api/audio/status ->', 'rx_device=', d.rx_device, 'tx_device=', d.tx_device,
+                'txVolume=', d.txVolume, 'txVolumeSsb=', d.txVolumeSsb);
     const rx = document.getElementById('cfg-audio-rx');
     const tx = document.getElementById('cfg-audio-tx');
     const br = document.getElementById('cfg-audio-bitrate');
     _selectByFuzzyName(rx, d.rx_device);
     _selectByFuzzyName(tx, d.tx_device);
+    console.log('[audio-cfg] _audioDeviceLoad() po selectByFuzzyName: rx.value=', rx?.value, 'tx.value=', tx?.value);
     if (br && d.opus_bitrate) br.value = d.opus_bitrate;
     // TX Volume — brakowalo tego (mimo komentarza wyzej ze "robi jedno i
     // drugie"). Suwak zostawal na statycznym HTML "4" niezaleznie od
@@ -3595,7 +3607,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const origBtn = document.querySelector('[onclick="UI.setPage(\'config\')"]');
   if (origBtn) {
     const orig = origBtn.getAttribute('onclick');
-    origBtn.setAttribute('onclick', orig + '; _audioDeviceLoad()');
+    origBtn.setAttribute('onclick', orig + '; console.log("[audio-cfg] tab KONFIGURACJA kliknieta"); _audioDeviceLoad()');
+    console.log('[audio-cfg] hak na przycisk KONFIGURACJA podpiety poprawnie');
+  } else {
+    console.warn('[audio-cfg] NIE znaleziono przycisku KONFIGURACJA do podpiecia haka _audioDeviceLoad()');
   }
 });
 </script>
