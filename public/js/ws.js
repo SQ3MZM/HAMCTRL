@@ -234,7 +234,14 @@ const _AUDIO_TARGET_BASE = 0.18;  // dolna granica adaptacji (dobre lacze)
 const _AUDIO_TARGET_CEIL = 0.30;  // gorna granica adaptacji (budzet 200-300ms, RCForb)
 const _AUDIO_TARGET_STEP = 0.03;  // krok wzrostu po niedoborze (30ms)
 const _AUDIO_TARGET_DECAY_STEP = 0.02; // krok powrotu w dol przy spokoju
-const _AUDIO_TARGET_CLEAN_MS = 20000;  // ile ms bez niedoboru zanim zaczniemy schodzic
+// POPRAWKA 2026-08-17: zaobserwowane na zywo niedobory powtarzaly sie co
+// dokladnie ~60s (13:26:10.289 -> 13:27:10.289, potem 13:31:10.311 - zbyt
+// precyzyjne na przypadkowy jitter, wyglada na cykl infrastruktury sieci
+// np. LTE RRC/DRX). Przy 20s ciszy do decaya bufor zdazal wrocic do bazy
+// ZANIM przyszedl kolejny taki sam ~60s cykl, wiec uczyl sie od nowa za
+// kazdym razem zamiast pamietac. Wydluzone do 90s, zeby nauczona wartosc
+// przetrwala co najmniej jeden pelny cykl 60s zanim zaczniemy schodzic.
+const _AUDIO_TARGET_CLEAN_MS = 90000;  // ile ms bez niedoboru zanim zaczniemy schodzic
 let _lastUnderrunAt = 0;
 const _AUDIO_MIN = 0.05;
 const _AUDIO_MAX = 0.40;     // twardy sufit (poza adaptacja) — powyzej niej PRZYTNIJ bufor
