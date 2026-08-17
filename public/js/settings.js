@@ -71,82 +71,73 @@ function buildRigPanel(id, rig, isAdmin) {
   div.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
       <span style="font-family:var(--mono);font-size:11px;color:var(--green);letter-spacing:1px;">
-        RADIO ${id}${id===1?' (domyślne)':''}
+        ${I18n.t('cfg_radio_n_lbl').replace('{id}', id)}${id===1?I18n.t('cfg_default_paren'):''}
       </span>
-      ${isAdmin && id > 1 ? `<button onclick="Settings.removeRig(${id})" style="background:none;border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 8px;cursor:pointer;">✕ USUŃ</button>` : ''}
+      ${isAdmin && id > 1 ? `<button onclick="Settings.removeRig(${id})" style="background:none;border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 8px;cursor:pointer;">✕ ${I18n.t('common_delete_btn')}</button>` : ''}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-      <div class="sg"><label>NAZWA</label>
+      <div class="sg"><label>${I18n.t('cfg_name_lbl')}</label>
         <input type="text" id="cfg-name-${id}" value="${rig.name||''}" placeholder="np. IC-7300">
       </div>
-      <div class="sg" style="grid-column:1/-1"><label>MODEL HAMLIB</label>
+      <div class="sg" style="grid-column:1/-1"><label>${I18n.t('cfg_model_hamlib_lbl')}</label>
         <select id="cfg-model-${id}">${modelOptsFn(rig.model||'3073')}</select>
       </div>
-      <div class="sg"><label>PORT COM</label>
+      <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label>
         <input type="text" id="cfg-port-${id}" value="${rig.port||'COM'+(2+id)}" placeholder="COM3">
       </div>
-      <div class="sg"><label>BAUD</label>
+      <div class="sg"><label>${I18n.t('cfg_baud_lbl')}</label>
         <select id="cfg-speed-${id}">${speedOpts}</select>
       </div>
-      <div class="sg"><label>CI-V (Icom)</label>
+      <div class="sg"><label>${I18n.t('cfg_civ_lbl')}</label>
         <input type="text" id="cfg-civ-${id}" value="${rig.civ||rig.civAddr||'0x94'}" placeholder="np. 0x94 / 0x56">
       </div>
       <div class="sg" style="grid-column:1/-1;margin-top:6px;padding-top:8px;border-top:1px solid var(--border);">
-        <label style="color:var(--amber);">KARTA DŹWIĘKOWA RX — odbiór z radia</label>
+        <label style="color:var(--amber);">${I18n.t('cfg_card_rx_full_lbl')}</label>
         <div style="display:flex;gap:5px;">
           <select id="cfg-audio-rx-${id}" data-saved="${rig.audioRx||''}" style="flex:1;font-family:var(--mono);font-size:11px;">
-            <option value="">-- wybierz kartę RX --</option>
+            <option value="">${I18n.t('cfg_choose_rx_card')}</option>
             ${rig.audioRx ? `<option value="${rig.audioRx}" selected>${rig.audioRx}</option>` : ''}
           </select>
-          <button onclick="Settings.loadAudioCards(${id})" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--dim);font-family:var(--mono);font-size:10px;padding:0 8px;cursor:pointer;" title="Odśwież">⟳</button>
+          <button onclick="Settings.loadAudioCards(${id})" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--dim);font-family:var(--mono);font-size:10px;padding:0 8px;cursor:pointer;" title="${I18n.t('cfg_refresh_title')}">⟳</button>
         </div>
         <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;">
-          Dla IC-7300/IC-7610/IC-9700/IC-705 itp. wybierz <b>"USB Audio CODEC"</b>
-          (wbudowany kodek audio radia, podlaczony przez USB — audio idzie
-          przez USB, NIE przez zewnetrzne gniazda ACC/AF Out/Phones).
-          Karta zewnetrzna (np. interfejs CAT/audio) potrzebna tylko dla
-          radia bez wbudowanego USB Audio Codec.
+          ${I18n.t('cfg_card_rx_desc')}
         </div>
       </div>
       <div class="sg" style="grid-column:1/-1;">
-        <label style="color:var(--amber);">KARTA DŹWIĘKOWA TX — nadawanie do radia</label>
+        <label style="color:var(--amber);">${I18n.t('cfg_card_tx_full_lbl')}</label>
         <select id="cfg-audio-tx-${id}" style="font-family:var(--mono);font-size:11px;">
-          <option value="">-- wybierz kartę TX --</option>
+          <option value="">${I18n.t('cfg_choose_tx_card')}</option>
           ${rig.audioTx ? `<option value="${rig.audioTx}" selected>${rig.audioTx}</option>` : ''}
         </select>
         <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:2px;">
-          Zwykle <b>ta sama "USB Audio CODEC"</b> co RX — jeden kabel USB
-          przenosi audio w obie strony (RX = wejscie karty/wyjscie radia,
-          TX = wyjscie karty/wejscie mikrofonowe radia). Wybranie innej
-          karty (np. wbudowanego mikrofonu PC) NIE trafi do radia.
+          ${I18n.t('cfg_card_tx_desc')}
         </div>
       </div>
     </div>
 
     <!-- CW KEYER — metoda i port DTR/RTS -->
     <div class="sg" style="grid-column:1/-1;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
-      <label style="color:var(--amber);">CW KEYER — METODA WYSYŁANIA MORSE'A</label>
+      <label style="color:var(--amber);">${I18n.t('cfg_cw_keyer_hdr')}</label>
       <select id="cfg-cw-method-${id}" style="font-family:var(--mono);font-size:11px;margin-bottom:8px;"
         onchange="Settings._cwMethodChange(${id})">
-        <option value="auto">AUTO (CAT CI-V 17 — zalecane dla IC-7300/7610)</option>
-        <option value="cat">CAT — wysyłanie przez CI-V cmd 17</option>
-        <option value="dtr">DTR — kluczowanie linią DTR portu COM</option>
-        <option value="rts">RTS — kluczowanie linią RTS portu COM</option>
+        <option value="auto">${I18n.t('cfg_cw_auto_opt')}</option>
+        <option value="cat">${I18n.t('cfg_cw_cat_opt')}</option>
+        <option value="dtr">${I18n.t('cfg_cw_dtr_opt')}</option>
+        <option value="rts">${I18n.t('cfg_cw_rts_opt')}</option>
       </select>
       <div id="cfg-cw-dtr-section-${id}" style="display:none;">
         <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:6px;line-height:1.8;">
-          DTR/RTS kluczuje nadajnik przez linię sterującą portu COM.<br>
-          Można użyć tego samego portu co CI-V (np. COM13) lub osobnego adaptera USB→COM.<br>
-          Upewnij się że adapter połączony jest z wejściem KEY radia.
+          ${I18n.t('cfg_dtr_desc')}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <div style="flex:1;min-width:120px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">PORT COM (pusty = ten sam co CI-V)</div>
-            <input type="text" id="cfg-cw-dtr-port-${id}" placeholder="COM3 (lub pusty)"
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_dtr_port_lbl')}</div>
+            <input type="text" id="cfg-cw-dtr-port-${id}" placeholder="${I18n.t('cfg_dtr_port_ph')}"
               style="font-family:var(--mono);font-size:11px;" value="${rig.cwDtrPort||''}">
           </div>
           <div style="flex:1;min-width:100px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">LINIA</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_line_lbl')}</div>
             <select id="cfg-cw-dtr-line-${id}" style="font-family:var(--mono);font-size:11px;">
               <option value="DTR" ${(rig.cwDtrLine||'DTR')==='DTR'?'selected':''}>DTR</option>
               <option value="RTS" ${(rig.cwDtrLine||'DTR')==='RTS'?'selected':''}>RTS</option>
@@ -154,20 +145,19 @@ function buildRigPanel(id, rig, isAdmin) {
           </div>
         </div>
         <button onclick="Settings._cwDtrSave(${id})" class="save-btn" style="margin-top:8px;">
-          ZAPISZ I AKTYWUJ KEYER DTR/RTS
+          ${I18n.t('cfg_save_dtr_btn')}
         </button>
         <span id="cfg-cw-dtr-status-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:8px;"></span>
       </div>
     </div>
 
     <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap;">
-      <button onclick="Settings.saveRig(${id})" class="save-btn">ZAPISZ</button>
-      <button onclick="Settings.connectRig(${id})" class="save-btn" style="background:rgba(184,201,143,0.05);">POŁĄCZ</button>
+      <button onclick="Settings.saveRig(${id})" class="save-btn">${I18n.t('settings_save_btn')}</button>
+      <button onclick="Settings.connectRig(${id})" class="save-btn" style="background:rgba(184,201,143,0.05);">${I18n.t('cfg_connect_btn')}</button>
       <span id="rig-connect-status-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
     </div>
     ${id===1?`<div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;padding:6px;background:var(--panel2);border-radius:3px;">
-      Wymagany: <b>Hamlib rigctld.exe</b> → instalator pobrał do C:\hamlib\bin\<br>
-      Jeśli tryb SIM: sprawdź <code>HAMLIB_PATH=</code> w pliku .env i kliknij POŁĄCZ
+      ${I18n.t('cfg_rig1_note')}
     </div>`:''}
   `;
   return div;
@@ -182,9 +172,7 @@ function buildRigPanel(id, rig, isAdmin) {
 // radio. Zeby nie wprowadzac w blad, blokujemy dodawanie. Pelna obsluga wielu
 // radiow (rownolegla praca) to osobny, duzy etap — patrz notatki projektu.
 function addRig() {
-  window.UI?.showToast?.(
-    'Obecna wersja obsługuje jedno radio. Obsługa wielu radiów planowana w przyszłości.',
-    'info');
+  window.UI?.showToast?.(I18n.t('cfg_single_rig_notice'), 'info');
 }
 
 // Admin: usuń radio (nie można usunąć radio 1)
@@ -257,7 +245,7 @@ function fillAudioSelect(elId, devices) {
   // Zachowaj opcję "zapisana karta" jeśli nie ma jej w liście
   const savedOpt = current && !(devices||[]).includes(current) ? current : null;
 
-  sel.innerHTML = '<option value="">-- wybierz kartę --</option>';
+  sel.innerHTML = `<option value="">${I18n.t('cfg_choose_card_generic')}</option>`;
   if (savedOpt) {
     const opt = document.createElement('option');
     opt.value = opt.textContent = savedOpt;
@@ -331,17 +319,17 @@ async function saveRig(id) {
     });
     const res = await r.json();
     if (res.ok) {
-      window.UI?.showToast(`✓ Radio ${id} (${body.name}) zapisane`);
+      window.UI?.showToast(I18n.t('cfg_toast_rig_saved').replace('{id}', id).replace('{name}', body.name));
     } else {
-      window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
+      window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
     }
-  } catch(e) { window.UI?.showToast('✗ Błąd połączenia', 'error'); }
+  } catch(e) { window.UI?.showToast('✗ ' + I18n.t('cfg_conn_error'), 'error'); }
 }
 
 async function connectRig(id) {
   const statusEl = document.getElementById(`rig-connect-status-${id}`);
-  if (statusEl) statusEl.textContent = 'Łączenie...';
-  UI.showToast('Łączę z radiem...');
+  if (statusEl) statusEl.textContent = I18n.t('cfg_connecting');
+  UI.showToast(I18n.t('cfg_toast_connecting_radio'));
   try {
     // Pobierz aktualne ustawienia z formularza
     const model = document.getElementById(`cfg-model-${id}`)?.value;
@@ -356,13 +344,13 @@ async function connectRig(id) {
     const res = await r.json();
     if (res.ok) {
       const msg = res.sim
-        ? `⚠ Tryb symulacji — ${res.message||'rigctld nie znaleziony'}`
-        : `✓ ${res.message||'Połączono'}`;
+        ? I18n.t('cfg_sim_mode_msg').replace('{msg}', res.message||I18n.t('cfg_not_found'))
+        : `✓ ${res.message||I18n.t('cfg_connected_fallback')}`;
       UI.showToast(msg, res.sim ? 'warn' : 'ok');
       if (statusEl) {
         statusEl.textContent = res.sim
-          ? `SIM — brak rigctld (${res.rigctldPath||'nie znaleziono'})`
-          : `✓ Połączono`;
+          ? I18n.t('cfg_sim_no_rigctld').replace('{path}', res.rigctldPath||I18n.t('cfg_not_found'))
+          : I18n.t('cfg_connected_status');
         statusEl.style.color = res.sim ? 'var(--amber)' : 'var(--green)';
       }
       // Odswiez panel funkcji radia (VFO A/B, sliders, func toggle) —
@@ -370,7 +358,7 @@ async function connectRig(id) {
       window.RadioFunctions?.refresh();
       window.Admin?.loadRigFeatures?.();
     } else {
-      const err = res.error || 'Błąd połączenia';
+      const err = res.error || I18n.t('cfg_conn_error');
       UI.showToast('✗ ' + err, 'error');
       if (statusEl) {
         statusEl.textContent = '✗ ' + err;
@@ -378,7 +366,7 @@ async function connectRig(id) {
         statusEl.style.whiteSpace = 'normal';
       }
     }
-  } catch(e) { UI.showToast('✗ Błąd połączenia: ' + e.message, 'error'); }
+  } catch(e) { UI.showToast('✗ ' + I18n.t('cfg_conn_error') + ': ' + e.message, 'error'); }
 }
 
 async function loadStatus() {
@@ -451,7 +439,7 @@ async function _cwMethodChange(id) {
     headers: {'Content-Type':'application/json','Authorization':`Bearer ${token}`},
     body: JSON.stringify({method}),
   }).then(r => r.json())
-    .then(d => UI.showToast(d.ok ? `✓ Metoda CW: ${method.toUpperCase()}` : `✗ ${d.error||d.message||'Błąd'}`))
+    .then(d => UI.showToast(d.ok ? I18n.t('cfg_cw_method_toast').replace('{method}', method.toUpperCase()) : `✗ ${d.error||d.message||I18n.t('profile_error_fallback')}`))
     .catch(() => {});
 }
 
@@ -460,7 +448,7 @@ async function _cwDtrSave(id) {
   const line   = document.getElementById(`cfg-cw-dtr-line-${id}`)?.value || 'DTR';
   const status = document.getElementById(`cfg-cw-dtr-status-${id}`);
   const token  = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
-  if (status) status.textContent = 'Konfiguruję...';
+  if (status) status.textContent = I18n.t('cfg_configuring');
   const r = await fetch('/api/cw/dtr-port', {
     method: 'POST',
     headers: {'Content-Type':'application/json','Authorization':`Bearer ${token}`},

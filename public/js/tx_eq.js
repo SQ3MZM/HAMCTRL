@@ -378,6 +378,7 @@ window.TxEq = (() => {
     monitorActive = true;
     const btn = document.getElementById('eq-monitor-btn');
     if (btn) {
+      btn.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
       btn.textContent = I18n.t('profile_eq_monitor_stop_btn');
       btn.style.background = 'var(--red)';
       btn.style.color = 'white';

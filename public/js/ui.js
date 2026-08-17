@@ -498,7 +498,7 @@ function confirmModal(message, { title = I18n.t('common_confirm_title'), okLabel
     const titleEl = document.getElementById('confirm-modal-title');
     const okBtn   = document.getElementById('confirm-modal-ok');
     if (!modal || !msgEl) { resolve(false); return; }
-    if (titleEl) titleEl.textContent = title;
+    if (titleEl) { titleEl.removeAttribute('data-i18n'); titleEl.textContent = title; }
     msgEl.textContent = message;
     if (okBtn) {
       okBtn.textContent = okLabel;

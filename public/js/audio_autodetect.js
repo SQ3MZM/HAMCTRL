@@ -26,32 +26,33 @@ window.AudioAutoDetect = (function() {
     const info = document.getElementById('audio-detect-info');
     const badge = document.getElementById('audio-detect-badge');
     if (!info || !badge) return;
+    badge.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
 
     const det = data.detection || {};
     const cur = data.current || {};
 
     if (det.detected) {
-      badge.textContent = '✓ WYKRYTO';
+      badge.textContent = I18n.t('cfg_detected_badge');
       badge.style.color = 'var(--green)';
       badge.style.background = 'rgba(184,201,143,0.15)';
       info.style.borderLeftColor = 'var(--green2)';
       info.innerHTML = `
         <div style="color:var(--green);font-weight:600;margin-bottom:6px;">
-          ✓ Karta radia wykryta (wzorzec: <code>${_esc(det.pattern)}</code>)
+          ${I18n.t('cfg_card_detected_msg').replace('{pattern}', '<code>' + _esc(det.pattern) + '</code>')}
         </div>
         <div style="color:var(--dim);font-size:10px;line-height:1.7;">
-          <b style="color:var(--fg);">RX (radio → serwer):</b> <code>${_esc(det.rx || '—')}</code><br>
-          <b style="color:var(--fg);">TX (serwer → radio):</b> <code>${_esc(det.tx || '—')}</code>
+          <b style="color:var(--fg);">${I18n.t('cfg_rx_arrow_lbl')}</b> <code>${_esc(det.rx || '—')}</code><br>
+          <b style="color:var(--fg);">${I18n.t('cfg_tx_arrow_lbl')}</b> <code>${_esc(det.tx || '—')}</code>
         </div>
         ${(cur.rxDevice && cur.rxDevice !== det.rx) || (cur.txDevice && cur.txDevice !== det.tx) ? `
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--amber);font-size:10px;">
-            ⚠ Aktualnie użwane inne karty (ręczna konfiguracja aktywna):
+            ${I18n.t('cfg_other_cards_active')}
             RX=<code>${_esc(cur.rxDevice || '—')}</code>, TX=<code>${_esc(cur.txDevice || '—')}</code>
           </div>
         ` : ''}
       `;
     } else {
-      badge.textContent = '✕ NIE WYKRYTO';
+      badge.textContent = I18n.t('cfg_not_detected_badge');
       badge.style.color = 'var(--amber)';
       badge.style.background = 'rgba(212,168,87,0.15)';
       info.style.borderLeftColor = 'var(--amber)';
@@ -59,16 +60,14 @@ window.AudioAutoDetect = (function() {
       const txList = (det.all_tx || []).slice(0, 5);
       info.innerHTML = `
         <div style="color:var(--amber);font-weight:600;margin-bottom:6px;">
-          ⚠ Karta radia nie wykryta automatycznie
+          ${I18n.t('cfg_not_detected_msg')}
         </div>
         <div style="color:var(--dim);font-size:10px;line-height:1.6;">
-          Serwer nie znalazł karty pasującej do znanych wzorców (IC-7300, IC-705, FT-991, SCU-17).<br>
-          Sprawdź czy radio jest podłączone przez USB i włączone, następnie kliknij <b>SKANUJ PONOWNIE</b>.<br>
-          Jeśli używasz nietypowego interfejsu — przełącz na <b>TRYB EKSPERT</b> i wybierz kartę ręcznie.
+          ${I18n.t('cfg_not_detected_desc')}
         </div>
         <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--dim);font-size:9px;">
-          <b>Dostępne karty capture (RX):</b> ${rxList.length ? rxList.map(x => `<code>${_esc(x)}</code>`).join(', ') : '(brak)'}<br>
-          <b>Dostępne karty playback (TX):</b> ${txList.length ? txList.map(x => `<code>${_esc(x)}</code>`).join(', ') : '(brak)'}
+          <b>${I18n.t('cfg_avail_capture_lbl')}</b> ${rxList.length ? rxList.map(x => `<code>${_esc(x)}</code>`).join(', ') : I18n.t('cfg_none_paren')}<br>
+          <b>${I18n.t('cfg_avail_playback_lbl')}</b> ${txList.length ? txList.map(x => `<code>${_esc(x)}</code>`).join(', ') : I18n.t('cfg_none_paren')}
         </div>
       `;
     }
@@ -76,7 +75,7 @@ window.AudioAutoDetect = (function() {
 
   async function rescan() {
     const badge = document.getElementById('audio-detect-badge');
-    if (badge) { badge.textContent = '⏳ SKANOWANIE…'; badge.style.color = 'var(--amber)'; }
+    if (badge) { badge.textContent = I18n.t('cfg_scanning_badge'); badge.style.color = 'var(--amber)'; }
     try {
       const r = await fetch('/api/audio/detect', {
         method: 'POST', credentials: 'include'
@@ -85,16 +84,16 @@ window.AudioAutoDetect = (function() {
       if (data.ok) {
         window.UI?.showToast?.(
           data.detection?.detected
-            ? `✓ Wykryto: ${data.detection.pattern}`
-            : '⚠ Karta radia nie wykryta',
+            ? I18n.t('cfg_toast_detected').replace('{pattern}', data.detection.pattern)
+            : I18n.t('cfg_toast_not_detected'),
           data.detection?.detected ? 'info' : 'warning'
         );
         await load();
       } else {
-        window.UI?.showToast?.('✕ Błąd skanowania: ' + (data.error || ''), 'error');
+        window.UI?.showToast?.(I18n.t('cfg_toast_scan_error_prefix') + (data.error || ''), 'error');
       }
     } catch(e) {
-      window.UI?.showToast?.('✕ Błąd sieci: ' + e.message, 'error');
+      window.UI?.showToast?.(I18n.t('cfg_toast_network_error_prefix') + e.message, 'error');
     }
   }
 

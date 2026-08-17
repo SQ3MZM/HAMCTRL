@@ -354,11 +354,15 @@ async function loadRotatorConfig() {
 function renderRotatorConfig(rots) {
   const el = document.getElementById('rotator-config-list');
   if (!el) return;
+  // Usun znacznik i18n statycznego placeholdera "Ladowanie..." - inaczej
+  // kolejne I18n.setLang() (apply() dziala na calym dokumencie) nadpisze
+  // ten kontener z powrotem na "Ladowanie..." i skasuje wyrenderowane rotatory.
+  el.removeAttribute('data-i18n');
   el.innerHTML = rots.map((rot, i) => `
     <div class="rot-cfg-row">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr auto;gap:8px;align-items:end;">
-        <div class="sg"><label>NAZWA</label><input type="text" value="${_escapeHtmlAdmin(rot.name||'')}" id="rcfg-name-${i}" placeholder="Rotator AZ"></div>
-        <div class="sg"><label>MODEL HAMLIB</label>
+        <div class="sg"><label>${I18n.t('cfg_name_lbl')}</label><input type="text" value="${_escapeHtmlAdmin(rot.name||'')}" id="rcfg-name-${i}" placeholder="Rotator AZ"></div>
+        <div class="sg"><label>${I18n.t('cfg_model_hamlib_lbl')}</label>
           <select id="rcfg-model-${i}">
             <optgroup label="Alfaspid SPID">
               <option value="901" ${rot.model==='901'?'selected':''}>RAK / BIG-RAK</option>
@@ -371,32 +375,32 @@ function renderRotatorConfig(rots) {
             <option value="1" ${rot.model==='1'?'selected':''}>Dummy (test)</option>
           </select>
         </div>
-        <div class="sg"><label>PORT COM</label><input type="text" value="${_escapeHtmlAdmin(rot.port||'COM5')}" id="rcfg-port-${i}" placeholder="COM5"></div>
-        <div class="sg"><label>BAUD</label>
+        <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label><input type="text" value="${_escapeHtmlAdmin(rot.port||'COM5')}" id="rcfg-port-${i}" placeholder="COM5"></div>
+        <div class="sg"><label>${I18n.t('cfg_baud_lbl')}</label>
           <select id="rcfg-speed-${i}">
             <option value="600"  ${(rot.speed||'1200')==='600' ?'selected':''}>600</option>
             <option value="1200" ${(rot.speed||'1200')==='1200'?'selected':''}>1200</option>
             <option value="9600" ${(rot.speed||'1200')==='9600'?'selected':''}>9600</option>
           </select>
         </div>
-        <div class="sg"><label>PH</label>
+        <div class="sg"><label>${I18n.t('cfg_rot_ph_lbl')}</label>
           <select id="rcfg-ph-${i}">
             <option value="2" ${(rot.ph||2)===2?'selected':''}>PH=2 (0.50°)</option>
             <option value="1" ${(rot.ph||2)===1?'selected':''}>PH=1 (1.00°)</option>
             <option value="4" ${(rot.ph||2)===4?'selected':''}>PH=4 (0.25°)</option>
           </select>
         </div>
-        <div class="sg"><label>WŁĄCZONY</label>
+        <div class="sg"><label>${I18n.t('cfg_rot_enabled_lbl')}</label>
           <select id="rcfg-en-${i}">
-            <option value="1" ${rot.enabled?'selected':''}>TAK</option>
-            <option value="0" ${!rot.enabled?'selected':''}>NIE</option>
+            <option value="1" ${rot.enabled?'selected':''}>${I18n.t('cfg_yes')}</option>
+            <option value="0" ${!rot.enabled?'selected':''}>${I18n.t('cfg_no')}</option>
           </select>
         </div>
         <button class="admin-btn danger" onclick="Admin.removeRotator(${i})" style="height:33px;">✕</button>
         <button onclick="Admin.testRotator(${i})" style="height:33px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:10px;padding:0 8px;border-radius:3px;cursor:pointer;">TEST</button>
       </div>
       <div id="rot-test-result-${i}" style="font-family:var(--mono);font-size:10px;color:var(--dim);padding:3px 2px 0;min-height:14px;"></div>
-    </div>`).join('') || `<div style="font-family:var(--mono);font-size:11px;color:var(--dim);padding:12px;">Brak rotatorów</div>`;
+    </div>`).join('') || `<div style="font-family:var(--mono);font-size:11px;color:var(--dim);padding:12px;">${I18n.t('cfg_no_rotators')}</div>`;
 }
 
 let _rotatorsCfg = [];
@@ -436,26 +440,26 @@ async function saveRotatorConfig() {
     });
     const res = await r.json();
     if (res.ok) {
-      window.UI?.showToast('✓ Rotatory zapisane');
-    } else window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
-  } catch(e) { window.UI?.showToast('✗ Błąd połączenia', 'error'); }
+      window.UI?.showToast(I18n.t('cfg_toast_rotators_saved'));
+    } else window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
+  } catch(e) { window.UI?.showToast('✗ ' + I18n.t('cfg_conn_error'), 'error'); }
 }
 
 async function testRotator(idx) {
   const cfg = _rotatorsCfg[idx];
-  if (!cfg?.id) { window.UI?.showToast('Najpierw zapisz konfigurację', 'error'); return; }
+  if (!cfg?.id) { window.UI?.showToast(I18n.t('cfg_save_config_first'), 'error'); return; }
   const resultEl = document.getElementById(`rot-test-result-${idx}`);
-  if (resultEl) resultEl.textContent = 'Testowanie...';
+  if (resultEl) resultEl.textContent = I18n.t('cfg_testing');
   try {
     const r = await fetch(`/api/rotator/${cfg.id}/test`, {method:'POST'});
     const d = await r.json();
     const msg = d.testOk
-      ? `✓ OK — az=${d.testPos?.az??'?'}° (${d.driverType})`
+      ? I18n.t('cfg_rot_test_ok').replace('{az}', d.testPos?.az??'?').replace('{driver}', d.driverType)
       : `✗ ${d.testMsg||d.error}`;
     if (resultEl) { resultEl.textContent = msg; resultEl.style.color = d.testOk ? 'var(--green)' : 'var(--red)'; }
     window.UI?.showToast(msg, d.testOk ? 'ok' : 'error');
   } catch(e) {
-    if (resultEl) { resultEl.textContent = '✗ Błąd: ' + e.message; resultEl.style.color = 'var(--red)'; }
+    if (resultEl) { resultEl.textContent = '✗ ' + I18n.t('log_error_prefix') + e.message; resultEl.style.color = 'var(--red)'; }
   }
 }
 
@@ -465,7 +469,7 @@ let _rigFeaturesData = null;
 async function loadRigFeatures() {
   const el = document.getElementById('rig-features-config-list');
   if (!el) return;
-  el.innerHTML = 'Ładowanie...';
+  el.innerHTML = I18n.t('settings_loading');
   try {
     const token = localStorage.getItem('token');
     const r = await fetch('/api/rig/features', {
@@ -476,13 +480,14 @@ async function loadRigFeatures() {
     _rigFeaturesData = data;
     renderRigFeaturesConfig(data.features || [], data.dynamic || {actions:[],sliders:[]});
   } catch(e) {
-    el.innerHTML = `<span style="color:var(--red)">Błąd: ${e.message}</span>`;
+    el.innerHTML = `<span style="color:var(--red)">${I18n.t('log_error_prefix')}${e.message}</span>`;
   }
 }
 
 function renderRigFeaturesConfig(features, dynamic) {
   const el = document.getElementById('rig-features-config-list');
   if (!el) return;
+  el.removeAttribute('data-i18n');  // patrz komentarz w renderRotatorConfig()
 
   const actions = dynamic.actions || [];
   const sliders = dynamic.sliders || [];
@@ -492,7 +497,7 @@ function renderRigFeaturesConfig(features, dynamic) {
     <div style="display:flex;flex-direction:column;gap:20px;">
 
       ${_renderTransferWidget({
-        title:     'FUNKCJE STATYCZNE — dostęp dla userów',
+        title:     I18n.t('cfg_static_features_title'),
         items:     features,
         dataAttr:  'data-feature-id',
         widgetId:  'feat-transfer',
@@ -501,7 +506,7 @@ function renderRigFeaturesConfig(features, dynamic) {
       })}
 
       ${_renderTransferWidget({
-        title:     'PRZYCISKI FUNKCJI — widoczne na ekranie głównym',
+        title:     I18n.t('cfg_buttons_title'),
         items:     actions,
         dataAttr:  'data-dynamic-id',
         widgetId:  'btn-transfer',
@@ -510,7 +515,7 @@ function renderRigFeaturesConfig(features, dynamic) {
       })}
 
       ${_renderTransferWidget({
-        title:     'SLIDERY — widoczne w lewej kolumnie',
+        title:     I18n.t('cfg_sliders_title'),
         items:     sliders,
         dataAttr:  'data-dynamic-id',
         widgetId:  'sld-transfer',
@@ -541,28 +546,28 @@ function _renderTransferWidget({ title, items, dataAttr, widgetId, labelFn, subl
     <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;">${title}</div>
     <div class="tw-body">
       <div class="tw-col">
-        <div class="tw-col-header">Widoczne <span class="tw-count" id="${widgetId}-sel-count">${selected.length}</span></div>
+        <div class="tw-col-header">${I18n.t('tw_visible_lbl')} <span class="tw-count" id="${widgetId}-sel-count">${selected.length}</span></div>
         <div class="tw-list" id="${widgetId}-selected" data-side="selected">
           ${renderList(selected, 'selected')}
         </div>
-        <div class="tw-hint">Kliknij dwukrotnie aby usunąć</div>
+        <div class="tw-hint">${I18n.t('tw_hint_remove')}</div>
       </div>
       <div class="tw-buttons">
-        <button class="tw-btn" onclick="_twMoveAll('${widgetId}','selected')" title="Dodaj wszystkie">«« Wszystkie</button>
-        <button class="tw-btn" onclick="_twMoveSelected('${widgetId}','selected')" title="Dodaj zaznaczone">« Dodaj</button>
-        <button class="tw-btn" onclick="_twMoveSelected('${widgetId}','available')" title="Usuń zaznaczone">Usuń »</button>
-        <button class="tw-btn" onclick="_twMoveAll('${widgetId}','available')" title="Usuń wszystkie">Wszystkie »»</button>
+        <button class="tw-btn" onclick="_twMoveAll('${widgetId}','selected')" title="${I18n.t('tw_title_add_all')}">${I18n.t('tw_btn_all_left')}</button>
+        <button class="tw-btn" onclick="_twMoveSelected('${widgetId}','selected')" title="${I18n.t('tw_title_add_sel')}">${I18n.t('tw_btn_add')}</button>
+        <button class="tw-btn" onclick="_twMoveSelected('${widgetId}','available')" title="${I18n.t('tw_title_remove_sel')}">${I18n.t('tw_btn_remove')}</button>
+        <button class="tw-btn" onclick="_twMoveAll('${widgetId}','available')" title="${I18n.t('tw_title_remove_all')}">${I18n.t('tw_btn_all_right')}</button>
         <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
-          <button class="tw-btn" onclick="_twMoveUp('${widgetId}')" title="Przesuń wyżej">▲ Wyżej</button>
-          <button class="tw-btn" onclick="_twMoveDown('${widgetId}')" title="Przesuń niżej">▼ Niżej</button>
+          <button class="tw-btn" onclick="_twMoveUp('${widgetId}')" title="${I18n.t('tw_title_move_up')}">${I18n.t('tw_btn_up')}</button>
+          <button class="tw-btn" onclick="_twMoveDown('${widgetId}')" title="${I18n.t('tw_title_move_down')}">${I18n.t('tw_btn_down')}</button>
         </div>
       </div>
       <div class="tw-col">
-        <div class="tw-col-header">Dostępne <span class="tw-count" id="${widgetId}-avl-count">${available.length}</span></div>
+        <div class="tw-col-header">${I18n.t('tw_available_lbl')} <span class="tw-count" id="${widgetId}-avl-count">${available.length}</span></div>
         <div class="tw-list" id="${widgetId}-available" data-side="available">
           ${renderList(available, 'available')}
         </div>
-        <div class="tw-hint">Kliknij dwukrotnie aby dodać</div>
+        <div class="tw-hint">${I18n.t('tw_hint_add')}</div>
       </div>
     </div>
   </div>`;
@@ -728,10 +733,10 @@ async function saveRigFeatures() {
     });
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || 'blad');
-    window.UI?.showToast('✓ Konfiguracja zapisana', 'success');
+    window.UI?.showToast(I18n.t('cfg_toast_config_saved'), 'success');
     await loadRigFeatures();
   } catch(e) {
-    window.UI?.showToast('✗ Błąd: ' + e.message, 'error');
+    window.UI?.showToast('✗ ' + I18n.t('log_error_prefix') + e.message, 'error');
   }
 }
 
@@ -845,8 +850,8 @@ window.AdminBands = (() => {
         body: JSON.stringify({ enabledBands: enabled }),
       });
       const res = await r.json();
-      if (res.ok) window.UI?.showToast('✓ Pasma zapisane');
-      else window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
+      if (res.ok) window.UI?.showToast(I18n.t('cfg_toast_bands_saved'));
+      else window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
     } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
   }
 
@@ -890,7 +895,7 @@ window.AdminBands = (() => {
         <select data-mode-filter="${m}"
           style="font-family:var(--mono);font-size:10px;background:var(--panel3);
           border:1px solid var(--border2);border-radius:3px;color:var(--text);padding:2px 4px;">
-          <option value="">-- brak --</option>
+          <option value="">${I18n.t('cfg_none_filter')}</option>
           ${['1','2','3'].map(f => `<option value="${f}" ${_modeFilters[m]==f?'selected':''}>FIL${f}</option>`).join('')}
         </select>
       </div>`).join('');
@@ -911,8 +916,8 @@ window.AdminBands = (() => {
         body: JSON.stringify({ enabledModes: enabled, modeFilters: filters }),
       });
       const res = await r.json();
-      if (res.ok) window.UI?.showToast('✓ Tryby zapisane');
-      else window.UI?.showToast('✗ ' + (res.error||'Błąd'), 'error');
+      if (res.ok) window.UI?.showToast(I18n.t('cfg_toast_modes_saved'));
+      else window.UI?.showToast('✗ ' + (res.error||I18n.t('profile_error_fallback')), 'error');
     } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
   }
 
@@ -1018,7 +1023,7 @@ async function saveStationLocator() {
   if (!el) return;
   const loc = (el.value || '').trim().toUpperCase();
   if (loc && !/^[A-R]{2}\d{2}([A-X]{2})?$/.test(loc)) {
-    if (msg) { msg.textContent = '✗ Zły format (np. JO72)'; msg.style.color = 'var(--red)'; }
+    if (msg) { msg.textContent = I18n.t('cfg_bad_locator_format'); msg.style.color = 'var(--red)'; }
     return;
   }
   try {
@@ -1031,10 +1036,10 @@ async function saveStationLocator() {
     });
     const d = await r.json();
     if (d.ok) {
-      if (msg) { msg.textContent = '✓ Zapisano'; msg.style.color = 'var(--green)'; }
+      if (msg) { msg.textContent = I18n.t('cfg_saved_capital'); msg.style.color = 'var(--green)'; }
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } else {
-      if (msg) { msg.textContent = '✗ ' + (d.error || 'Błąd'); msg.style.color = 'var(--red)'; }
+      if (msg) { msg.textContent = '✗ ' + (d.error || I18n.t('profile_error_fallback')); msg.style.color = 'var(--red)'; }
     }
   } catch(e) {
     if (msg) { msg.textContent = '✗ ' + e.message; msg.style.color = 'var(--red)'; }
@@ -1052,9 +1057,9 @@ async function deepcwStatus() {
     });
     const d = await r.json();
     if (d.error)          { el.textContent = '✗ ' + d.error;        el.style.color = 'var(--red)'; }
-    else if (!d.hasModel) { el.textContent = '⚠ Model nie pobrany'; el.style.color = '#fa0'; }
-    else if (!d.ready)    { el.textContent = `⏳ Model na dysku (${d.sizeMB} MB), ładowanie...`; el.style.color = '#fa0'; }
-    else                  { el.textContent = `✓ Gotowy (${d.sizeMB} MB)`; el.style.color = 'var(--green)'; }
+    else if (!d.hasModel) { el.textContent = I18n.t('cfg_deepcw_not_downloaded'); el.style.color = '#fa0'; }
+    else if (!d.ready)    { el.textContent = I18n.t('cfg_deepcw_loading').replace('{mb}', d.sizeMB); el.style.color = '#fa0'; }
+    else                  { el.textContent = I18n.t('cfg_deepcw_ready').replace('{mb}', d.sizeMB); el.style.color = 'var(--green)'; }
   } catch(e) {
     el.textContent = '✗ ' + e.message; el.style.color = 'var(--red)';
   }
@@ -1064,7 +1069,7 @@ async function deepcwDownload() {
   const bar = document.getElementById('deepcw-admin-bar');
   const log = document.getElementById('deepcw-admin-log');
   if (bar) bar.style.display = 'block';
-  if (log) log.textContent = 'Rozpoczynam pobieranie...';
+  if (log) log.textContent = I18n.t('cfg_deepcw_starting_download');
   try {
     const token = localStorage.getItem('token') || '';
     const r = await fetch('/api/deepcw/download', {
@@ -1073,11 +1078,11 @@ async function deepcwDownload() {
     });
     const d = await r.json();
     if (d.ok) {
-      if (log) { log.textContent = `✓ Model pobrany (${(d.sizeBytes/1e6).toFixed(1)} MB)`;
+      if (log) { log.textContent = I18n.t('cfg_deepcw_downloaded').replace('{mb}', (d.sizeBytes/1e6).toFixed(1));
                  log.style.color = 'var(--green)'; }
       deepcwStatus();
     } else {
-      if (log) { log.textContent = '✗ ' + (d.error || 'Błąd pobierania');
+      if (log) { log.textContent = d.error ? ('✗ ' + d.error) : I18n.t('cfg_deepcw_download_error');
                  log.style.color = 'var(--red)'; }
     }
   } catch(e) {

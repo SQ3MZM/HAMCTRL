@@ -108,7 +108,7 @@ function _setStatus(state, text) {
                           : state === 'error' ? '0 0 6px var(--red)'
                           : 'none';
   }
-  if (label) label.textContent = text || '';
+  if (label) { label.removeAttribute('data-i18n'); label.textContent = text || ''; }
 }
 
 // ── Live freq/mode (co 30s podczas nadawania lub zawsze jesli wlaczone) ──────

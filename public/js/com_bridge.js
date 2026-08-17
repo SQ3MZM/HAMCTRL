@@ -39,18 +39,18 @@ function _checkAdmin() {
 async function loadStats() {
   const list = document.getElementById('cb-stats-list');
   if (!list) return;
-  list.innerHTML = `<div style="color:var(--dim);">Ładowanie...</div>`;
+  list.innerHTML = `<div style="color:var(--dim);">${I18n.t('settings_loading')}</div>`;
 
   try {
     const r = await fetch('/api/com/stats');
     if (!r.ok) {
-      list.innerHTML = `<div style="color:var(--red);">Błąd: HTTP ${r.status} (tylko admin)</div>`;
+      list.innerHTML = `<div style="color:var(--red);">${I18n.t('log_error_prefix')}HTTP ${r.status} ${I18n.t('cfg_admin_only')}</div>`;
       return;
     }
     const d = await r.json();
     _renderStats(d);
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);">Błąd: ${e.message}</div>`;
+    list.innerHTML = `<div style="color:var(--red);">${I18n.t('log_error_prefix')}${e.message}</div>`;
   }
 }
 
@@ -62,24 +62,25 @@ function _renderStats(data) {
 
   const badge = document.getElementById('cb-client-status');
   if (badge) {
+    badge.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
     if (n > 0) {
-      badge.textContent = `● ${n} klient${n > 1 ? 'ów' : ''} online`;
+      badge.textContent = I18n.t(n > 1 ? 'cfg_client_online_n' : 'cfg_client_online_1').replace('{n}', n);
       badge.style.color = 'var(--green)';
     } else {
-      badge.textContent = '— brak podłączonego klienta —';
+      badge.textContent = I18n.t('cfg_combridge_no_client');
       badge.style.color = 'var(--dim)';
     }
   }
 
   if (n === 0) {
-    list.innerHTML = `<div style="padding:10px;color:var(--dim);">Brak podłączonych klientów.</div>`;
+    list.innerHTML = `<div style="padding:10px;color:var(--dim);">${I18n.t('cfg_no_client_connected')}</div>`;
     return;
   }
 
   const clients = data.clients || [];
   list.innerHTML = `
     <div style="padding:8px 0;color:var(--green);font-size:12px;">
-      ● ${n} klient${n > 1 ? 'ów' : ''} podłączony${n > 1 ? 'ch' : ''}
+      ${I18n.t(n > 1 ? 'cfg_clients_connected_n' : 'cfg_clients_connected_1').replace('{n}', n)}
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:10px;">
       <thead>

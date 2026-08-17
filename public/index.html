@@ -131,7 +131,7 @@
           </select>
         </div>
         <button id="tx-mic-btn" class="audio-toggle-btn" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
-          onclick="WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
+          onclick="this.removeAttribute('data-i18n'); WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
           🎤 Nadawanie TX — mikrofon
         </button>
         <!-- TX GAIN z dynamicznym VU metrem -->
@@ -1306,23 +1306,23 @@
     <!-- AUDIO RADIA - przeniesione z Ustawien - konfigurowane raz na start -->
     <div class="box">
       <div class="box-header">
-        <span>🎙 AUDIO RADIA — AUTO-DETEKCJA</span>
-        <span id="audio-detect-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;margin-left:8px;color:var(--dim);background:var(--panel3);">— ładowanie —</span>
+        <span data-i18n="cfg_audio_autodetect_hdr">🎙 AUDIO RADIA — AUTO-DETEKCJA</span>
+        <span id="audio-detect-badge" data-i18n="cfg_loading_dash" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;margin-left:8px;color:var(--dim);background:var(--panel3);">— ładowanie —</span>
       </div>
       <div style="padding:10px 12px;">
-        <div style="font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.6;margin-bottom:10px;">
+        <div data-i18n-html="cfg_audio_autodetect_desc" style="font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.6;margin-bottom:10px;">
           Serwer automatycznie wykrywa kartę audio radia (IC-7300, IC-705, FT-991 itp.) po nazwie.<br>
           Standardowo nie musisz nic konfigurować — po podłączeniu radia przez USB karta zostanie znaleziona.
         </div>
         <div id="audio-detect-info" style="font-family:var(--mono);font-size:11px;padding:8px 10px;background:var(--panel3);border-radius:3px;border-left:3px solid var(--green2);margin-bottom:10px;">
-          <div style="color:var(--dim);">Ładowanie…</div>
+          <div style="color:var(--dim);" data-i18n="settings_loading">Ładowanie…</div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button onclick="AudioAutoDetect.rescan()"
+          <button onclick="AudioAutoDetect.rescan()" data-i18n="cfg_rescan_btn"
             style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
             🔍 SKANUJ PONOWNIE
           </button>
-          <button onclick="AudioAutoDetect.toggleExpert()"
+          <button onclick="AudioAutoDetect.toggleExpert()" data-i18n="cfg_expert_mode_btn"
             style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:none;border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;letter-spacing:1px;">
             ⚙ TRYB EKSPERT (ręczny wybór karty)
           </button>
@@ -1332,22 +1332,22 @@
 
     <!-- SEKCJA RĘCZNEGO WYBORU KART - domyślnie ukryta, tylko dla ekspertów -->
     <div class="box" id="audio-manual-config" style="display:none;">
-      <div class="box-header">⚙ KARTY DŹWIĘKOWE — RĘCZNIE (tryb ekspert)</div>
-      <div style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);border-bottom:1px solid var(--border);">
+      <div class="box-header" data-i18n="cfg_manual_cards_hdr">⚙ KARTY DŹWIĘKOWE — RĘCZNIE (tryb ekspert)</div>
+      <div data-i18n="cfg_manual_cards_warn" style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);border-bottom:1px solid var(--border);">
         ⚠ Zwykle nie potrzebujesz tego dotykać. Używaj gdy auto-detekcja nie znajduje karty lub masz kilka radi.
       </div>
       <div class="settings-inner">
-        <div class="sg"><label>Karta RX (radio → serwer)</label>
+        <div class="sg"><label data-i18n="cfg_card_rx_lbl">Karta RX (radio → serwer)</label>
           <select id="cfg-audio-rx" style="flex:1;font-family:var(--mono);font-size:11px;">
-            <option value="">— domyślna —</option>
+            <option value="" data-i18n="cfg_default_dash">— domyślna —</option>
           </select>
         </div>
-        <div class="sg"><label>Karta TX (serwer → radio)</label>
+        <div class="sg"><label data-i18n="cfg_card_tx_lbl">Karta TX (serwer → radio)</label>
           <select id="cfg-audio-tx" style="flex:1;font-family:var(--mono);font-size:11px;">
-            <option value="">— domyślna —</option>
+            <option value="" data-i18n="cfg_default_dash">— domyślna —</option>
           </select>
         </div>
-        <div class="sg"><label>Bitrate Opus</label>
+        <div class="sg"><label data-i18n="cfg_bitrate_lbl">Bitrate Opus</label>
           <select id="cfg-audio-bitrate" style="width:120px;font-family:var(--mono);font-size:11px;">
             <option value="12000">12 kbps</option>
             <option value="16000">16 kbps</option>
@@ -1359,7 +1359,7 @@
         <div class="sg"><label>Status</label>
           <span id="cfg-audio-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);">—</span>
         </div>
-        <div class="sg" style="grid-column:1/-1;"><label>TX Volume FT8/FT4 (mnożnik tonu enkodera → radio)</label>
+        <div class="sg" style="grid-column:1/-1;"><label data-i18n="cfg_txvol_ft8_lbl">TX Volume FT8/FT4 (mnożnik tonu enkodera → radio)</label>
           <div style="display:flex;align-items:center;gap:8px;flex:1">
             <input type="range" id="cfg-tx-volume" min="0.1" max="16" step="0.1" value="4"
               style="flex:1;accent-color:var(--red)"
@@ -1367,8 +1367,8 @@
             <span id="cfg-tx-volume-val" style="width:35px;font-size:11px">4x</span>
           </div>
         </div>
-        <div class="sg" style="grid-column:1/-1;"><label>TX Volume SSB (mnożnik mikrofonu → radio)
-          <span style="color:var(--dim);font-size:9px;">(osobny od FT8/FT4 — inna charakterystyka sygnału, łatwiej trafić w ALC)</span></label>
+        <div class="sg" style="grid-column:1/-1;"><label><span data-i18n="cfg_txvol_ssb_lbl">TX Volume SSB (mnożnik mikrofonu → radio)</span>
+          <span style="color:var(--dim);font-size:9px;" data-i18n="cfg_txvol_ssb_sublabel">(osobny od FT8/FT4 — inna charakterystyka sygnału, łatwiej trafić w ALC)</span></label>
           <div style="display:flex;align-items:center;gap:8px;flex:1">
             <input type="range" id="cfg-tx-volume-ssb" min="0.1" max="16" step="0.1" value="1"
               style="flex:1;accent-color:var(--red)"
@@ -1378,16 +1378,16 @@
         </div>
       </div>
       <div style="padding:0 12px 12px;display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="save-btn" onclick="_audioDeviceSave()">💾 ZAPISZ I ZASTOSUJ (karty + TX Volume)</button>
+        <button class="save-btn" onclick="_audioDeviceSave()" data-i18n="cfg_save_apply_btn">💾 ZAPISZ I ZASTOSUJ (karty + TX Volume)</button>
         <button class="save-btn" style="background:rgba(76,160,219,0.1);border-color:#4aa;"
-          onclick="_audioDeviceRefresh()">↺ ODŚWIEŻ KARTY</button>
+          onclick="_audioDeviceRefresh()" data-i18n="cfg_refresh_cards_btn">↺ ODŚWIEŻ KARTY</button>
       </div>
     </div>
 
     <div class="box">
       <div class="box-header">
-        <span>KONFIGURACJA RADIA</span>
-        <button id="btn-add-rig" onclick="Settings.addRig()"
+        <span data-i18n="cfg_rig_config_hdr">KONFIGURACJA RADIA</span>
+        <button id="btn-add-rig" onclick="Settings.addRig()" data-i18n="cfg_add_rig_btn"
           style="background:none;border:1px solid var(--green2);border-radius:4px;
           color:var(--green);font-family:var(--mono);font-size:10px;
           padding:3px 10px;cursor:pointer;letter-spacing:1px;">+ DODAJ RADIO</button>
@@ -1396,38 +1396,38 @@
     </div>
 
     <div class="box">
-      <div class="box-header"><span>KONFIGURACJA ROTATORÓW</span><button class="admin-btn" onclick="Admin.addRotator()">+ DODAJ</button></div>
+      <div class="box-header"><span data-i18n="cfg_rotator_config_hdr">KONFIGURACJA ROTATORÓW</span><button class="admin-btn" onclick="Admin.addRotator()" data-i18n="cfg_add_btn">+ DODAJ</button></div>
       <!-- Lokator STACJI — miejsce gdzie stoi antena. Od niego liczony jest
            azymut na korespondenta (ten sam dla wszystkich operatorow). -->
       <div style="padding:12px 12px 0;display:flex;align-items:center;gap:10px;
            flex-wrap:wrap;border-bottom:1px solid #1a1a1a;padding-bottom:12px;">
-        <span style="font-size:11px;color:var(--dim);letter-spacing:1px;">
+        <span style="font-size:11px;color:var(--dim);letter-spacing:1px;" data-i18n="cfg_station_locator_lbl">
           LOKATOR STACJI</span>
-        <input id="cfg-station-locator" type="text" placeholder="np. JO72"
+        <input id="cfg-station-locator" type="text" data-i18n-placeholder="cfg_station_locator_ph" placeholder="np. JO72"
           maxlength="6" style="font-family:var(--mono);font-size:12px;
           text-transform:uppercase;background:#0a0a0a;border:1px solid #2a2a2a;
           color:#fa0;padding:4px 8px;border-radius:2px;width:90px;">
-        <button class="admin-btn" onclick="Admin.saveStationLocator()">ZAPISZ</button>
+        <button class="admin-btn" onclick="Admin.saveStationLocator()" data-i18n="settings_save_btn">ZAPISZ</button>
         <span id="cfg-station-locator-msg" style="font-size:10px;color:var(--dim);"></span>
-        <div style="flex-basis:100%;font-size:10px;color:#666;">
+        <div style="flex-basis:100%;font-size:10px;color:#666;" data-i18n="cfg_station_locator_desc">
           Pozycja anteny — od niej liczony jest kierunek na korespondenta
           (widoczny w logu QSO po wpisaniu znaku). Wspólny dla wszystkich
           operatorów, niezależnie skąd się łączą.
         </div>
       </div>
-      <div style="padding:12px;" id="rotator-config-list">Ładowanie...</div>
-      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRotatorConfig()">ZAPISZ I ZRESTARTUJ ROTATORY</button></div>
+      <div style="padding:12px;" id="rotator-config-list" data-i18n="settings_loading">Ładowanie...</div>
+      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRotatorConfig()" data-i18n="cfg_save_restart_rotators_btn">ZAPISZ I ZRESTARTUJ ROTATORY</button></div>
     </div>
 
     <div class="box">
-      <div class="box-header"><span>DEKODER CW — MODEL DEEPCW</span></div>
+      <div class="box-header"><span data-i18n="cfg_deepcw_hdr">DEKODER CW — MODEL DEEPCW</span></div>
       <div style="padding:12px;font-size:11px;color:var(--dim);">
-        Sieciowy dekoder CW (~15 MB). Pobierany raz, zapisywany w katalogu
+        <span data-i18n="cfg_deepcw_desc">Sieciowy dekoder CW (~15 MB). Pobierany raz, zapisywany w katalogu
         danych — przetrwa aktualizacje programu. Dekoder pracuje tylko gdy
-        okno dekodera jest otwarte.
+        okno dekodera jest otwarte.</span>
         <div style="display:flex;align-items:center;gap:10px;margin-top:10px;">
-          <button class="admin-btn" onclick="Admin.deepcwDownload()">POBIERZ / AKTUALIZUJ MODEL</button>
-          <button class="admin-btn" onclick="Admin.deepcwStatus()">SPRAWDŹ STAN</button>
+          <button class="admin-btn" onclick="Admin.deepcwDownload()" data-i18n="cfg_deepcw_download_btn">POBIERZ / AKTUALIZUJ MODEL</button>
+          <button class="admin-btn" onclick="Admin.deepcwStatus()" data-i18n="cfg_deepcw_check_btn">SPRAWDŹ STAN</button>
           <span id="deepcw-admin-status" style="font-size:10px;color:var(--dim);"></span>
         </div>
         <div id="deepcw-admin-bar" style="display:none;margin-top:8px;height:4px;
@@ -1441,13 +1441,13 @@
     </div>
 
     <div class="box">
-      <div class="box-header"><span>FUNKCJE RADIA — DOSTĘP DLA UŻYTKOWNIKÓW</span></div>
-      <div style="padding:12px;font-size:11px;color:var(--dim);">
+      <div class="box-header"><span data-i18n="cfg_rig_features_hdr">FUNKCJE RADIA — DOSTĘP DLA UŻYTKOWNIKÓW</span></div>
+      <div style="padding:12px;font-size:11px;color:var(--dim);" data-i18n="cfg_rig_features_desc">
         Zaznacz funkcje dostępne dla zwykłych użytkowników (operator/viewer).
         Funkcje wyszarzone nie są wspierane przez aktualnie podłączone radio.
       </div>
-      <div style="padding:0 12px 12px;" id="rig-features-config-list">Ładowanie...</div>
-      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRigFeatures()">ZAPISZ FUNKCJE RADIA</button></div>
+      <div style="padding:0 12px 12px;" id="rig-features-config-list" data-i18n="settings_loading">Ładowanie...</div>
+      <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRigFeatures()" data-i18n="cfg_save_rig_features_btn">ZAPISZ FUNKCJE RADIA</button></div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════
@@ -1455,10 +1455,10 @@
          ═══════════════════════════════════════════════════════════════════ -->
     <div class="box" id="com-bridge-config-section">
       <div class="box-header">
-        <span>🔌 COM BRIDGE — zdalny dostęp CAT (CW Skimmer, HRD, Logger32)</span>
-        <span id="cb-client-status" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);margin-left:8px;">— brak podłączonego klienta —</span>
+        <span data-i18n="cfg_combridge_hdr">🔌 COM BRIDGE — zdalny dostęp CAT (CW Skimmer, HRD, Logger32)</span>
+        <span id="cb-client-status" data-i18n="cfg_combridge_no_client" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);margin-left:8px;">— brak podłączonego klienta —</span>
       </div>
-      <div style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;">
+      <div data-i18n-html="cfg_combridge_desc" style="padding:12px;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;">
         Aplikacja <b style="color:var(--fg);">HAM RADIO CTRL</b> (klient Windows) tworzy wirtualne porty COM na Twoim
         komputerze i łączy je ze zdalnym radiem przez internet. Programy jak
         <b>CW Skimmer</b>, <b>Ham Radio Deluxe</b> czy <b>Logger32</b> widzą radio tak jakby było podłączone lokalnie.
@@ -1468,14 +1468,14 @@
         <!-- 2 dostepne porty -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
           <div style="padding:12px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;">PORT 1 — pierwsza aplikacja</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;" data-i18n="cfg_combridge_port1_lbl">PORT 1 — pierwsza aplikacja</div>
             <div style="font-family:var(--mono);font-size:18px;color:var(--fg);font-weight:bold;">COM11</div>
             <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;line-height:1.5;">
               Icom IC-7300 · CI-V <b>0x94</b><br>19200 baud · 8N1
             </div>
           </div>
           <div style="padding:12px;background:var(--panel2);border:1px solid var(--green2);border-radius:6px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;">PORT 2 — druga aplikacja</div>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px;" data-i18n="cfg_combridge_port2_lbl">PORT 2 — druga aplikacja</div>
             <div style="font-family:var(--mono);font-size:18px;color:var(--fg);font-weight:bold;">COM21</div>
             <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;line-height:1.5;">
               Icom IC-7300 · CI-V <b>0x94</b><br>19200 baud · 8N1
@@ -1483,7 +1483,7 @@
           </div>
         </div>
 
-        <div style="padding:10px 12px;background:rgba(184,201,143,0.06);border-left:3px solid var(--green2);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
+        <div data-i18n-html="cfg_combridge_note" style="padding:10px 12px;background:rgba(184,201,143,0.06);border-left:3px solid var(--green2);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
           <b style="color:var(--fg);">Masz 2 niezależne porty</b> — możesz uruchomić dwie aplikacje jednocześnie
           (np. CW Skimmer na COM11 i HRD na COM21). Nie kolidują ze sobą ani z serwerem.<br>
           <span style="color:var(--amber);">Uwaga:</span> numery COM na Twoim komputerze mogą się różnić —
@@ -1492,8 +1492,8 @@
 
         <!-- Krok po kroku -->
         <details style="margin-bottom:12px;">
-          <summary style="cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--green);padding:6px 0;">📖 Jak skonfigurować (kliknij)</summary>
-          <div style="padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.8;">
+          <summary style="cursor:pointer;font-family:var(--mono);font-size:11px;color:var(--green);padding:6px 0;" data-i18n="cfg_combridge_howto_summary">📖 Jak skonfigurować (kliknij)</summary>
+          <div data-i18n-html="cfg_combridge_steps" style="padding:10px 12px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.8;">
             <b style="color:var(--fg);">1.</b> Pobierz i uruchom <b>Most COM</b> (przycisk poniżej)<br>
             <b style="color:var(--fg);">2.</b> Wpisz adres serwera, swój login i hasło → <b>POŁĄCZ</b><br>
             <b style="color:var(--fg);">3.</b> Aplikacja utworzy porty COM (przy pierwszym razie zezwól na UAC)<br>
@@ -1504,11 +1504,11 @@
         </details>
 
         <!-- Link do pobrania EXE -->
-        <a href="/download/com-bridge" download
+        <a href="/download/com-bridge" download data-i18n="cfg_combridge_download_btn"
            style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
           ⬇️ POBIERZ MOST COM (Windows .exe)
         </a>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;" data-i18n="cfg_combridge_winreq">
           Wymaga Windows 10/11 · ~25 MB · zawiera sterownik com0com
         </div>
       </div>
@@ -1517,94 +1517,94 @@
     <!-- Statystyki dla admin - lista podlaczonych klientow -->
     <div class="box adminonly" id="cb-admin-stats-box" style="display:none;">
       <div class="box-header">
-        <span>📊 COM BRIDGE — podłączeni klienci (ADMIN)</span>
-        <button onclick="ComBridge.loadStats()" style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border2);border-radius:3px;color:var(--dim);cursor:pointer;">🔍 ODŚWIEŻ</button>
+        <span data-i18n="cfg_combridge_stats_hdr">📊 COM BRIDGE — podłączeni klienci (ADMIN)</span>
+        <button onclick="ComBridge.loadStats()" data-i18n="cfg_refresh_btn" style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:var(--panel3);border:1px solid var(--border2);border-radius:3px;color:var(--dim);cursor:pointer;">🔍 ODŚWIEŻ</button>
       </div>
       <div class="box-body">
         <div id="cb-stats-list" style="font-family:var(--mono);font-size:11px;color:var(--dim);">
-          <span style="color:var(--dim);">Kliknij ODŚWIEŻ żeby zobaczyć podłączonych klientów.</span>
+          <span style="color:var(--dim);" data-i18n="cfg_combridge_stats_hint">Kliknij ODŚWIEŻ żeby zobaczyć podłączonych klientów.</span>
         </div>
       </div>
     </div>
 
     <!-- PASMA — WYBÓR DOSTĘPNYCH -->
     <div class="box">
-      <div class="box-header">PASMA — WIDOCZNE W UI</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
+      <div class="box-header" data-i18n="cfg_bands_hdr">PASMA — WIDOCZNE W UI</div>
+      <div data-i18n-html="cfg_bands_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
         Wybierz które pasma będą widoczne użytkownikom w siatce PASMO.<br>
         Zmiana obowiązuje natychmiast dla wszystkich połączonych klientów.
       </div>
       <div style="padding:12px;" id="admin-bands-container">
         <div class="tw-widget" id="bands-transfer">
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;">PASMA</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;" data-i18n="cfg_bands_widget_title">PASMA</div>
           <div class="tw-body">
             <div class="tw-col">
-              <div class="tw-col-header">Widoczne <span class="tw-count" id="bands-transfer-sel-count">0</span></div>
+              <div class="tw-col-header"><span data-i18n="tw_visible_lbl">Widoczne</span> <span class="tw-count" id="bands-transfer-sel-count">0</span></div>
               <div class="tw-list" id="bands-transfer-selected" data-side="selected"></div>
-              <div class="tw-hint">Kliknij dwukrotnie aby usunąć</div>
+              <div class="tw-hint" data-i18n="tw_hint_remove">Kliknij dwukrotnie aby usunąć</div>
             </div>
             <div class="tw-buttons">
-              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','selected')">«« Wszystkie</button>
-              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','selected')">« Dodaj</button>
-              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','available')">Usuń »</button>
-              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','available')">Wszystkie »»</button>
+              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','selected')" data-i18n="tw_btn_all_left">«« Wszystkie</button>
+              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','selected')" data-i18n="tw_btn_add">« Dodaj</button>
+              <button class="tw-btn" onclick="_twMoveSelected('bands-transfer','available')" data-i18n="tw_btn_remove">Usuń »</button>
+              <button class="tw-btn" onclick="_twMoveAll('bands-transfer','available')" data-i18n="tw_btn_all_right">Wszystkie »»</button>
               <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
-                <button class="tw-btn" onclick="_twMoveUp('bands-transfer')">▲ Wyżej</button>
-                <button class="tw-btn" onclick="_twMoveDown('bands-transfer')">▼ Niżej</button>
+                <button class="tw-btn" onclick="_twMoveUp('bands-transfer')" data-i18n="tw_btn_up">▲ Wyżej</button>
+                <button class="tw-btn" onclick="_twMoveDown('bands-transfer')" data-i18n="tw_btn_down">▼ Niżej</button>
               </div>
             </div>
             <div class="tw-col">
-              <div class="tw-col-header">Dostępne <span class="tw-count" id="bands-transfer-avl-count">0</span></div>
+              <div class="tw-col-header"><span data-i18n="tw_available_lbl">Dostępne</span> <span class="tw-count" id="bands-transfer-avl-count">0</span></div>
               <div class="tw-list" id="bands-transfer-available" data-side="available"></div>
-              <div class="tw-hint">Kliknij dwukrotnie aby dodać</div>
+              <div class="tw-hint" data-i18n="tw_hint_add">Kliknij dwukrotnie aby dodać</div>
             </div>
           </div>
         </div>
       </div>
       <div style="padding:0 12px 12px;">
-        <button class="save-btn" onclick="AdminBands.save()">ZAPISZ PASMA</button>
+        <button class="save-btn" onclick="AdminBands.save()" data-i18n="cfg_save_bands_btn">ZAPISZ PASMA</button>
       </div>
     </div>
 
     <!-- TRYBY — WYBÓR DOSTĘPNYCH + FILTR DLA USB-D -->
     <div class="box">
-      <div class="box-header">TRYBY PRACY — WIDOCZNE W UI + FILTRY</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
+      <div class="box-header" data-i18n="cfg_modes_hdr">TRYBY PRACY — WIDOCZNE W UI + FILTRY</div>
+      <div data-i18n="cfg_modes_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:1.9;">
         Wybierz tryby widoczne w siatce TRYB. USB-D/LSB-D = tryby cyfrowe (DATA) — można przypisać domyślny filtr.
       </div>
       <div style="padding:12px;">
         <div class="tw-widget" id="modes-transfer">
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;">TRYBY</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;margin-bottom:8px;" data-i18n="cfg_modes_widget_title">TRYBY</div>
           <div class="tw-body">
             <div class="tw-col">
-              <div class="tw-col-header">Widoczne <span class="tw-count" id="modes-transfer-sel-count">0</span></div>
+              <div class="tw-col-header"><span data-i18n="tw_visible_lbl">Widoczne</span> <span class="tw-count" id="modes-transfer-sel-count">0</span></div>
               <div class="tw-list" id="modes-transfer-selected" data-side="selected"></div>
-              <div class="tw-hint">Kliknij dwukrotnie aby usunąć</div>
+              <div class="tw-hint" data-i18n="tw_hint_remove">Kliknij dwukrotnie aby usunąć</div>
             </div>
             <div class="tw-buttons">
-              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','selected')">«« Wszystkie</button>
-              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','selected')">« Dodaj</button>
-              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','available')">Usuń »</button>
-              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','available')">Wszystkie »»</button>
+              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','selected')" data-i18n="tw_btn_all_left">«« Wszystkie</button>
+              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','selected')" data-i18n="tw_btn_add">« Dodaj</button>
+              <button class="tw-btn" onclick="_twMoveSelected('modes-transfer','available')" data-i18n="tw_btn_remove">Usuń »</button>
+              <button class="tw-btn" onclick="_twMoveAll('modes-transfer','available')" data-i18n="tw_btn_all_right">Wszystkie »»</button>
               <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
-                <button class="tw-btn" onclick="_twMoveUp('modes-transfer')">▲ Wyżej</button>
-                <button class="tw-btn" onclick="_twMoveDown('modes-transfer')">▼ Niżej</button>
+                <button class="tw-btn" onclick="_twMoveUp('modes-transfer')" data-i18n="tw_btn_up">▲ Wyżej</button>
+                <button class="tw-btn" onclick="_twMoveDown('modes-transfer')" data-i18n="tw_btn_down">▼ Niżej</button>
               </div>
             </div>
             <div class="tw-col">
-              <div class="tw-col-header">Dostępne <span class="tw-count" id="modes-transfer-avl-count">0</span></div>
+              <div class="tw-col-header"><span data-i18n="tw_available_lbl">Dostępne</span> <span class="tw-count" id="modes-transfer-avl-count">0</span></div>
               <div class="tw-list" id="modes-transfer-available" data-side="available"></div>
-              <div class="tw-hint">Kliknij dwukrotnie aby dodać</div>
+              <div class="tw-hint" data-i18n="tw_hint_add">Kliknij dwukrotnie aby dodać</div>
             </div>
           </div>
         </div>
 
         <!-- Przypisanie filtrów do trybów cyfrowych -->
         <div style="margin-top:14px;border:1px solid var(--border);border-radius:4px;padding:10px 12px;">
-          <div style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:2px;margin-bottom:10px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--amber);letter-spacing:2px;margin-bottom:10px;" data-i18n="cfg_mode_filter_hdr">
             DOMYŚLNY FILTR DLA TRYBU
           </div>
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:8px;line-height:1.8;">
+          <div data-i18n-html="cfg_mode_filter_desc" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:8px;line-height:1.8;">
             Gdy użytkownik przełączy tryb, serwer automatycznie ustawi wybrany filtr.<br>
             Puste = brak automatycznej zmiany filtra.
           </div>
@@ -1614,7 +1614,7 @@
         </div>
       </div>
       <div style="padding:0 12px 12px;">
-        <button class="save-btn" onclick="AdminBands.saveModes()">ZAPISZ TRYBY I FILTRY</button>
+        <button class="save-btn" onclick="AdminBands.saveModes()" data-i18n="cfg_save_modes_btn">ZAPISZ TRYBY I FILTRY</button>
       </div>
     </div>
 
@@ -2559,21 +2559,21 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608180001"></script>
+<script src="js/i18n.js?v=202608180002"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
 <script src="js/radiofunctions.js?v=202606180504"></script>
 <script src="js/ui.js?v=202608180001"></script>
-<script src="js/settings.js?v=202606180504"></script>
+<script src="js/settings.js?v=202608180001"></script>
 <script src="js/tx_eq.js?v=202608170001"></script>
 <script src="js/relay_ui.js?v=202606300001"></script>
 <script src="js/dxcluster.js?v=202606300001"></script>
-<script src="js/audio_autodetect.js?v=202608170001"></script>
-<script src="js/com_bridge.js?v=202607040001"></script>
+<script src="js/audio_autodetect.js?v=202608180001"></script>
+<script src="js/com_bridge.js?v=202608180001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
 <script src="js/rotormini.js?v=202608170001"></script>
-<script src="js/admin.js?v=202608160003"></script>
+<script src="js/admin.js?v=202608180001"></script>
 <script src="js/admin_status.js?v=202608160001"></script>
 <script src="js/profile_audio.js?v=202608170001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
@@ -3190,6 +3190,7 @@ function _renderOpPanel() {
   if (btnTake)    btnTake.style.display    = isFree ? '' : 'none';
   if (btnRelease) btnRelease.style.display = isHolder ? '' : 'none';
   if (btnRequest) {
+    btnRequest.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
     btnRequest.style.display = (!isFree && !isHolder) ? '' : 'none';
     btnRequest.textContent   = hasReq ? I18n.t('request_sent_short') : I18n.t('request_trx_btn');
     btnRequest.disabled      = hasReq;
@@ -3494,7 +3495,7 @@ function _selectByFuzzyName(selectEl, wanted) {
 async function _audioDeviceRefresh() {
   console.log('[audio-cfg] _audioDeviceRefresh() start');
   const st = document.getElementById('cfg-audio-status');
-  if (st) st.textContent = 'Ładowanie kart...';
+  if (st) st.textContent = I18n.t('cfg_loading_cards');
   try {
     const r = await fetch('/api/audio/enumerate');
     const d = await r.json();
@@ -3514,13 +3515,13 @@ async function _audioDeviceRefresh() {
     // wygladalo jak "zapomniana" karta mimo ze config.json ma ja poprawnie.
     if (!rxList.length && !txList.length && (rx.options.length > 1 || tx.options.length > 1)) {
       console.warn('[audio-cfg] _audioDeviceRefresh: pusta odpowiedz enumerate mimo istniejacej listy - zachowuje poprzednia liste, pomijam wyczyszczenie');
-      if (st) st.textContent = `${d.source} — 0 RX, 0 TX (odpowiedz pusta, zachowano poprzednia liste)`;
+      if (st) st.textContent = I18n.t('cfg_empty_response_kept').replace('{source}', d.source);
       return;
     }
 
     const curRx = rx.value, curTx = tx.value;
-    rx.innerHTML = '<option value="">— domyślna —</option>';
-    tx.innerHTML = '<option value="">— domyślna —</option>';
+    rx.innerHTML = `<option value="">${I18n.t('cfg_default_dash')}</option>`;
+    tx.innerHTML = `<option value="">${I18n.t('cfg_default_dash')}</option>`;
 
     (d.devices?.rx || []).forEach(name => {
       const o = document.createElement('option');
@@ -3535,7 +3536,7 @@ async function _audioDeviceRefresh() {
     _selectByFuzzyName(rx, curRx);
     _selectByFuzzyName(tx, curTx);
 
-    if (st) st.textContent = `${d.source} — ${(d.devices?.rx||[]).length} RX, ${(d.devices?.tx||[]).length} TX`;
+    if (st) st.textContent = I18n.t('cfg_cards_summary').replace('{source}', d.source).replace('{rx}', (d.devices?.rx||[]).length).replace('{tx}', (d.devices?.tx||[]).length);
     console.log('[audio-cfg] _audioDeviceRefresh() koniec: rx.value=', rx.value, 'tx.value=', tx.value,
                 'opcje rx=', Array.from(rx.options).map(o=>o.value), 'opcje tx=', Array.from(tx.options).map(o=>o.value));
   } catch(e) {
@@ -3589,7 +3590,7 @@ async function _audioDeviceSave() {
   const tvSsbEl = document.getElementById('cfg-tx-volume-ssb');
   const tvSsb = tvSsbEl ? parseFloat(tvSsbEl.value) : null;
   const st = document.getElementById('cfg-audio-status');
-  if (st) st.textContent = 'Zapisywanie...';
+  if (st) st.textContent = I18n.t('cfg_saving');
   try {
     const payload = {rxDevice: rx, txDevice: tx, bitrate: br};
     if (tv !== null && !isNaN(tv)) payload.txVolume = tv;
@@ -3600,8 +3601,8 @@ async function _audioDeviceSave() {
       body: JSON.stringify(payload)
     });
     const d = await r.json();
-    if (st) st.textContent = d.ok ? '✓ Zapisano i zastosowano' : '✗ ' + d.error;
-    if (d.ok) UI.showToast('Karta audio + TX Volume zapisane — Rust RX zrestartuje się');
+    if (st) st.textContent = d.ok ? I18n.t('cfg_saved_applied') : '✗ ' + d.error;
+    if (d.ok) UI.showToast(I18n.t('cfg_toast_audio_saved'));
   } catch(e) {
     if (st) st.textContent = '✗ ' + e.message;
   }

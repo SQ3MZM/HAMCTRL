@@ -186,6 +186,10 @@ function updateUI(rot) {
   // Badge
   const badge = document.getElementById('rot-status-badge');
   if (badge) {
+    // Usun data-i18n statycznego HTML - inaczej kolejny I18n.setLang()
+    // nadpisze ten badge z powrotem na "brak" niezaleznie od realnego stanu
+    // (SIM/OK/moving), bo apply() dziala po calym dokumencie po atrybucie.
+    badge.removeAttribute('data-i18n');
     if (!rot.connected&&!rot.sim) { badge.textContent=I18n.t('rotator_none'); badge.style.color='var(--red)'; }
     else if (rot.sim)             { badge.textContent='● SIM';  badge.style.color='var(--amber,#f0b429)'; }
     else if (_moving)             { badge.textContent=I18n.t('rotator_moving'); badge.style.color='var(--amber,#f0b429)'; }

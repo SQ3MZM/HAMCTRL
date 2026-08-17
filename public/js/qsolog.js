@@ -251,7 +251,7 @@ function openNew() {
   toggleSatFields(false);
 
   const title = document.getElementById('log-modal-title');
-  if (title) title.textContent = I18n.t('log_modal_new_title');
+  if (title) { title.removeAttribute('data-i18n'); title.textContent = I18n.t('log_modal_new_title'); }
   const modal = document.getElementById('log-modal');
   if (modal) modal.style.display = 'flex';
   document.getElementById('qso-call')?.focus();
@@ -299,7 +299,7 @@ async function openEdit(id) {
     if (satChk) satChk.checked = isSat;
     toggleSatFields(isSat);
     const title = document.getElementById('log-modal-title');
-    if (title) title.textContent = I18n.t('log_modal_edit_title');
+    if (title) { title.removeAttribute('data-i18n'); title.textContent = I18n.t('log_modal_edit_title'); }
     const modal = document.getElementById('log-modal');
     if (modal) modal.style.display = 'flex';
   } catch(e) {
