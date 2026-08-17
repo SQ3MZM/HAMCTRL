@@ -217,11 +217,16 @@ function initOpusDecoder() {
 // skonczy sie poprzednia ramka.
 let _nextAudioTime = 0;
 let _aheadAvg = 0;
-const AUDIO_LATENCY = 0.18;  // 180ms cel — maly zapas wiecej niz 150, amortyzuje
-                             // czkawki LTE (zmienny rytm pakietow). Na swiatlowodzie
-                             // tez OK — RCForb i tak trzyma 200-300ms.
+// POPRAWKA 2026-08-17: 180ms dawalo PRAWIE ZERO zapasu wobec realnego jittera
+// zaobserwowanego na zywo przez usera przez tunel LTE (sq3mzmremote.duckdns.org)
+// - pojedynczy skok RTT 183ms (bez blokady JS, bez reakcji adaptacyjnego
+// bitrate w ham_audio.exe - za maly zeby przepelnic 5.12s bufor Rust) w
+// zupelnosci wystarczal zeby oproznic ten bufor i dac slyszalne przyciecie.
+// Podniesione do 260ms - dalej w udokumentowanym budzecie 200-300ms
+// (RCForb), ale z realnym zapasem na tego typu krotkie skoki.
+const AUDIO_LATENCY = 0.26;
 const _AUDIO_MIN = 0.05;
-const _AUDIO_MAX = 0.30;     // gorna granica — powyzej niej PRZYTNIJ bufor (nie rosnij)
+const _AUDIO_MAX = 0.40;     // gorna granica — powyzej niej PRZYTNIJ bufor (nie rosnij)
 let _audioBadgeAt = 0;       // throttle aktualizacji DOM (ramki leca co 20ms)
 
 function _updateAudioLatencyBadge() {
@@ -237,10 +242,10 @@ function _updateAudioLatencyBadge() {
   }
   const ms = Math.round(_aheadAvg * 1000);
   badge.textContent = ms + ' ms';
-  // Cel 180ms (AUDIO_LATENCY), twardy sufit 300ms (_AUDIO_MAX) — powyzej niego
+  // Cel 260ms (AUDIO_LATENCY), twardy sufit 400ms (_AUDIO_MAX) — powyzej niego
   // scheduler i tak przycina bufor, wiec czerwony = bufor stale dobija do sufitu.
-  badge.style.color = ms < 220 ? 'var(--green)' : ms < 300 ? 'var(--amber)' : 'var(--red)';
-  badge.style.borderColor = ms < 220 ? 'var(--green2)' : ms < 300 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
+  badge.style.color = ms < 300 ? 'var(--green)' : ms < 400 ? 'var(--amber)' : 'var(--red)';
+  badge.style.borderColor = ms < 300 ? 'var(--green2)' : ms < 400 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
 }
 
 function _scheduleAudioBuffer(audioBuffer) {
