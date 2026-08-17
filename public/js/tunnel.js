@@ -210,12 +210,6 @@ function modeChanged(mode) {
     b.style.background  = active ? 'rgba(184,201,143,0.08)' : 'var(--panel2)';
   });
 
-  // Otwórz collapse "zaawansowane" gdy wybrany tryb jest zaawansowany
-  // (żeby user widział że jego wybór jest widoczny)
-  const isAdvancedMode = (mode === 'named' || mode === 'staticip' || mode === 'customcert');
-  const advDetails = document.querySelector('#page-internet details');
-  if (advDetails && isAdvancedMode) advDetails.open = true;
-
   // Pokaż diagnostykę cloudflared tylko dla trybów Cloudflare
   const cfStatus = document.getElementById('tn-cf-status');
   if (cfStatus) {

@@ -1857,7 +1857,11 @@
       <div class="box-body" style="display:flex;flex-direction:column;gap:12px;">
         <input type="hidden" id="tn-mode" value="off">
 
-        <!-- Tryby podstawowe (3 najczęściej używane) -->
+        <!-- Wszystkie 6 trybow na wierzchu, plaska siatka. POPRAWKA: reszta byla
+             schowana w zwinietym <details>"TRYBY ZAAWANSOWANE" - user (admin)
+             sam mial problem ze znalezieniem trybow spoza pierwszej trojki
+             ("wyciagnij je na zewnatrz bo sam mialem problem z ich
+             znalezieniem"), wiec wszystkie sa teraz od razu widoczne. -->
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
 
           <button class="tn-mode-btn" data-mode="off" onclick="Tunnel.modeChanged('off')"
@@ -1888,16 +1892,8 @@
               <span style="color:var(--green);">Stały adres.</span>
             </div>
           </button>
-        </div>
 
-        <!-- Tryby zaawansowane (collapse — domyślnie ukryte) -->
-        <details style="border-top:1px dashed var(--border);padding-top:8px;">
-          <summary style="cursor:pointer;font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:1px;padding:4px 0;list-style:none;">
-            ▸ TRYBY ZAAWANSOWANE (własna domena, stałe IP, własny certyfikat)
-          </summary>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;">
-
-            <button class="tn-mode-btn" data-mode="named" onclick="Tunnel.modeChanged('named')"
+          <button class="tn-mode-btn" data-mode="named" onclick="Tunnel.modeChanged('named')"
               style="background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:12px 10px;cursor:pointer;text-align:left;transition:all 0.15s;">
               <div style="font-size:18px;margin-bottom:4px;">🌐</div>
               <div style="font-family:var(--mono);font-size:11px;color:var(--text);font-weight:bold;">CLOUDFLARE + DOMENA</div>
@@ -1923,8 +1919,7 @@
                 Masz już domenę i wykupiony certyfikat.
               </div>
             </button>
-          </div>
-        </details>
+        </div>
 
         <!-- POLA — Cloudflare named -->
         <div id="tn-named-fields" style="display:none;padding:12px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;">
@@ -2580,7 +2575,7 @@
 <script src="js/admin_status.js?v=202608160001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
 <script src="js/relay_admin.js?v=202606300002"></script>
-<script src="js/tunnel.js?v=202608160002"></script>
+<script src="js/tunnel.js?v=202608170001"></script>
 <script src="js/dxcc.js?v=202608160001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
