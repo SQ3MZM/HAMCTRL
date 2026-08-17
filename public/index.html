@@ -130,8 +130,8 @@
             <option value="1">ATT ON</option>
           </select>
         </div>
-        <button id="tx-mic-btn" class="audio-toggle-btn" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
-          onclick="WS.isTxActive() ? (WS.stopTX(), this.textContent='🎤 Nadawanie TX — mikrofon', this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent='⏹ Zatrzymaj TX mikrofon'; this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
+        <button id="tx-mic-btn" class="audio-toggle-btn" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
+          onclick="WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
           🎤 Nadawanie TX — mikrofon
         </button>
         <!-- TX GAIN z dynamicznym VU metrem -->
@@ -260,7 +260,7 @@
       <div id="quick-log-bar" style="display:flex;align-items:center;gap:8px;
         padding:5px 10px;border-bottom:1px solid var(--border);background:var(--panel2);">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);
-          letter-spacing:1px;flex-shrink:0;">LOG QSO</span>
+          letter-spacing:1px;flex-shrink:0;" data-i18n="tab_log">LOG QSO</span>
         <input type="text" id="qlog-call" placeholder="CALL"
           style="font-family:var(--mono);font-size:12px;text-transform:uppercase;
           width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
@@ -350,7 +350,7 @@
 
       <div class="tile-header">
         <span>ROTATOR</span>
-        <span id="rot-status-badge" style="font-family:var(--mono);font-size:9px;color:var(--dim);">● brak</span>
+        <span id="rot-status-badge" data-i18n="rotator_none" style="font-family:var(--mono);font-size:9px;color:var(--dim);">● brak</span>
       </div>
 
       <div class="rotator-inner">
@@ -366,7 +366,7 @@
 
         <div>
           <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;" data-i18n="rotator_target_lbl">CEL (stopnie lub lokator)</div>
-          <input id="rot-target-inp" type="text" class="rot-target-inp" placeholder="272 lub KO02"
+          <input id="rot-target-inp" type="text" class="rot-target-inp" data-i18n-placeholder="rotator_target_placeholder" placeholder="272 lub KO02"
             style="text-transform:uppercase;"
             onkeydown="if(event.key==='Enter')RotW.go()"
             oninput="RotW.onInput()">
@@ -407,32 +407,32 @@
       <div id="cw-macros-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:6px 8px;flex-shrink:0;">
         <!-- F1 -->
         <div class="cw-macro-card" id="cwm-1" title="" onclick="CW.sendMacro(1)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-1">CQ</span><span class="cw-macro-num">F1</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(1);event.stopPropagation()" title="Edytuj makro F1">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-1">CQ</span><span class="cw-macro-num">F1</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(1);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F1">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-1">CQ DE {MYCALL} K</div>
           </div>
         <!-- F2 -->
         <div class="cw-macro-card" id="cwm-2" title="" onclick="CW.sendMacro(2)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-2">RST</span><span class="cw-macro-num">F2</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(2);event.stopPropagation()" title="Edytuj makro F2">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-2">RST</span><span class="cw-macro-num">F2</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(2);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F2">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-2">UR 599 {NR} BK</div>
           </div>
         <!-- F3 -->
         <div class="cw-macro-card" id="cwm-3" title="" onclick="CW.sendMacro(3)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-3">73</span><span class="cw-macro-num">F3</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(3);event.stopPropagation()" title="Edytuj makro F3">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-3">73</span><span class="cw-macro-num">F3</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(3);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F3">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-3">73 DE {MYCALL} SK</div>
           </div>
         <!-- F4 -->
         <div class="cw-macro-card" id="cwm-4" title="" onclick="CW.sendMacro(4)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-4">QRZ?</span><span class="cw-macro-num">F4</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(4);event.stopPropagation()" title="Edytuj makro F4">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-4">QRZ?</span><span class="cw-macro-num">F4</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(4);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F4">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-4">QRZ? DE {MYCALL}</div>
           </div>
         <!-- F5 -->
         <div class="cw-macro-card" id="cwm-5" title="" onclick="CW.sendMacro(5)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-5">AGN?</span><span class="cw-macro-num">F5</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(5);event.stopPropagation()" title="Edytuj makro F5">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-5">AGN?</span><span class="cw-macro-num">F5</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(5);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F5">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-5">PSE AGN?</div>
           </div>
         <!-- F6 -->
         <div class="cw-macro-card" id="cwm-6" title="" onclick="CW.sendMacro(6)">
-          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-6">QSL</span><span class="cw-macro-num">F6</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(6);event.stopPropagation()" title="Edytuj makro F6">✎</button></div>
+          <div class="cw-macro-header"><span class="cw-macro-label" id="cwm-lbl-6">QSL</span><span class="cw-macro-num">F6</span><button class="cw-macro-edit-btn" onclick="CW.startEdit(6);event.stopPropagation()" data-i18n-title="cw_edit_macro_title" title="Edytuj makro F6">✎</button></div>
           <div class="cw-macro-text" id="cwm-txt-6">TU QSL 73</div>
           </div>
       </div>
@@ -464,27 +464,27 @@
             🔓 RADIO WOLNE
           </div>
           <div style="display:flex;gap:4px;">
-            <button id="op-btn-take" onclick="RadioLock.lockRadio()"
+            <button id="op-btn-take" onclick="RadioLock.lockRadio()" data-i18n="take_trx_btn"
               style="flex:1;background:rgba(184,201,143,0.1);border:1px solid var(--green2);
               border-radius:3px;color:var(--green);font-family:var(--mono);font-size:10px;
               padding:5px;cursor:pointer;letter-spacing:1px;">
               ▶ PRZEJMIJ TRX
             </button>
-            <button id="op-btn-release" onclick="RadioLock.releaseRadio()"
+            <button id="op-btn-release" onclick="RadioLock.releaseRadio()" data-i18n="release_trx_btn"
               style="flex:1;display:none;background:rgba(217,119,106,0.08);
               border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);
               font-family:var(--mono);font-size:10px;padding:5px;cursor:pointer;">
               ✕ ODDAJ TRX
             </button>
           </div>
-          <button id="op-btn-request" onclick="RadioLock.requestRadio()"
+          <button id="op-btn-request" onclick="RadioLock.requestRadio()" data-i18n="request_trx_btn"
             style="display:none;background:rgba(212,168,87,0.08);border:1px solid rgba(212,168,87,0.3);
             border-radius:3px;color:var(--amber);font-family:var(--mono);font-size:10px;
             padding:5px;cursor:pointer;letter-spacing:1px;">
             🙋 POPROŚ O TRX
           </button>
           <!-- Tylko admin -->
-          <button id="op-btn-force" onclick="RadioLock.forceRelease()"
+          <button id="op-btn-force" onclick="RadioLock.forceRelease()" data-i18n="force_release_btn"
             style="display:none;background:none;border:1px solid var(--border);
             border-radius:3px;color:var(--dim);font-family:var(--mono);font-size:9px;
             padding:3px;cursor:pointer;">
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608170002"></script>
+<script src="js/i18n.js?v=202608170003"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
@@ -2572,7 +2572,7 @@
 <script src="js/audio_autodetect.js?v=202608170001"></script>
 <script src="js/com_bridge.js?v=202607040001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
-<script src="js/rotormini.js?v=202608150001"></script>
+<script src="js/rotormini.js?v=202608170001"></script>
 <script src="js/admin.js?v=202608160003"></script>
 <script src="js/admin_status.js?v=202608160001"></script>
 <script src="js/profile_audio.js?v=202607020001"></script>
@@ -3088,26 +3088,26 @@ async function releaseRadio() {
   try {
     const r = await _api('/api/radio/release', 'POST', {});
     if (!r.ok) { window.UI?.showToast('✗ ' + r.error, 'error'); }
-  } catch(e) { window.UI?.showToast('✗ Błąd zwalniania radia', 'error'); }
+  } catch(e) { window.UI?.showToast(I18n.t('toast_release_error'), 'error'); }
 }
 
 async function requestRadio() {
   const btn = document.getElementById('op-btn-request');
-  if (btn) { btn.disabled = true; btn.textContent = '✋ Wysyłanie…'; }
+  if (btn) { btn.disabled = true; btn.textContent = I18n.t('request_sending'); }
   try {
     const r = await _api('/api/radio/request', 'POST', {});
     if (r.granted) {
-      window.UI?.showToast('✓ Masz teraz dostęp do TRX!');
+      window.UI?.showToast(I18n.t('toast_trx_granted'));
     } else {
-      window.UI?.showToast('✋ Prośba wysłana — operator zostanie powiadomiony');
+      window.UI?.showToast(I18n.t('toast_request_sent'));
       // Po 10s odblokuj przycisk — user może wysłać ponownie jeśli odrzucono
       setTimeout(() => {
-        if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ PONOWNIE'; }
+        if (btn) { btn.disabled = false; btn.textContent = I18n.t('request_trx_again_btn'); }
       }, 10000);
     }
   } catch(e) {
-    window.UI?.showToast('✗ Błąd wysyłania prośby', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ O TRX'; }
+    window.UI?.showToast(I18n.t('toast_request_error'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = I18n.t('request_trx_btn'); }
   }
 }
 
@@ -3115,7 +3115,7 @@ async function rejectRequest(fromUid) {
   try {
     const r = await _api('/api/radio/reject-request', 'POST', { uid: fromUid });
     if (!r.ok) window.UI?.showToast('✗ ' + (r.error || 'Błąd'), 'error');
-  } catch(e) { window.UI?.showToast('✗ Błąd odrzucania prośby', 'error'); }
+  } catch(e) { window.UI?.showToast(I18n.t('toast_reject_error'), 'error'); }
 }
 
 // Powiadomienie DLA PROSZĄCEGO gdy jego prośba zostanie odrzucona — bez tego
@@ -3123,9 +3123,9 @@ async function rejectRequest(fromUid) {
 function handleRejected(msg) {
   const myUid = window.AppState?.my_uid || window.CurrentUser?.id;
   if (String(msg.to_uid) !== String(myUid)) return;
-  window.UI?.showToast(`✗ Prośba o TRX odrzucona przez ${msg.by || '?'}`, 'error');
+  window.UI?.showToast(I18n.t('toast_request_rejected').replace('{by}', msg.by || '?'), 'error');
   const btn = document.getElementById('op-btn-request');
-  if (btn) { btn.disabled = false; btn.textContent = '🙋 POPROŚ PONOWNIE'; }
+  if (btn) { btn.disabled = false; btn.textContent = I18n.t('request_trx_again_btn'); }
 }
 
 async function forceRelease() {
@@ -3165,7 +3165,7 @@ function _renderOpPanel() {
         </span>
         ${isActive ? `<span style="font-family:var(--mono);font-size:8px;color:var(--green);letter-spacing:1px;">TRX</span>` : ''}
       </div>`;
-    }).join('') || `<div style="font-family:var(--mono);font-size:9px;color:var(--dim);padding:8px;text-align:center;">Brak połączeń</div>`;
+    }).join('') || `<div style="font-family:var(--mono);font-size:9px;color:var(--dim);padding:8px;text-align:center;">${I18n.t('no_connections')}</div>`;
   }
   if (count) count.textContent = _state.online.length;
 
@@ -3173,9 +3173,9 @@ function _renderOpPanel() {
   const status = document.getElementById('op-lock-status');
   if (status) {
     if (isFree) {
-      status.innerHTML = '<span style="color:var(--green)">🔓 RADIO WOLNE</span>';
+      status.innerHTML = `<span style="color:var(--green)">${I18n.t('radio_free')}</span>`;
     } else if (isHolder) {
-      status.innerHTML = '<span style="color:var(--green)">🎙 MASZ TRX</span>';
+      status.innerHTML = `<span style="color:var(--green)">${I18n.t('you_have_trx')}</span>`;
     } else {
       status.innerHTML = `<span style="color:var(--amber)">🔒 ${_state.callsign || _state.username || '?'}</span>`;
     }
@@ -3191,7 +3191,7 @@ function _renderOpPanel() {
   if (btnRelease) btnRelease.style.display = isHolder ? '' : 'none';
   if (btnRequest) {
     btnRequest.style.display = (!isFree && !isHolder) ? '' : 'none';
-    btnRequest.textContent   = hasReq ? '✋ Prośba wysłana…' : '🙋 POPROŚ O TRX';
+    btnRequest.textContent   = hasReq ? I18n.t('request_sent_short') : I18n.t('request_trx_btn');
     btnRequest.disabled      = hasReq;
   }
   if (btnForce)   btnForce.style.display   = (isAdmin && _state.locked && !isHolder) ? '' : 'none';

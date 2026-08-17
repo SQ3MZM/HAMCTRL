@@ -186,9 +186,9 @@ function updateUI(rot) {
   // Badge
   const badge = document.getElementById('rot-status-badge');
   if (badge) {
-    if (!rot.connected&&!rot.sim) { badge.textContent='✗ brak'; badge.style.color='var(--red)'; }
+    if (!rot.connected&&!rot.sim) { badge.textContent=I18n.t('rotator_none'); badge.style.color='var(--red)'; }
     else if (rot.sim)             { badge.textContent='● SIM';  badge.style.color='var(--amber,#f0b429)'; }
-    else if (_moving)             { badge.textContent='↻ ruch'; badge.style.color='var(--amber,#f0b429)'; }
+    else if (_moving)             { badge.textContent=I18n.t('rotator_moving'); badge.style.color='var(--amber,#f0b429)'; }
     else                          { badge.textContent='● OK';   badge.style.color='var(--green)'; }
   }
 
