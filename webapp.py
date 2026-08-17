@@ -6318,7 +6318,7 @@ class App:
             # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
             # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
             # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-17-AUDIO-DEVICE-STATUS-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-17-INDEXHTML-NOCACHE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
 
@@ -7796,12 +7796,25 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                 _STATIC_CACHE[key] = entry
                 _, raw, gz, _, etag = entry
 
+            # HTML (index.html/login.html) NIE MOZE dostac dlugiego max-age —
+            # to WLASNIE ten dokument decyduje, ktora wersja JS/CSS sie
+            # zaladuje (przez ?v=... w <script src>). Z max-age=3600 dla .html
+            # przegladarka mogla przez cala godzine serwowac STARY index.html
+            # (wskazujacy na STARE ?v= plikow JS) z wlasnego cache, NAWET po
+            # "twardym" odswiezeniu jesli akurat nie zresetowalo cache HTTP —
+            # zywy przypadek: user mial poprawiony kod na serwerze/w EXE
+            # (zweryfikowane wprost z archiwum), a mimo to widzial stare
+            # zachowanie w przegladarce. Krotkie assety (.js/.css) z ?v=
+            # bezpiecznie zostaja dlugo cache'owane (nowa wersja = nowy URL),
+            # ale sam .html musi byc zawsze rewalidowany.
+            _cc = "no-cache" if ext in (".html", ".htm") else "public, max-age=3600, must-revalidate"
+
             # If-None-Match — HTTP 304 (client cache hit)
             client_etag = request.headers.get("If-None-Match", "")
             if client_etag == etag:
                 return web.Response(status=304, headers={
                     "ETag": etag,
-                    "Cache-Control": "public, max-age=3600, must-revalidate",
+                    "Cache-Control": _cc,
                 })
 
             # Wybierz body: gzip jesli klient akceptuje i mamy pre-compressed
@@ -7809,7 +7822,7 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             body = raw
             headers = {
                 "ETag": etag,
-                "Cache-Control": "public, max-age=3600, must-revalidate",
+                "Cache-Control": _cc,
                 "Vary": "Accept-Encoding",
             }
             if gz is not None and "gzip" in accept_enc.lower():
