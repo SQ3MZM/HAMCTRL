@@ -13,13 +13,13 @@
 async function load() {
   const box = document.getElementById('hamlib-slots');
   if (!box) return;
-  box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Ładowanie...</div>`;
+  box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">${I18n.t('settings_loading')}</div>`;
   try {
     const r = await fetch('/api/hamlib/status');
     const d = await r.json();
     _render(d.servers || []);
   } catch (e) {
-    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--red);">Błąd ładowania statusu</div>`;
+    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--red);">${I18n.t('hamlib_load_error')}</div>`;
   }
 }
 
@@ -31,19 +31,20 @@ function _render(servers) {
   if (saveBtn) saveBtn.style.display = isAdmin ? '' : 'none';
 
   if (!servers.length) {
-    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Brak skonfigurowanych portów.</div>`;
+    box.innerHTML = `<div style="font-family:var(--mono);font-size:10px;color:var(--dim);">${I18n.t('hamlib_no_ports')}</div>`;
     return;
   }
 
   box.innerHTML = servers.map((s, i) => {
+    const clientWord = s.clients === 1 ? I18n.t('hamlib_client_singular') : I18n.t('hamlib_client_plural');
     const running = s.running
-      ? `<span style="color:var(--green);">● aktywny</span> · ${s.clients || 0} klient${s.clients === 1 ? '' : 'ów'}`
-      : `<span style="color:var(--dim);">— wyłączony —</span>`;
+      ? `<span style="color:var(--green);">● ${I18n.t('hamlib_active')}</span> · ${s.clients || 0} ${clientWord}`
+      : `<span style="color:var(--dim);">${I18n.t('hamlib_disabled')}</span>`;
     if (isAdmin) {
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;">
           <input type="checkbox" data-slot="${i}" class="hamlib-enabled" ${s.enabled ? 'checked' : ''}
-            title="Włącz/wyłącz ten port">
+            title="${I18n.t('hamlib_toggle_port_title')}">
           <input type="number" data-slot="${i}" class="hamlib-port" value="${s.port}" min="1024" max="65535"
             style="width:70px;font-family:var(--mono);font-size:11px;">
           <input type="text" data-slot="${i}" class="hamlib-label" value="${_esc(s.label || '')}"
@@ -81,7 +82,7 @@ async function save() {
     if (el.classList.contains('hamlib-label'))   bySlot[i].label   = el.value;
   });
   const servers = Object.keys(bySlot).sort((a, b) => a - b).map(k => bySlot[k]);
-  if (msg) msg.textContent = 'zapisywanie...';
+  if (msg) msg.textContent = I18n.t('hamlib_saving');
   try {
     const r = await fetch('/api/hamlib/config', {
       method: 'POST',
@@ -89,10 +90,10 @@ async function save() {
       body: JSON.stringify({ servers }),
     });
     const d = await r.json();
-    if (msg) msg.textContent = d.message || (d.ok ? '✓ zapisano' : (d.error || 'błąd'));
+    if (msg) msg.textContent = d.message || (d.ok ? I18n.t('settings_saved_short') : (d.error || I18n.t('status_error_generic')));
     await load();
   } catch (e) {
-    if (msg) msg.textContent = 'błąd zapisu';
+    if (msg) msg.textContent = I18n.t('settings_save_error_plain');
   }
 }
 

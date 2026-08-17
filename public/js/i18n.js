@@ -3,9 +3,12 @@
  *
  * Static text: mark an element with data-i18n="key" (replaces textContent),
  * data-i18n-title="key" (replaces title attribute), or
- * data-i18n-placeholder="key" (replaces placeholder attribute). Call
- * I18n.apply() after injecting new HTML dynamically (e.g. after building a
- * list of rows) to translate the new nodes too.
+ * data-i18n-placeholder="key" (replaces placeholder attribute). For strings
+ * with inline HTML formatting (e.g. <b>) use data-i18n-html="key" instead of
+ * data-i18n — sets innerHTML. Only for trusted, hardcoded dictionary strings,
+ * never for anything derived from user input. Call I18n.apply() after
+ * injecting new HTML dynamically (e.g. after building a list of rows) to
+ * translate the new nodes too.
  *
  * Dynamic text (toasts, JS-built strings): call I18n.t('key') directly.
  *
@@ -68,6 +71,71 @@ window.I18N_STRINGS = {
     cw_edit_macro_title: "Edytuj makro",
     rotator_none: "✗ brak",
     rotator_moving: "↻ ruch",
+
+    // ── USTAWIENIA tab ──
+    settings_save_btn: "ZAPISZ",
+    settings_loading: "Ładowanie…",
+    status_checking: "sprawdzanie…",
+    status_error_generic: "błąd",
+    status_no_response: "brak odpowiedzi",
+    settings_saved_short: "✓ zapisano",
+    settings_save_error_plain: "błąd zapisu",
+
+    // COM BRIDGE
+    settings_combridge_hdr: "🔌 ZDALNY DOSTĘP CAT — CW Skimmer, HRD, Logger32",
+    settings_combridge_desc: "Pobierz aplikację <b style=\"color:var(--fg);\">HAM RADIO CTRL</b> i używaj zdalnego radia w programach CAT tak jakby było podłączone lokalnie. Masz <b style=\"color:var(--green);\">2 niezależne porty</b> — np. CW Skimmer i HRD jednocześnie.",
+    settings_combridge_warn: "<b style=\"color:var(--amber);\">Uwaga:</b> zmiana częstotliwości/trybu przez CAT wymaga przejęcia radia (blokady). Bez blokady możesz tylko <b>odczytywać</b> stan radia (podgląd freq w programie). Numery COM na Twoim PC mogą się różnić — sprawdź w oknie aplikacji.",
+    settings_combridge_download: "⬇️ POBIERZ MOST COM (Windows)",
+    settings_combridge_winreq: "Windows 10/11 · ~25 MB · zawiera com0com",
+
+    // CLOUDLOG / WAVELOG
+    settings_cloudlog_status_title: "Kliknij aby przetestować połączenie",
+    settings_cloudlog_status_default: "nie sprawdzono",
+    settings_cl_url_lbl: "Adres serwera",
+    settings_cl_apikey_qso_lbl: "API Key — logowanie QSO",
+    settings_cl_apikey_qso_ph: "klucz API dla QSO",
+    settings_cl_stationid_ph: "ID stacji",
+    settings_cl_apikey_radio_lbl: "API Key — częstotliwość live",
+    settings_cl_apikey_radio_ph: "klucz API dla live freq/mode",
+    settings_cl_live_checkbox: "Wysyłaj freq+mode automatycznie (co 5s)",
+    settings_test_connection_btn: "TEST POŁĄCZENIA",
+    toast_cloudlog_saved: "✓ CloudLog: ustawienia zapisane",
+    toast_cloudlog_save_error: "✗ Błąd zapisu ustawień",
+    cloudlog_fill_url_key: "Uzupełnij adres i API Key QSO",
+    cloudlog_connected_default: "połączono",
+    toast_cloudlog_qso_sent: "✓ QSO wysłane do CloudLog",
+    toast_cloudlog_no_connection: "✗ CloudLog: brak połączenia",
+
+    // WYSZUKIWANIE ZNAKÓW (QRZ.com / HamQTH)
+    settings_lookup_hdr: "🔍 WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH",
+    settings_lookup_desc: "Przy logowaniu QSO ikonka 🔍 przy polu ZNAK spróbuje pobrać imię/QTH/kraj drugiej stacji — najpierw z QRZ.com (jeśli skonfigurowane), potem HamQTH. Wymaga <b style=\"color:var(--fg);\">Twojego własnego</b> konta w tych serwisach (QRZ: płatna subskrypcja \"XML Data\" · HamQTH: darmowe konto).",
+    settings_qrz_login_lbl: "QRZ.com — login",
+    settings_qrz_pass_lbl: "QRZ.com — hasło",
+    settings_hamqth_login_lbl: "HamQTH — login",
+    settings_hamqth_pass_lbl: "HamQTH — hasło",
+    ph_qrz_login: "login QRZ.com",
+    ph_qrz_pass: "hasło QRZ.com",
+    ph_hamqth_login: "login HamQTH",
+    ph_hamqth_pass: "hasło HamQTH",
+    cb_fill_login_pass: "uzupełnij login/hasło",
+    cb_connected: "✓ połączono",
+    cb_no_response: "✗ brak odpowiedzi",
+    toast_lookup_saved: "✓ Ustawienia lookupu zapisane",
+
+    // WIRTUALNE RADIO (Hamlib NET rigctl)
+    settings_virtual_radio_hdr: "WIRTUALNE RADIO — ZEWNĘTRZNE PROGRAMY",
+    settings_virtual_radio_desc: "Emulacja <b>Hamlib NET rigctl</b> (rigctld) — 3 niezależne serwery TCP.<br>Każdy port to osobne \"wirtualne radio\" do którego podłączasz zewnętrzny program.<br><span style=\"color:var(--green);\">WSJT-X / Log4OM / N1MM / CW Skimmer / DXKeeper / HRD:</span> Rig → <b>Hamlib NET rigctl</b> → host: <b>&lt;IP serwera&gt;</b> → port: <b>4532</b>",
+    settings_virtual_radio_save_btn: "ZAPISZ KONFIGURACJĘ",
+    settings_virtual_radio_refresh_btn: "↻ ODŚWIEŻ STATUS",
+    settings_virtual_radio_howto_hdr: "Jak podłączyć program zewnętrzny:",
+    hamlib_load_error: "Błąd ładowania statusu",
+    hamlib_no_ports: "Brak skonfigurowanych portów.",
+    hamlib_active: "aktywny",
+    hamlib_client_singular: "klient",
+    hamlib_client_plural: "klientów",
+    hamlib_disabled: "— wyłączony —",
+    hamlib_toggle_port_title: "Włącz/wyłącz ten port",
+    hamlib_saving: "zapisywanie…",
   },
   en: {
     tab_radio: "RADIO",
@@ -122,6 +190,71 @@ window.I18N_STRINGS = {
     cw_edit_macro_title: "Edit macro",
     rotator_none: "✗ none",
     rotator_moving: "↻ moving",
+
+    // ── SETTINGS tab ──
+    settings_save_btn: "SAVE",
+    settings_loading: "Loading…",
+    status_checking: "checking…",
+    status_error_generic: "error",
+    status_no_response: "no response",
+    settings_saved_short: "✓ saved",
+    settings_save_error_plain: "save error",
+
+    // COM BRIDGE
+    settings_combridge_hdr: "🔌 REMOTE CAT ACCESS — CW Skimmer, HRD, Logger32",
+    settings_combridge_desc: "Download the <b style=\"color:var(--fg);\">HAM RADIO CTRL</b> app and use the remote radio in CAT programs as if it were connected locally. You get <b style=\"color:var(--green);\">2 independent ports</b> — e.g. CW Skimmer and HRD at the same time.",
+    settings_combridge_warn: "<b style=\"color:var(--amber);\">Note:</b> changing frequency/mode via CAT requires taking over the radio (lock). Without the lock you can only <b>read</b> the radio state (freq preview in the program). COM numbers on your PC may differ — check the app window.",
+    settings_combridge_download: "⬇️ DOWNLOAD COM BRIDGE (Windows)",
+    settings_combridge_winreq: "Windows 10/11 · ~25 MB · includes com0com",
+
+    // CLOUDLOG / WAVELOG
+    settings_cloudlog_status_title: "Click to test the connection",
+    settings_cloudlog_status_default: "not checked",
+    settings_cl_url_lbl: "Server address",
+    settings_cl_apikey_qso_lbl: "API Key — QSO logging",
+    settings_cl_apikey_qso_ph: "API key for QSO",
+    settings_cl_stationid_ph: "Station ID",
+    settings_cl_apikey_radio_lbl: "API Key — live frequency",
+    settings_cl_apikey_radio_ph: "API key for live freq/mode",
+    settings_cl_live_checkbox: "Send freq+mode automatically (every 5s)",
+    settings_test_connection_btn: "TEST CONNECTION",
+    toast_cloudlog_saved: "✓ CloudLog: settings saved",
+    toast_cloudlog_save_error: "✗ Error saving settings",
+    cloudlog_fill_url_key: "Fill in the address and QSO API Key",
+    cloudlog_connected_default: "connected",
+    toast_cloudlog_qso_sent: "✓ QSO sent to CloudLog",
+    toast_cloudlog_no_connection: "✗ CloudLog: no connection",
+
+    // CALLSIGN LOOKUP (QRZ.com / HamQTH)
+    settings_lookup_hdr: "🔍 CALLSIGN LOOKUP — QRZ.com / HamQTH",
+    settings_lookup_desc: "When logging a QSO, the 🔍 icon next to the CALL field will try to fetch the other station's name/QTH/country — first from QRZ.com (if configured), then HamQTH. Requires <b style=\"color:var(--fg);\">your own</b> account on these services (QRZ: paid \"XML Data\" subscription · HamQTH: free account).",
+    settings_qrz_login_lbl: "QRZ.com — login",
+    settings_qrz_pass_lbl: "QRZ.com — password",
+    settings_hamqth_login_lbl: "HamQTH — login",
+    settings_hamqth_pass_lbl: "HamQTH — password",
+    ph_qrz_login: "QRZ.com login",
+    ph_qrz_pass: "QRZ.com password",
+    ph_hamqth_login: "HamQTH login",
+    ph_hamqth_pass: "HamQTH password",
+    cb_fill_login_pass: "fill in login/password",
+    cb_connected: "✓ connected",
+    cb_no_response: "✗ no response",
+    toast_lookup_saved: "✓ Lookup settings saved",
+
+    // VIRTUAL RADIO (Hamlib NET rigctl)
+    settings_virtual_radio_hdr: "VIRTUAL RADIO — EXTERNAL PROGRAMS",
+    settings_virtual_radio_desc: "Emulates <b>Hamlib NET rigctl</b> (rigctld) — 3 independent TCP servers.<br>Each port is a separate \"virtual radio\" you connect an external program to.<br><span style=\"color:var(--green);\">WSJT-X / Log4OM / N1MM / CW Skimmer / DXKeeper / HRD:</span> Rig → <b>Hamlib NET rigctl</b> → host: <b>&lt;server IP&gt;</b> → port: <b>4532</b>",
+    settings_virtual_radio_save_btn: "SAVE CONFIGURATION",
+    settings_virtual_radio_refresh_btn: "↻ REFRESH STATUS",
+    settings_virtual_radio_howto_hdr: "How to connect an external program:",
+    hamlib_load_error: "Error loading status",
+    hamlib_no_ports: "No configured ports.",
+    hamlib_active: "active",
+    hamlib_client_singular: "client",
+    hamlib_client_plural: "clients",
+    hamlib_disabled: "— disabled —",
+    hamlib_toggle_port_title: "Enable/disable this port",
+    hamlib_saving: "saving…",
   },
 };
 
@@ -152,6 +285,9 @@ window.I18n = (function () {
     root = root || document;
     root.querySelectorAll("[data-i18n]").forEach((el) => {
       el.textContent = t(el.getAttribute("data-i18n"));
+    });
+    root.querySelectorAll("[data-i18n-html]").forEach((el) => {
+      el.innerHTML = t(el.getAttribute("data-i18n-html"));
     });
     root.querySelectorAll("[data-i18n-title]").forEach((el) => {
       el.title = t(el.getAttribute("data-i18n-title"));

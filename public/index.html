@@ -1626,9 +1626,9 @@
 
     <!-- COM BRIDGE — zdalny dostep CAT (info + download dla wszystkich userow) -->
     <div class="box" id="com-bridge-settings-card">
-      <div class="box-header">🔌 ZDALNY DOSTĘP CAT — CW Skimmer, HRD, Logger32</div>
+      <div class="box-header" data-i18n="settings_combridge_hdr">🔌 ZDALNY DOSTĘP CAT — CW Skimmer, HRD, Logger32</div>
       <div class="settings-inner">
-        <div style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
+        <div data-i18n-html="settings_combridge_desc" style="font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
           Pobierz aplikację <b style="color:var(--fg);">HAM RADIO CTRL</b> i używaj zdalnego radia
           w programach CAT tak jakby było podłączone lokalnie. Masz <b style="color:var(--green);">2 niezależne porty</b> —
           np. CW Skimmer i HRD jednocześnie.
@@ -1647,17 +1647,17 @@
           </div>
         </div>
 
-        <div style="padding:8px 10px;background:rgba(217,180,106,0.08);border-left:3px solid var(--amber);border-radius:4px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:12px;">
+        <div data-i18n-html="settings_combridge_warn" style="padding:8px 10px;background:rgba(217,180,106,0.08);border-left:3px solid var(--amber);border-radius:4px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;margin-bottom:12px;">
           <b style="color:var(--amber);">Uwaga:</b> zmiana częstotliwości/trybu przez CAT wymaga przejęcia radia (blokady).
           Bez blokady możesz tylko <b>odczytywać</b> stan radia (podgląd freq w programie).
           Numery COM na Twoim PC mogą się różnić — sprawdź w oknie aplikacji.
         </div>
 
-        <a href="/download/com-bridge" download
+        <a href="/download/com-bridge" download data-i18n="settings_combridge_download"
            style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
           ⬇️ POBIERZ MOST COM (Windows)
         </a>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
+        <div data-i18n="settings_combridge_winreq" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
           Windows 10/11 · ~25 MB · zawiera com0com
         </div>
       </div>
@@ -1667,35 +1667,35 @@
     <div class="box">
       <div class="box-header" style="display:flex;align-items:center;gap:8px;">
         <span>CLOUDLOG / WAVELOG</span>
-        <span id="cloudlog-status" title="Status polaczenia z CloudLog/WaveLog"
+        <span id="cloudlog-status" data-i18n-title="settings_cloudlog_status_title"
           style="width:10px;height:10px;border-radius:50%;background:var(--dim);
           display:inline-block;flex-shrink:0;box-shadow:0 0 0 0 transparent;
           transition:background 0.3s,box-shadow 0.3s;cursor:pointer;"
-          onclick="CloudLog.test()" title="Kliknij aby przetestowac polaczenie"></span>
-        <span id="cloudlog-status-text" style="font-family:var(--mono);font-size:9px;
+          onclick="CloudLog.test()"></span>
+        <span id="cloudlog-status-text" data-i18n="settings_cloudlog_status_default" style="font-family:var(--mono);font-size:9px;
           color:var(--dim);">nie sprawdzono</span>
       </div>
       <div class="settings-inner">
 
         <div class="sg">
-          <label>Adres serwera</label>
+          <label data-i18n="settings_cl_url_lbl">Adres serwera</label>
           <input type="text" id="cl-url" placeholder="https://cloudlog.example.com"
             style="flex:1;font-family:var(--mono);font-size:11px;">
         </div>
 
         <div class="sg">
-          <label>API Key — logowanie QSO</label>
+          <label data-i18n="settings_cl_apikey_qso_lbl">API Key — logowanie QSO</label>
           <div style="display:flex;gap:6px;flex:1;">
-            <input type="text" id="cl-api-key-qso" placeholder="klucz API dla QSO"
+            <input type="text" id="cl-api-key-qso" data-i18n-placeholder="settings_cl_apikey_qso_ph" placeholder="klucz API dla QSO"
               style="flex:1;font-family:var(--mono);font-size:11px;">
-            <input type="number" id="cl-station-id" placeholder="ID stacji" min="1"
+            <input type="number" id="cl-station-id" data-i18n-placeholder="settings_cl_stationid_ph" placeholder="ID stacji" min="1"
               style="width:80px;font-family:var(--mono);font-size:11px;">
           </div>
         </div>
 
         <div class="sg">
-          <label>API Key — częstotliwość live</label>
-          <input type="text" id="cl-api-key-radio" placeholder="klucz API dla live freq/mode"
+          <label data-i18n="settings_cl_apikey_radio_lbl">API Key — częstotliwość live</label>
+          <input type="text" id="cl-api-key-radio" data-i18n-placeholder="settings_cl_apikey_radio_ph" placeholder="klucz API dla live freq/mode"
             style="flex:1;font-family:var(--mono);font-size:11px;">
         </div>
 
@@ -1703,23 +1703,23 @@
           <label>Live freq/mode</label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;">
             <input type="checkbox" id="cl-live-enabled" onchange="CloudLog.setLive(this.checked)">
-            Wysyłaj freq+mode automatycznie (co 5s)
+            <span data-i18n="settings_cl_live_checkbox">Wysyłaj freq+mode automatycznie (co 5s)</span>
           </label>
         </div>
 
       </div>
       <div style="padding:0 12px 12px;display:flex;gap:8px;">
-        <button class="save-btn" style="flex:1;" onclick="CloudLog.save()">ZAPISZ</button>
+        <button class="save-btn" style="flex:1;" onclick="CloudLog.save()" data-i18n="settings_save_btn">ZAPISZ</button>
         <button class="save-btn" style="flex:0 0 auto;background:rgba(76,219,106,0.08);"
-          onclick="CloudLog.test()">TEST POŁĄCZENIA</button>
+          onclick="CloudLog.test()" data-i18n="settings_test_connection_btn">TEST POŁĄCZENIA</button>
       </div>
     </div>
 
     <!-- WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH.com, wlasne konto kazdego usera -->
     <div class="box">
-      <div class="box-header">🔍 WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH</div>
+      <div class="box-header" data-i18n="settings_lookup_hdr">🔍 WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH</div>
       <div class="settings-inner">
-        <div style="grid-column:1/-1;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
+        <div data-i18n-html="settings_lookup_desc" style="grid-column:1/-1;font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.5;">
           Przy logowaniu QSO ikonka 🔍 przy polu ZNAK spróbuje pobrać imię/QTH/kraj
           drugiej stacji — najpierw z QRZ.com (jeśli skonfigurowane), potem HamQTH.
           Wymaga <b style="color:var(--fg);">Twojego własnego</b> konta w tych serwisach
@@ -1727,17 +1727,17 @@
         </div>
 
         <div class="sg" style="min-width:0;">
-          <label>QRZ.com — login
+          <label><span data-i18n="settings_qrz_login_lbl">QRZ.com — login</span>
             <span id="cb-qrz-status" title="Status QRZ.com"
               style="margin-left:4px;font-size:9px;color:var(--dim);"></span>
           </label>
-          <input type="text" id="cb-qrz-user" placeholder="login QRZ.com"
+          <input type="text" id="cb-qrz-user" data-i18n-placeholder="ph_qrz_login" placeholder="login QRZ.com"
             style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11px;">
         </div>
         <div class="sg" style="min-width:0;">
-          <label>QRZ.com — hasło</label>
+          <label data-i18n="settings_qrz_pass_lbl">QRZ.com — hasło</label>
           <div style="display:flex;gap:6px;min-width:0;">
-            <input type="password" id="cb-qrz-pass" placeholder="hasło QRZ.com"
+            <input type="password" id="cb-qrz-pass" data-i18n-placeholder="ph_qrz_pass" placeholder="hasło QRZ.com"
               style="flex:1;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:11px;">
             <button class="save-btn" style="flex:0 0 auto;width:auto;padding:0 10px;white-space:nowrap;"
               onclick="Callbook.test('qrz')">TEST</button>
@@ -1745,17 +1745,17 @@
         </div>
 
         <div class="sg" style="min-width:0;">
-          <label>HamQTH — login
+          <label><span data-i18n="settings_hamqth_login_lbl">HamQTH — login</span>
             <span id="cb-hamqth-status" title="Status HamQTH"
               style="margin-left:4px;font-size:9px;color:var(--dim);"></span>
           </label>
-          <input type="text" id="cb-hamqth-user" placeholder="login HamQTH"
+          <input type="text" id="cb-hamqth-user" data-i18n-placeholder="ph_hamqth_login" placeholder="login HamQTH"
             style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:11px;">
         </div>
         <div class="sg" style="min-width:0;">
-          <label>HamQTH — hasło</label>
+          <label data-i18n="settings_hamqth_pass_lbl">HamQTH — hasło</label>
           <div style="display:flex;gap:6px;min-width:0;">
-            <input type="password" id="cb-hamqth-pass" placeholder="hasło HamQTH"
+            <input type="password" id="cb-hamqth-pass" data-i18n-placeholder="ph_hamqth_pass" placeholder="hasło HamQTH"
               style="flex:1;min-width:0;box-sizing:border-box;font-family:var(--mono);font-size:11px;">
             <button class="save-btn" style="flex:0 0 auto;width:auto;padding:0 10px;white-space:nowrap;"
               onclick="Callbook.test('hamqth')">TEST</button>
@@ -1763,15 +1763,15 @@
         </div>
       </div>
       <div style="padding:0 12px 12px;display:flex;gap:8px;align-items:center;">
-        <button class="save-btn" style="flex:1;" onclick="Callbook.save()">ZAPISZ</button>
+        <button class="save-btn" style="flex:1;" onclick="Callbook.save()" data-i18n="settings_save_btn">ZAPISZ</button>
         <span id="cb-save-msg" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
       </div>
     </div>
 
     <!-- WIRTUALNE RADIO — emulacja rigctld dla zewnętrznych programów -->
     <div class="box">
-      <div class="box-header">WIRTUALNE RADIO — ZEWNĘTRZNE PROGRAMY</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:2;">
+      <div class="box-header" data-i18n="settings_virtual_radio_hdr">WIRTUALNE RADIO — ZEWNĘTRZNE PROGRAMY</div>
+      <div data-i18n-html="settings_virtual_radio_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:2;">
         Emulacja <b>Hamlib NET rigctl</b> (rigctld) — 3 niezależne serwery TCP.<br>
         Każdy port to osobne "wirtualne radio" do którego podłączasz zewnętrzny program.<br>
         <span style="color:var(--green);">WSJT-X / Log4OM / N1MM / CW Skimmer / DXKeeper / HRD:</span>
@@ -1780,19 +1780,19 @@
 
       <div id="hamlib-slots" style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
         <!-- Wypełniane przez JS -->
-        <div style="font-family:var(--mono);font-size:10px;color:var(--dim);">Ładowanie...</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--dim);" data-i18n="settings_loading">Ładowanie...</div>
       </div>
 
       <div style="padding:0 12px 12px;display:flex;gap:8px;align-items:center;">
-        <button class="save-btn" id="hamlib-save-btn" onclick="HamlibUI.save()">ZAPISZ KONFIGURACJĘ</button>
+        <button class="save-btn" id="hamlib-save-btn" onclick="HamlibUI.save()" data-i18n="settings_virtual_radio_save_btn">ZAPISZ KONFIGURACJĘ</button>
         <button class="save-btn" style="background:none;border-color:var(--border);color:var(--dim);"
-          onclick="HamlibUI.load()">↻ ODŚWIEŻ STATUS</button>
+          onclick="HamlibUI.load()" data-i18n="settings_virtual_radio_refresh_btn">↻ ODŚWIEŻ STATUS</button>
         <span id="hamlib-msg" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
       </div>
 
       <div style="padding:0 12px 12px;border-top:1px solid var(--border);">
         <div style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:2;margin-top:8px;">
-          <b style="color:var(--text);">Jak podłączyć program zewnętrzny:</b><br>
+          <b style="color:var(--text);" data-i18n="settings_virtual_radio_howto_hdr">Jak podłączyć program zewnętrzny:</b><br>
           WSJT-X: <span style="color:var(--amber)">Settings → Radio → Rig: Hamlib NET rigctl → Network server: &lt;IP&gt; Port: 4532</span><br>
           Log4OM: <span style="color:var(--amber)">Settings → Rig → Hamlib NET rigctl → host: &lt;IP&gt; : 4533</span><br>
           N1MM+:  <span style="color:var(--amber)">Config → Configurer → Hamlib → NET rigctl → host:port</span><br>
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608170003"></script>
+<script src="js/i18n.js?v=202608170004"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
@@ -2656,9 +2656,9 @@
 </div>
 
 <script src="js/cw.js?v=202606250001"></script>
-<script src="js/cloudlog.js?v=202606250001"></script>
-<script src="js/hamlib_ui.js?v=202608160001"></script>
-<script src="js/callbook.js?v=202608160001"></script>
+<script src="js/cloudlog.js?v=202608170001"></script>
+<script src="js/hamlib_ui.js?v=202608170001"></script>
+<script src="js/callbook.js?v=202608170001"></script>
 <script src="js/qsolog.js?v=202608160005"></script>
 
 <script>

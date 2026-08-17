@@ -35,10 +35,10 @@ async function save() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cfg),
     });
-    if (msg) msg.textContent = '✓ zapisano';
-    window.UI?.showToast('✓ Ustawienia lookupu zapisane');
+    if (msg) msg.textContent = I18n.t('settings_saved_short');
+    window.UI?.showToast(I18n.t('toast_lookup_saved'));
   } catch (e) {
-    if (msg) msg.textContent = '✗ błąd zapisu';
+    if (msg) msg.textContent = '✗ ' + I18n.t('settings_save_error_plain');
   }
 }
 
@@ -48,10 +48,10 @@ async function test(service) {
   const username = _get(isQrz ? 'cb-qrz-user' : 'cb-hamqth-user');
   const password = _get(isQrz ? 'cb-qrz-pass' : 'cb-hamqth-pass');
   if (!username || !password) {
-    if (statusEl) { statusEl.textContent = 'uzupełnij login/hasło'; statusEl.style.color = 'var(--red)'; }
+    if (statusEl) { statusEl.textContent = I18n.t('cb_fill_login_pass'); statusEl.style.color = 'var(--red)'; }
     return;
   }
-  if (statusEl) { statusEl.textContent = 'sprawdzanie...'; statusEl.style.color = 'var(--dim)'; }
+  if (statusEl) { statusEl.textContent = I18n.t('status_checking'); statusEl.style.color = 'var(--dim)'; }
   try {
     const r = await fetch('/api/callbook/test', {
       method: 'POST',
@@ -60,11 +60,11 @@ async function test(service) {
     });
     const res = await r.json();
     if (statusEl) {
-      if (res.ok) { statusEl.textContent = '✓ połączono'; statusEl.style.color = 'var(--green)'; }
-      else { statusEl.textContent = '✗ ' + (res.error || 'błąd'); statusEl.style.color = 'var(--red)'; }
+      if (res.ok) { statusEl.textContent = I18n.t('cb_connected'); statusEl.style.color = 'var(--green)'; }
+      else { statusEl.textContent = '✗ ' + (res.error || I18n.t('status_error_generic')); statusEl.style.color = 'var(--red)'; }
     }
   } catch (e) {
-    if (statusEl) { statusEl.textContent = '✗ brak odpowiedzi'; statusEl.style.color = 'var(--red)'; }
+    if (statusEl) { statusEl.textContent = I18n.t('cb_no_response'); statusEl.style.color = 'var(--red)'; }
   }
 }
 

@@ -62,10 +62,10 @@ async function save() {
       headers: _hdr(true),
       body: JSON.stringify(_cfg),
     });
-    window.UI?.showToast('✓ CloudLog: ustawienia zapisane');
+    window.UI?.showToast(I18n.t('toast_cloudlog_saved'));
     if (_cfg.liveEnabled) _startLive(); else _stopLive();
   } catch(e) {
-    window.UI?.showToast('✗ Błąd zapisu ustawień', 'error');
+    window.UI?.showToast(I18n.t('toast_cloudlog_save_error'), 'error');
   }
 }
 
@@ -74,10 +74,10 @@ async function test() {
   const url    = document.getElementById('cl-url')?.value.trim();
   const apiKey = document.getElementById('cl-api-key-qso')?.value.trim();
   if (!url || !apiKey) {
-    _setStatus('error', 'Uzupełnij adres i API Key QSO');
+    _setStatus('error', I18n.t('cloudlog_fill_url_key'));
     return;
   }
-  _setStatus('pending', 'sprawdzanie...');
+  _setStatus('pending', I18n.t('status_checking'));
   try {
     const r = await fetch('/api/cloudlog/test', {
       method: 'POST',
@@ -86,12 +86,12 @@ async function test() {
     });
     const res = await r.json();
     if (res.ok) {
-      _setStatus('ok', res.message || 'połączono');
+      _setStatus('ok', res.message || I18n.t('cloudlog_connected_default'));
     } else {
-      _setStatus('error', res.error || 'błąd');
+      _setStatus('error', res.error || I18n.t('status_error_generic'));
     }
   } catch(e) {
-    _setStatus('error', 'brak odpowiedzi');
+    _setStatus('error', I18n.t('status_no_response'));
   }
 }
 
@@ -163,14 +163,14 @@ async function logQso(qso) {
     });
     const res = await r.json();
     if (res.ok) {
-      window.UI?.showToast('✓ QSO wysłane do CloudLog');
+      window.UI?.showToast(I18n.t('toast_cloudlog_qso_sent'));
       return true;
     } else {
-      window.UI?.showToast('✗ CloudLog: ' + (res.error || 'błąd'), 'error');
+      window.UI?.showToast('✗ CloudLog: ' + (res.error || I18n.t('status_error_generic')), 'error');
       return false;
     }
   } catch(e) {
-    window.UI?.showToast('✗ CloudLog: brak połączenia', 'error');
+    window.UI?.showToast(I18n.t('toast_cloudlog_no_connection'), 'error');
     return false;
   }
 }
