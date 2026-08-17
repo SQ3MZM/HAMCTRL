@@ -7,28 +7,32 @@
 'use strict';
 
 // ── Definicja uprawnień ───────────────────────────────────────────────────────
+// UWAGA: labelki tlumaczone leniwie funkcja _permLabel() (nie w momencie
+// definicji tablicy) - I18n moze jeszcze nie byc zainicjalizowane (jezyk
+// nieznany) gdy ten plik sie laduje, poza tym PERM_DEFS musi zawsze
+// odzwierciedlac AKTUALNY jezyk (badge w tabeli userow renderuje sie wielokrotnie).
 const PERM_DEFS = [
-  { key: 'ptt',      label: 'PTT — nadawanie',          group: 'radio'  },
-  { key: 'rfPower',  label: 'RF Power — moc TX',         group: 'radio'  },
-  { key: 'rfGain',   label: 'RF/AF Gain, SQL',           group: 'radio'  },
-  { key: 'mode',     label: 'Zmiana trybu (USB/CW…)',    group: 'radio'  },
-  { key: 'band',     label: 'Zmiana pasma',              group: 'radio'  },
-  { key: 'freq',     label: 'Strojenie częstotliwości',  group: 'radio'  },
-  { key: 'split',    label: 'Split VFO A/B',             group: 'radio'  },
-  { key: 'cw',       label: 'CW Keyer — wysyłanie',      group: 'radio'  },
-  { key: 'rotator',  label: 'Rotator — sterowanie',      group: 'sprzet' },
-  { key: 'log',      label: 'Log QSO — zapis',           group: 'system' },
-  { key: 'settings', label: 'Ustawienia serwera',        group: 'system' },
-  { key: 'admin',    label: 'Panel administratora',      group: 'system' },
+  { key: 'ptt',      get label() { return I18n.t('perm_ptt'); },      group: 'radio'  },
+  { key: 'rfPower',  get label() { return I18n.t('perm_rfpower'); },  group: 'radio'  },
+  { key: 'rfGain',   get label() { return I18n.t('perm_rfgain'); },   group: 'radio'  },
+  { key: 'mode',     get label() { return I18n.t('perm_mode'); },     group: 'radio'  },
+  { key: 'band',     get label() { return I18n.t('perm_band'); },     group: 'radio'  },
+  { key: 'freq',     get label() { return I18n.t('perm_freq'); },     group: 'radio'  },
+  { key: 'split',    get label() { return I18n.t('perm_split'); },    group: 'radio'  },
+  { key: 'cw',       get label() { return I18n.t('perm_cw'); },       group: 'radio'  },
+  { key: 'rotator',  get label() { return I18n.t('perm_rotator'); },  group: 'sprzet' },
+  { key: 'log',      get label() { return I18n.t('perm_log'); },      group: 'system' },
+  { key: 'settings', get label() { return I18n.t('perm_settings'); }, group: 'system' },
+  { key: 'admin',    get label() { return I18n.t('perm_admin'); },    group: 'system' },
   // Przekazniki Arduino (0-7) - kazdy przydzielany osobno
-  { key: 'relay_0',  label: 'Przekaźnik 0',              group: 'relay'  },
-  { key: 'relay_1',  label: 'Przekaźnik 1',              group: 'relay'  },
-  { key: 'relay_2',  label: 'Przekaźnik 2',              group: 'relay'  },
-  { key: 'relay_3',  label: 'Przekaźnik 3',              group: 'relay'  },
-  { key: 'relay_4',  label: 'Przekaźnik 4',              group: 'relay'  },
-  { key: 'relay_5',  label: 'Przekaźnik 5',              group: 'relay'  },
-  { key: 'relay_6',  label: 'Przekaźnik 6',              group: 'relay'  },
-  { key: 'relay_7',  label: 'Przekaźnik 7',              group: 'relay'  },
+  { key: 'relay_0',  get label() { return I18n.t('perm_relay_n').replace('{n}', 0); }, group: 'relay' },
+  { key: 'relay_1',  get label() { return I18n.t('perm_relay_n').replace('{n}', 1); }, group: 'relay' },
+  { key: 'relay_2',  get label() { return I18n.t('perm_relay_n').replace('{n}', 2); }, group: 'relay' },
+  { key: 'relay_3',  get label() { return I18n.t('perm_relay_n').replace('{n}', 3); }, group: 'relay' },
+  { key: 'relay_4',  get label() { return I18n.t('perm_relay_n').replace('{n}', 4); }, group: 'relay' },
+  { key: 'relay_5',  get label() { return I18n.t('perm_relay_n').replace('{n}', 5); }, group: 'relay' },
+  { key: 'relay_6',  get label() { return I18n.t('perm_relay_n').replace('{n}', 6); }, group: 'relay' },
+  { key: 'relay_7',  get label() { return I18n.t('perm_relay_n').replace('{n}', 7); }, group: 'relay' },
 ];
 
 const DEFAULT_PERMS = {
@@ -82,21 +86,21 @@ function renderUsers(users) {
       </td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--amber)">${_cs}</td>
       <td>
-        <div style="display:flex;flex-wrap:wrap;gap:2px;max-width:260px;">${permBadges || '<span style="font-size:10px;color:var(--dim)">brak</span>'}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:2px;max-width:260px;">${permBadges || `<span style="font-size:10px;color:var(--dim)">${I18n.t('adm_no_perms')}</span>`}</div>
       </td>
       <td>
         <span style="font-size:10px;color:${u.active?'var(--green)':'var(--red)'}">
-          ${u.active ? '● AKTYWNY' : '○ WYŁĄCZONY'}
+          ${u.active ? I18n.t('in_active') : I18n.t('in_stopped_badge')}
         </span>
       </td>
       <td>
         <div style="display:flex;gap:4px;">
-          <button class="admin-btn" onclick="Admin.editUser('${_uid}')" title="Edytuj">✏</button>
-          <button class="admin-btn" onclick="Admin.resetPwdDialog('${_uid}','${_uUn}')" title="Reset hasła">🔑</button>
-          <button class="admin-btn danger" onclick="Admin.toggleActive('${_uid}',${u.active})" title="${u.active?'Dezaktywuj':'Aktywuj'}">
+          <button class="admin-btn" onclick="Admin.editUser('${_uid}')" title="${I18n.t('adm_edit_title')}">✏</button>
+          <button class="admin-btn" onclick="Admin.resetPwdDialog('${_uid}','${_uUn}')" title="${I18n.t('adm_reset_pwd_title')}">🔑</button>
+          <button class="admin-btn danger" onclick="Admin.toggleActive('${_uid}',${u.active})" title="${u.active?I18n.t('adm_deactivate_title'):I18n.t('adm_activate_title')}">
             ${u.active ? '⏸' : '▶'}
           </button>
-          ${u.id !== window.CurrentUser?.id ? `<button class="admin-btn danger" onclick="Admin.deleteUser('${_uid}','${_uUn}')" title="Usuń">✕</button>` : ''}
+          ${u.id !== window.CurrentUser?.id ? `<button class="admin-btn danger" onclick="Admin.deleteUser('${_uid}','${_uUn}')" title="${I18n.t('adm_delete_title')}">✕</button>` : ''}
         </div>
       </td>
     </tr>`;
@@ -113,11 +117,11 @@ async function editUser(id) {
   const r = await fetch('/api/users', {
     headers: token ? {'Authorization': `Bearer ${token}`} : {}
   });
-  if (!r.ok) { UI.showToast('✗ Brak dostępu', 'error'); return; }
+  if (!r.ok) { UI.showToast(I18n.t('adm_no_access'), 'error'); return; }
   const data  = await r.json();
   const users = data.users || data;
   const u = users.find(x => String(x.id) === String(id));
-  if (!u) { UI.showToast('✗ Nie znaleziono użytkownika', 'error'); return; }
+  if (!u) { UI.showToast(I18n.t('adm_user_not_found'), 'error'); return; }
   _openModal(u);
 }
 
@@ -126,7 +130,9 @@ function _openModal(u) {
   if (!modal) return;
 
   const isNew = !u;
-  document.getElementById('modal-title').textContent = isNew ? 'Nowy użytkownik' : `Edytuj: ${u.username}`;
+  const titleEl = document.getElementById('modal-title');
+  titleEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+  titleEl.textContent = isNew ? I18n.t('adm_new_user_title') : I18n.t('adm_edit_user_title').replace('{username}', u.username);
   document.getElementById('user-id').value       = u?.id    || '';
   document.getElementById('uname').value         = u?.username || '';
   document.getElementById('upass').value         = '';
@@ -236,7 +242,7 @@ async function saveUser() {
   const locator  = document.getElementById('ulocator')?.value?.trim().toUpperCase();
   const email    = document.getElementById('uemail')?.value?.trim();
 
-  if (!username) { UI.showToast('Podaj login', 'error'); return; }
+  if (!username) { UI.showToast(I18n.t('adm_enter_login'), 'error'); return; }
 
   // Zbierz uprawnienia z checkboxów — admin dostaje wszystko
   const permissions = {};
@@ -262,7 +268,7 @@ async function saveUser() {
         body: JSON.stringify({ role, name, callsign, locator, email, permissions }),
       });
     } else {
-      if (!password) { UI.showToast('Podaj hasło', 'error'); return; }
+      if (!password) { UI.showToast(I18n.t('adm_enter_password'), 'error'); return; }
       r = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json',
@@ -271,7 +277,7 @@ async function saveUser() {
       });
     }
   } catch(e) {
-    UI.showToast('✗ Błąd sieci: ' + e.message, 'error');
+    UI.showToast(I18n.t('adm_network_error') + e.message, 'error');
     return;
   }
 
@@ -287,7 +293,7 @@ async function saveUser() {
 
   closeModal();
   loadUsers();
-  UI.showToast(id ? '✓ Użytkownik zaktualizowany' : '✓ Użytkownik dodany');
+  UI.showToast(id ? I18n.t('adm_user_updated') : I18n.t('adm_user_added'));
 
   // Jeśli admin edytował samego siebie — odśwież uprawnienia w UI natychmiast
   if (id && window.CurrentUser && String(window.CurrentUser.id) === String(id)) {
@@ -307,28 +313,28 @@ async function toggleActive(id, isActive) {
     body: JSON.stringify({ active: !isActive }),
   });
   const res = await r.json();
-  if (res.ok) { loadUsers(); UI.showToast(isActive ? 'Konto dezaktywowane' : 'Konto aktywowane'); }
+  if (res.ok) { loadUsers(); UI.showToast(isActive ? I18n.t('adm_account_deactivated') : I18n.t('adm_account_activated')); }
   else UI.showToast('✗ ' + res.error, 'error');
 }
 
 async function deleteUser(id, username) {
-  if (!await UI.confirmModal(`Usunąć użytkownika ${username}?`, { danger: true, okLabel: 'USUŃ' })) return;
+  if (!await UI.confirmModal(I18n.t('adm_confirm_delete_user').replace('{username}', username), { danger: true, okLabel: I18n.t('common_delete_btn') })) return;
   const r   = await fetch(`/api/users/${id}`, { method: 'DELETE' });
   const res = await r.json();
-  if (res.ok) { loadUsers(); UI.showToast(`✓ Usunięto ${username}`); }
+  if (res.ok) { loadUsers(); UI.showToast(I18n.t('adm_user_deleted').replace('{username}', username)); }
   else UI.showToast('✗ ' + res.error, 'error');
 }
 
 async function resetPwdDialog(id, username) {
-  const pwd = await UI.textPrompt(`NOWE HASŁO DLA ${username} (min. 8 znaków)`, '');
+  const pwd = await UI.textPrompt(I18n.t('adm_new_pwd_for').replace('{username}', username), '');
   if (!pwd) return;
-  if (pwd.length < 8) { UI.showToast('✗ Min. 8 znaków', 'error'); return; }
+  if (pwd.length < 8) { UI.showToast(I18n.t('profile_pwd_min_len'), 'error'); return; }
   fetch(`/api/users/${id}/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ newPassword: pwd }),
   }).then(r => r.json()).then(res => {
-    if (res.ok) UI.showToast(`✓ Hasło ${username} zresetowane`);
+    if (res.ok) UI.showToast(I18n.t('adm_pwd_reset_done').replace('{username}', username));
     else UI.showToast('✗ ' + res.error, 'error');
   });
 }
@@ -752,7 +758,7 @@ async function loadFt8Timers() {
     const el = document.getElementById('ft8t-global-dur');
     if (el) el.value = d.duration_min || 6;
     const st = document.getElementById('ft8t-global-status');
-    if (st) st.textContent = `✓ Aktywny — ${d.duration_min || 6} min dla wszystkich użytkowników`;
+    if (st) st.textContent = I18n.t('adm_timer_active').replace('{min}', d.duration_min || 6);
   } catch(e) { console.warn('[ft8timer] load:', e); }
 }
 
@@ -767,11 +773,11 @@ async function saveGlobalFt8Timer() {
     });
     const d = await r.json();
     if (d.ok) {
-      window.UI?.showToast(`✓ Timer FT8: ${dur} min dla wszystkich`);
+      window.UI?.showToast(I18n.t('adm_timer_saved_toast').replace('{min}', dur));
       const st = document.getElementById('ft8t-global-status');
-      if (st) st.textContent = `✓ Aktywny — ${dur} min dla wszystkich użytkowników`;
+      if (st) st.textContent = I18n.t('adm_timer_active').replace('{min}', dur);
     }
-  } catch(e) { window.UI?.showToast('✗ Błąd zapisu timera', 'error'); }
+  } catch(e) { window.UI?.showToast(I18n.t('adm_timer_save_error'), 'error'); }
 }
 
 // UWAGA: byla tu wczesniej DRUGA deklaracja "function saveFt8Timer(userId)"

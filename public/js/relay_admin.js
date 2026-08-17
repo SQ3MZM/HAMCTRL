@@ -24,7 +24,7 @@
       // Wypelnij UI
       document.getElementById('relay-enabled').checked = !!_config.enabled;
       const portSel = document.getElementById('relay-port');
-      portSel.innerHTML = '<option value="">(wybierz port)</option>';
+      portSel.innerHTML = `<option value="">${I18n.t('adm_choose_port')}</option>`;
       _ports.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.device;
@@ -36,7 +36,7 @@
       if (_config.port && !_ports.find(p => p.device === _config.port)) {
         const opt = document.createElement('option');
         opt.value = _config.port;
-        opt.textContent = _config.port + ' (niedostepny)';
+        opt.textContent = _config.port + I18n.t('adm_port_unavailable');
         opt.selected = true;
         portSel.appendChild(opt);
       }
@@ -46,15 +46,15 @@
       const badge = document.getElementById('relay-status-badge');
       if (badge) {
         if (data.connected) {
-          badge.textContent = '● PODŁĄCZONY';
+          badge.textContent = I18n.t('adm_relay_connected_badge');
           badge.style.color = 'var(--green)';
           badge.style.background = 'rgba(184,201,143,0.15)';
         } else if (_config.enabled) {
-          badge.textContent = '● BŁĄD POŁĄCZENIA';
+          badge.textContent = I18n.t('adm_relay_error_badge');
           badge.style.color = 'var(--red)';
           badge.style.background = 'rgba(217,119,106,0.15)';
         } else {
-          badge.textContent = '○ WYŁĄCZONY';
+          badge.textContent = I18n.t('in_stopped_badge');
           badge.style.color = 'var(--dim)';
         }
       }
@@ -74,7 +74,7 @@
       const existing = (_config.relays || []).find(r => r.id === i);
       relays.push(existing || {
         id: i,
-        name: `Przekaźnik ${i}`,
+        name: I18n.t('perm_relay_n').replace('{n}', i),
         mode: 'manual',
         pulse_s: 1.0,
         visible: true,
@@ -85,12 +85,12 @@
       <div style="display:grid;grid-template-columns:24px 1fr 130px 90px 80px;gap:6px;align-items:center;padding:6px;border:1px solid var(--border);border-radius:3px;background:var(--panel2);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--dim);text-align:center;">${r.id}</div>
         <input type="text" data-relay-id="${r.id}" data-field="name"
-          value="${_escapeHtml(r.name)}" maxlength="30" placeholder="Nazwa..."
+          value="${_escapeHtml(r.name)}" maxlength="30" placeholder="${I18n.t('adm_relay_name_ph')}"
           style="font-family:var(--mono);font-size:11px;padding:4px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;">
         <select data-relay-id="${r.id}" data-field="mode"
           style="font-family:var(--mono);font-size:10px;padding:4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;">
-          <option value="manual" ${r.mode === 'manual' ? 'selected' : ''}>Manual (toggle)</option>
-          <option value="momentary" ${r.mode === 'momentary' ? 'selected' : ''}>Momentary (impuls)</option>
+          <option value="manual" ${r.mode === 'manual' ? 'selected' : ''}>${I18n.t('adm_relay_manual_opt')}</option>
+          <option value="momentary" ${r.mode === 'momentary' ? 'selected' : ''}>${I18n.t('adm_relay_momentary_opt')}</option>
         </select>
         <input type="number" data-relay-id="${r.id}" data-field="pulse_s"
           value="${r.pulse_s}" min="0.1" max="${_maxPulse}" step="0.1"
@@ -99,7 +99,7 @@
         <label style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--dim);cursor:pointer;">
           <input type="checkbox" data-relay-id="${r.id}" data-field="visible" ${r.visible ? 'checked' : ''}
             style="width:12px;height:12px;">
-          Widoczny
+          ${I18n.t('adm_visible_lbl')}
         </label>
       </div>
     `).join('');
@@ -122,7 +122,7 @@
 
   async function save() {
     const status = document.getElementById('relay-save-status');
-    if (status) { status.textContent = '⏳ Zapisywanie...'; status.style.color = 'var(--dim)'; }
+    if (status) { status.textContent = I18n.t('dx_saving'); status.style.color = 'var(--dim)'; }
 
     // Zbierz dane
     const list = document.getElementById('relay-list');
@@ -134,7 +134,7 @@
       const visEl = list.querySelector(`input[data-relay-id="${i}"][data-field="visible"]`);
       relays.push({
         id: i,
-        name: (nameEl?.value || `Przekaźnik ${i}`).trim(),
+        name: (nameEl?.value || I18n.t('perm_relay_n').replace('{n}', i)).trim(),
         mode: modeEl?.value || 'manual',
         pulse_s: parseFloat(pulseEl?.value || '1.0'),
         visible: !!(visEl?.checked),
@@ -157,10 +157,10 @@
       });
       const data = await r.json();
       if (r.ok && data.ok) {
-        if (status) { status.textContent = '✓ Zapisano'; status.style.color = 'var(--green)'; }
+        if (status) { status.textContent = I18n.t('cfg_saved_capital'); status.style.color = 'var(--green)'; }
         setTimeout(load, 1500); // odswiez status polaczenia
       } else {
-        if (status) { status.textContent = '✕ ' + (data.error || 'Błąd'); status.style.color = 'var(--red)'; }
+        if (status) { status.textContent = '✕ ' + (data.error || I18n.t('profile_error_fallback')); status.style.color = 'var(--red)'; }
       }
     } catch(e) {
       if (status) { status.textContent = '✕ ' + e.message; status.style.color = 'var(--red)'; }

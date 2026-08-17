@@ -2191,14 +2191,14 @@
   <div class="page-col">
     <!-- STATUS SERWERA + DIAGNOSTYKA -->
     <div class="box">
-      <div class="box-header"><span>📊 STATUS SERWERA</span>
-        <button class="admin-btn" onclick="AdminStatus.refresh()">↻ ODŚWIEŻ</button>
+      <div class="box-header"><span data-i18n="adm_status_hdr">📊 STATUS SERWERA</span>
+        <button class="admin-btn" onclick="AdminStatus.refresh()" data-i18n="adm_refresh_btn">↻ ODŚWIEŻ</button>
       </div>
       <div id="admin-status-body" style="padding:10px 12px;font-family:var(--mono);font-size:11px;">
-        <div style="color:var(--dim);text-align:center;padding:10px;">Ładowanie statusu...</div>
+        <div style="color:var(--dim);text-align:center;padding:10px;" data-i18n="adm_loading_status">Ładowanie statusu...</div>
       </div>
       <div style="padding:0 12px 10px;display:flex;gap:8px;">
-        <button onclick="AdminStatus.testCiv()"
+        <button onclick="AdminStatus.testCiv()" data-i18n="adm_test_civ_btn"
           style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">
           🔌 TEST CI-V
         </button>
@@ -2208,16 +2208,16 @@
 
     <!-- BACKUP / RESTORE -->
     <div class="box">
-      <div class="box-header">💾 BACKUP / RESTORE KONFIGURACJI</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.5;border-bottom:1px solid var(--border);">
+      <div class="box-header" data-i18n="adm_backup_hdr">💾 BACKUP / RESTORE KONFIGURACJI</div>
+      <div data-i18n-html="adm_backup_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.5;border-bottom:1px solid var(--border);">
         Backup zawiera <b>config.json</b> (radia, pasma, przekaźniki, SMTP) oraz <b>users.json</b> (konta, uprawnienia, hasła).<br>
         Trzymaj plik w bezpiecznym miejscu — zawiera hasła. Po restore zrestartuj serwer.
       </div>
       <div style="padding:10px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <button onclick="AdminStatus.downloadBackup()" class="save-btn"
+        <button onclick="AdminStatus.downloadBackup()" class="save-btn" data-i18n="adm_download_backup_btn"
           style="font-family:var(--mono);font-size:11px;padding:6px 14px;">⬇ POBIERZ BACKUP</button>
         <label style="font-family:var(--mono);font-size:11px;padding:6px 14px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:3px;cursor:pointer;">
-          ⬆ WCZYTAJ BACKUP
+          <span data-i18n="adm_upload_backup_btn">⬆ WCZYTAJ BACKUP</span>
           <input type="file" accept=".json" style="display:none;" onchange="AdminStatus.uploadBackup(this)">
         </label>
         <span id="admin-backup-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
@@ -2225,30 +2225,30 @@
     </div>
 
     <div class="box">
-      <div class="box-header"><span>UŻYTKOWNICY SYSTEMU</span><button class="admin-btn" onclick="Admin.showAddUser()">+ NOWY UŻYTKOWNIK</button></div>
+      <div class="box-header"><span data-i18n="adm_users_hdr">UŻYTKOWNICY SYSTEMU</span><button class="admin-btn" onclick="Admin.showAddUser()" data-i18n="adm_new_user_btn">+ NOWY UŻYTKOWNIK</button></div>
       <div style="overflow:auto;">
         <table class="admin-table">
-          <thead><tr><th>LOGIN / IMIĘ</th><th>ROLA</th><th>ZNAK</th><th>UPRAWNIENIA</th><th>STATUS</th><th>AKCJE</th></tr></thead>
-          <tbody id="users-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--dim);">Ładowanie...</td></tr></tbody>
+          <thead><tr><th data-i18n="adm_th_login_name">LOGIN / IMIĘ</th><th data-i18n="adm_th_role">ROLA</th><th data-i18n="adm_th_callsign">ZNAK</th><th data-i18n="adm_th_perms">UPRAWNIENIA</th><th data-i18n="adm_th_status">STATUS</th><th data-i18n="log_th_actions">AKCJE</th></tr></thead>
+          <tbody id="users-tbody"><tr><td colspan="6" style="text-align:center;padding:20px;color:var(--dim);" data-i18n="settings_loading">Ładowanie...</td></tr></tbody>
         </table>
       </div>
     </div>
     <!-- TIMER FT8 — ustawienia per user (tylko admin) -->
     <div class="box">
-      <div class="box-header">TIMER BEZPIECZEŃSTWA FT8/HOUND — GLOBALNY</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);
+      <div class="box-header" data-i18n="adm_ft8timer_hdr">TIMER BEZPIECZEŃSTWA FT8/HOUND — GLOBALNY</div>
+      <div data-i18n-html="adm_ft8timer_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);
         border-bottom:1px solid var(--border);line-height:1.8;">
         Maksymalny czas ciągłego nadawania FT8/FT4/Hound bez potwierdzenia operatora.<br>
         Po upływie czasu — TX zostaje automatycznie zatrzymany. Dotyczy wszystkich użytkowników. Zakres: 1–60 min.
       </div>
       <div style="padding:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);">CZAS TIMERA:</span>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);" data-i18n="adm_timer_duration_lbl">CZAS TIMERA:</span>
         <input type="number" min="1" max="60" value="6" id="ft8t-global-dur"
           style="width:60px;font-family:var(--mono);font-size:13px;padding:4px 8px;
           background:var(--panel3);border:1px solid var(--border2);border-radius:3px;
           color:var(--green);text-align:center;">
-        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);">minut</span>
-        <button onclick="Admin.saveGlobalFt8Timer()"
+        <span style="font-family:var(--mono);font-size:11px;color:var(--dim);" data-i18n="adm_minutes_word">minut</span>
+        <button onclick="Admin.saveGlobalFt8Timer()" data-i18n="settings_save_btn"
           style="font-family:var(--mono);font-size:11px;padding:5px 16px;
           background:rgba(76,219,106,0.1);border:1px solid var(--green2);
           border-radius:3px;color:var(--green);cursor:pointer;">ZAPISZ</button>
@@ -2257,54 +2257,54 @@
     </div>
 
     <div class="box">
-      <div class="box-header">MÓJ PROFIL</div>
+      <div class="box-header" data-i18n="adm_myprofile_hdr">MÓJ PROFIL</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>IMIĘ</label>
+        <div class="field"><label data-i18n="profile_name_lbl">IMIĘ</label>
           <input type="text" id="admin-profile-name" placeholder="Jan" autocomplete="name"></div>
-        <div class="field"><label>ZNAK WYWOŁAWCZY</label>
+        <div class="field"><label data-i18n="profile_callsign_lbl">ZNAK WYWOŁAWCZY</label>
           <input type="text" id="admin-profile-callsign" placeholder="SP0ABC" style="text-transform:uppercase;" autocomplete="off"></div>
-        <div class="field"><label>LOKATOR QTH (np. JO82)</label>
+        <div class="field"><label data-i18n="profile_locator_lbl">LOKATOR QTH (np. JO82)</label>
           <input type="text" id="admin-profile-locator" placeholder="JO82" maxlength="8" style="text-transform:uppercase;" autocomplete="off"></div>
         <div class="field"><label>E-MAIL</label>
           <input type="email" id="admin-profile-email" placeholder="user@example.com" autocomplete="email"></div>
-        <button class="save-btn" onclick="saveProfile('admin-profile')">ZAPISZ PROFIL</button>
+        <button class="save-btn" onclick="saveProfile('admin-profile')" data-i18n="adm_save_profile_btn">ZAPISZ PROFIL</button>
         <span id="admin-profile-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:10px;"></span>
       </div>
     </div>
 
     <div class="box">
-      <div class="box-header">ZMIANA WŁASNEGO HASŁA</div>
+      <div class="box-header" data-i18n="adm_change_pwd_hdr">ZMIANA WŁASNEGO HASŁA</div>
       <div class="box-body change-pwd-form">
-        <div class="field"><label>STARE HASŁO</label><input type="password" id="old-pwd" autocomplete="current-password"></div>
-        <div class="field"><label>NOWE HASŁO (min. 8 znaków)</label><input type="password" id="new-pwd" autocomplete="new-password"></div>
-        <div class="field"><label>POWTÓRZ NOWE HASŁO</label><input type="password" id="new-pwd2" autocomplete="new-password"></div>
-        <button class="save-btn" onclick="changeOwnPassword()">ZMIEŃ HASŁO</button>
+        <div class="field"><label data-i18n="profile_old_pwd_lbl">STARE HASŁO</label><input type="password" id="old-pwd" autocomplete="current-password"></div>
+        <div class="field"><label data-i18n="profile_new_pwd_lbl">NOWE HASŁO (min. 8 znaków)</label><input type="password" id="new-pwd" autocomplete="new-password"></div>
+        <div class="field"><label data-i18n="profile_new_pwd2_lbl">POWTÓRZ NOWE HASŁO</label><input type="password" id="new-pwd2" autocomplete="new-password"></div>
+        <button class="save-btn" onclick="changeOwnPassword()" data-i18n="adm_change_pwd_btn">ZMIEŃ HASŁO</button>
       </div>
     </div>
 
     <!-- RADIO LOCK SETTINGS -->
     <div class="box">
-      <div class="box-header">BLOKADA RADIA — USTAWIENIA</div>
+      <div class="box-header" data-i18n="adm_lock_settings_hdr">BLOKADA RADIA — USTAWIENIA</div>
       <div class="box-body">
         <div class="sg" style="margin-bottom:12px;">
-          <label>TIMEOUT BEZCZYNNOŚCI (minuty)</label>
+          <label data-i18n="adm_lock_timeout_lbl">TIMEOUT BEZCZYNNOŚCI (minuty)</label>
           <div style="display:flex;align-items:center;gap:10px;">
             <input type="range" id="lock-timeout" min="1" max="480" step="1" value="20"
               style="flex:1;accent-color:var(--green);"
               oninput="document.getElementById('lock-timeout-val').textContent=this.value+' min'">
             <span id="lock-timeout-val" style="font-family:var(--mono);font-size:12px;color:var(--green);width:60px;">20 min</span>
           </div>
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.8;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:4px;line-height:1.8;" data-i18n="adm_lock_timeout_desc">
             Jeśli aktywny operator nie wykona żadnej akcji przez ten czas, radio zostaje zwolnione automatycznie.
           </div>
         </div>
         <button class="save-btn" onclick="
           RadioLock.setTimeout_(parseInt(document.getElementById('lock-timeout').value))
-            .then(() => UI.showToast('✓ Timeout zapisany'))">
+            .then(() => UI.showToast(I18n.t('adm_timeout_saved')))" data-i18n="adm_save_timeout_btn">
           ZAPISZ TIMEOUT
         </button>
         <button class="save-btn" style="margin-left:8px;background:rgba(217,119,106,0.08);border-color:rgba(217,119,106,0.3);color:var(--red);"
-          onclick="RadioLock.forceRelease()">
+          onclick="RadioLock.forceRelease()" data-i18n="adm_force_release_btn">
           ⚡ WYMUŚ ZWOLNIENIE RADIA
         </button>
       </div>
@@ -2312,10 +2312,10 @@
 
     <!-- PRZEKAŹNIKI ARDUINO -->
     <div class="box">
-      <div class="box-header">🔌 PRZEKAŹNIKI ARDUINO (SP5IOU SDR220)
+      <div class="box-header"><span data-i18n="adm_relay_hdr">🔌 PRZEKAŹNIKI ARDUINO (SP5IOU SDR220)</span>
         <span id="relay-status-badge" style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--panel3);color:var(--dim);margin-left:8px;">--</span>
       </div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;border-bottom:1px solid var(--border);">
+      <div data-i18n-html="adm_relay_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;border-bottom:1px solid var(--border);">
         Sterowanie przekaźnikami przez Arduino z firmware SP5IOU (protokół SDR220).<br>
         Każdy z 8 przekaźników można ustawić jako "manual" (toggle on/off) lub "momentary" (impuls z ustawianym czasem 0.1-10s).<br>
         Uprawnienia dostępu (kto ma widoczne przyciski) przydzielasz w sekcji <em>Użytkownicy</em> checkboxami "Przekaźnik 0..7".
@@ -2324,15 +2324,15 @@
         <div class="sg" style="grid-column:1/-1;">
           <label style="display:flex;align-items:center;gap:8px;">
             <input type="checkbox" id="relay-enabled" style="width:14px;height:14px;">
-            <span>Włączony (podłączony do Arduino)</span>
+            <span data-i18n="adm_relay_enabled_lbl">Włączony (podłączony do Arduino)</span>
           </label>
         </div>
         <div class="sg">
-          <label>PORT SZEREGOWY</label>
-          <select id="relay-port"><option value="">(wybierz port)</option></select>
+          <label data-i18n="adm_serial_port_lbl">PORT SZEREGOWY</label>
+          <select id="relay-port"><option value="" data-i18n="adm_choose_port">(wybierz port)</option></select>
         </div>
         <div class="sg">
-          <label>BAUDRATE</label>
+          <label data-i18n="adm_baudrate_lbl">BAUDRATE</label>
           <select id="relay-baudrate">
             <option value="9600">9600</option>
             <option value="19200">19200</option>
@@ -2343,7 +2343,7 @@
         </div>
       </div>
 
-      <div style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:1px;">
+      <div style="padding:6px 12px;font-family:var(--mono);font-size:10px;color:var(--amber);letter-spacing:1px;" data-i18n="adm_relay_config_hdr">
         KONFIGURACJA 8 PRZEKAŹNIKÓW
       </div>
       <div id="relay-list" style="padding:4px 12px 12px;display:flex;flex-direction:column;gap:6px;">
@@ -2351,39 +2351,39 @@
       </div>
 
       <div style="padding:8px 12px;display:flex;gap:8px;">
-        <button class="save-btn" onclick="Admin.saveRelayConfig()">💾 ZAPISZ KONFIGURACJĘ</button>
+        <button class="save-btn" onclick="Admin.saveRelayConfig()" data-i18n="adm_save_relay_config_btn">💾 ZAPISZ KONFIGURACJĘ</button>
         <span id="relay-save-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);align-self:center;"></span>
       </div>
     </div>
 
     <!-- SMTP CONFIG -->
     <div class="box">
-      <div class="box-header">EMAIL — KONFIGURACJA SMTP</div>
-      <div style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.9;border-bottom:1px solid var(--border);">
+      <div class="box-header" data-i18n="adm_smtp_hdr">EMAIL — KONFIGURACJA SMTP</div>
+      <div data-i18n-html="adm_smtp_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.9;border-bottom:1px solid var(--border);">
         Wymagane do działania funkcji "Zapomniałem hasła". Obsługiwany STARTTLS (port 587) i SSL (port 465).<br>
         Przykład dla Gmail: host=smtp.gmail.com, port=587, user=twoj@gmail.com, hasło = App Password z Google.
       </div>
       <div class="settings-inner">
-        <div class="sg"><label>SERWER SMTP (host)</label><input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
-        <div class="sg"><label>PORT</label><input type="number" id="smtp-port" value="587" min="1" max="65535"></div>
-        <div class="sg"><label>UŻYTKOWNIK (login SMTP)</label><input type="text" id="smtp-user" placeholder="twoj@gmail.com" autocomplete="off"></div>
-        <div class="sg"><label>HASŁO SMTP</label><input type="password" id="smtp-pass" placeholder="••••••••" autocomplete="new-password"></div>
-        <div class="sg"><label>ADRES NADAWCY (From)</label><input type="text" id="smtp-from" placeholder="noreply@twoja-domena.pl"></div>
-        <div class="sg"><label>SZYFROWANIE</label>
+        <div class="sg"><label data-i18n="adm_smtp_host_lbl">SERWER SMTP (host)</label><input type="text" id="smtp-host" placeholder="smtp.gmail.com"></div>
+        <div class="sg"><label data-i18n="in_port_lbl">PORT</label><input type="number" id="smtp-port" value="587" min="1" max="65535"></div>
+        <div class="sg"><label data-i18n="adm_smtp_user_lbl">UŻYTKOWNIK (login SMTP)</label><input type="text" id="smtp-user" placeholder="twoj@gmail.com" autocomplete="off"></div>
+        <div class="sg"><label data-i18n="adm_smtp_pass_lbl">HASŁO SMTP</label><input type="password" id="smtp-pass" placeholder="••••••••" autocomplete="new-password"></div>
+        <div class="sg"><label data-i18n="adm_smtp_from_lbl">ADRES NADAWCY (From)</label><input type="text" id="smtp-from" placeholder="noreply@twoja-domena.pl"></div>
+        <div class="sg"><label data-i18n="adm_smtp_encryption_lbl">SZYFROWANIE</label>
           <select id="smtp-tls">
-            <option value="1">STARTTLS (port 587, zalecane)</option>
-            <option value="0">SSL/TLS (port 465)</option>
+            <option value="1" data-i18n="adm_smtp_starttls_opt">STARTTLS (port 587, zalecane)</option>
+            <option value="0" data-i18n="adm_smtp_ssl_opt">SSL/TLS (port 465)</option>
           </select>
         </div>
-        <div class="sg"><label>EMAIL TESTOWY — WYŚLIJ NA</label>
+        <div class="sg"><label data-i18n="adm_smtp_test_lbl">EMAIL TESTOWY — WYŚLIJ NA</label>
           <div style="display:flex;gap:6px;">
             <input type="email" id="smtp-test-email" placeholder="test@gmail.com" style="flex:1;">
-            <button class="admin-btn" onclick="AdminSmtp.test()">WYŚLIJ TEST</button>
+            <button class="admin-btn" onclick="AdminSmtp.test()" data-i18n="adm_send_test_btn">WYŚLIJ TEST</button>
           </div>
         </div>
       </div>
       <div style="padding:0 12px 12px;display:flex;gap:8px;">
-        <button class="save-btn" onclick="AdminSmtp.save()">ZAPISZ SMTP</button>
+        <button class="save-btn" onclick="AdminSmtp.save()" data-i18n="adm_save_smtp_btn">ZAPISZ SMTP</button>
       </div>
       <div id="smtp-msg" style="padding:0 12px 12px;font-family:var(--mono);font-size:10px;min-height:20px;"></div>
     </div>
@@ -2454,91 +2454,91 @@
 
 <div class="modal-overlay" id="user-modal" onclick="if(event.target===this)Admin.closeModal()">
   <div class="modal-box" style="max-width:560px;">
-    <div class="modal-header"><span id="modal-title">NOWY UŻYTKOWNIK</span><button class="modal-close" onclick="Admin.closeModal()">✕</button></div>
+    <div class="modal-header"><span id="modal-title" data-i18n="adm_new_user_title">NOWY UŻYTKOWNIK</span><button class="modal-close" onclick="Admin.closeModal()">✕</button></div>
     <input type="hidden" id="user-id">
 
     <!-- Dane podstawowe -->
     <div class="modal-grid">
-      <div class="sg"><label>LOGIN *</label><input type="text" id="uname" placeholder="jan_sp2abc"></div>
-      <div class="sg"><label>ROLA *</label>
+      <div class="sg"><label data-i18n="adm_login_lbl">LOGIN *</label><input type="text" id="uname" placeholder="jan_sp2abc"></div>
+      <div class="sg"><label data-i18n="adm_role_lbl">ROLA *</label>
         <select id="urole" onchange="Admin._updatePermsByRole(this.value)">
           <option value="viewer">VIEWER</option>
           <option value="operator" selected>OPERATOR</option>
           <option value="admin">ADMIN</option>
         </select>
       </div>
-      <div class="sg" id="upass-row"><label>HASŁO *</label><input type="password" id="upass" placeholder="min. 8 znaków" autocomplete="new-password"></div>
-      <div class="sg"><label>ZNAK WYWOŁAWCZY</label><input type="text" id="ucallsign" placeholder="SP2ABC" style="text-transform:uppercase"></div>
-      <div class="sg"><label>LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="8" style="text-transform:uppercase"></div>
-      <div class="sg full-row"><label>IMIĘ</label><input type="text" id="uname-full" placeholder="Jan"></div>
+      <div class="sg" id="upass-row"><label data-i18n="adm_pass_lbl">HASŁO *</label><input type="password" id="upass" data-i18n-placeholder="adm_min_chars_ph" placeholder="min. 8 znaków" autocomplete="new-password"></div>
+      <div class="sg"><label data-i18n="profile_callsign_lbl">ZNAK WYWOŁAWCZY</label><input type="text" id="ucallsign" placeholder="SP2ABC" style="text-transform:uppercase"></div>
+      <div class="sg"><label data-i18n="adm_locator_grid_lbl">LOKATOR (grid)</label><input type="text" id="ulocator" placeholder="JO72" maxlength="8" style="text-transform:uppercase"></div>
+      <div class="sg full-row"><label data-i18n="profile_name_lbl">IMIĘ</label><input type="text" id="uname-full" placeholder="Jan"></div>
       <div class="sg full-row"><label>EMAIL</label><input type="email" id="uemail" placeholder="jan@example.com"></div>
     </div>
 
     <!-- Uprawnienia granularne -->
     <div style="margin-top:16px;border:1px solid var(--border);border-radius:5px;overflow:hidden;">
-      <div style="background:var(--panel2);padding:6px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;border-bottom:1px solid var(--border);">
+      <div style="background:var(--panel2);padding:6px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;border-bottom:1px solid var(--border);" data-i18n="adm_perms_hdr">
         UPRAWNIENIA GRANULARNE
       </div>
       <div style="padding:10px 12px;display:grid;grid-template-columns:1fr 1fr;gap:0;">
 
         <!-- RADIO -->
         <div style="padding-right:10px;border-right:1px solid var(--border);">
-          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">RADIO</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);" data-i18n="adm_group_radio">RADIO</div>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-ptt" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">PTT — nadawanie</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_ptt">PTT — nadawanie</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-rfPower" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">RF Power — moc TX</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_rfpower">RF Power — moc TX</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-rfGain" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">RF/AF Gain, SQL</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_rfgain">RF/AF Gain, SQL</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-mode" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Zmiana trybu (USB/CW…)</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_mode">Zmiana trybu (USB/CW…)</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-band" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Zmiana pasma</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_band">Zmiana pasma</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-freq" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Strojenie częstotliwości</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_freq">Strojenie częstotliwości</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
             <input type="checkbox" id="perm-cw" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">CW Keyer — wysyłanie</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_cw">CW Keyer — wysyłanie</span>
           </label>
         </div>
 
         <!-- SPRZĘT + LOG + SYSTEM -->
         <div style="padding-left:10px;">
-          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);">SPRZĘT</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid var(--border);" data-i18n="adm_group_hw">SPRZĘT</div>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-rotator" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Rotator — sterowanie</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_rotator">Rotator — sterowanie</span>
           </label>
 
-          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);">SYSTEM</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);" data-i18n="adm_group_system">SYSTEM</div>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-log" style="width:14px;height:14px;accent-color:var(--green);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Log QSO — zapis</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_log">Log QSO — zapis</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);">
             <input type="checkbox" id="perm-settings" style="width:14px;height:14px;accent-color:var(--amber);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Ustawienia serwera</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_settings">Ustawienia serwera</span>
           </label>
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
             <input type="checkbox" id="perm-admin" style="width:14px;height:14px;accent-color:var(--amber);cursor:pointer;">
-            <span style="font-family:var(--mono);font-size:11px;color:var(--text);">Panel administratora</span>
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text);" data-i18n="perm_admin">Panel administratora</span>
           </label>
 
           <!-- PRZEKAŹNIKI - generowane dynamicznie z konfiguracji (relay_0..7) -->
           <div id="perm-relay-section" style="display:none;">
-            <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);">PRZEKAŹNIKI</div>
+            <div style="font-family:var(--mono);font-size:8px;color:var(--amber);letter-spacing:2px;margin:10px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);" data-i18n="adm_group_relay">PRZEKAŹNIKI</div>
             <div id="perm-relay-list"><!-- checkboxy relay wstawiane przez admin.js --></div>
           </div>
         </div>
@@ -2547,8 +2547,8 @@
     </div>
 
     <div style="margin-top:16px;display:flex;gap:10px;">
-      <button class="save-btn" onclick="Admin.saveUser()">ZAPISZ</button>
-      <button class="save-btn" style="background:transparent;border-color:var(--border);" onclick="Admin.closeModal()">ANULUJ</button>
+      <button class="save-btn" onclick="Admin.saveUser()" data-i18n="settings_save_btn">ZAPISZ</button>
+      <button class="save-btn" style="background:transparent;border-color:var(--border);" onclick="Admin.closeModal()" data-i18n="common_cancel_btn">ANULUJ</button>
     </div>
   </div>
 </div>
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608180005"></script>
+<script src="js/i18n.js?v=202608180006"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
@@ -2573,10 +2573,10 @@
 <script src="js/com_bridge.js?v=202608180001"></script>
 <script src="js/rotator.js?v=202608150001"></script>
 <script src="js/rotormini.js?v=202608170001"></script>
-<script src="js/admin.js?v=202608180001"></script>
-<script src="js/admin_status.js?v=202608160001"></script>
+<script src="js/admin.js?v=202608180002"></script>
+<script src="js/admin_status.js?v=202608180001"></script>
 <script src="js/profile_audio.js?v=202608170001"></script>
-<script src="js/relay_admin.js?v=202606300002"></script>
+<script src="js/relay_admin.js?v=202608180001"></script>
 <script src="js/tunnel.js?v=202608180001"></script>
 <script src="js/dxcc.js?v=202608160001"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
@@ -2956,7 +2956,7 @@ window.AdminSmtp = {
       document.getElementById('smtp-from').value = d.from || '';
       document.getElementById('smtp-tls').value  = d.use_tls ? '1' : '0';
       // Nie wczytuj hasla — pokazujemy placeholder jesli ustawione
-      if (d.has_password) document.getElementById('smtp-pass').placeholder = '●●●●●● (ustawione)';
+      if (d.has_password) document.getElementById('smtp-pass').placeholder = I18n.t('adm_smtp_pass_saved_ph');
     } catch(e) {}
   },
   async save() {
@@ -2975,7 +2975,7 @@ window.AdminSmtp = {
     });
     const d = await r.json();
     const msg = document.getElementById('smtp-msg');
-    msg.textContent = d.ok ? '✓ Konfiguracja SMTP zapisana' : '✗ ' + (d.error||'Błąd');
+    msg.textContent = d.ok ? I18n.t('adm_smtp_saved') : '✗ ' + (d.error||I18n.t('profile_error_fallback'));
     msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
     if (d.ok) document.getElementById('smtp-pass').value = '';
   },
@@ -2984,11 +2984,11 @@ window.AdminSmtp = {
     const email = document.getElementById('smtp-test-email').value.trim();
     const msg   = document.getElementById('smtp-msg');
     if (!email) {
-      msg.textContent = '✗ Wpisz adres email w polu "EMAIL TESTOWY"';
+      msg.textContent = I18n.t('adm_smtp_enter_test_email');
       msg.style.color = 'var(--red)';
       return;
     }
-    msg.textContent = '⏳ Wysyłam email testowy…';
+    msg.textContent = I18n.t('adm_smtp_sending_test');
     msg.style.color = 'var(--dim)';
     try {
       const r = await fetch('/api/smtp/test', {
@@ -2997,10 +2997,10 @@ window.AdminSmtp = {
         body: JSON.stringify({ email, base_url: location.origin })
       });
       const d = await r.json();
-      msg.textContent = d.message || (d.ok ? '✓ Wysłano' : '✗ Błąd');
+      msg.textContent = d.message || (d.ok ? I18n.t('adm_smtp_sent') : I18n.t('profile_error_fallback'));
       msg.style.color = d.ok ? 'var(--green)' : 'var(--red)';
     } catch(e) {
-      msg.textContent = '✗ Błąd połączenia: ' + e.message;
+      msg.textContent = '✗ ' + I18n.t('cfg_conn_error') + ': ' + e.message;
       msg.style.color = 'var(--red)';
     }
   }

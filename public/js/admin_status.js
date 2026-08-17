@@ -26,7 +26,7 @@ window.AdminStatus = (function() {
     try {
       const r = await fetch('/api/status', { credentials: 'include' });
       if (!r.ok) {
-        body.innerHTML = `<div style="color:var(--red);">Błąd: HTTP ${r.status}</div>`;
+        body.innerHTML = `<div style="color:var(--red);">${I18n.t('log_error_prefix')}HTTP ${r.status}</div>`;
         return;
       }
       const d = await r.json();
@@ -38,20 +38,20 @@ window.AdminStatus = (function() {
 
       // Zbuduj grid statusu
       const rows = [
-        ['Wersja', `${d.version} (Python ${d.python}, ${d.platform})`],
-        ['Uptime', _fmtUptime(d.uptime_s)],
-        ['Online', `${d.online_count} użytkowników`],
-        ['Radio', rig.sim
-          ? _dot(false, '', 'SYMULACJA')
-          : _dot(rig.connected, `CI-V połączone (${rig.backend})`, 'ROZŁĄCZONE')],
-        ['Model / Port', `${rig.model || '?'} @ ${rig.port || '?'}`
+        [I18n.t('adm_stat_version'), `${d.version} (Python ${d.python}, ${d.platform})`],
+        [I18n.t('adm_stat_uptime'), _fmtUptime(d.uptime_s)],
+        [I18n.t('adm_stat_online'), I18n.t('adm_stat_users_count').replace('{n}', d.online_count)],
+        [I18n.t('adm_stat_radio'), rig.sim
+          ? _dot(false, '', I18n.t('adm_stat_sim'))
+          : _dot(rig.connected, `${I18n.t('adm_stat_civ_connected')} (${rig.backend})`, I18n.t('adm_stat_disconnected'))],
+        [I18n.t('adm_stat_model_port'), `${rig.model || '?'} @ ${rig.port || '?'}`
           + (rig.speed && rig.speed !== '?' ? ` (${rig.speed} bd)` : '')],
-        ['Częstotliwość', rig.freq ? `${(rig.freq/1e6).toFixed(3)} MHz` : '—'],
-        ['Audio', _dot(true, `${audio.backend}${audio.rust ? ' (Rust)' : ''}`, '')],
-        ['DX Cluster', _dot(d.dxcluster?.available, 'dostępny', 'niedostępny')],
-        ['Przekaźniki', d.relay?.available
-          ? _dot(d.relay.connected, 'podłączone', 'skonfigurowane (offline)')
-          : '<span style="color:var(--dim);">— brak modułu</span>'],
+        [I18n.t('adm_stat_freq'), rig.freq ? `${(rig.freq/1e6).toFixed(3)} MHz` : '—'],
+        [I18n.t('adm_stat_audio'), _dot(true, `${audio.backend}${audio.rust ? ' (Rust)' : ''}`, '')],
+        [I18n.t('adm_stat_dxcluster'), _dot(d.dxcluster?.available, I18n.t('adm_stat_available'), I18n.t('adm_stat_unavailable'))],
+        [I18n.t('adm_stat_relays'), d.relay?.available
+          ? _dot(d.relay.connected, I18n.t('adm_stat_relays_connected'), I18n.t('adm_stat_relays_configured'))
+          : `<span style="color:var(--dim);">${I18n.t('adm_stat_no_module')}</span>`],
       ];
 
       // CPU/RAM jesli dostepne
@@ -74,17 +74,17 @@ window.AdminStatus = (function() {
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
           <a href="/perf" target="_blank" rel="noopener"
              style="color:var(--green);text-decoration:none;font-size:12px;">
-            📊 Otwórz szczegółową diagnostykę wydajności (/perf) →
+            ${I18n.t('adm_stat_perf_link')}
           </a>
         </div>`;
     } catch(e) {
-      body.innerHTML = `<div style="color:var(--red);">Błąd: ${e.message}</div>`;
+      body.innerHTML = `<div style="color:var(--red);">${I18n.t('log_error_prefix')}${e.message}</div>`;
     }
   }
 
   async function testCiv() {
     const res = document.getElementById('admin-civ-test-result');
-    if (res) { res.textContent = '⏳ Testowanie...'; res.style.color = 'var(--dim)'; }
+    if (res) { res.textContent = I18n.t('adm_testing'); res.style.color = 'var(--dim)'; }
     try {
       const r = await fetch('/api/status/test_civ', { method: 'POST', credentials: 'include' });
       const d = await r.json();
@@ -99,7 +99,7 @@ window.AdminStatus = (function() {
 
   async function downloadBackup() {
     const status = document.getElementById('admin-backup-status');
-    if (status) { status.textContent = '⏳ Generowanie...'; status.style.color = 'var(--dim)'; }
+    if (status) { status.textContent = I18n.t('adm_generating'); status.style.color = 'var(--dim)'; }
     try {
       const r = await fetch('/api/backup', { credentials: 'include' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -115,7 +115,7 @@ window.AdminStatus = (function() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      if (status) { status.textContent = '✓ Pobrano'; status.style.color = 'var(--green)'; }
+      if (status) { status.textContent = I18n.t('adm_downloaded'); status.style.color = 'var(--green)'; }
     } catch(e) {
       if (status) { status.textContent = '✕ ' + e.message; status.style.color = 'var(--red)'; }
     }
@@ -125,11 +125,11 @@ window.AdminStatus = (function() {
     const status = document.getElementById('admin-backup-status');
     const file = input.files?.[0];
     if (!file) return;
-    if (!await window.UI?.confirmModal(`Przywrócić konfigurację z pliku "${file.name}"?\n\nTo NADPISZE obecną konfigurację i wszystkich użytkowników. Po restore zrestartuj serwer.`, { danger: true, okLabel: 'PRZYWRÓĆ' })) {
+    if (!await window.UI?.confirmModal(I18n.t('adm_confirm_restore').replace('{name}', file.name), { danger: true, okLabel: I18n.t('adm_restore_btn') })) {
       input.value = '';
       return;
     }
-    if (status) { status.textContent = '⏳ Wczytywanie...'; status.style.color = 'var(--dim)'; }
+    if (status) { status.textContent = I18n.t('adm_loading_ellipsis'); status.style.color = 'var(--dim)'; }
     try {
       const text = await file.text();
       const backup = JSON.parse(text);
@@ -142,10 +142,10 @@ window.AdminStatus = (function() {
       const d = await r.json();
       if (r.ok && d.ok) {
         if (status) {
-          status.textContent = `✓ Przywrócono: ${d.restored.join(', ')}. Zrestartuj serwer!`;
+          status.textContent = I18n.t('adm_restored').replace('{list}', d.restored.join(', '));
           status.style.color = 'var(--green)';
         }
-        window.UI?.showToast?.('✓ Backup przywrócony — zrestartuj serwer', 'info');
+        window.UI?.showToast?.(I18n.t('adm_toast_restored'), 'info');
       } else {
         if (status) { status.textContent = '✕ ' + (d.error || 'Błąd'); status.style.color = 'var(--red)'; }
       }
