@@ -63,13 +63,13 @@
       </div>
 
       <!-- TRYB -->
-      <div class="tile-header" data-perm="mode">TRYB</div>
+      <div class="tile-header" data-perm="mode" data-i18n="radio_mode_hdr">TRYB</div>
       <div class="mode-band-grid" id="mode-grid-left" data-perm="mode"></div>
 
       <div class="tile-divider"></div>
 
       <!-- PASMO -->
-      <div class="tile-header" data-perm="band">PASMO</div>
+      <div class="tile-header" data-perm="band" data-i18n="radio_band_hdr">PASMO</div>
       <div class="mode-band-grid" id="band-grid-left" data-perm="band"></div>
 
       <!-- HISTORIA FREQ (rozwijalny panel) -->
@@ -77,7 +77,7 @@
       <div style="padding:4px 8px;">
         <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;padding:2px 0;"
           onclick="UI.toggleFreqHistory()">
-          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;">HISTORIA FREQ</span>
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:2px;" data-i18n="radio_freq_history">HISTORIA FREQ</span>
           <span id="freq-history-toggle" style="font-family:var(--mono);font-size:10px;color:var(--dim);">▶</span>
         </div>
         <div id="freq-history-list" style="display:none;max-height:180px;overflow-y:auto;padding-top:4px;font-family:var(--mono);font-size:10px;">
@@ -89,9 +89,9 @@
 
       <!-- TRX FUNKCJE (wybor miernika pokazywanego w bargrafie pod S-metrem) -->
       <div class="rf-section">
-        <div class="rf-section-title">TRX FUNKCJE</div>
+        <div class="rf-section-title" data-i18n="radio_trx_functions">TRX FUNKCJE</div>
         <div style="padding-bottom:6px;">
-          <span class="rf-sub-lbl">WSKAZNIK (bargraf pod S-metrem)</span>
+          <span class="rf-sub-lbl" data-i18n="radio_meter_indicator">WSKAZNIK (bargraf pod S-metrem)</span>
           <select id="trx-funkcje-select"
             onchange="UI.setTxMeter(this.value)">
             <option value="ALC">ALC</option>
@@ -108,7 +108,7 @@
       <div class="rf-section">
         <div class="rf-section-title">AUDIO</div>
         <div style="padding-bottom:6px;">
-          <span class="rf-sub-lbl">FILTR (FIL1/2/3 — ustawienia z menu radia)</span>
+          <span class="rf-sub-lbl" data-i18n="radio_filter_lbl">FILTR (FIL1/2/3 — ustawienia z menu radia)</span>
           <select id="bw-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
             <option value="1">FIL1</option>
             <option value="2">FIL2</option>
@@ -178,8 +178,8 @@
         <span id="badge-split" style="display:none;" class="vfo-badge" style="border-color:rgba(212,168,87,0.4);color:var(--amber);cursor:pointer;" onclick="UI.toggleSplit()">SPLIT</span>
         <span id="badge-rx" class="vfo-badge" style="border-color:rgba(184,201,143,0.3);background:rgba(184,201,143,0.1);color:var(--green);">RX</span>
         <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(217,119,106,0.4);background:rgba(217,119,106,0.15);color:var(--red);">TX</span>
-        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">WS</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" title="Opoznienie polaczenia sterujacego (ping/pong) — NIE opoznienie samego audio. Kliknij aby odswiezyc." style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
-        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">AUDIO</span><span id="badge-audio-latency" class="vfo-badge" title="Rzeczywiste opoznienie odsluchu RX: ile audio jest zbuforowane miedzy odbiorem z serwera a odtworzeniem. Cel adaptacyjny 180-300ms (rosnie po niedoborach, opada gdy lacze spokojne), twardy limit 400ms." style="border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">WS</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" data-i18n-title="ws_badge_title" title="Opoznienie polaczenia sterujacego (ping/pong) — NIE opoznienie samego audio. Kliknij aby odswiezyc." style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">AUDIO</span><span id="badge-audio-latency" class="vfo-badge" data-i18n-title="audio_badge_title" title="Rzeczywiste opoznienie odsluchu RX: ile audio jest zbuforowane miedzy odbiorem z serwera a odtworzeniem. Cel adaptacyjny 180-300ms (rosnie po niedoborach, opada gdy lacze spokojne), twardy limit 400ms." style="border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
         <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(212,168,87,0.15);border:1px solid rgba(212,168,87,0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
         <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(184,201,143,0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
       </div>
@@ -204,7 +204,7 @@
           <span id="vfo-b-row" onclick="UI.vfoSelect('B')"
             oncontextmenu="event.preventDefault(); UI.editVfoB();"
             onwheel="UI.wheelVfoB(event)"
-            title="Klik: przełącz na VFO-B | Prawy klik: wpisz częstotliwość | Scroll: zmieniaj co 1kHz"
+            data-i18n-title="vfo_b_tooltip" title="Klik: przełącz na VFO-B | Prawy klik: wpisz częstotliwość | Scroll: zmieniaj co 1kHz"
             style="margin-left:auto;display:flex;align-items:baseline;gap:5px;cursor:pointer;user-select:none;">
             <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">VFO-B</span>
             <span id="freq-b-display" style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--dim);">14.200.000</span>
@@ -266,12 +266,12 @@
           width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
           border:1px solid var(--border2);border-radius:3px;color:var(--text);"
           onkeydown="if(event.key==='Enter')QSOLog.quickLog()">
-        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" title="RST wyslane">SENT</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" data-i18n-title="sent_title" title="RST wyslane">SENT</span>
         <input type="text" id="qlog-rst-s" placeholder="599" maxlength="3"
           style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
           padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
           border-radius:3px;color:var(--text);text-align:center;" value="599">
-        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" title="RST odebrane">RCVD</span>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" data-i18n-title="rcvd_title" title="RST odebrane">RCVD</span>
         <input type="text" id="qlog-rst-r" placeholder="599" maxlength="3"
           style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
           padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
@@ -292,14 +292,14 @@
       <div class="rf-buttons-row">
         <!-- A<->B / A->B / SPLIT — przeniesione z wiersza krokow strojenia,
              zawsze widoczne (CI-V 07 B0/A0/0F, patrz UI.vfoSwap/vfoCopy/toggleSplit) -->
-        <button class="rf-btn" onclick="UI.vfoSwap()" data-perm="freq" title="Zamien VFO A i B (CI-V 07 B0)">A↔B</button>
-        <button class="rf-btn" onclick="UI.vfoCopy()" data-perm="freq" title="Skopiuj A do B (CI-V 07 A0)">A→B</button>
+        <button class="rf-btn" onclick="UI.vfoSwap()" data-perm="freq" data-i18n-title="vfoab_title" title="Zamien VFO A i B (CI-V 07 B0)">A↔B</button>
+        <button class="rf-btn" onclick="UI.vfoCopy()" data-perm="freq" data-i18n-title="vfoa2b_title" title="Skopiuj A do B (CI-V 07 A0)">A→B</button>
         <button class="rf-btn" id="split-btn" onclick="UI.toggleSplit()" data-perm="freq" title="Split VFO A/B (CI-V 0F)">SPLIT</button>
         <span style="width:1px;height:16px;background:var(--border2);margin:0 2px;"></span>
         <!-- TUNER (toggle ON/OFF, CI-V 1C 01 00/01) i AUTOTUNE (jednorazowy
              cykl dopasowania, CI-V 1C 01 02 — generuje krotki TX) -->
         <button class="rf-btn" id="tuner-btn" onclick="UI.toggleTuner()" data-perm="freq" title="Antenna Tuner ON/OFF (CI-V 1C 01)">TUNER</button>
-        <button class="rf-btn" onclick="UI.startAutotune()" data-perm="ptt" title="Autotune — cykl dopasowania (CI-V 1C 01 02, generuje TX)">AUTOTUNE</button>
+        <button class="rf-btn" onclick="UI.startAutotune()" data-perm="ptt" data-i18n-title="autotune_title" title="Autotune — cykl dopasowania (CI-V 1C 01 02, generuje TX)">AUTOTUNE</button>
       </div>
       <div id="rig-features-buttons" class="rf-buttons-row" style="display:none;">
         <!-- przyciski generowane dynamicznie przez radiofunctions.js -->
@@ -328,7 +328,7 @@
               <option value="500000">±500kHz</option>
             </select>
           </label>
-          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:3px;cursor:pointer;" title="Peak-hold: pokazuje najwyższą wartość w każdym paśmie">
+          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:3px;cursor:pointer;" data-i18n-title="peak_hold_title" title="Peak-hold: pokazuje najwyższą wartość w każdym paśmie">
             <input type="checkbox" id="wf-peak-toggle" checked
               onchange="Waterfall.setPeakHold(this.checked)"
               style="width:11px;height:11px;">
@@ -365,7 +365,7 @@
         <div id="rot-name-label" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-bottom:6px;"></div>
 
         <div>
-          <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;">CEL (stopnie lub lokator)</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;" data-i18n="rotator_target_lbl">CEL (stopnie lub lokator)</div>
           <input id="rot-target-inp" type="text" class="rot-target-inp" placeholder="272 lub KO02"
             style="text-transform:uppercase;"
             onkeydown="if(event.key==='Enter')RotW.go()"
@@ -437,7 +437,7 @@
           </div>
       </div>
       <div style="display:flex;gap:4px;padding:0 8px 8px;">
-        <input type="text" id="cw-custom-input" placeholder="Wpisz tekst CW…"
+        <input type="text" id="cw-custom-input" data-i18n-placeholder="cw_custom_placeholder" placeholder="Wpisz tekst CW…"
           style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;padding:5px 8px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
           onkeydown="if(event.key==='Enter')CW.sendCustom()">
         <button onclick="CW.sendCustom()" data-perm-disable="ptt"
@@ -449,7 +449,7 @@
       <!-- OPERATORZY ONLINE — lista + TRX lock -->
       <div style="display:flex;flex-direction:column;">
         <div class="tile-header" style="font-size:9px;letter-spacing:2px;">
-          OPERATORZY
+          <span data-i18n="operators_hdr">OPERATORZY</span>
           <span id="op-online-count" style="font-family:var(--mono);font-size:9px;color:var(--green);">0</span>
         </div>
 
@@ -2559,7 +2559,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608170001"></script>
+<script src="js/i18n.js?v=202608170002"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608170004"></script>
