@@ -982,7 +982,10 @@ class CivRig:
                              "kind": "vfo_select", "value": "VFOB"})
 
         if raw_caps.get("power"):
-            actions.append({"id": "power_toggle", "label": "Zasilanie radia", "group": "tx",
+            # Uniwersalna etykieta (PL/EN) zamiast opisu po polsku — ten
+            # przycisk renderuje sie tak samo w obu jezykach frontendu,
+            # kolor (zielony/czerwony) pokazuje faktyczny stan ON/OFF.
+            actions.append({"id": "power_toggle", "label": "PWR ON/OFF", "group": "tx",
                              "kind": "power_toggle", "value": "POWER"})
 
         func_labels = self.profile.get("func_labels", {})

@@ -53,24 +53,24 @@ _BASE_CAPS_CIV = {
 # KEYSPD: 0000-0060 (6-48 WPM mapowane na 0-255 przez Hamlib, ale natywnie
 #         IC-7300 uzywa wlasnej skali 0000-0060 dla 6-48 WPM).
 _IC7300_LEVELS = {
-    "AF":       {"sub": 0x01, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Glosnosc (AF)"},
-    "RF":       {"sub": 0x02, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Wzmocnienie RF (RF Gain)"},
-    "SQL":      {"sub": 0x03, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Squelch"},
-    "NR":       {"sub": 0x06, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Redukcja szumow (NR)"},
-    "PBT_IN":   {"sub": 0x07, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Passband Tuning IN"},
-    "PBT_OUT":  {"sub": 0x08, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Passband Tuning OUT"},
-    "CWPITCH":  {"sub": 0x09, "min": 300, "max": 900,  "civ_max": 255, "label": "Ton CW (Pitch)"},
-    "RFPOWER":  {"sub": 0x0A, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Moc TX (RF Power)"},
-    "MICGAIN":  {"sub": 0x0B, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Wzmocnienie mikrofonu"},
-    "KEYSPD":   {"sub": 0x0C, "min": 6,   "max": 48,   "civ_max": 255, "label": "Szybkosc CW (WPM)"},
-    "NOTCHF":   {"sub": 0x0D, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Notch (czestotliwosc)"},
-    "COMP":     {"sub": 0x0E, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Kompresja mikrofonu"},
+    "AF":       {"sub": 0x01, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "AF"},
+    "RF":       {"sub": 0x02, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "RF GAIN"},
+    "SQL":      {"sub": 0x03, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "SQL"},
+    "NR":       {"sub": 0x06, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "NR"},
+    "PBT_IN":   {"sub": 0x07, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "PBT IN"},
+    "PBT_OUT":  {"sub": 0x08, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "PBT OUT"},
+    "CWPITCH":  {"sub": 0x09, "min": 300, "max": 900,  "civ_max": 255, "label": "CW PITCH"},
+    "RFPOWER":  {"sub": 0x0A, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "RF PWR"},
+    "MICGAIN":  {"sub": 0x0B, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "MIC GAIN"},
+    "KEYSPD":   {"sub": 0x0C, "min": 6,   "max": 48,   "civ_max": 255, "label": "KEYSPD"},
+    "NOTCHF":   {"sub": 0x0D, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "NOTCH"},
+    "COMP":     {"sub": 0x0E, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "COMP"},
     # POPRAWKA: Break-IN Delay to CI-V 14 0F (00 00=2.0d .. 02 55=13.0d),
     # NIE 14 12 (to jest NB level, patrz NB_LEVEL ponizej). Wczesniejsza
     # wersja mapowala BKINDL na 0x12 — kolidowalo to z NB_LEVEL i bylo
     # niezgodne z dokumentacja CI-V (str.19-3).
-    "BKINDL":   {"sub": 0x0F, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Opoznienie break-in (BKINDL)"},
-    "NB_LEVEL": {"sub": 0x12, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "Poziom NB"},
+    "BKINDL":   {"sub": 0x0F, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "BK-IN DELAY"},
+    "NB_LEVEL": {"sub": 0x12, "min": 0,   "max": 1.0,  "civ_max": 255, "label": "NB LEVEL"},
     # USUNIETO: AGC_TIME (poprzednio blednie 14 37 — taki subcommand nie
     # istnieje w tabeli 0x14). Faktyczny AGC time constant to CI-V 1A 04
     # (00=OFF, AM:01-13=0.3-8.0s, SSB/CW/RTTY:01-13=0.1-6.0s) — INNA
@@ -100,17 +100,21 @@ _IC7300_FUNCS = {
     "MON":    0x45,  # Monitor (sidetone TX)
 }
 
-# Etykiety dla funkcji (zgodne z hamlib_caps.FUNC_LABELS gdzie mozliwe)
+# Etykiety dla funkcji (zgodne z hamlib_caps.FUNC_LABELS gdzie mozliwe).
+# Format "SKROT (opis)": frontend (radiofunctions.js) tnie po '(' -> na
+# przycisku widac tylko uniwersalny skrot (SKROT), pelny string (z polskim
+# opisem) trafia do title (tooltip po najechaniu) — tak przyciski dzialaja
+# identycznie w PL/EN bez osobnego tlumaczenia backendu.
 _FUNC_LABELS = {
-    "NB":   "Noise Blanker (NB)",
-    "NR":   "Noise Reduction (NR)",
-    "ANF":  "Auto Notch Filter (ANF)",
-    "COMP": "Kompresor (COMP)",
+    "NB":   "NB (Noise Blanker)",
+    "NR":   "NR (Redukcja szumow)",
+    "ANF":  "ANF (Auto Notch Filter)",
+    "COMP": "COMP (Kompresor)",
     "VOX":  "VOX",
-    "TONE": "Tone (CTCSS TX)",
-    "TSQL": "Tone Squelch (TSQL)",
-    "BKIN": "Break-In (BK-IN)",
-    "MON":  "Monitor (sidetone TX)",
+    "TONE": "TONE (Tone CTCSS TX)",
+    "TSQL": "TSQL (Tone Squelch)",
+    "BKIN": "BKIN (Break-In)",
+    "MON":  "MON (Monitor sidetone TX)",
 }
 
 

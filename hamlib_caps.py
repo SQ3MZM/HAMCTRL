@@ -27,58 +27,64 @@ import asyncio
 import re
 
 
-# ── Etykiety dla znanych poziomow Hamlib (ladniejsze nazwy w UI) ─────────────
+# ── Etykiety dla znanych poziomow Hamlib (uniwersalne skroty PL/EN) ─────────
+# Bez opisow po polsku — te trafiaja prosto na slider w UI (obcinane do 14
+# znakow, patrz radiofunctions.js renderSliders/makeTile), wiec musza byc
+# krotkie i dzialac identycznie w obu jezykach frontendu (jak ALC/PWR/SWR).
 LEVEL_LABELS = {
-    "PREAMP":      "Przedwzmacniacz (Preamp)",
-    "ATT":         "Atenuator",
-    "AF":          "Glosnosc (AF)",
-    "RF":          "Wzmocnienie RF (RF Gain)",
-    "SQL":         "Squelch",
-    "APF":         "Audio Peak Filter (APF)",
-    "NR":          "Redukcja szumow (NR)",
-    "PBT_IN":      "Passband Tuning IN",
-    "PBT_OUT":     "Passband Tuning OUT",
-    "CWPITCH":     "Ton CW (Pitch)",
-    "RFPOWER":     "Moc TX (RF Power)",
-    "MICGAIN":     "Wzmocnienie mikrofonu",
-    "KEYSPD":      "Szybkosc CW (WPM)",
-    "COMP":        "Kompresja mikrofonu",
+    "PREAMP":      "PREAMP",
+    "ATT":         "ATT",
+    "AF":          "AF",
+    "RF":          "RF GAIN",
+    "SQL":         "SQL",
+    "APF":         "APF",
+    "NR":          "NR",
+    "PBT_IN":      "PBT IN",
+    "PBT_OUT":     "PBT OUT",
+    "CWPITCH":     "CW PITCH",
+    "RFPOWER":     "RF PWR",
+    "MICGAIN":     "MIC GAIN",
+    "KEYSPD":      "KEYSPD",
+    "COMP":        "COMP",
     "AGC":         "AGC",
-    "BKINDL":      "Opoznienie break-in (BKINDL)",
-    "RAWSTR":      "Surowy S-metr (RAWSTR)",
+    "BKINDL":      "BK-IN DELAY",
+    "RAWSTR":      "RAWSTR",
     "SWR":         "SWR",
     "ALC":         "ALC",
-    "RFPOWER_METER": "Wskaznik mocy TX",
-    "NOTCHF_RAW":  "Notch (czestotliwosc)",
-    "RFPOWER_METER_WATTS": "Moc TX (W)",
-    "AGC_TIME":    "Czas reakcji AGC",
-    "VOXDELAY":    "Opoznienie VOX",
-    "ANTIVOX":     "Anti-VOX",
+    "RFPOWER_METER": "PWR METER",
+    "NOTCHF_RAW":  "NOTCH",
+    "RFPOWER_METER_WATTS": "PWR (W)",
+    "AGC_TIME":    "AGC TIME",
+    "VOXDELAY":    "VOX DELAY",
+    "ANTIVOX":     "ANTI-VOX",
 }
 
 # Poziomy ktore sa "tylko odczyt" / telemetria — nie generujemy slidera
 # nawet jesli sa w "Set level" (rigctld czasem zglasza je tam blednie)
 LEVEL_READONLY = {"RAWSTR", "SWR", "ALC", "RFPOWER_METER", "RFPOWER_METER_WATTS"}
 
-# Etykiety dla funkcji (Get/Set functions)
+# Etykiety dla funkcji (Get/Set functions). Format "SKROT (opis)" — frontend
+# tnie po '(' na przycisku, wiec widac tylko uniwersalny skrot; pelny opis
+# (polski) zostaje w title (tooltip). Patrz ta sama uwaga przy
+# rigs/civ_profiles.py::_FUNC_LABELS (druga sciezka: CI-V bezposredni).
 FUNC_LABELS = {
-    "NB":     "Noise Blanker (NB)",
-    "COMP":   "Kompresor (COMP)",
+    "NB":     "NB (Noise Blanker)",
+    "COMP":   "COMP (Kompresor)",
     "VOX":    "VOX",
-    "TONE":   "Tone (CTCSS TX)",
-    "TSQL":   "Tone Squelch (TSQL)",
-    "SBKIN":  "Semi break-in (CW)",
-    "FBKIN":  "Full break-in (CW)",
-    "ANF":    "Auto Notch Filter (ANF)",
-    "NR":     "Noise Reduction (NR)",
-    "APF":    "Audio Peak Filter (APF)",
-    "MON":    "Monitor (sidetone TX)",
-    "MN":     "Manual Notch",
+    "TONE":   "TONE (Tone CTCSS TX)",
+    "TSQL":   "TSQL (Tone Squelch)",
+    "SBKIN":  "SBKIN (Semi break-in CW)",
+    "FBKIN":  "FBKIN (Full break-in CW)",
+    "ANF":    "ANF (Auto Notch Filter)",
+    "NR":     "NR (Redukcja szumow)",
+    "APF":    "APF (Audio Peak Filter)",
+    "MON":    "MON (Monitor sidetone TX)",
+    "MN":     "MN (Manual Notch)",
     "RF":     "RF (Func)",
-    "ARO":    "Auto Repeater Offset (ARO)",
-    "RESUME": "Resume Scan",
-    "LOCK":   "Blokada VFO (Lock)",
-    "FAGC":   "Fast AGC",
+    "ARO":    "ARO (Auto Repeater Offset)",
+    "RESUME": "RESUME (Resume Scan)",
+    "LOCK":   "LOCK (Blokada VFO)",
+    "FAGC":   "FAGC (Fast AGC)",
 }
 
 # VFO -> etykiety przyciskow
