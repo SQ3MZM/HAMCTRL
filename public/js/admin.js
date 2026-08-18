@@ -386,6 +386,7 @@ function renderRotatorConfig(rots) {
           <select id="rcfg-speed-${i}">
             <option value="600"  ${(rot.speed||'1200')==='600' ?'selected':''}>600</option>
             <option value="1200" ${(rot.speed||'1200')==='1200'?'selected':''}>1200</option>
+            <option value="4800" ${(rot.speed||'1200')==='4800'?'selected':''}>4800</option>
             <option value="9600" ${(rot.speed||'1200')==='9600'?'selected':''}>9600</option>
           </select>
         </div>

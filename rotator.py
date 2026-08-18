@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-rotator.py — Alfaspid RAK/RAS (protokół SPID) przez port szeregowy (pyserial).
-Na Replit (brak portów COM) automatyczny fallback do symulacji.
+rotator.py — sterowanie rotorem przez port szeregowy (pyserial), dwa protokoly:
+  - Alfaspid RAK/RAS (SPID) — modele "901"/"902"
+  - Yaesu GS-232A — modele "601"/"603" (patrz komentarz w Rotator._yaesu_*)
+Na Replit (brak portow COM) automatyczny fallback do symulacji.
 """
 import re, sys, time, threading
 
@@ -12,16 +14,33 @@ except ImportError:
     HAS_SERIAL = False
     print("[warn] Brak pyserial — pip install pyserial")
 
+YAESU_MODELS = {"601", "603"}  # GS-232A / GS-232B (dropdown w admin.js)
+
 
 class Rotator:
     """
-    Alfaspid RAK (Rot1Prog) — protokół SPID, pyserial.
+    Dwa wspierane protokoly, wybierane po polu 'model' z konfiguracji
+    (self.protocol = 'yaesu' | 'spid'). Reszta klasy (polaczenie szeregowe,
+    watek ruchu, symulacja, broadcast WS) jest wspolna dla obu.
+
+    Alfaspid RAK (Rot1Prog) — protokol SPID, pyserial.
       STATUS TX (13B): 57 00..00 1F 20  →  RX (5B): 57 H1 H2 H3 20  (az = H1*100+H2*10+H3-360)
       SET TX:          57 H1 H2 H3 00 01 00 00 00 00 00 2F 20  (H = az+360, cyfry ASCII)
       STOP TX (6B):    57 00 00 00 0F 20
+
+    Yaesu GS-232A — ASCII, komendy zakonczone CR (\\r), 8N1.
+      STATUS TX: "C\\r"      →  RX: "+0ddd\\r" (znak + 4 cyfry azymutu, np. "+0180")
+      SET TX:    "Mddd\\r"   (3-cyfrowy azymut 000-360, bez znaku)
+      STOP TX:   "S\\r"
+    UWAGA: oparte na powszechnie udokumentowanym zestawie komend GS-232A
+    (Hamlib, PstRotator, N1MM uzywaja tego samego C/M/S + formatu "+0ddd").
+    NIEZWERYFIKOWANE na fizycznym kontrolerze — przed podlaczeniem realnego
+    Yaesu potwierdz format w instrukcji SWOJEGO modelu (rozne firmware GS-232
+    roznia sie w szczegolach ramki). Do czasu potwierdzenia uzywaj trybu
+    symulacji (sim=True, patrz connect()).
     """
 
-    STATUS_PKT = bytes([0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, 0x20])
+    STATUS_PKT = bytes([0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, 0x20])  # SPID
 
     def __init__(self, cfg: dict, broadcast_fn=None):
         self.id         = int(cfg.get("id", 1))
@@ -29,6 +48,7 @@ class Rotator:
         self.port       = cfg.get("port", "COM8")
         self.speed      = int(cfg.get("speed", 1200))
         self.model      = str(cfg.get("model", "901"))
+        self.protocol   = "yaesu" if self.model in YAESU_MODELS else "spid"
         self.enabled    = bool(cfg.get("enabled", True))
         self.az         = 0.0
         self.el         = 0.0
@@ -58,7 +78,7 @@ class Rotator:
         }
 
     # ── Protokół SPID ─────────────────────────────────────────────────────────
-    def _set_pkt(self, az: float) -> bytes:
+    def _spid_set_pkt(self, az: float) -> bytes:
         """SET 13B: 57 H1 H2 H3 00 01 00 00 00 00 00 2F 20 (H = az+360, ASCII)."""
         A = str(int(round(az + 360)) % 1000).zfill(3)
         return bytes([0x57,
@@ -67,11 +87,11 @@ class Rotator:
                       0x00, 0x00, 0x00, 0x00, 0x00,
                       0x2F, 0x20])
 
-    def _stop_pkt(self) -> bytes:
+    def _spid_stop_pkt(self) -> bytes:
         """STOP 6B: 57 00 00 00 0F 20"""
         return bytes([0x57, 0, 0, 0, 0x0F, 0x20])
 
-    def _decode(self, buf: bytes) -> float | None:
+    def _spid_decode(self, buf: bytes) -> float | None:
         """Znajdź i zdekoduj 5B ramkę: 57 H1 H2 H3 20"""
         for i in range(len(buf) - 4):
             if buf[i] == 0x57 and buf[i + 4] == 0x20:
@@ -79,6 +99,44 @@ class Rotator:
                 if -5 <= az <= 365:
                     return float(az)
         return None
+
+    # ── Protokół Yaesu GS-232A ────────────────────────────────────────────────
+    def _yaesu_status_pkt(self) -> bytes:
+        return b"C\r"
+
+    def _yaesu_set_pkt(self, az: float) -> bytes:
+        """SET: "Mddd\\r" — 3-cyfrowy azymut 000-360, bez znaku."""
+        A = str(int(round(az)) % 360).zfill(3)
+        return f"M{A}\r".encode("ascii")
+
+    def _yaesu_stop_pkt(self) -> bytes:
+        return b"S\r"
+
+    def _yaesu_decode(self, buf: bytes) -> float | None:
+        """Parsuj odpowiedz "+0ddd\\r" (znak + 4 cyfry azymutu)."""
+        try:
+            txt = buf.decode("ascii", errors="ignore")
+        except Exception:
+            return None
+        m = re.search(r'([+-]\d{4})', txt)
+        if m:
+            az = int(m.group(1))
+            if -5 <= az <= 365:
+                return float(az)
+        return None
+
+    # ── Dyspozytor protokolu (uzywany przez _write/_read_pos/_move_worker) ─────
+    def _set_pkt(self, az: float) -> bytes:
+        return self._yaesu_set_pkt(az) if self.protocol == "yaesu" else self._spid_set_pkt(az)
+
+    def _stop_pkt(self) -> bytes:
+        return self._yaesu_stop_pkt() if self.protocol == "yaesu" else self._spid_stop_pkt()
+
+    def _decode(self, buf: bytes) -> float | None:
+        return self._yaesu_decode(buf) if self.protocol == "yaesu" else self._spid_decode(buf)
+
+    def _status_pkt(self) -> bytes:
+        return self._yaesu_status_pkt() if self.protocol == "yaesu" else self.STATUS_PKT
 
     # ── Serial I/O ────────────────────────────────────────────────────────────
     def _write(self, pkt: bytes) -> bool:
@@ -92,7 +150,8 @@ class Rotator:
         return False
 
     def _read_pos(self, timeout: float = 2.5) -> float | None:
-        """Wyślij STATUS (13B), odczytaj odpowiedź (5B). W symulacji zwraca self.az."""
+        """Wyślij STATUS, odczytaj odpowiedź (format zalezny od protokolu -
+        patrz _status_pkt/_decode). W symulacji zwraca self.az."""
         if self.sim:
             return self.az
         if not self._ser or not self._ser.is_open:
@@ -100,7 +159,7 @@ class Rotator:
         with self._lock:
             try:
                 self._ser.reset_input_buffer()
-                self._ser.write(self.STATUS_PKT)
+                self._ser.write(self._status_pkt())
                 buf      = bytearray()
                 deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
@@ -137,7 +196,8 @@ class Rotator:
             self.az        = az
             self.connected = True
             self.sim       = False
-            print(f"[rotator] {self.name} SPID @ {self.port} {self.speed}bd — az={self.az:.0f}°")
+            proto_label = "Yaesu GS-232A" if self.protocol == "yaesu" else "SPID"
+            print(f"[rotator] {self.name} {proto_label} @ {self.port} {self.speed}bd — az={self.az:.0f}°")
             return True
         except Exception as e:
             print(f"[rotator] {self.name}: {e} → symulacja")
