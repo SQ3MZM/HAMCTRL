@@ -1,32 +1,32 @@
 /*
- * dxcluster.js — Klient DX Cluster (UI + WS handlers).
+ * dxcluster.js — DX Cluster client (UI + WS handlers).
  *
- * Odbiera z serwera:
+ * Receives from the server:
  *   {type: 'dx_spot', freq_hz, call, spotter, comment, utc, ts, band, mode}
  *   {type: 'dx_status', status: 'connecting'|'connected'|'disconnected'|'error', message}
  *
- * Wysyla do serwera:
- *   POST /api/dxcluster/config  — zapisz adres/login/haslo
- *   POST /api/dxcluster/connect — polacz
- *   POST /api/dxcluster/disconnect — rozlacz
- *   POST /api/dxcluster/command — dowolna komenda telnet
- *   GET  /api/dxcluster/config  — pobierz konfiguracje
- *   GET  /api/dxcluster/history — pobierz cache ostatnich spotow
+ * Sends to the server:
+ *   POST /api/dxcluster/config  — save host/login/password
+ *   POST /api/dxcluster/connect — connect
+ *   POST /api/dxcluster/disconnect — disconnect
+ *   POST /api/dxcluster/command — arbitrary telnet command
+ *   GET  /api/dxcluster/config  — fetch the config
+ *   GET  /api/dxcluster/history — fetch the recent-spots cache
  */
 
 window.DXCluster = (function() {
-  let _spots = [];             // wszystkie odebrane spoty w tej sesji
-  const _MAX_SPOTS = 500;      // limit w pamieci
+  let _spots = [];             // all spots received in this session
+  const _MAX_SPOTS = 500;      // in-memory limit
   let _connected = false;
 
-  // Pokaz/ukryj panel konfiguracji
+  // Show/hide the config panel
   function toggleConfig() {
     const panel = document.getElementById('dx-config-panel');
     if (!panel) return;
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
   }
 
-  // ── Konfiguracja ─────────────────────────────────────────────────────────
+  // ── Config ────────────────────────────────────────────────────────────────
   async function loadConfig() {
     try {
       const r = await fetch('/api/dxcluster/config', { credentials: 'include' });
@@ -37,27 +37,27 @@ window.DXCluster = (function() {
       document.getElementById('dx-host').value = cfg.host || '';
       document.getElementById('dx-port').value = cfg.port || 7300;
       document.getElementById('dx-login').value = cfg.login || '';
-      // Hasla nie zwracamy - placeholder pokazuje ze jest zapisane
+      // We don't return the password - the placeholder shows it's saved
       const pwEl = document.getElementById('dx-password');
       if (pwEl) pwEl.placeholder = cfg.has_password ? I18n.t('dx_password_saved_ph') : I18n.t('dx_optional_ph');
       document.getElementById('dx-auto-connect').checked = !!cfg.auto_connect;
 
-      // Auto-pokaz konfiguracje jesli nie ma adresu (pierwszy raz)
+      // Auto-show the config if there's no host (first time)
       if (!cfg.host) {
         const panel = document.getElementById('dx-config-panel');
         if (panel) panel.style.display = 'block';
       }
 
-      // Wczytaj historie z cache serwera (spoty z tej sesji nawet po odswiezeniu)
+      // Load history from the server cache (spots from this session even after a refresh)
       if (data.history && data.history.length) {
         _spots = data.history.slice();
         renderSpots();
       }
 
-      // Zaktualizuj status
+      // Update the status
       _connected = !!data.connected;
       updateStatusBadge(_connected ? 'connected' : 'disconnected', '');
-    } catch(e) { console.warn('[dx] loadConfig blad:', e); }
+    } catch(e) { console.warn('[dx] loadConfig error:', e); }
   }
 
   async function save() {
@@ -68,7 +68,7 @@ window.DXCluster = (function() {
       host: document.getElementById('dx-host').value.trim(),
       port: parseInt(document.getElementById('dx-port').value, 10),
       login: document.getElementById('dx-login').value.trim(),
-      // Jesli pole hasla puste, wysylamy null - serwer zachowa poprzednie
+      // If the password field is empty, send null - the server keeps the previous one
       password: password ? password : null,
       auto_connect: document.getElementById('dx-auto-connect').checked,
     };
@@ -82,7 +82,7 @@ window.DXCluster = (function() {
       const data = await r.json();
       if (r.ok && data.ok) {
         if (status) { status.textContent = I18n.t('dx_saved'); status.style.color = 'var(--green)'; }
-        // Wyczyść pole hasła (nie chcemy go trzymać w DOM)
+        // Clear the password field (we don't want to keep it in the DOM)
         document.getElementById('dx-password').value = '';
         setTimeout(loadConfig, 500);
       } else {
@@ -94,7 +94,7 @@ window.DXCluster = (function() {
   }
 
   async function connect() {
-    // Zapisz konfiguracje przed polaczeniem, jesli sa niezapisane zmiany
+    // Save the config before connecting, in case there are unsaved changes
     await save();
     try {
       const r = await fetch('/api/dxcluster/connect', {
@@ -134,7 +134,7 @@ window.DXCluster = (function() {
     } catch(e) { window.UI?.showToast?.('⛔ ' + e.message, 'error'); }
   }
 
-  // ── Renderowanie spotow ──────────────────────────────────────────────────
+  // ── Rendering spots ───────────────────────────────────────────────────────
   function renderSpots() {
     const tbody = document.getElementById('dx-spot-list');
     if (!tbody) return;
@@ -142,7 +142,7 @@ window.DXCluster = (function() {
     const fMode = document.getElementById('dx-filter-mode')?.value || '';
     const fCall = (document.getElementById('dx-filter-call')?.value || '').toUpperCase().trim();
 
-    // Najnowsze na gorze
+    // Newest at the top
     const filtered = _spots.slice().reverse().filter(s => {
       if (fBand && s.band !== fBand) return false;
       if (fMode && s.mode !== fMode) return false;
@@ -150,7 +150,7 @@ window.DXCluster = (function() {
       return true;
     });
 
-    // Update licznika - pokaz "widoczne / lacznie" bo renderujemy tylko 30
+    // Update the counter - show "shown / total" since we only render 30
     const totalCount = filtered.length;
     const shownCount = Math.min(30, totalCount);
     const countEl = document.getElementById('dx-spot-count');
@@ -166,7 +166,7 @@ window.DXCluster = (function() {
       return;
     }
 
-    // Kolory pasm dla lepszej czytelnosci
+    // Band colors for better readability
     const bandColors = {
       '160m':'#B08D57','80m':'#c17a2f','60m':'#d99050',
       '40m':'#4C8F2F','30m':'#3a7fc7','20m':'#E5B84A',
@@ -201,74 +201,75 @@ window.DXCluster = (function() {
     }).join('');
   }
 
-  // QSY do czestotliwosci spota + ustaw tryb (jesli znany).
-  // ── Konwersja trybu ze spota na tryb radia (IC-7300) ──────────────────────
+  // QSY to a spot's frequency + set the mode (if known).
+  // ── Convert a spot's mode to the radio's mode (IC-7300) ────────────────────
   //
-  // Spot z klastra podaje tryb "operacyjny" (SSB, FT8, CW, RTTY...), a radio
-  // rozumie tylko LSB/USB/CW/RTTY/AM/FM. Trzeba przetlumaczyc — zwlaszcza
-  // wybrac WLASCIWA WSTEGE dla SSB i trybow cyfrowych.
+  // A cluster spot gives the "operating" mode (SSB, FT8, CW, RTTY...), but
+  // the radio only understands LSB/USB/CW/RTTY/AM/FM. It needs translating
+  // — in particular picking the CORRECT SIDEBAND for SSB and digital modes.
   //
-  // Konwencja amatorska (IARU):
-  //   - ponizej 10 MHz  -> LSB  (160m, 80m, 40m)
-  //   - powyzej 10 MHz  -> USB  (20m, 17m, 15m, 12m, 10m, 6m i wyzej)
-  //   - 60m (5.3 MHz)   -> USB  (wyjatek! kanaly 60m sa zawsze USB)
-  //   - tryby cyfrowe   -> zawsze USB (niezaleznie od pasma)
+  // Amateur convention (IARU):
+  //   - below 10 MHz  -> LSB  (160m, 80m, 40m)
+  //   - above 10 MHz  -> USB  (20m, 17m, 15m, 12m, 10m, 6m and up)
+  //   - 60m (5.3 MHz) -> USB  (exception! 60m channels are always USB)
+  //   - digital modes -> always USB (regardless of band)
   //
-  // Zwraca null gdy nie ma sensu zmieniac trybu (nieznany / '?').
+  // Returns null when changing the mode doesn't make sense (unknown / '?').
   function _spotModeToRigMode(mode, freq_hz) {
     const m = String(mode || '').trim().toUpperCase();
     if (!m || m === '?') return null;
 
-    // Wstega dla fonii: <10 MHz = LSB, >=10 MHz = USB.
-    // Wyjatek 60m (5250-5450 kHz) - miedzynarodowo zawsze USB.
+    // Sideband for phone: <10 MHz = LSB, >=10 MHz = USB.
+    // Exception: 60m (5250-5450 kHz) - internationally always USB.
     const is60m = freq_hz >= 5_250_000 && freq_hz <= 5_450_000;
     const phoneSideband = (freq_hz < 10_000_000 && !is60m) ? 'LSB' : 'USB';
 
-    // Tryby cyfrowe: ZAWSZE USB (tak jest w standardzie, tez na 40m/80m).
-    // Radio moze byc w USB albo USB-D - oba dzialaja, USB-D lepsze (filtr).
+    // Digital modes: ALWAYS USB (that's the standard, even on 40m/80m).
+    // The radio can be in USB or USB-D - both work, USB-D is better (filter).
     const DIGI = ['FT8', 'FT4', 'RTTY', 'PSK', 'PSK31', 'JT65', 'JT9',
                   'DIGI', 'DATA', 'MFSK', 'OLIVIA', 'JS8', 'WSPR',
                   'MSK144', 'Q65'];
     if (DIGI.includes(m)) return 'USB';
 
-    // SAT - praca satelitarna. Nie zmieniamy trybu automatycznie, bo zalezy
-    // od satelity (FM/SSB/CW) i strony lacza (uplink/downlink). Operator
-    // ustawia sam.
+    // SAT - satellite operation. We don't auto-change the mode, since it
+    // depends on the satellite (FM/SSB/CW) and the link direction
+    // (uplink/downlink). The operator sets it themselves.
     if (m === 'SAT') return null;
 
-    // Fonia -> wlasciwa wstega wg pasma
+    // Phone -> correct sideband by band
     if (m === 'SSB' || m === 'PHONE' || m === 'LSB' || m === 'USB') {
-      // Jesli spot jawnie mowi LSB/USB - uszanuj to (spotter wiedzial lepiej).
-      // Ale gdy mowi ogolnie "SSB" - wybierz wstege po czestotliwosci.
+      // If the spot explicitly says LSB/USB - respect it (the spotter knew better).
+      // But when it just says "SSB" generically - pick the sideband by frequency.
       if (m === 'LSB' || m === 'USB') return m;
       return phoneSideband;
     }
 
-    // CW, AM, FM - bez zmian (radio zna te tryby)
+    // CW, AM, FM - unchanged (the radio knows these modes)
     if (m === 'CW' || m === 'CWR' || m === 'CW-R') return 'CW';
     if (m === 'AM') return 'AM';
     if (m === 'FM' || m === 'NFM' || m === 'WFM') return 'FM';
 
-    // Nieznany tryb - nie ruszaj radia (lepiej zostawic jak jest)
+    // Unknown mode - don't touch the radio (better to leave it as is)
     return null;
   }
 
-  // WAZNE: uzywamy window.UI.sendFreq (sprawdzony mechanizm) zamiast bezposredniego
-  // WS.send - dzieki temu QSY zachowuje sie tak samo jak reczne strojenie z
-  // panelu Radio (sprawdzanie locka, S.freq update, updateFreqDisplay itp.).
-  // Wczesniej byl bezposredni WS.send({type:'freq',freq}) ktore omijalo
-  // logike S.freq/updateFreqDisplay i nie zawsze dawalo widoczna zmiane.
+  // IMPORTANT: we use window.UI.sendFreq (the proven mechanism) instead of
+  // calling WS.send directly - this way QSY behaves exactly like manual
+  // tuning from the Radio panel (lock check, S.freq update,
+  // updateFreqDisplay, etc.). It used to call WS.send({type:'freq',freq})
+  // directly, which bypassed the S.freq/updateFreqDisplay logic and didn't
+  // always produce a visible change.
   function qsy(freq_hz, mode) {
-    // Zabezpieczenie przed nieprawidlowymi argumentami z HTML onclick
+    // Guard against invalid arguments from the HTML onclick
     freq_hz = parseInt(freq_hz, 10);
     if (!freq_hz || freq_hz < 100000) {
       window.UI?.showToast?.(I18n.t('dx_invalid_freq'), 'error');
       return;
     }
 
-    // Sprawdz czy user moze sterowac radiem (informacyjny toast przed
-    // wyslaniem, bo bez tego UI.sendFreq tez pokaze toast ale klarowniej
-    // objasnimy z zakladki DX Cluster).
+    // Check whether the user can control the radio (an informational
+    // toast before sending, since without this UI.sendFreq would also
+    // show a toast but we can explain it more clearly from the DX Cluster tab).
     const lock  = window.AppState?.radio_lock;
     const myUid = String(window.AppState?.my_uid || window.CurrentUser?.id || '');
     const role  = window.CurrentUser?.role;
@@ -282,19 +283,20 @@ window.DXCluster = (function() {
       return;
     }
 
-    // Uzyj sprawdzonego UI.sendFreq — wywoluje _canControlRadio, aktualizuje
-    // S.freq, updateFreqDisplay, updateVFOBadges, scheduleBandMemorySave i
-    // wysyla WS. To DOKLADNIE to co robi klik na "Radio" tab przy strojeniu.
+    // Use the proven UI.sendFreq — calls _canControlRadio, updates S.freq,
+    // updateFreqDisplay, updateVFOBadges, scheduleBandMemorySave, and
+    // sends the WS message. This is EXACTLY what clicking the "Radio" tab
+    // during tuning does.
     if (typeof window.UI?.sendFreq === 'function') {
       window.UI.sendFreq(freq_hz);
     } else {
-      // Fallback jesli UI.sendFreq niedostepne (nie powinno sie zdarzyc)
+      // Fallback if UI.sendFreq is unavailable (shouldn't happen)
       window.WS?.send?.({ type: 'freq', freq: freq_hz });
     }
 
-    // Zmien tryb (jesli konkretny) — z krotkim opoznieniem zeby zmiana freq
-    // dotarla najpierw (backend przetwarza wiadomosci sekwencyjnie ale radio
-    // moze potrzebowac chwili miedzy CI-V freq i mode command).
+    // Change the mode (if specific) — with a short delay so the freq
+    // change arrives first (the backend processes messages sequentially,
+    // but the radio may need a moment between the CI-V freq and mode commands).
     const rigMode = _spotModeToRigMode(mode, freq_hz);
     if (rigMode) {
       setTimeout(() => {
@@ -305,9 +307,9 @@ window.DXCluster = (function() {
     const mhz = (freq_hz / 1e6).toFixed(3);
     window.UI?.showToast?.(`✓ QSY: ${mhz} MHz${mode && mode !== '?' ? ' ('+mode+')' : ''}`, 'info');
 
-    // Przelacz na zakladke Radio zeby uzytkownik widzial zmianie freq/mode.
-    // setTimeout(0) zeby scroll reset (dodany w setPage) nie skolidowal z
-    // renderowaniem toasta powyzej.
+    // Switch to the Radio tab so the user sees the freq/mode change.
+    // setTimeout(0) so the scroll reset (added in setPage) doesn't collide
+    // with rendering the toast above.
     setTimeout(() => { window.UI?.setPage?.('radio'); }, 100);
   }
 
@@ -316,11 +318,11 @@ window.DXCluster = (function() {
     renderSpots();
   }
 
-  // ── WS handlery ─────────────────────────────────────────────────────────
+  // ── WS handlers ───────────────────────────────────────────────────────────
   function handleSpot(msg) {
     _spots.push(msg);
     if (_spots.length > _MAX_SPOTS) _spots.splice(0, _spots.length - _MAX_SPOTS);
-    // Aktualizuj UI tylko jesli zakladka aktywna (oszczedza CPU)
+    // Update the UI only if the tab is active (saves CPU)
     const page = document.getElementById('page-dxcluster');
     if (page && page.classList.contains('active')) {
       renderSpots();
@@ -344,8 +346,8 @@ window.DXCluster = (function() {
       badge.style.background = 'rgba(184,201,143,0.15)';
       if (connectBtn) connectBtn.style.display = 'none';
       if (disconnectBtn) disconnectBtn.style.display = '';
-      // Ukryj panel konfiguracji po udanym polaczeniu (zeby lista spotow
-      // miala wiecej miejsca — nie zmuszamy do scrollowania)
+      // Hide the config panel after a successful connection (so the spot
+      // list has more room — we don't force scrolling)
       const cfgPanel = document.getElementById('dx-config-panel');
       if (cfgPanel) cfgPanel.style.display = 'none';
     } else if (status === 'connecting') {
@@ -367,25 +369,25 @@ window.DXCluster = (function() {
     }
   }
 
-  // ── Utility ─────────────────────────────────────────────────────────────
+  // ── Utility ───────────────────────────────────────────────────────────────
   function _escapeHtml(s) {
     return String(s || '').replace(/[&<>"']/g, m => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[m]));
   }
 
-  // ── Init ────────────────────────────────────────────────────────────────
+  // ── Init ──────────────────────────────────────────────────────────────────
   window.addEventListener('app:ready', () => {
     loadConfig();
   });
 
-  // Auto-refresh age co 30s zeby stopnie "5s ago" -> "1m ago" aktualizowaly sie
+  // Auto-refresh the age every 30s so "5s ago" -> "1m ago" transitions update
   setInterval(() => {
     const page = document.getElementById('page-dxcluster');
     if (page && page.classList.contains('active')) renderSpots();
   }, 30000);
 
-  // ── Wysylanie spota na klaster ─────────────────────────────────────────────
+  // ── Sending a spot to the cluster ──────────────────────────────────────────
 
   function _spotHdr() {
     const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
@@ -401,7 +403,7 @@ window.DXCluster = (function() {
     else     { el.style.display = 'none'; }
   }
 
-  // Aktualizuj podglad komendy jaka poleci na klaster
+  // Update the preview of the command that will be sent to the cluster
   function _updateSpotPreview() {
     const call = (document.getElementById('dx-spot-call')?.value || '').trim().toUpperCase();
     const freq = (document.getElementById('dx-spot-freq')?.value || '').trim();
@@ -413,13 +415,14 @@ window.DXCluster = (function() {
     prev.textContent = cmd;
   }
 
-  // Zamien tryb radia na etykiete uzywana w spotach.
-  // Radio raportuje USB/LSB/CW/RTTY... a przy pracy cyfrowej USB-D/LSB-D.
-  // Dla spota sensowniej podac realny tryb pracy (FT8 gdy na czestotliwosci FT8).
+  // Convert the radio's mode to the label used in spots.
+  // The radio reports USB/LSB/CW/RTTY... and USB-D/LSB-D for digital
+  // work. For a spot it makes more sense to give the real operating mode
+  // (FT8 when on an FT8 frequency).
   function _guessSpotMode(freqHz, rigMode) {
     const m = String(rigMode || '').toUpperCase();
     const khz = freqHz / 1000;
-    // Dokladne czestotliwosci FT8/FT4 (kHz) - HF + VHF/UHF + mikrofale
+    // Exact FT8/FT4 frequencies (kHz) - HF + VHF/UHF + microwave
     const FT8 = [1840, 3573, 5357, 7074, 10136, 14074, 18100, 21074, 24915, 28074,
                  50313, 50323, 70100, 70154, 144174, 222065, 432174,
                  1296174, 2320174, 3400174, 5760174, 10368174, 24048174];
@@ -434,7 +437,7 @@ window.DXCluster = (function() {
     if (m.startsWith('CW'))   return 'CW';
     if (m.startsWith('RTTY')) return 'RTTY';
     if (m === 'USB' || m === 'LSB') {
-      if (near(FT8)) return 'FT8';   // ktos zapomnial przelaczyc na -D
+      if (near(FT8)) return 'FT8';   // someone forgot to switch to -D
       if (near(FT4)) return 'FT4';
       return 'SSB';
     }
@@ -445,7 +448,7 @@ window.DXCluster = (function() {
     const modal = document.getElementById('dx-spot-modal');
     if (!modal) return;
 
-    // Wypelnij aktualna czestotliwoscia i trybem radia
+    // Fill in the current frequency and the radio's mode
     const S = window.AppState || {};
     const freqHz = parseInt(S.freq, 10) || 0;
     const khz = freqHz ? (freqHz / 1000).toFixed(1).replace(/\.0$/, '') : '';
@@ -456,17 +459,17 @@ window.DXCluster = (function() {
     const mEl = document.getElementById('dx-spot-comment');
     if (fEl) fEl.value = khz;
     if (cEl) cEl.value = '';
-    if (mEl) mEl.value = mode ? `${mode} ` : '';   // spacja - user dopisze resztę
+    if (mEl) mEl.value = mode ? `${mode} ` : '';   // trailing space - the user types the rest
 
     _spotError('');
     _updateSpotPreview();
 
-    // Podepnij live-podglad (raz)
+    // Hook up the live preview (once)
     if (!modal.dataset.wired) {
       ['dx-spot-call', 'dx-spot-freq', 'dx-spot-comment'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', _updateSpotPreview);
       });
-      // Enter w polu znaku/komentarza = wyslij
+      // Enter in the call/comment field = send
       ['dx-spot-call', 'dx-spot-comment'].forEach(id => {
         document.getElementById(id)?.addEventListener('keydown', e => {
           if (e.key === 'Enter') { e.preventDefault(); sendSpot(); }
@@ -476,7 +479,7 @@ window.DXCluster = (function() {
     }
 
     modal.classList.add('active');   // CSS: .modal-overlay.active { display:flex }
-    setTimeout(() => cEl?.focus(), 50);   // kursor od razu w polu znaku
+    setTimeout(() => cEl?.focus(), 50);   // put the cursor straight into the call field
   }
 
   function closeSpotDialog() {
@@ -490,7 +493,7 @@ window.DXCluster = (function() {
     const freqKhz = (document.getElementById('dx-spot-freq')?.value || '').trim();
     const comment = (document.getElementById('dx-spot-comment')?.value || '').trim();
 
-    // Walidacja po stronie klienta (backend i tak sprawdza ponownie)
+    // Client-side validation (the backend re-checks it anyway)
     if (!call || !/^[A-Z0-9/]{3,16}$/.test(call)) {
       _spotError(I18n.t('dx_spot_call_invalid'));
       return;
