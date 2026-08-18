@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-config.py — konfiguracja, ścieżki, zmienne środowiskowe i dane statyczne.
-Bez zależności od pozostałych modułów projektu (tylko stdlib).
+config.py — configuration, paths, environment variables, and static data.
+No dependency on the rest of the project's modules (stdlib only).
 """
 import os, sys, hashlib
 from pathlib import Path
 
-# ── Ścieżki (świadome PyInstaller) ────────────────────────────────────────────
-# Kod i frontend (public/, rigs/) sa READ-ONLY i moga byc spakowane w EXE.
-# Dane uzytkownika (config.json, users.json, .env, logi) MUSZA byc trwale i
-# zapisywalne - obok EXE, nie w tymczasowym folderze PyInstaller.
+# ── Paths (PyInstaller-aware) ─────────────────────────────────────────────────
+# The code and frontend (public/, rigs/) are READ-ONLY and can be bundled
+# into the EXE. User data (config.json, users.json, .env, logs) MUST be
+# persistent and writable - next to the EXE, not in PyInstaller's temp folder.
 #
-# Wykrywanie srodowiska:
-#   - PyInstaller onefile: sys.frozen=True, dane statyczne w sys._MEIPASS,
-#     ale EXE fizycznie lezy w sys.executable (tam trzymamy dane usera).
-#   - Normalny python: wszystko obok config.py.
+# Environment detection:
+#   - PyInstaller onefile: sys.frozen=True, static data in sys._MEIPASS,
+#     but the EXE physically lives at sys.executable (that's where we keep user data).
+#   - Regular Python: everything next to config.py.
 
 def _is_frozen() -> bool:
     return getattr(sys, "frozen", False)
@@ -22,30 +22,31 @@ def _is_frozen() -> bool:
 
 def _writable_data_dir() -> "Path":
     """
-    Wybierz TRWALY, ZAPISYWALNY katalog na dane usera (config, users, .env, logi).
+    Choose a PERSISTENT, WRITABLE directory for user data (config, users, .env, logs).
 
-    Logika:
-      1. Tryb dev (nie-frozen): obok config.py.
+    Logic:
+      1. Dev mode (not frozen): next to config.py.
       2. Frozen (EXE):
-         a) Jesli katalog obok EXE jest zapisywalny (np. EXE na pulpicie,
-            w Downloads, przenosny) -> uzyj obok EXE (proste, przenosne).
-         b) Jesli NIE (np. zainstalowany w Program Files, read-only) ->
-            uzyj %APPDATA%\\HAMCTRL (Windows) / ~/.hamctrl (inne).
+         a) If the directory next to the EXE is writable (e.g. EXE on the
+            desktop, in Downloads, portable) -> use next to the EXE (simple, portable).
+         b) If NOT (e.g. installed in Program Files, read-only) ->
+            use %APPDATA%\\HAMCTRL (Windows) / ~/.hamctrl (other OSes).
 
-    Dzieki temu ten sam EXE dziala i jako przenosny (dane obok), i jako
-    zainstalowany w Program Files (dane w APPDATA).
+    This lets the same EXE work both as a portable app (data alongside it)
+    and as an install in Program Files (data in APPDATA).
     """
     if not _is_frozen():
         return Path(__file__).parent
 
     exe_dir = Path(sys.executable).parent
 
-    # KRYTYCZNE (utrata danych przy aktualizacji): dla instalacji w Program
-    # Files ZAWSZE uzywaj APPDATA — bez testu zapisywalnosci. Test "czy moge
-    # zapisac obok EXE" przechodzi gdy serwer uruchomiony JAKO ADMINISTRATOR,
-    # wtedy qso.db/users.json/config ladowaly W Program Files i kazda
-    # aktualizacja/deinstalacja je kasowala ("wgrywam nowa wersje - wywala
-    # log"). Tryb przenosny (dane obok EXE) tylko POZA Program Files.
+    # CRITICAL (data loss on update): for an install in Program Files,
+    # ALWAYS use APPDATA — no writability test. The "can I write next to
+    # the EXE" test passes when the server is run AS ADMINISTRATOR, which
+    # meant qso.db/users.json/config loaded FROM Program Files and every
+    # update/uninstall deleted them ("installing a new version wipes the
+    # log"). Portable mode (data next to the EXE) only applies OUTSIDE
+    # Program Files.
     _pf = [os.environ.get("ProgramFiles", r"C:\Program Files"),
            os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
     _in_program_files = any(
@@ -54,16 +55,16 @@ def _writable_data_dir() -> "Path":
     )
 
     if not _in_program_files:
-        # Test zapisywalnosci katalogu obok EXE (tryb przenosny)
+        # Test whether the directory next to the EXE is writable (portable mode)
         try:
             _test = exe_dir / ".write_test"
             _test.write_text("x", encoding="utf-8")
             _test.unlink()
-            return exe_dir  # zapisywalny - tryb przenosny
+            return exe_dir  # writable - portable mode
         except Exception:
-            pass  # read-only - idziemy do APPDATA
+            pass  # read-only - fall back to APPDATA
 
-    # Katalog danych aplikacji
+    # Application data directory
     appdata = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
     if appdata:
         d = Path(appdata) / "HAMCTRL"
@@ -72,51 +73,53 @@ def _writable_data_dir() -> "Path":
     try:
         d.mkdir(parents=True, exist_ok=True)
     except Exception:
-        d = Path.home()  # ostateczny fallback
+        d = Path.home()  # last-resort fallback
 
-    # MIGRACJA RATUNKOWA: jesli stare dane leza OBOK EXE (efekt wczesniejszego
-    # bledu: uruchamianie jako admin -> zapis do Program Files przechodzil),
-    # przenies je do APPDATA zanim aktualizacja/deinstalacja je skasuje.
-    # Kopiujemy tylko gdy plik NIE istnieje jeszcze w APPDATA (nie nadpisujemy
-    # nowszych danych starymi).
+    # RESCUE MIGRATION: if old data is sitting NEXT TO the EXE (a side
+    # effect of an earlier bug: running as admin -> writing to Program
+    # Files succeeded), move it to APPDATA before an update/uninstall
+    # deletes it. We only copy a file if it does NOT already exist in
+    # APPDATA (never overwrite newer data with older data).
     try:
         import shutil as _sh
-        # qso.db-wal / -shm to pliki towarzyszace SQLite w trybie WAL —
-        # zawieraja NAJNOWSZE transakcje, jeszcze nie scalone z glowna baza.
-        # Bez nich migracja gubilaby ostatnio zapisane QSO.
+        # qso.db-wal / -shm are SQLite's WAL-mode companion files —
+        # they hold the MOST RECENT transactions, not yet merged into the
+        # main database. Without them, the migration would lose the most
+        # recently logged QSOs.
         for _fn in ("qso.db", "qso.db-wal", "qso.db-shm",
                     "users.json", "config.json", ".env"):
             _src = exe_dir / _fn
             _dst = d / _fn
             if _src.exists() and not _dst.exists():
                 _sh.copy2(str(_src), str(_dst))
-                print(f"[config] Migracja danych: {_fn} (obok EXE -> APPDATA)",
+                print(f"[config] Data migration: {_fn} (next to EXE -> APPDATA)",
                       flush=True)
-        # KATALOGI: certyfikat Let's Encrypt (letsencrypt/) i tunel
-        # (cloudflared/) tez zyly obok EXE — bez migracji cert "znikal"
-        # (kod szuka w DATA=APPDATA, a pliki zostaly w Program Files).
+        # DIRECTORIES: the Let's Encrypt certificate (letsencrypt/) and the
+        # tunnel (cloudflared/) also used to live next to the EXE — without
+        # migrating them the cert "disappeared" (the code looks in
+        # DATA=APPDATA, but the files stayed in Program Files).
         for _dn in ("letsencrypt", "cloudflared", "logs"):
             _src = exe_dir / _dn
             _dst = d / _dn
             if _src.is_dir() and not _dst.exists():
                 try:
                     _sh.copytree(str(_src), str(_dst))
-                    print(f"[config] Migracja katalogu: {_dn}/ "
-                          f"(obok EXE -> APPDATA)", flush=True)
+                    print(f"[config] Directory migration: {_dn}/ "
+                          f"(next to EXE -> APPDATA)", flush=True)
                 except Exception as _de:
-                    # Klucz prywatny w Program Files mogl byc utworzony przez
-                    # certbota jako admin — odczyt bez admina moze byc
-                    # zablokowany. Jasna instrukcja zamiast cichej awarii.
-                    print(f"[config] NIE moge zmigrowac {_dn}/ ({_de}). "
-                          f"Skopiuj recznie: '{_src}' -> '{_dst}' "
-                          f"(np. jako administrator).", flush=True)
+                    # The private key in Program Files may have been created
+                    # by certbot as admin — reading it without admin rights
+                    # may be blocked. A clear instruction instead of a silent failure.
+                    print(f"[config] COULD NOT migrate {_dn}/ ({_de}). "
+                          f"Copy it manually: '{_src}' -> '{_dst}' "
+                          f"(e.g. as administrator).", flush=True)
     except Exception as _e:
-        print(f"[config] Migracja danych pominieta: {_e}", flush=True)
+        print(f"[config] Data migration skipped: {_e}", flush=True)
 
     return d
 
 
-# BUNDLE = katalog z read-only zasobami (public/, rigs/)
+# BUNDLE = directory with read-only assets (public/, rigs/)
 if _is_frozen():
     BUNDLE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     DATA = _writable_data_dir()
@@ -124,8 +127,8 @@ else:
     BUNDLE = Path(__file__).parent
     DATA = Path(__file__).parent
 
-BASE   = DATA            # zachowana nazwa dla kompatybilnosci (dane usera)
-PUBLIC = BUNDLE / "public"   # frontend - read-only, z paczki
+BASE   = DATA            # name kept for compatibility (user data)
+PUBLIC = BUNDLE / "public"   # frontend - read-only, from the bundle
 CFG_F  = DATA / "config.json"
 USR_F  = DATA / "users.json"
 LOG_F  = DATA / "qso_log.json"
@@ -146,26 +149,26 @@ def load_env():
 
 def ensure_env():
     """
-    Przy pierwszym uruchomieniu (brak .env) tworzy .env z BEZPIECZNYMI
-    wartosciami dla tej konkretnej instalacji:
+    On first run (no .env), creates .env with SAFE values for this
+    specific installation:
 
-    - JWT_SECRET: LOSOWY (secrets.token_hex) - kazda instalacja ma wlasny
-      klucz. KRYTYCZNE dla produktu wieloklubowego: bez tego wszystkie
-      instalacje dzielilyby ten sam klucz i mozna by podrabiac tokeny.
-    - FIRST_RUN: 1 - flaga ze kreator konfiguracji jeszcze nie przeszedl
-      (wymusza zmiane hasla admina i konfiguracje stacji).
+    - JWT_SECRET: RANDOM (secrets.token_hex) - each install has its own
+      key. CRITICAL for a multi-club product: without this every
+      installation would share the same key and tokens could be forged.
+    - FIRST_RUN: 1 - a flag meaning the setup wizard hasn't run yet
+      (forces the admin password change and station configuration).
 
-    Zwraca zaktualizowany slownik ENV. Jesli .env juz istnieje - nie rusza.
+    Returns the updated ENV dict. If .env already exists - leaves it alone.
     """
     import secrets
     if ENV_F.exists():
         return load_env()
-    # Pierwszy start - generuj swiezy .env
-    jwt_secret = secrets.token_hex(32)  # 256-bit losowy klucz
+    # First start - generate a fresh .env
+    jwt_secret = secrets.token_hex(32)  # 256-bit random key
     lines = [
-        "# HAM RADIO CTRL - konfiguracja instalacji",
-        "# Wygenerowane automatycznie przy pierwszym uruchomieniu.",
-        "# NIE UDOSTEPNIAJ tego pliku - zawiera klucz JWT tej instalacji.",
+        "# HAM RADIO CTRL - installation configuration",
+        "# Generated automatically on first run.",
+        "# DO NOT SHARE this file - it contains this installation's JWT key.",
         "",
         f"JWT_SECRET={jwt_secret}",
         "FIRST_RUN=1",
@@ -173,10 +176,10 @@ def ensure_env():
     ]
     try:
         ENV_F.write_text("\n".join(lines), encoding="utf-8")
-        print(f"[config] Utworzono .env z losowym kluczem JWT (pierwszy start)",
+        print(f"[config] Created .env with a random JWT key (first start)",
               flush=True)
     except Exception as e:
-        print(f"[config] UWAGA: nie moge zapisac .env: {e}", flush=True)
+        print(f"[config] WARNING: could not write .env: {e}", flush=True)
     return load_env()
 
 
@@ -184,15 +187,15 @@ ENV          = ensure_env()
 PORT         = int(os.environ.get("PORT", ENV.get("PORT", 8000)))
 CALLSIGN     = ENV.get("CALLSIGN", "SP0ABC")
 LOCATOR      = ENV.get("STATION_LOCATOR", "KO02")
-# JWT_SECRET zawsze z .env (ensure_env gwarantuje ze istnieje i jest losowy).
-# Fallback tylko awaryjny gdyby zapis .env sie nie powiodl - i tak losowy
-# per-proces (nie wspoldzielony hardcode jak wczesniej "hamradio2025").
+# SECRET always comes from .env (ensure_env guarantees it exists and is random).
+# The fallback is only an emergency measure if writing .env failed - still
+# random per-process (not a shared hardcoded value like the old "hamradio2025").
 SECRET       = ENV.get("JWT_SECRET") or __import__("secrets").token_hex(32)
 ADMIN_PW     = ENV.get("ADMIN_PASSWORD", "Admin1234!")
 FIRST_RUN    = ENV.get("FIRST_RUN", "0") == "1"
-# VERBOSE: gadatliwe logi (status radia co 2s itp). Domyslnie WYLACZONE -
-# produkt ma czysta konsole. Wlacz ustawiajac HAM_VERBOSE=1 w srodowisku
-# albo VERBOSE=1 w .env gdy trzeba diagnozowac.
+# VERBOSE: chatty logs (radio status every 2s etc). Disabled by default -
+# the product has a clean console. Enable via HAM_VERBOSE=1 in the
+# environment or VERBOSE=1 in .env when diagnosing.
 VERBOSE      = (os.environ.get("HAM_VERBOSE", ENV.get("VERBOSE", "0")) == "1")
 HAMLIB       = ENV.get("HAMLIB_PATH", "rigctld")
 HAMLIB_PORT  = int(ENV.get("HAMLIB_PORT", 4532))
@@ -206,8 +209,8 @@ MIME = {
     ".mp3": "audio/mpeg", ".wav": "audio/wav",
 }
 
-# Modele z wbudowanym spektroskopem (scope) → tryb bezpośredni CI-V (control + scope).
-# Pozostałe radia (IC-746 itd.) dalej przez rigctld/RigCAT — bez zmian.
+# Models with a built-in spectroscope (scope) → direct CI-V mode (control + scope).
+# The rest of the radios (IC-746 etc.) still go through rigctld/RigCAT — unchanged.
 SCOPE_MODELS = {"3073", "3078", "3085", "3068", "3070", "3081"}  # IC-7300/7610/705/9100/7100/9700
 
 HAMLIB_MODELS = {

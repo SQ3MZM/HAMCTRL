@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-webrtc_audio.py — odbior audio TX przez WebRTC (aiortc).
-Klient (mikrofon lub VB-Cable) -> RTCPeerConnection -> AudioFrame (PCM)
-  -> ten sam _tx_stream (PyAudio) co dotychczasowy pipeline WS.
+webrtc_audio.py — receives TX audio over WebRTC (aiortc).
+Client (microphone or VB-Cable) -> RTCPeerConnection -> AudioFrame (PCM)
+  -> the same _tx_stream (PyAudio) used by the existing WS pipeline.
 
-Sygnalizacja (offer/answer/ICE) idzie przez istniejacy WebSocket (/ws),
-wiec nie trzeba osobnego endpointu HTTP.
+Signaling (offer/answer/ICE) goes over the existing WebSocket (/ws), so no
+separate HTTP endpoint is needed.
 
-Tylko jeden klient nadaje na raz (ograniczenie sprzetowe IC-746/PTT),
-wiec nie ma potrzeby mixowania — najnowsze polaczenie zastepuje poprzednie.
+Only one client transmits at a time (IC-746/PTT hardware limitation), so
+there's no need to mix — the newest connection replaces the previous one.
 """
 import asyncio, fractions, struct
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
@@ -19,14 +19,14 @@ OPUS_RATE = 48000
 
 class WebRTCAudioReceiver:
     """
-    Zarzadza pojedynczym aktywnym RTCPeerConnection dla TX audio.
-    Odebrane ramki PCM (mono, 48kHz, int16) przekazywane przez callback.
+    Manages a single active RTCPeerConnection for TX audio.
+    Received PCM frames (mono, 48kHz, int16) are passed through a callback.
     """
 
     def __init__(self, on_pcm_frame, on_track_started=None, on_track_ended=None):
         """
-        on_pcm_frame(pcm_bytes: bytes) — wywolywane dla kazdej ramki PCM
-        on_track_started() / on_track_ended() — opcjonalne hooki (np. start_tx/stop_tx)
+        on_pcm_frame(pcm_bytes: bytes) — called for every PCM frame
+        on_track_started() / on_track_ended() — optional hooks (e.g. start_tx/stop_tx)
         """
         self._pc: RTCPeerConnection | None = None
         self._on_pcm = on_pcm_frame
@@ -37,8 +37,8 @@ class WebRTCAudioReceiver:
 
     async def handle_offer(self, sdp: str, type_: str = "offer") -> dict:
         """
-        Przyjmij SDP offer od klienta, zwroc SDP answer.
-        Jesli istnieje poprzednie polaczenie — zamknij je (jeden nadawca naraz).
+        Accept an SDP offer from the client, return an SDP answer.
+        If a previous connection exists — close it (one sender at a time).
         """
         await self.close()
 
@@ -56,7 +56,7 @@ class WebRTCAudioReceiver:
         def on_track(track):
             if track.kind != "audio":
                 return
-            print(f"[webrtc] Audio track odebrany: {track.kind}")
+            print(f"[webrtc] Audio track received: {track.kind}")
             self.active = True
             if self._on_start:
                 self._on_start()
@@ -64,13 +64,13 @@ class WebRTCAudioReceiver:
 
         @pc.on("connectionstatechange")
         async def on_state_change():
-            print(f"[webrtc] Stan polaczenia: {pc.connectionState}")
+            print(f"[webrtc] Connection state: {pc.connectionState}")
             if pc.connectionState in ("failed", "closed", "disconnected"):
                 await self.close()
 
         @pc.on("iceconnectionstatechange")
         async def on_ice_state_change():
-            print(f"[webrtc] ICE stan: {pc.iceConnectionState}")
+            print(f"[webrtc] ICE state: {pc.iceConnectionState}")
 
         @pc.on("icegatheringstatechange")
         async def on_ice_gathering_change():
@@ -80,12 +80,12 @@ class WebRTCAudioReceiver:
         await pc.setRemoteDescription(offer)
 
         offer_candidates = sdp.count('a=candidate')
-        print(f"[webrtc] Offer od klienta: {offer_candidates} kandydatow ICE")
+        print(f"[webrtc] Offer from client: {offer_candidates} ICE candidates")
 
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
-        # Czekaj az ICE gathering serwera sie zakonczy (max 3s)
+        # Wait for the server's ICE gathering to finish (max 3s)
         for _ in range(30):
             if pc.iceGatheringState == "complete":
                 break
@@ -93,7 +93,7 @@ class WebRTCAudioReceiver:
 
         final_sdp = pc.localDescription.sdp
         answer_candidates = final_sdp.count('a=candidate')
-        print(f"[webrtc] Answer serwera: {answer_candidates} kandydatow ICE, gathering={pc.iceGatheringState}")
+        print(f"[webrtc] Server answer: {answer_candidates} ICE candidates, gathering={pc.iceGatheringState}")
 
         return {
             "sdp": final_sdp,
@@ -101,12 +101,12 @@ class WebRTCAudioReceiver:
         }
 
     async def add_ice_candidate(self, candidate: dict):
-        """Dodaj ICE candidate od klienta (trickle ICE)."""
+        """Add an ICE candidate from the client (trickle ICE)."""
         if not self._pc:
             return
         raw = candidate.get("candidate", "")
         if not raw:
-            return  # pusty kandydat = end-of-candidates, ignoruj
+            return  # empty candidate = end-of-candidates, ignore
         try:
             from aioice import Candidate as IceCandidate
             # candidate string format: "candidate:foundation component protocol priority ip port typ type ..."
@@ -126,28 +126,28 @@ class WebRTCAudioReceiver:
                 sdpMLineIndex=candidate.get("sdpMLineIndex"),
             )
             await self._pc.addIceCandidate(cand)
-            print(f"[webrtc] ICE candidate dodany: {ice_cand.host}:{ice_cand.port} typ={ice_cand.type}")
+            print(f"[webrtc] ICE candidate added: {ice_cand.host}:{ice_cand.port} type={ice_cand.type}")
         except Exception as e:
-            print(f"[webrtc] ICE candidate blad: {e} | raw={raw[:80]}")
+            print(f"[webrtc] ICE candidate error: {e} | raw={raw[:80]}")
 
     async def _consume_track(self, track):
-        """Petla odbierajaca klatki audio i przekazujaca PCM do callbacku."""
+        """Loop receiving audio frames and passing PCM to the callback."""
         try:
             while True:
                 frame = await track.recv()
-                # frame to av.AudioFrame — konwertuj do PCM int16 mono 48kHz
+                # frame is an av.AudioFrame — convert to PCM int16 mono 48kHz
                 pcm = self._frame_to_pcm(frame)
                 if pcm and self._on_pcm:
                     self._on_pcm(pcm)
         except Exception as e:
-            print(f"[webrtc] Track zakonczony: {e}")
+            print(f"[webrtc] Track ended: {e}")
         finally:
             self.active = False
             if self._on_end:
                 self._on_end()
 
     def _frame_to_pcm(self, frame) -> bytes:
-        """Konwertuj av.AudioFrame -> PCM int16 mono @ 48kHz."""
+        """Convert an av.AudioFrame -> PCM int16 mono @ 48kHz."""
         try:
             n_ch = len(frame.layout.channels)
 
@@ -174,7 +174,7 @@ class WebRTCAudioReceiver:
                     pcm = raw
                 return pcm
 
-            # Inny sample rate - resampling konieczny (rzadki przypadek)
+            # Different sample rate - resampling needed (rare case)
             from av import AudioResampler
             if not hasattr(self, "_resampler"):
                 self._resampler = AudioResampler(format="s16", layout="mono", rate=OPUS_RATE)
@@ -185,11 +185,11 @@ class WebRTCAudioReceiver:
             return pcm
 
         except Exception as e:
-            print(f"[webrtc] frame_to_pcm blad: {e}")
+            print(f"[webrtc] frame_to_pcm error: {e}")
             return b""
 
     async def close(self):
-        """Zamknij aktywne polaczenie."""
+        """Close the active connection."""
         if self._task:
             self._task.cancel()
             self._task = None

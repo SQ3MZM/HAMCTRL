@@ -33,42 +33,43 @@ class RustAudioBridge:
 
         exe = next((p for p in EXE_PATHS if p.exists()), None)
         if not exe:
-            print("[audio_bridge] ham_audio.exe nie znaleziony", flush=True)
+            print("[audio_bridge] ham_audio.exe not found", flush=True)
             return False
 
-        # Zatrzymaj stary proces
+        # Stop the old process
         if self._proc:
             try: self._proc.terminate()
             except Exception: pass
             await asyncio.sleep(0.5)
 
         env = os.environ.copy()
-        # Ustaw karte przez env
+        # Set the audio device via env vars
         rx_dev = self._cfg.get("rxDevice", "")
         tx_dev = self._cfg.get("txDevice", "")
         if rx_dev: env["HAM_RX_DEVICE"] = rx_dev
         if tx_dev: env["HAM_TX_DEVICE"] = tx_dev
         env["HAM_BITRATE"] = str(self._cfg.get("bitrate", 24000))
 
-        # ── SCIEZKA CERTYFIKATU SSL DLA RUSTA (WSS 9443) ──────────────────────
-        # PROBLEM: Rust nie znajdowal certu -> "SSL cert not found" -> WSS off
-        # -> brak dzwieku. Python ZNA sciezke certu -> przekazujemy ja Rustowi
-        # przez HAM_SSL_CERT/HAM_SSL_KEY (Rust czyta te zmienne — potwierdzone
-        # w config.rs). KLUCZOWE: szukamy certu w KATALOGU DANYCH (APPDATA),
-        # NIE sciezka wzgledna — bo w EXE katalog roboczy to _MEIxxxx i wzgledny
-        # tunnel_config.json sie nie znajduje. Uzywamy DATA z config.py (to samo
-        # zrodlo prawdy co reszta aplikacji).
+        # ── SSL CERTIFICATE PATH FOR RUST (WSS 9443) ──────────────────────
+        # PROBLEM: Rust couldn't find the cert -> "SSL cert not found" -> WSS
+        # off -> no audio. Python KNOWS the cert path -> we pass it to Rust
+        # via HAM_SSL_CERT/HAM_SSL_KEY (Rust reads these env vars — confirmed
+        # in config.rs). KEY POINT: we look for the cert in the DATA
+        # DIRECTORY (APPDATA), NOT a relative path — because in the EXE the
+        # working directory is _MEIxxxx and a relative tunnel_config.json
+        # can't be found there. We use DATA from config.py (the same source
+        # of truth as the rest of the app).
         try:
             import json as _json
             import pathlib as _pl
             _cp = _kp = ""
-            # 1. Katalog danych z config.py (APPDATA\HAMCTRL) — deterministyczny.
+            # 1. Data directory from config.py (APPDATA\HAMCTRL) — deterministic.
             try:
                 from config import DATA as _DATA
                 _data_dir = _pl.Path(_DATA)
             except Exception:
                 _data_dir = _pl.Path(__file__).parent
-            # 2. Sprobuj tunnel_config.json W KATALOGU DANYCH (nie wzglednie).
+            # 2. Try tunnel_config.json IN THE DATA DIRECTORY (not relatively).
             for _cand in (_data_dir / "tunnel_config.json",
                           _pl.Path("tunnel_config.json")):
                 if _cand.exists():
@@ -80,8 +81,8 @@ class RustAudioBridge:
                             break
                     except Exception:
                         pass
-            # 3. Fallback: standardowa lokalizacja Let's Encrypt w katalogu danych.
-            #    letsencrypt\config\live\<domena>\{fullchain,privkey}.pem
+            # 3. Fallback: the standard Let's Encrypt location in the data directory.
+            #    letsencrypt\config\live\<domain>\{fullchain,privkey}.pem
             if not (_cp and _kp and _pl.Path(_cp).exists() and _pl.Path(_kp).exists()):
                 _le = _data_dir / "letsencrypt" / "config" / "live"
                 if _le.exists():
@@ -91,33 +92,34 @@ class RustAudioBridge:
                         if _fc.exists() and _pk.exists():
                             _cp, _kp = str(_fc), str(_pk)
                             break
-            # Przekaz Rustowi jesli znaleziono realne pliki.
+            # Pass it to Rust if real files were found.
             if _cp and _kp and _pl.Path(_cp).exists() and _pl.Path(_kp).exists():
                 env["HAM_SSL_CERT"] = str(_cp)
                 env["HAM_SSL_KEY"] = str(_kp)
-                print(f"[audio_bridge] cert SSL dla Rusta: {_cp}", flush=True)
+                print(f"[audio_bridge] SSL cert for Rust: {_cp}", flush=True)
             else:
-                print(f"[audio_bridge] UWAGA: nie znalazlem certu dla Rusta "
-                      f"(szukalem w {_data_dir}) — WSS bedzie OFF, brak dzwieku. "
-                      f"Sprawdz czy cert jest w letsencrypt\\config\\live\\", flush=True)
+                print(f"[audio_bridge] WARNING: could not find a cert for Rust "
+                      f"(looked in {_data_dir}) — WSS will be OFF, no audio. "
+                      f"Check whether the cert is in letsencrypt\\config\\live\\", flush=True)
         except Exception as _e:
-            print(f"[audio_bridge] UWAGA: nie odczytalem certu dla Rusta: {_e}", flush=True)
+            print(f"[audio_bridge] WARNING: could not read the cert for Rust: {_e}", flush=True)
 
         self._proc = subprocess.Popen(
             [str(exe)], env=env,
             cwd=str(exe.parent),
             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0,
         )
-        # Znacznik czasu modyfikacji EXE w logu Pythona - ham_audio.exe biegnie
-        # jako osobny proces w OSOBNEJ konsoli (CREATE_NEW_CONSOLE), wiec jego
-        # wlasny "[build] ..." print (main.rs) NIE trafia do tego samego logu,
-        # ktory operator faktycznie wkleja/sprawdza. Bez tego nie ma jak z tego
-        # loga stwierdzic, czy po `cargo build` faktycznie testowana jest nowa
-        # binarka, a nie stara sprzed rebuildu.
+        # Log the EXE's modification timestamp on the Python side -
+        # ham_audio.exe runs as a separate process in its OWN console
+        # (CREATE_NEW_CONSOLE), so its own "[build] ..." print (main.rs)
+        # does NOT end up in the same log the operator actually pastes/
+        # checks. Without this there's no way to tell from this log whether
+        # a `cargo build` actually produced the binary under test, or
+        # whether it's stale from before the rebuild.
         import datetime as _dt
         _mtime = _dt.datetime.fromtimestamp(exe.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[audio_bridge] Uruchomiono ham_audio.exe PID={self._proc.pid} "
-              f"(cwd={exe.parent}, plik zmieniony={_mtime})", flush=True)
+        print(f"[audio_bridge] Started ham_audio.exe PID={self._proc.pid} "
+              f"(cwd={exe.parent}, file modified={_mtime})", flush=True)
 
         for _ in range(20):
             await asyncio.sleep(0.3)
@@ -131,10 +133,10 @@ class RustAudioBridge:
                 pass
 
         if not self._connected:
-            print("[audio_bridge] Nie można połączyć z ham_audio", flush=True)
+            print("[audio_bridge] Could not connect to ham_audio", flush=True)
             return False
 
-        print("[audio_bridge] Połączono z ham_audio", flush=True)
+        print("[audio_bridge] Connected to ham_audio", flush=True)
 
         # Auto-start RX
         rx_dev  = self._cfg.get("rxDevice", "")
@@ -146,7 +148,7 @@ class RustAudioBridge:
         await self._send_ctrl({"cmd": "SetVolume",  "vol": vol})
         print(f"[audio_bridge] RX auto-start: dev='{rx_dev}' bitrate={bitrate}", flush=True)
 
-        # Uruchom FT8 receiver (Python nasluchuje, Rust sie laczy)
+        # Start the FT8 receiver (Python listens, Rust connects)
         from ft8_rust_receiver import Ft8RustReceiver
         self._ft8_receiver = Ft8RustReceiver(port=9444)
         await self._ft8_receiver.start()
@@ -159,7 +161,7 @@ class RustAudioBridge:
         if self._proc: self._proc.terminate()
         self._connected = False
 
-    # ── Komendy kontrolne ────────────────────────────────────────────────────
+    # ── Control commands ─────────────────────────────────────────────────────
     async def _send_ctrl(self, cmd: dict) -> dict:
         if not self._ctrl_w: return {"error": "not connected"}
         self._ctrl_w.write((json.dumps(cmd) + "\n").encode())
@@ -174,14 +176,15 @@ class RustAudioBridge:
         return await self._send_ctrl({"cmd": "GetStatus"})
 
     async def list_devices(self) -> list:
-        # ZYWY PRZYPADEK 2026-08-17: ListDevices bywa niestabilne — zwraca
-        # czasem pusta liste (WASAPI/cpal chwilowo zajete, np. w trakcie
-        # hot-swap urzadzenia RX) mimo ze karty realnie istnieja. Potwierdzone
-        # logami z frontu: to samo wywolanie chwile pozniej zwraca poprawne
-        # 3+ karty. Zamiast oddawac pusta liste (ktora front interpretuje jako
-        # "brak kart" i cichnie traci zaznaczenie zapisanej karty w UI mimo ze
-        # config.json ma ja poprawnie), probujemy ponownie 2x z krotkim
-        # odstepem zanim uznamy ze kart faktycznie nie ma.
+        # OBSERVED IN PRODUCTION: ListDevices can be unstable — it sometimes
+        # returns an empty list (WASAPI/cpal momentarily busy, e.g. during an
+        # RX device hot-swap) even though the cards genuinely exist.
+        # Confirmed via frontend logs: the same call moments later returns
+        # the correct 3+ cards. Instead of returning an empty list (which
+        # the frontend interprets as "no cards" and silently loses the
+        # saved card selection in the UI even though config.json has it
+        # correctly), we retry 2 more times with a short delay before
+        # concluding the cards genuinely aren't there.
         for attempt in range(3):
             r = await self._send_ctrl({"cmd": "ListDevices"})
             if isinstance(r, list) and r:
@@ -199,9 +202,9 @@ class RustAudioBridge:
     async def set_volume(self, vol: float):
         return await self._send_ctrl({"cmd": "SetVolume", "vol": vol})
 
-    # ── FT8 decode (z Rust) ─────────────────────────────────────────────────
+    # ── FT8 decode (from Rust) ───────────────────────────────────────────────
     async def ft8_enable_rx(self, enabled: bool, mode: str = "FT8"):
-        """Wlacz/wylacz FT8 RX decode w Rust ham_audio.exe."""
+        """Enable/disable FT8 RX decode in Rust ham_audio.exe."""
         await self._send_ctrl({"cmd": "SetFt8Mode", "mode": mode})
         await self._send_ctrl({"cmd": "SetFt8Rx",   "enabled": enabled})
         if self._ft8_receiver:
@@ -210,7 +213,7 @@ class RustAudioBridge:
         print(f"[audio_bridge] FT8 RX enabled={enabled} mode={mode}", flush=True)
 
     async def ft8_get_decode(self) -> dict | None:
-        """Pobierz jeden wynik dekodowania FT8 z kolejki Rust (timeout=0.1s)."""
+        """Fetch one FT8 decode result from the Rust queue (timeout=0.1s)."""
         if not self._ft8_receiver:
             return None
         return await self._ft8_receiver.get_decode()

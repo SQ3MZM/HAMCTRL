@@ -1,19 +1,21 @@
 """
-callbook.py — lookup znakow wywolawczych przez QRZ.com i HamQTH.com.
+callbook.py — callsign lookup via QRZ.com and HamQTH.com.
 
-Kazdy user ma WLASNE dane logowania (przechowywane w users.json, patrz
-webapp.py /api/callbook/config) - QRZ wymaga platnej subskrypcji "XML Data"
-na koncie QRZ, HamQTH jest darmowe ale tez wymaga wlasnego konta. Zadania
-robimy SERWEROWO (nie z przegladarki) z dwoch powodow: obie uslugi nie maja
-CORS dla przegladarek, i nie chcemy wystawiac hasel usera w JS.
+Each user has THEIR OWN login credentials (stored in users.json, see
+webapp.py /api/callbook/config) - QRZ requires a paid "XML Data"
+subscription on the QRZ account, HamQTH is free but also requires its own
+account. Lookups are done SERVER-SIDE (not from the browser) for two
+reasons: neither service supports CORS for browsers, and we don't want to
+expose the user's passwords in JS.
 
-Sesje (session key/id) cache'owane w pamieci procesu per (user_id, serwis) -
-logowanie na kazdy pojedynczy lookup byloby zbyt czeste dla obu serwisow.
+Sessions (session key/id) are cached in process memory per (user_id,
+service) - logging in on every single lookup would be too frequent for
+both services.
 
-Parsowanie XML jest NAMESPACE-AGNOSTYCZNE (spłaszczamy cale drzewo do
-{lokalna_nazwa_tagu: tekst}) - obie uslugi maja plytki XML bez kolizji nazw
-tagow, a nie mamy tu mozliwosci przetestowania na zywo dokladnego namespace
-URI/struktury, wiec bezpieczniej nie polegac na dopasowaniu 1:1.
+XML parsing is NAMESPACE-AGNOSTIC (we flatten the whole tree to
+{local_tag_name: text}) - both services have shallow XML with no tag-name
+collisions, and we have no way to live-test the exact namespace URI/
+structure here, so it's safer not to rely on an exact 1:1 match.
 """
 import time
 import xml.etree.ElementTree as ET
@@ -23,15 +25,15 @@ import aiohttp
 _AGENT = "HamRadioCTRL1.0"
 _TIMEOUT = aiohttp.ClientTimeout(total=8)
 
-# Cache sesji: {(user_id, service): (session_token, expires_at)}
+# Session cache: {(user_id, service): (session_token, expires_at)}
 _sessions: dict = {}
-_SESSION_TTL = 3600 * 12  # obie uslugi trzymaja sesje dlugo, ale nie ufamy w nieskonczonosc
+_SESSION_TTL = 3600 * 12  # both services keep sessions alive for a while, but don't trust that indefinitely
 
 
 def _flatten_xml(text: str) -> dict:
-    """Splaszcz XML do {lokalna_nazwa_tagu: tekst} ignorujac namespace i
-    zagniezdzenie. Pierwsze wystapienie tagu wygrywa (oba API maja plytkie,
-    nieskolidowane drzewo, wiec to bezpieczne uproszczenie)."""
+    """Flatten XML to {local_tag_name: text}, ignoring namespace and
+    nesting. The first occurrence of a tag wins (both APIs have a shallow,
+    non-colliding tree, so this simplification is safe)."""
     try:
         root = ET.fromstring(text)
     except ET.ParseError:
@@ -45,12 +47,12 @@ def _flatten_xml(text: str) -> dict:
 
 
 async def _get(url: str, params: dict) -> str:
-    # WAZNE: parametry (haslo w szczegolnosci) MUSZA byc URL-encoded - hasla
-    # ze znakiem &, %, +, =, spacja itp. psuly zapytanie przy recznym
-    # sklejaniu f-stringiem (np. haslo "abc&xyz" ucinalo sie na "abc" i
-    # doklejalo "xyz" jako osobny, nieznany parametr) - QRZ/HamQTH dostawaly
-    # zle dane i zwracaly blad logowania mimo poprawnego hasla. aiohttp z
-    # params= koduje to poprawnie samo.
+    # IMPORTANT: parameters (the password in particular) MUST be
+    # URL-encoded - passwords containing &, %, +, =, spaces etc. broke the
+    # request when hand-assembled with an f-string (e.g. the password
+    # "abc&xyz" got cut to "abc" with "xyz" appended as a separate, unknown
+    # parameter) - QRZ/HamQTH received bad data and returned a login error
+    # despite a correct password. aiohttp with params= encodes this correctly on its own.
     async with aiohttp.ClientSession() as sess:
         async with sess.get(url, params=params, timeout=_TIMEOUT) as resp:
             return await resp.text()
@@ -67,11 +69,11 @@ async def _qrz_session(username: str, password: str, user_id: str, force: bool =
         txt = await _get("https://xmldata.qrz.com/xml/current/",
                           {"username": username, "password": password, "agent": _AGENT})
     except Exception as e:
-        print(f"[callbook] QRZ sesja - blad polaczenia: {e}", flush=True)
+        print(f"[callbook] QRZ session - connection error: {e}", flush=True)
         return None
     data = _flatten_xml(txt)
     if data.get("Error"):
-        print(f"[callbook] QRZ blad logowania: {data['Error']}", flush=True)
+        print(f"[callbook] QRZ login error: {data['Error']}", flush=True)
         return None
     skey = data.get("Key")
     if not skey:
@@ -85,7 +87,7 @@ async def _qrz_lookup(call: str, session_key: str) -> dict | None:
         txt = await _get("https://xmldata.qrz.com/xml/current/",
                           {"s": session_key, "callsign": call})
     except Exception as e:
-        print(f"[callbook] QRZ lookup - blad polaczenia: {e}", flush=True)
+        print(f"[callbook] QRZ lookup - connection error: {e}", flush=True)
         return None
     data = _flatten_xml(txt)
     if data.get("Error") or not data.get("call"):
@@ -118,11 +120,11 @@ async def _hamqth_session(username: str, password: str, user_id: str, force: boo
         txt = await _get("https://www.hamqth.com/xml.php",
                           {"u": username, "p": password})
     except Exception as e:
-        print(f"[callbook] HamQTH sesja - blad polaczenia: {e}", flush=True)
+        print(f"[callbook] HamQTH session - connection error: {e}", flush=True)
         return None
     data = _flatten_xml(txt)
     if data.get("error"):
-        print(f"[callbook] HamQTH blad logowania: {data['error']}", flush=True)
+        print(f"[callbook] HamQTH login error: {data['error']}", flush=True)
         return None
     sid = data.get("session_id")
     if not sid:
@@ -136,7 +138,7 @@ async def _hamqth_lookup(call: str, session_id: str) -> dict | None:
         txt = await _get("https://www.hamqth.com/xml.php",
                           {"id": session_id, "callsign": call, "prg": _AGENT})
     except Exception as e:
-        print(f"[callbook] HamQTH lookup - blad polaczenia: {e}", flush=True)
+        print(f"[callbook] HamQTH lookup - connection error: {e}", flush=True)
         return None
     data = _flatten_xml(txt)
     if data.get("error") or not data.get("callsign"):
@@ -158,10 +160,10 @@ async def _hamqth_lookup(call: str, session_id: str) -> dict | None:
 # ── Public API ───────────────────────────────────────────────────────────────
 async def lookup(call: str, user_id: str,
                   qrz_creds: tuple | None, hamqth_creds: tuple | None) -> dict | None:
-    """Sprobuj QRZ najpierw (jesli skonfigurowany), potem HamQTH. Kazdy
-    zrodlo probowane dwa razy - jesli cache'owana sesja wygasla po stronie
-    serwisu (a jeszcze nie po naszej TTL), pierwszy lookup zwroci pusto;
-    wtedy wymuszamy swieza sesje i probujemy raz jeszcze."""
+    """Try QRZ first (if configured), then HamQTH. Each source is tried
+    twice - if the cached session expired on the service's side (but not
+    yet by our TTL), the first lookup returns empty; we then force a fresh
+    session and try once more."""
     call = (call or "").strip().upper()
     if not call:
         return None
@@ -196,7 +198,7 @@ async def lookup(call: str, user_id: str,
 
 
 async def test_connection(service: str, username: str, password: str, user_id: str) -> dict:
-    """Test logowania (przycisk TEST w ustawieniach) - tylko sesja, bez lookupu."""
+    """Test the login (the TEST button in settings) - session only, no lookup."""
     if service == "qrz":
         skey = await _qrz_session(username, password, user_id, force=True)
         return {"ok": bool(skey)}
