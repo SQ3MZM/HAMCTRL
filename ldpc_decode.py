@@ -1,23 +1,22 @@
 """
-Etap 3: LDPC(174,91) belief propagation decoder (min-sum algorithm).
+Stage 3: LDPC(174,91) belief propagation decoder (min-sum algorithm).
 
-Uzywa macierzy parzystosci Nm (83 parity checks x 174 bity, kazdy bit w
-dokladnie 3 parity-checkach) ktora jest juz obecna w ft8_encoder.py jako
-_NM (tam uzywana tylko do self-testu _ldpc_check). Indeksy w _NM sa
-1-based z 0 jako padding (brak polaczenia).
+Uses the parity-check matrix Nm (83 parity checks x 174 bits, each bit
+appears in exactly 3 parity checks) which already exists in ft8_encoder.py
+as _NM (used there only for the _ldpc_check self-test). Indices in _NM are
+1-based with 0 as padding (no connection).
 
-Algorytm: min-sum belief propagation (uproszczona, numerycznie stabilna
-wersja sum-product), iteracyjnie poprawia miekkie LLR-y wymieniajac
-wiadomosci miedzy wezlami bitowymi a wezlami parzystosci, az do
-osiagniecia spojnego (wszystkie parity=0) codeworda lub wyczerpania
-iteracji.
+Algorithm: min-sum belief propagation (a simplified, numerically stable
+variant of sum-product), iteratively refining soft LLRs by passing messages
+between bit nodes and check nodes until a consistent (all parity=0)
+codeword is found or iterations are exhausted.
 """
 import numpy as np
 import ft8_encoder as fe
 
-# Budujemy liste (check_idx -> [bit_idx,...]) i (bit_idx -> [check_idx,...])
-# z _NM (1-based, 0=padding), konwertujac na 0-based.
-_CHECKS = []  # lista list bit-indeksow (0-based) dla kazdego parity check
+# Build (check_idx -> [bit_idx,...]) and (bit_idx -> [check_idx,...])
+# from _NM (1-based, 0=padding), converting to 0-based.
+_CHECKS = []  # list of bit-index lists (0-based) for each parity check
 for row in fe._NM:
     bits = [i - 1 for i in row if i != 0]
     _CHECKS.append(bits)
@@ -30,12 +29,12 @@ for c_idx, bits in enumerate(_CHECKS):
     for b in bits:
         _BIT_TO_CHECKS[b].append(c_idx)
 
-# Wszystkie bity powinny miec degree=3 (zweryfikowane wczesniej)
+# All bits should have degree=3 (verified earlier)
 _DEGREES = [len(_BIT_TO_CHECKS[b]) for b in range(N_BITS)]
 
 
 def ldpc_check_llr(bits174):
-    """Sprawdza czy podane twarde bity (0/1, lista 174) spelniaja wszystkie parity checks."""
+    """Checks whether the given hard bits (0/1, list of 174) satisfy all parity checks."""
     for bits in _CHECKS:
         x = 0
         for i in bits:
@@ -48,16 +47,16 @@ def ldpc_check_llr(bits174):
 def bp_decode(llr_channel, max_iters=50):
     """
     Min-sum belief propagation.
-    llr_channel: 174 wartosci LLR z kanalu (dodatni = bit=0 bardziej
-        prawdopodobny, zgodnie z konwencja demod.extract_llr174).
-    Zwraca: (bits174_hard, success, n_iters)
-        success=True jesli znaleziono codeword spelniajacy wszystkie parity checks.
+    llr_channel: 174 channel LLR values (positive = bit=0 more likely,
+        matching demod.extract_llr174's convention).
+    Returns: (bits174_hard, success, n_iters)
+        success=True if a codeword satisfying all parity checks was found.
     """
     llr_channel = np.asarray(llr_channel, dtype=np.float64)
 
-    # Wiadomosci bit->check (Q) i check->bit (R), indeksowane (check_idx, pozycja_w_check)
-    # Inicjalizacja: Q = llr kanalu
-    Q = {}  # (check_idx, bit_idx) -> wartosc
+    # Messages bit->check (Q) and check->bit (R), indexed (check_idx, bit_idx)
+    # Initialization: Q = channel LLR
+    Q = {}  # (check_idx, bit_idx) -> value
     for c_idx, bits in enumerate(_CHECKS):
         for b in bits:
             Q[(c_idx, b)] = llr_channel[b]
@@ -92,16 +91,16 @@ def bp_decode(llr_channel, max_iters=50):
             bit_total[b] = total
 
         # Hard decision + early termination check
-        hard = (bit_total < 0).astype(np.int32)  # LLR<0 -> bit=1 (konwencja: dodatni=bit0)
+        hard = (bit_total < 0).astype(np.int32)  # LLR<0 -> bit=1 (convention: positive=bit0)
         if ldpc_check_llr(hard.tolist()):
             return hard.tolist(), True, it + 1
 
-        # Update Q dla nastepnej iteracji: total - R(tego checka) (extrinsic)
+        # Update Q for the next iteration: total - R(this check) (extrinsic)
         for c_idx, bits in enumerate(_CHECKS):
             for b in bits:
                 Q[(c_idx, b)] = bit_total[b] - R[(c_idx, b)]
 
-    # Brak zbieznosci - zwroc ostatnia twarda decyzje
+    # Did not converge - return the last hard decision
     bit_total = np.zeros(N_BITS, dtype=np.float64)
     for b in range(N_BITS):
         total = llr_channel[b]

@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 """
-rthook_scipy.py — runtime hook naprawiajacy scipy.stats pod PyInstaller + Py3.12.
+rthook_scipy.py — runtime hook fixing scipy.stats under PyInstaller + Py3.12.
 
-PROBLEM (potwierdzony sladem bledu):
-scipy/stats/_distn_infrastructure.py konczy sie:
+PROBLEM (confirmed via traceback):
+scipy/stats/_distn_infrastructure.py ends with:
     for obj in [s for s in dir() if s.startswith('_doc_')]:
         exec('del ' + obj)
-    del obj          # <- NameError pod Py3.12 + PyInstaller frozen importer
+    del obj          # <- NameError under Py3.12 + PyInstaller frozen importer
 
-Pod Python 3.12 zmienna petli 'obj' nie jest widoczna po petli gdy modul
-ladowany przez frozen importer PyInstallera (pyimod02_importers), wiec
-koncowe 'del obj' rzuca NameError i aplikacja pada na imporcie scipy.
+Under Python 3.12 the loop variable 'obj' is not visible after the loop
+when the module is loaded through PyInstaller's frozen importer
+(pyimod02_importers), so the final 'del obj' raises NameError and the
+app crashes on importing scipy.
 
-ROZWIAZANIE:
-PyInstaller uzywa WLASNEGO loadera (w pyimod02_importers), nie standardowego
-SourceFileLoader. Patchujemy jego exec_module: gdy laduje
-_distn_infrastructure, wstrzykujemy 'obj' do globals modulu PRZED wykonaniem
-kodu - dzieki czemu koncowe 'del obj' ma co usunac.
+FIX:
+PyInstaller uses its OWN loader (in pyimod02_importers), not the standard
+SourceFileLoader. We patch its exec_module: when it loads
+_distn_infrastructure, inject 'obj' into the module's globals BEFORE the
+module code runs, so the trailing 'del obj' has something to delete.
 """
 
 

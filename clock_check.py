@@ -1,40 +1,40 @@
 """
-clock_check.py — Kontrola synchronizacji zegara UTC dla FT8/FT4 (HAMCTRL).
+clock_check.py — UTC clock sync check for FT8/FT4 (HAMCTRL).
 
-DLACZEGO: FT8 opiera sie SCISLE na oknach czasowych UTC (15s dla FT8, 7.5s
-FT4). Jesli zegar maszyny odjedzie o >~1s, WSZYSTKIE okna sie rozjezdzaja —
-dekodowanie slabnie, QSO nie wchodza, a objaw wyglada DOKLADNIE jak blad w
-kodzie timingu. Ta kontrola pozwala odroznic "zly zegar" od "zly kod":
-zanim zaczniesz szukac buga w skrypcie, sprawdz czy to nie zegar.
+WHY: FT8 relies STRICTLY on UTC time windows (15s for FT8, 7.5s for FT4).
+If the machine's clock drifts by more than ~1s, ALL windows shift —
+decoding degrades, QSOs don't complete, and the symptom looks EXACTLY like
+a bug in the timing code. This check lets you tell "bad clock" apart from
+"bad code": check the clock before hunting for a bug in the script.
 
-Zaleznosci: BRAK (surowy socket NTP). Timeout + bezpieczny fallback —
-jesli NTP niedostepny, zwraca status "unknown" i NIGDY nie wywala aplikacji.
+Dependencies: NONE (raw NTP socket). Timeout + safe fallback — if NTP is
+unavailable, returns status "unknown" and NEVER crashes the app.
 
-Progi (dla FT8, okno 15s):
-  < 0.5s   OK        — dekodowanie pewne
-  0.5-1.0s WARNING   — moze dzialac, ale na granicy
-  > 1.0s   ERROR     — okna rozjechane, QSO nie wejda; ustaw NTP/zegar
+Thresholds (for FT8, 15s window):
+  < 0.5s   OK        — decoding reliable
+  0.5-1.0s WARNING   — may still work, but marginal
+  > 1.0s   ERROR     — windows misaligned, QSOs won't complete; fix NTP/clock
 """
 import socket
 import struct
 import time
 
-# Serwery NTP (kilka, dla odpornosci — probujemy po kolei az ktorys odpowie)
+# NTP servers (several, for resilience — tried in order until one responds)
 _NTP_SERVERS = ["pool.ntp.org", "time.google.com", "time.windows.com",
-                "tempus1.gum.gov.pl"]  # ostatni: polski serwer GUM (Tom w PL)
+                "tempus1.gum.gov.pl"]  # last one: Polish GUM server (author is in PL)
 
-# Progi offsetu w sekundach (wartosc bezwzgledna)
-THRESH_OK = 0.5      # ponizej = OK
-THRESH_WARN = 1.0    # 0.5-1.0 = warning; powyzej = error
+# Offset thresholds in seconds (absolute value)
+THRESH_OK = 0.5      # below = OK
+THRESH_WARN = 1.0    # 0.5-1.0 = warning; above = error
 
 
 def query_ntp_offset(host, timeout=3.0):
     """
-    Zwraca offset zegara (czas_NTP - czas_lokalny) w sekundach, lub rzuca
-    wyjatek jesli serwer nie odpowie. Offset dodatni = nasz zegar SPOZNIONY.
-    Uzywa korekcji RTT/2 (jak prawdziwy klient NTP), wiec jest dokladny.
+    Returns the clock offset (NTP_time - local_time) in seconds, or raises
+    if the server doesn't respond. Positive offset = our clock is BEHIND.
+    Uses RTT/2 correction (like a real NTP client), so it's accurate.
     """
-    # NTP request: LI=0, VN=3, Mode=3 (client) -> pierwszy bajt 0x1b
+    # NTP request: LI=0, VN=3, Mode=3 (client) -> first byte 0x1b
     packet = b'\x1b' + 47 * b'\0'
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(timeout)
@@ -47,26 +47,26 @@ def query_ntp_offset(host, timeout=3.0):
         s.close()
 
     if len(resp) < 48:
-        raise ValueError("odpowiedz NTP za krotka")
+        raise ValueError("NTP response too short")
 
     unpacked = struct.unpack("!12I", resp[:48])
-    # Transmit timestamp: slowa 10 (sekundy) i 11 (ulamek), od 1900-01-01
+    # Transmit timestamp: words 10 (seconds) and 11 (fraction), since 1900-01-01
     tx_secs = unpacked[10]
     tx_frac = unpacked[11]
     ntp_time = (tx_secs - 2208988800) + (tx_frac / 2**32)  # -> unix epoch
-    # Offset z korekcja opoznienia sieci (zakladamy symetryczne RTT):
-    # czas serwera odpowiada momentowi ~ (t0+t3)/2 po naszej stronie.
+    # Offset with network delay correction (assuming symmetric RTT):
+    # the server's time corresponds to roughly (t0+t3)/2 on our side.
     offset = ntp_time - (t0 + t3) / 2.0
     return offset
 
 
 def check_clock(timeout=3.0):
     """
-    Sprawdza offset zegara wzgledem NTP. Zwraca dict:
+    Checks the clock offset against NTP. Returns a dict:
       {status, offset_s, level, message, server}
     status: 'ok' | 'warning' | 'error' | 'unknown'
-    level:  odpowiada status (do koloryzacji UI)
-    NIGDY nie rzuca wyjatku — przy braku NTP zwraca status='unknown'.
+    level:  mirrors status (for UI color-coding)
+    NEVER raises — returns status='unknown' if NTP is unavailable.
     """
     last_err = None
     for host in _NTP_SERVERS:
@@ -75,33 +75,33 @@ def check_clock(timeout=3.0):
             a = abs(offset)
             if a < THRESH_OK:
                 status = "ok"
-                msg = f"Zegar zsynchronizowany (offset {offset:+.2f}s)."
+                msg = f"Clock synchronized (offset {offset:+.2f}s)."
             elif a < THRESH_WARN:
                 status = "warning"
-                msg = (f"Zegar na granicy (offset {offset:+.2f}s). "
-                       f"FT8 moze dzialac niepewnie — rozwaz synchronizacje NTP.")
+                msg = (f"Clock is marginal (offset {offset:+.2f}s). "
+                       f"FT8 may work unreliably — consider syncing NTP.")
             else:
                 status = "error"
-                msg = (f"ZEGAR ROZJECHANY o {offset:+.2f}s! Okna FT8/FT4 nie beda "
-                       f"pasowac — QSO nie wejda. Zsynchronizuj zegar (NTP/Windows "
-                       f"czas internetowy) PRZED szukaniem bledu w kodzie.")
+                msg = (f"CLOCK OFF by {offset:+.2f}s! FT8/FT4 windows won't "
+                       f"align — QSOs won't complete. Sync the clock (NTP/Windows "
+                       f"internet time) BEFORE looking for a bug in the code.")
             return {"status": status, "offset_s": round(offset, 3),
                     "level": status, "message": msg, "server": host}
         except Exception as e:
             last_err = e
             continue
-    # Zaden serwer nie odpowiedzial
+    # No server responded
     return {"status": "unknown", "offset_s": None, "level": "unknown",
-            "message": (f"Nie mozna sprawdzic zegara (NTP niedostepny: {last_err}). "
-                        f"Upewnij sie recznie, ze czas systemowy jest dokladny."),
+            "message": (f"Could not check the clock (NTP unavailable: {last_err}). "
+                        f"Manually verify the system time is accurate."),
             "server": None}
 
 
 if __name__ == "__main__":
-    # Szybki test z linii polecen
-    print("Sprawdzam synchronizacje zegara UTC...")
+    # Quick command-line test
+    print("Checking UTC clock synchronization...")
     result = check_clock()
     print(f"  status:  {result['status']}")
     print(f"  offset:  {result['offset_s']}s")
-    print(f"  serwer:  {result['server']}")
-    print(f"  komunikat: {result['message']}")
+    print(f"  server:  {result['server']}")
+    print(f"  message: {result['message']}")

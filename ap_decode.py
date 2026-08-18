@@ -1,10 +1,10 @@
 """
-AP (a-priori) decoding dla FT8 — celowany, nie brute force.
-Odzyskuje slabe sygnaly gdy kontekst (znaki) jest znany.
-Trzy zrodla hipotez:
-  A) aktywne QSO: para (nasz_znak, klikniety_partner)
-  B) ktos nas wola: call_to = nasz_znak
-  C) kontekst pasma: znaki widziane w poprzednich oknach
+AP (a-priori) decoding for FT8 — targeted, not brute force.
+Recovers weak signals when the context (callsigns) is known.
+Three hypothesis sources:
+  A) active QSO: pair (our_call, clicked_partner)
+  B) someone is calling us: call_to = our_call
+  C) band context: callsigns seen in previous windows
 """
 import numpy as np
 import re
@@ -15,7 +15,7 @@ import ft8_encoder as enc
 
 
 def _bits174(call_to, call_de, rpt):
-    """Wiadomosc -> 174 bity (przez pack77 + crc14 + ldpc_encode)."""
+    """Message -> 174 bits (via pack77 + crc14 + ldpc_encode)."""
     b = enc.pack77(call_to, call_de, rpt)
     c = enc._crc14(b + [0] * 5)
     a91 = b + list(c[:14])
@@ -27,17 +27,17 @@ def _check_crc(hard):
     return list(c[:14]) == list(hard[77:91])
 
 
-# raporty najczestsze w FT8 QSO (kolejnosc = priorytet prob)
+# most common reports in an FT8 QSO (order = probability priority)
 _COMMON_REPORTS = ['-01', '-05', '-10', '-15', 'R-01', 'R-05', 'R-10',
                    'RR73', '73', '+00', '-03', '-08', '-12', '-18']
 
 
 def ap_try_candidate(power, hypotheses, prior_strength=6.0, max_iters=60):
     """
-    Dla jednego kandydata (jego 'power' z extract_tone_power), probuje
-    listy hipotez (call_to, call_de). Zwraca (msg, i3) pierwszej ktora
-    zdekoduje z poprawnym CRC i pasuje do hipotezy, albo None.
-    Raport iterowany z _COMMON_REPORTS (bo raportu zwykle nie znamy).
+    For a single candidate (its 'power' from extract_tone_power), tries the
+    list of hypotheses (call_to, call_de). Returns (msg, i3) for the first
+    one that decodes with a valid CRC and matches the hypothesis, or None.
+    The report is iterated from _COMMON_REPORTS (since it's usually unknown).
     """
     llr_ch = extract_llr174(power)
     for (to, de) in hypotheses:
@@ -47,13 +47,13 @@ def ap_try_candidate(power, hypotheses, prior_strength=6.0, max_iters=60):
             except Exception:
                 continue
             prior = np.zeros(174)
-            # prior tylko na bity ZNAKOW [0:57] (raport zostawiamy kanalowi)
+            # prior only on the CALLSIGN bits [0:57] (leave the report to the channel)
             prior[:57] = np.where(full[:57] == 0, prior_strength, -prior_strength)
             hard, ok, it = bp_decode(llr_ch + prior, max_iters=max_iters)
             if not ok or not _check_crc(hard):
                 continue
             msg = format_message(unpack77(list(hard[:77]))).strip()
-            # WALIDACJA: dekod musi zawierac hipotezowane znaki
+            # VALIDATION: the decode must contain the hypothesized callsigns
             if de in msg and (to in msg or to == 'CQ'):
                 return msg
     return None
@@ -61,7 +61,8 @@ def ap_try_candidate(power, hypotheses, prior_strength=6.0, max_iters=60):
 
 def build_band_context(decoded_messages):
     """
-    Tryb C: z wiadomosci juz zdekodowanych wyciaga zbior znakow (kontekst pasma).
+    Mode C: extracts the set of callsigns (band context) from already
+    decoded messages.
     """
     calls = set()
     for msg in decoded_messages:
@@ -80,20 +81,21 @@ def build_band_context(decoded_messages):
 
 def make_hypotheses_band(known_calls, max_pairs=40):
     """
-    Tryb C: buduje CELOWANA liste hipotez par ze znanych znakow.
-    NIE wszystkie pary (to timeout) — priorytetyzuje:
-      1. CQ od znanego znaku (ktos moze odpowiadac)
-      2. pary gdzie oba znaki znane (trwajace QSO)
-    Ogranicza do max_pairs najsensowniejszych.
+    Mode C: builds a TARGETED list of pair hypotheses from known callsigns.
+    NOT all pairs (that would time out) — prioritizes:
+      1. CQ from a known callsign (someone might be answering)
+      2. pairs where both callsigns are known (ongoing QSO)
+    Caps at the max_pairs most plausible ones.
     """
     calls = list(known_calls)
     hyps = []
-    # 1. CQ od kazdego znanego (ktos wola znany znak)
+    # 1. CQ from each known callsign (someone calling a known callsign)
     for de in calls:
         hyps.append(('CQ', de))
-    # 2. pary znanych (odpowiedz w QSO) — ograniczone
-    # priorytet: pary ktore realnie moglyby rozmawiac (heurystyka: wszystkie,
-    # ale limitowane). W produkcie: pary z faktycznie zaobserwowanych QSO.
+    # 2. pairs of known callsigns (reply in a QSO) — capped
+    # priority: pairs that could plausibly be talking (heuristic: all of
+    # them, but capped). In a full implementation: pairs from actually
+    # observed QSOs.
     for i, de in enumerate(calls):
         for to in calls:
             if to == de:
@@ -106,21 +108,21 @@ def make_hypotheses_band(known_calls, max_pairs=40):
 
 def make_hypotheses_qso(my_calls, partner):
     """
-    Tryb A: aktywne QSO. Bardzo waski, najbezpieczniejszy.
-    Para (nasz_znak, partner) w obu kierunkach.
+    Mode A: active QSO. Very narrow, the safest mode.
+    Pair (our_call, partner) in both directions.
     """
     hyps = []
     for my in my_calls:
-        hyps.append((my, partner))   # my wolamy partnera / on nam odpowiada
-        hyps.append((partner, my))   # on wola nas
+        hyps.append((my, partner))   # we call the partner / they answer us
+        hyps.append((partner, my))   # they call us
     return hyps
 
 
 def make_hypotheses_calling_us(my_calls):
     """
-    Tryb B: ktos nas wola. call_to = nasz znak, call_de nieznany.
-    Zwraca hipotezy z naszym znakiem jako call_to (de='CQ' placeholder
-    nie zadziala — w tym trybie prior tylko na call_to [0:28]).
+    Mode B: someone is calling us. call_to = our callsign, call_de unknown.
+    Returns hypotheses with our callsign as call_to (de='CQ' placeholder
+    won't work here — this mode uses a prior on call_to [0:28] only).
     """
-    # ten tryb wymaga innego priora (tylko call_to) — obslugiwany osobno
+    # this mode needs a different prior (call_to only) — handled separately
     return [(my, None) for my in my_calls]
