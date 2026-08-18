@@ -1,12 +1,12 @@
 
 /**
- * auth.js (frontend) — sprawdzenie sesji, logout, guard
- * Ładowany jako pierwszy skrypt na każdej stronie (oprócz login.html)
+ * auth.js (frontend) — session check, logout, guard
+ * Loaded as the first script on every page (except login.html)
  */
 (function() {
 'use strict';
 
-// ── Sprawdź sesję ─────────────────────────────────────────────────────────────
+// ── Check session ───────────────────────────────────────────────────────────
 async function checkSession() {
   try {
     const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
@@ -39,14 +39,14 @@ async function checkSession() {
   }
 }
 
-// ── Zastosuj uprawnienia do UI ────────────────────────────────────────────────
+// ── Apply permissions to the UI ───────────────────────────────────────────────
 function applyPermissions(user) {
   if (!user) return;
 
   const role    = user.role || 'viewer';
   const isAdmin = role === 'admin';
 
-  // Uprawnienia z backendu (tablica lub obiekt)
+  // Permissions from the backend (array or object)
   let permsRaw = user.permissions || [];
   let permsSet;
   if (Array.isArray(permsRaw)) {
@@ -55,26 +55,26 @@ function applyPermissions(user) {
     permsSet = new Set(Object.entries(permsRaw).filter(([,v]) => v).map(([k]) => k));
   }
 
-  // Pobierz aktywne statyczne features (z ostatniego refresh RadioFunctions)
+  // Get the active static features (from RadioFunctions' last refresh)
   const activeFeatures = new Set((window._activeStaticFeatures || []).map(f => f.id || f));
   const featuresLoaded = window._activeStaticFeatures !== undefined && activeFeatures.size > 0;
 
-  // Elementy data-perm — show/hide
+  // data-perm elements — show/hide
   document.querySelectorAll('[data-perm]').forEach(el => {
     const required = el.dataset.perm;
     if (required === 'admin') {
       el.style.display = isAdmin ? '' : 'none';
       return;
     }
-    // Admin widzi wszystko
+    // Admin sees everything
     if (isAdmin) { el.style.display = ''; return; }
-    // Sprawdz uprawnienia usera z backendu
+    // Check the user's permissions from the backend
     const permAllowed = permsSet.has(required) ||
       !['ptt','cw','band','mode','freq','split','rotator','settings','log'].includes(required);
     el.style.display = permAllowed ? '' : 'none';
   });
 
-  // data-perm-disable — tylko PTT/CW dla nie-operatorow
+  // data-perm-disable — PTT/CW only, for non-operators
   document.querySelectorAll('[data-perm-disable]').forEach(el => {
     const required = el.dataset.permDisable;
     const has = isAdmin || permsSet.has(required);
@@ -88,14 +88,14 @@ function applyPermissions(user) {
   const csEl = document.getElementById('callsign-display');
   if (csEl) csEl.textContent = user.callsign || user.username || '--';
 
-  // Rola badge
+  // Role badge
   const roleEl = document.getElementById('user-role');
   if (roleEl) {
     roleEl.textContent = role.toUpperCase();
     roleEl.className   = `role-badge role-${role}`;
   }
 
-  // Zakładki tylko dla admina
+  // Tabs visible to admin only
   const adminTab = document.getElementById('tab-admin');
   if (adminTab) adminTab.style.display = isAdmin ? '' : 'none';
 
@@ -103,12 +103,12 @@ function applyPermissions(user) {
   if (internetTab) internetTab.style.display = isAdmin ? '' : 'none';
 }
 
-// Pozwól na ponowne zastosowanie uprawnień (np. po zmianie przez admina)
+// Allow re-applying permissions (e.g. after an admin change)
 function reapplyPermissions() {
   if (window.CurrentUser) applyPermissions(window.CurrentUser);
 }
 
-// ── Logout ────────────────────────────────────────────────────────────────────
+// ── Logout ───────────────────────────────────────────────────────────────────
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
   localStorage.removeItem('token');
@@ -116,8 +116,8 @@ async function logout() {
   location.replace('/login.html');
 }
 
-// ── Dodaj nagłówek auth do fetch ──────────────────────────────────────────────
-// Patch globalny fetch — automatycznie doda Bearer token do wszystkich /api/*
+// ── Add the auth header to fetch ──────────────────────────────────────────────
+// Patch the global fetch — automatically adds the Bearer token to every /api/*
 const _origFetch = window.fetch;
 window.fetch = function(url, opts = {}) {
   if (typeof url === 'string' && url.startsWith('/api')) {
@@ -131,10 +131,10 @@ window.fetch = function(url, opts = {}) {
   return _origFetch.call(this, url, opts);
 };
 
-// ── Eksport ───────────────────────────────────────────────────────────────────
+// ── Export ───────────────────────────────────────────────────────────────────
 window.Auth = { checkSession, logout, applyPermissions, reapplyPermissions };
 
-// Auto-sprawdź sesję przy ładowaniu
+// Auto-check the session on load
 document.addEventListener('DOMContentLoaded', () => checkSession());
 
 })();
