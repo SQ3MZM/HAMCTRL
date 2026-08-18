@@ -6301,21 +6301,21 @@ class App:
                 self._fake_split_state = None
                 return False
         self._ft8_tx_freq_hz = split["new_audio_hz"]
-        self._pre_pcm_cache = None  # unieważnij — policzony dla starego audio offsetu
+        self._pre_pcm_cache = None  # invalidate — computed for the old audio offset
         print(f"[ft8] Fake Split: VFO {split['restore_dial_hz']:.0f} -> "
               f"{split['new_dial_hz']:.0f}Hz, audio -> {split['new_audio_hz']:.0f}Hz "
-              f"(eter bez zmian: {split['on_air_hz']:.0f}Hz)")
+              f"(on-air unchanged: {split['on_air_hz']:.0f}Hz)")
         await self.hub.broadcast({"type": "freq", "freq": int(split["new_dial_hz"])})
         await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                    "frozen": self._ft8_tx_frozen})
         return True
 
     async def _restore_fake_split_after_tx(self):
-        """Przywraca VFO i audio TX offset do stanu sprzed
-        _apply_fake_split_before_tx(). Bezpieczny no-op gdy split nie zostal
-        zastosowany dla biezacej transmisji (self._fake_split_state is None) —
-        wolane bezwarunkowo w finally: po kazdym TX, wiec musi byc odporne na
-        wywolanie gdy nie ma czego przywracac."""
+        """Restores the VFO and TX audio offset to the state before
+        _apply_fake_split_before_tx(). A safe no-op when a split wasn't
+        applied for the current transmission (self._fake_split_state is
+        None) — called unconditionally in finally: after every TX, so it
+        must tolerate being called when there's nothing to restore."""
         state = self._fake_split_state
         if not state:
             return
@@ -6325,9 +6325,9 @@ class App:
             try:
                 await self.rig.set_freq(state["dial_hz"])
             except Exception as e:
-                print(f"[ft8] Fake Split restore set_freq blad: {e!r}")
+                print(f"[ft8] Fake Split restore set_freq error: {e!r}")
         self._ft8_tx_freq_hz = state["audio_hz"]
-        print(f"[ft8] Fake Split: VFO przywrocone -> {state['dial_hz']:.0f}Hz, "
+        print(f"[ft8] Fake Split: VFO restored -> {state['dial_hz']:.0f}Hz, "
               f"audio -> {state['audio_hz']:.0f}Hz")
         await self.hub.broadcast({"type": "freq", "freq": int(state["dial_hz"])})
         await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
@@ -6335,88 +6335,90 @@ class App:
 
     async def _ft8_tx_sequence(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False, tx_seq: int = None):
         """
-        Wrapper z mutexem wokol _ft8_tx_sequence_inner — zapobiega rownoleglemu
-        wykonaniu dwoch transmisji (np. automatyka + reczny klik, lub dwie
-        automatyczne odpowiedzi z tego samego okna RX). Jesli lock jest juz
-        zajety, ta wiadomosc CZEKA w kolejce asyncio.Lock (FIFO), zamiast
-        kolidowac z trwajacym PTT — co w praktyce oznacza, ze proba wyslania
-        w trakcie innej transmisji bedzie po prostu OPOZNIONA do kolejnego
-        wolnego okna (bo _ft8_tx_sequence_inner i tak czeka na nastepne okno
-        15s, wiec ostatecznie nic nie ginie, tylko ewentualnie przesuwa sie
-        o jeden cykl).
+        A mutex wrapper around _ft8_tx_sequence_inner — prevents two
+        transmissions from running in parallel (e.g. the automation +
+        a manual click, or two automatic replies from the same RX window).
+        If the lock is already held, this message WAITS in the
+        asyncio.Lock queue (FIFO), instead of colliding with the ongoing
+        PTT — which in practice means a send attempt during another
+        transmission is simply DELAYED to the next free window (since
+        _ft8_tx_sequence_inner waits for the next 15s window anyway, so in
+        the end nothing is lost, it just possibly shifts by one cycle).
         """
         async with self._ft8_tx_lock:
             await self._ft8_tx_sequence_inner(call_to, call_de, report, r_flag, auto_respond=auto_respond, tx_seq=tx_seq)
 
     async def _ft8_tx_sequence_inner(self, call_to: str, call_de: str, report: str, r_flag: bool = False, auto_respond: bool = False, tx_seq: int = None):
         """
-        Pelna sekwencja nadawania FT8: enkoduj -> czekaj na okno 15s UTC ->
-        PTT ON -> stream audio (kawalki 20ms przez feed_tx_pcm) -> PTT OFF.
-        Uruchamiane jako osobny task (asyncio.create_task), nie blokuje WS loopa.
+        The full FT8 transmit sequence: encode -> wait for the 15s UTC
+        window -> PTT ON -> stream audio (20ms chunks via feed_tx_pcm) ->
+        PTT OFF. Run as a separate task (asyncio.create_task), doesn't block the WS loop.
         """
-        # Radio lock, siatka bezpieczenstwa dla JUZ TRWAJACEJ automatyki
-        # (retransmisje, kontynuacja QSO, kolejka Call 1st) - te wywolania
-        # nie maja pojedynczego "nadawcy" WS do sprawdzenia, wiec porownujemy
-        # z zapamietanym _autoqso_uid (operator ktory faktycznie zainicjowal
-        # to QSO/CQ - patrz "ft8_tx"/"ft8_start_auto_qso" powyzej, gdzie
-        # rzeczywisty check "czy sender trzyma locka" juz zablokowal
-        # niepowolane ROZPOCZECIE transmisji). Jesli radio zostalo w
-        # miedzyczasie przejete przez KOGOS INNEGO (nie zwolnione - to jest
-        # w porzadku, zwykly brak locka nie blokuje), zatrzymaj automatyke
-        # zamiast nadawac bez nadzoru operatora ktory je zaczal.
+        # Radio lock, a safety net for automation ALREADY IN PROGRESS
+        # (retransmits, QSO continuation, the Call 1st queue) - these calls
+        # don't have a single WS "sender" to check, so we compare against
+        # the remembered _autoqso_uid (the operator who actually started
+        # this QSO/CQ - see "ft8_tx"/"ft8_start_auto_qso" above, where the
+        # real "does the sender hold the lock" check already blocked an
+        # unauthorized START of a transmission). If the radio was taken
+        # over by SOMEONE ELSE in the meantime (not released - that's
+        # fine, simply not holding the lock doesn't block), stop the
+        # automation instead of transmitting unsupervised by the operator who started it.
         if (self.radio_lock["user_id"] and self._autoqso_uid and
                 self.radio_lock["user_id"] != self._autoqso_uid):
-            print(f"[ft8] TX wstrzymany — radio przejal inny operator "
+            print(f"[ft8] TX held back — radio taken over by another operator "
                   f"({self.radio_lock.get('callsign') or self.radio_lock.get('username')})")
             return
-        # Blokada TX na niedozwolonym pasmie
+        # Block TX on a disallowed band
         if not self._is_band_allowed():
             await self.hub.broadcast({"type": "toast", "msg": "⛔ FT8 TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})
             return
-        # Blokada FT8/FT4 w cross-band split (chroni radio)
+        # Block FT8/FT4 on a cross-band split (protects the radio)
         cross, band_a, band_b = self._is_split_cross_band()
         if cross:
             await self.hub.broadcast({"type": "toast",
                 "msg": f"⛔ FT8/FT4 TX zablokowany — split cross-band ({band_a} RX / {band_b} TX). Wylacz split.",
                 "level": "error"})
             return
-        # Nie kasuj abort jesli wlasnie zatrzymano cykliczne CQ (stop/timer) —
-        # inaczej to nadanie zignorowaloby zadanie zatrzymania i nadawaloby dalej.
+        # Don't clear the abort flag if periodic CQ was just stopped
+        # (stop/timer) — otherwise this transmission would ignore the stop
+        # request and keep transmitting.
         if not (call_to == "CQ" and not self._cq_calling):
             self._ft8_tx_abort = False
         else:
-            print("[cq] sequence CQ pominiete - CQ zatrzymane")
+            print("[cq] CQ sequence skipped - CQ stopped")
             return
-        # Czy PTT faktycznie zostalo wlaczone w TEJ probie — odrozniamy od
-        # wczesnego return (np. tx_seq nieaktualny, abort przed PTT, blad
-        # audio start_tx). Zywy log 2026-08-15: retransmisja "-07" zostala
-        # poprawnie odrzucona jako nieaktualna (tx_seq stale) PRZED PTT, ale
-        # finally: i tak wykonywal "trzymaj mutex do konca okresu" (do 15s
-        # sleep) tak jakby cos realnie nadal — co zablokowalo prawdziwe "73"
-        # (czekajace w kolejce na ten sam _ft8_tx_lock) az do NASTEPNEGO
-        # okresu. Efekt na zywo: korespondent nie dostal 73 na czas i powtorzyl RRR.
+        # Whether PTT was actually turned on in THIS attempt — distinguishes
+        # from an early return (e.g. a stale tx_seq, an abort before PTT, an
+        # audio start_tx error). Confirmed live: a "-07" retransmit was
+        # correctly rejected as stale (a stale tx_seq) BEFORE PTT, but the
+        # finally: block still did "hold the mutex until the end of the
+        # period" (up to a 15s sleep) as if something had actually been
+        # transmitting — which blocked the real "73" (waiting in the queue
+        # for the same _ft8_tx_lock) until the NEXT period. Effect observed
+        # live: the correspondent didn't get 73 in time and repeated RRR.
         ptt_was_on = False
         try:
             is_ft4 = (self._ft8_decode_mode == "FT4")
-            # SYNCHRONIZACJA txVolume PRZED TX: audio.cfg to referencja ktora moze
-            # sie rozjechac z glownym configiem (przelogowanie, reload) -> audio
-            # bralo stara/domyslna wartosc zamiast zapisanej -> ALC wysokie mimo
-            # ze UI i config pokazuja 2. Tu WYMUSZAMY zeby audio uzylo aktualnego
-            # txVolume z config.json tuz przed nadawaniem.
+            # SYNC txVolume BEFORE TX: audio.cfg is a reference that can
+            # drift apart from the main config (re-login, reload) -> audio
+            # took the old/default value instead of the saved one -> high
+            # ALC despite the UI and config showing 2. Here we FORCE audio
+            # to use the current txVolume from config.json right before transmitting.
             if "audio" in self.cfg:
                 self.audio.cfg = self.cfg["audio"]
                 _tv_now = self.cfg["audio"].get("txVolume", 1.0)
-                print(f"[audio] txVolume synchronizowany przed TX = {_tv_now}x", flush=True)
-            # Utnij grid do 4 znakow (FT8/FT4 nie obsluguje 6-znakowego locatora)
+                print(f"[audio] txVolume synced before TX = {_tv_now}x", flush=True)
+            # Truncate the grid to 4 characters (FT8/FT4 doesn't support a 6-char locator)
             if len(report) == 6 and report[:2].isalpha() and report[2:4].isdigit():
                 report = report[:4]
-                print(f"[ft8] Grid uciety do 4 znakow: {report}")
+                print(f"[ft8] Grid truncated to 4 characters: {report}")
             import time as _tx_time
-            # Fake Split PRZED sprawdzeniem cache PCM — jesli przesuwa VFO i
-            # zmienia audio offset, kasuje _pre_pcm_cache (patrz docstring),
-            # wiec musi wystapic zanim ponizej odczytamy cache.
+            # Fake Split BEFORE checking the PCM cache — if it shifts the
+            # VFO and changes the audio offset, it clears _pre_pcm_cache
+            # (see the docstring), so it must happen before we read the cache below.
             await self._apply_fake_split_before_tx()
-            # Użyj pre-wygenerowanego PCM jeśli pasuje (call_to/call_de/report)
+            # Use the pre-generated PCM if it matches (call_to/call_de/report)
             cache = self._pre_pcm_cache
             if (cache and cache[0] == call_to and cache[1] == call_de and
                     cache[2] == report):
@@ -6426,7 +6428,7 @@ class App:
                 _cached_ldpc = cache[5] if len(cache) > 5 else None
                 debug = {"ldpc_valid": _cached_ldpc}
                 self._pre_pcm_cache = None
-                print(f"[ft8] PCM z cache ({duration:.2f}s, ldpc_valid={_cached_ldpc})")
+                print(f"[ft8] PCM from cache ({duration:.2f}s, ldpc_valid={_cached_ldpc})")
             elif is_ft4:
                 pcm_bytes, debug, duration = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: ft4_encoder.generate_tx_pcm48k_ft4(
@@ -6435,79 +6437,82 @@ class App:
                 pcm_bytes, debug, duration = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: ft8_encoder.generate_tx_pcm48k(
                         call_to, call_de, report, r_flag, base_freq_hz=self._ft8_tx_freq_hz))
-            # ZNACZNIK WERSJI - potwierdza ktora wersja kodu jest w EXE.
-            # ZMIENIANY przy kazdej istotnej naprawie. Jesli po przebudowie EXE
-            # widzisz STARY znacznik = PyInstaller spakowal zly webapp.py.
+            # BUILD VERSION MARKER - confirms which code version is in the
+            # EXE. CHANGED on every significant fix. If you see an OLD
+            # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
             print(f"[build] webapp.py wersja BUILD-2026-08-18-TLUMACZENIE-BACKEND-40-PLIKOW, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
-                print(f"[{'ft4' if is_ft4 else 'ft8'}] OSTRZEZENIE: ldpc_valid=False dla '{call_to} {call_de} {report}' — wysylam mimo to")
+                print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
-            # Tekst do wyswietlenia w UI (status TX, podswietlenie makra) MUSI
-            # zawierac prefix "R" gdy r_flag=True, inaczej front nie odroznia
-            # wizualnie "R+raport" (potwierdzenie) od zwyklego pierwszego
-            # raportu — to byl zrodlowy blad zgloszony 2026-06-21 (podswietlal
-            # sie zly przycisk makra przy odpowiedziach typu "R-18").
+            # The text shown in the UI (TX status, macro highlight) MUST
+            # include the "R" prefix when r_flag=True, otherwise the
+            # frontend can't visually distinguish "R+report" (an
+            # acknowledgment) from a plain first report — this was the
+            # root cause of a bug where the wrong macro button got
+            # highlighted for replies like "R-18".
             display_report = f"R{report}" if r_flag else report
             display_text = f"{call_to} {call_de} {display_report}"
 
-            # Upewnij sie ze audio TX playback dziala (jak w audio_tx_start) —
-            # robimy to PRZED oczekiwaniem na okno, zeby nie tracic czasu w
-            # krytycznym momencie startu transmisji.
+            # Make sure audio TX playback is running (like in
+            # audio_tx_start) — done BEFORE waiting for the window, so we
+            # don't waste time at the critical moment the transmission starts.
             if not self.audio.tx_active:
                 dev = self.cfg.get("audio", {}).get("txDevice")
                 ok = self.audio.start_tx(device=dev)
-                print(f"[ft8] audio start_tx: {'OK' if ok else 'BLAD'} dev={dev}")
+                print(f"[ft8] audio start_tx: {'OK' if ok else 'ERROR'} dev={dev}")
                 if not ok:
                     await self.hub.broadcast({"type": "ft8_tx_status", "status": "error",
                                                "error": "Nie udalo sie uruchomic audio TX"})
                     return
 
-            # ── Synchronizacja do wlasciwego okna UTC wg wybranego okresu
-            # nadawania i trybu (FT8: 15s xx:00/30 lub xx:15/45; FT4: 7.5s) ──
+            # ── Sync to the right UTC window per the selected transmit
+            # period and mode (FT8: 15s xx:00/30 or xx:15/45; FT4: 7.5s) ──
             window_s = ft4_encoder.FT4_SLOT_TIME if is_ft4 else 15.0
             import time as _time
             now = _time.time()
             pos_in_window = now % window_s
 
-            # Wyznacz poczatek kolejnego okna naszego okresu (1 lub 2)
-            # Okres 1: okna 0, 2, 4... (okna parzyste) — xx:00/30 dla FT8
-            # Okres 2: okna 1, 3, 5... (okna nieparzyste) — xx:15/45 dla FT8
-            # WSPOLNA logika (reczne TX i automatyka): jesli "teraz" wypada
-            # WEWNATRZ naszego wlasnego okna (self._ft8_tx_period), nadaj
-            # NATYCHMIAST — niezaleznie od tego ile sekund w to okno juz
-            # wpadlismy — o ile w oknie zostalo dosc czasu na CALA
-            # transmisje (duration, ~12.64s FT8 / ~4.5s FT4). Tylko jesli
-            # NIE ma juz na to miejsca (albo jestesmy w ogole w oknie
-            # partnera), czekamy na nastepne wystapienie naszej parzystosci.
+            # Determine the start of the next window of our period (1 or 2)
+            # Period 1: windows 0, 2, 4... (even windows) — xx:00/30 for FT8
+            # Period 2: windows 1, 3, 5... (odd windows) — xx:15/45 for FT8
+            # SHARED logic (manual TX and automation): if "now" falls
+            # INSIDE our own window (self._ft8_tx_period), transmit
+            # IMMEDIATELY — regardless of how many seconds into this window
+            # we already are — as long as there's enough time left in the
+            # window for the WHOLE transmission (duration, ~12.64s FT8 /
+            # ~4.5s FT4). Only if there ISN'T room for it anymore (or we're
+            # in the partner's window at all) do we wait for the next
+            # occurrence of our parity.
             #
-            # WCZESNIEJSZA WERSJA odrzucala okno juz po stalym progu 1.5s od
-            # jego poczatku (bez wzgledu na to ile faktycznie zostalo czasu)
-            # i wtedy czekala CALY DODATKOWY OKRES (do 30s) — w praktyce
-            # klikniecie stacji 1-2s "za pozno" (a wciaz z ~13-14s zapasu w
-            # oknie!) wywalalo reczny start QSO na ponad pol minuty czekania,
-            # mimo ze samo okno bylo jeszcze w pelni uzywalne. Prawidlowe
-            # kryterium to fizyczne "czy transmisja sie zmiesci", nie
-            # dowolny staly prog czasu reakcji.
+            # The EARLIER VERSION rejected a window once a fixed 1.5s
+            # threshold from its start had passed (regardless of how much
+            # time was actually left) and then waited a WHOLE EXTRA PERIOD
+            # (up to 30s) — in practice clicking a station 1-2s "too late"
+            # (while still having ~13-14s of margin in the window!) delayed
+            # a manual QSO start by over half a minute, even though the
+            # window itself was still fully usable. The correct criterion
+            # is the physical "does the transmission fit", not an arbitrary
+            # fixed reaction-time threshold.
             full_period_s = window_s * 2
             offset = 0.0 if self._ft8_tx_period == 1 else window_s
             pos_in_full = now % full_period_s
             if pos_in_full < offset:
-                # Jestesmy w oknie partnera, PRZED poczatkiem naszego
+                # We're in the partner's window, BEFORE our window starts
                 wait_s = offset - pos_in_full
             elif pos_in_full < offset + window_s:
-                # Jestesmy w NASZYM oknie — nadaj jesli zostalo dosc czasu
-                # na cala transmisje, inaczej czekaj na nastepne wystapienie
+                # We're in OUR window — transmit if there's enough time
+                # left for the whole transmission, otherwise wait for the next occurrence
                 remaining = offset + window_s - pos_in_full
                 if remaining < duration:
                     wait_s = remaining + full_period_s - window_s
                 else:
                     wait_s = 0.0
             else:
-                # Jestesmy juz w oknie partnera PO naszym — czekaj do
-                # nastepnego wystapienia naszej parzystosci
+                # We're already in the partner's window AFTER ours — wait
+                # for the next occurrence of our parity
                 wait_s = full_period_s - pos_in_full + offset
             print(f"[ft8] TX period={self._ft8_tx_period} auto={auto_respond}, "
-                  f"pozycja={pos_in_window:.1f}s, dur={duration:.1f}s, czekam {wait_s:.2f}s")
+                  f"position={pos_in_window:.1f}s, dur={duration:.1f}s, waiting {wait_s:.2f}s")
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "waiting",
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
