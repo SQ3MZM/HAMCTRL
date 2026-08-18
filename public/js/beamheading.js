@@ -1,28 +1,31 @@
 /**
- * beamheading.js — kierunek rotora na korespondenta
+ * beamheading.js — rotator heading to the correspondent
  *
- * Po wpisaniu znaku w logu QSO pokazuje azymut (i dystans), na ktory ustawic
- * antene. Wszystko liczone W PRZEGLADARCE — serwer nie robi nic dodatkowego.
+ * After typing a callsign into the QSO log, shows the azimuth (and
+ * distance) to point the antenna at. Everything is computed IN THE
+ * BROWSER — the server does nothing extra.
  *
- * Lokator korespondenta szukamy po kolei:
- *   1. pole "grid" w formularzu (jesli operator juz je wypelnil / przyszlo z FT8)
- *   2. cache call->grid z dekodow FT8 (endpoint /api/qsolog/calls + FT8)
- *   3. wlasny log QSO (stacja juz przepracowana - znamy jej lokator)
- *   4. prefiks znaku -> przyblizone wspolrzedne kraju (tablica ponizej)
+ * The correspondent's locator is looked up in order:
+ *   1. the "grid" field in the form (if the operator already filled it in / it came from FT8)
+ *   2. the call->grid cache from FT8 decodes (endpoint /api/qsolog/calls + FT8)
+ *   3. our own QSO log (the station was already worked - we know its locator)
+ *   4. the callsign prefix -> approximate country coordinates (table below)
  *
- * Punkt 4 daje kierunek "z grubsza", ale przy szerokosci wiazki typowej anteny
- * kilka stopni bledu nie ma znaczenia — a dla DX-u to i tak lepsze niz nic.
+ * Point 4 gives a "rough" heading, but at the beamwidth of a typical
+ * antenna a few degrees of error doesn't matter — and for DX it's still
+ * better than nothing.
  */
 (function () {
 'use strict';
 
-// ── Maidenhead -> szerokosc/dlugosc (srodek pola) ─────────────────────────────
+// ── Maidenhead -> latitude/longitude (field center) ───────────────────────────
 function gridToLatLon(grid) {
   const g = (grid || '').trim().toUpperCase();
   if (!/^[A-R]{2}\d{2}([A-X]{2})?$/.test(g)) return null;
-  // RR73 formalnie pasuje do wzorca lokatora, ale to ZAKONCZENIE QSO
-  // (protokol wybral grid z Antarktydy wlasnie dlatego, ze nikt stamtad nie
-  // nadaje). Bez tego wyjatku antena jechalaby "na pozegnanie".
+  // RR73 formally matches the locator pattern, but it signals QSO END
+  // (the protocol picked a grid in Antarctica precisely because no one
+  // transmits from there). Without this exception the antenna would swing
+  // to "say goodbye".
   if (g === 'RR73') return null;
   const A = 'A'.charCodeAt(0);
   let lon = (g.charCodeAt(0) - A) * 20 - 180;
@@ -30,19 +33,19 @@ function gridToLatLon(grid) {
   lon += parseInt(g[2], 10) * 2;
   lat += parseInt(g[3], 10) * 1;
   if (g.length >= 6) {
-    // Podkwadrat: 24 podzialy na kwadrat (2° dlugosci, 1° szerokosci)
-    lon += (g.charCodeAt(4) - A) * (2 / 24) + (1 / 24);   // +srodek podkwadratu
+    // Subsquare: 24 divisions per square (2° longitude, 1° latitude)
+    lon += (g.charCodeAt(4) - A) * (2 / 24) + (1 / 24);   // +subsquare center
     lat += (g.charCodeAt(5) - A) * (1 / 24) + (0.5 / 24);
   } else {
-    lon += 1;           // srodek kwadratu
+    lon += 1;           // square center
     lat += 0.5;
   }
   return { lat, lon };
 }
 
-// ── Azymut i dystans (wzor great-circle) ──────────────────────────────────────
+// ── Azimuth and distance (great-circle formula) ───────────────────────────────
 function beamAndDistance(from, to) {
-  const R = 6371.0;                    // promien Ziemi [km]
+  const R = 6371.0;                    // Earth radius [km]
   const rad = Math.PI / 180, deg = 180 / Math.PI;
   const la1 = from.lat * rad, lo1 = from.lon * rad;
   const la2 = to.lat   * rad, lo2 = to.lon   * rad;
@@ -61,15 +64,16 @@ function beamAndDistance(from, to) {
 
   return {
     azimuth:  Math.round(az),
-    azLong:   Math.round((az + 180) % 360),   // dluga droga (long path)
+    azLong:   Math.round((az + 180) % 360),   // long path
     distance: Math.round(dist),
-    distLong: Math.round(40075 - dist),       // obwod Ziemi - krotka droga
+    distLong: Math.round(40075 - dist),       // Earth's circumference minus the short path
   };
 }
 
-// ── Przyblizone wspolrzedne wg prefiksu znaku ─────────────────────────────────
-// Tylko gdy nie znamy lokatora. Srodek kraju/regionu wystarcza do ustawienia
-// anteny. Lista skrocona do najczestszych w ruchu europejskim + glowne DX.
+// ── Approximate coordinates by callsign prefix ────────────────────────────────
+// Only used when the locator is unknown. The center of the country/region
+// is good enough for pointing the antenna. List trimmed to the most common
+// in European traffic + major DX.
 const PREFIX_LOC = {
   'SP':[52.0,19.0], 'SQ':[52.0,19.0], 'SN':[52.0,19.0], 'SO':[52.0,19.0],
   'DL':[51.0,10.0], 'DK':[51.0,10.0], 'DJ':[51.0,10.0], 'DF':[51.0,10.0], 'DB':[51.0,10.0],
@@ -108,11 +112,11 @@ const PREFIX_LOC = {
 function prefixToLatLon(call) {
   const c = (call || '').trim().toUpperCase();
   if (!c) return null;
-  // Znak lamany — wez czlon prefiksowy (np. F/SQ3MZM -> F)
+  // Compound callsign — take the prefix segment (e.g. F/SQ3MZM -> F)
   const base = c.includes('/')
       ? c.split('/').reduce((a, b) => (a.length <= b.length ? a : b))
       : c;
-  // Probuj od najdluzszego prefiksu (UA9 przed UA)
+  // Try the longest prefix first (UA9 before UA)
   for (let len = 3; len >= 1; len--) {
     const p = base.slice(0, len);
     if (PREFIX_LOC[p]) {
@@ -123,18 +127,18 @@ function prefixToLatLon(call) {
   return null;
 }
 
-// ── Publiczne API ─────────────────────────────────────────────────────────────
-// Zwraca {azimuth, azLong, distance, source} albo null.
-//   source: 'grid' (dokladny lokator) | 'prefix' (przyblizony kraj)
+// ── Public API ─────────────────────────────────────────────────────────────
+// Returns {azimuth, azLong, distance, source} or null.
+//   source: 'grid' (exact locator) | 'prefix' (approximate country)
 function headingFor(call, grid) {
-  // Azymut liczymy OD ANTENY, czyli od lokatora STACJI (ustawianego przez
-  // admina jako STATION_LOCATOR) — nie od lokatora zalogowanego operatora.
-  // Przy pracy zdalnej kazdy user siedzi gdzie indziej, a rotor obraca sie
-  // w jednym miejscu; kierunek musi byc ten sam dla wszystkich.
+  // The azimuth is computed FROM THE ANTENNA, i.e. from the STATION's
+  // locator (set by the admin as STATION_LOCATOR) — not from the logged-in
+  // operator's locator. In remote operation each user sits somewhere
+  // different, but the rotator turns in one place; the heading must be the same for everyone.
   const myGrid = (window.S?.stationLocator
                   || window.AppState?.stationLocator || '').toUpperCase();
   const me = gridToLatLon(myGrid);
-  if (!me) return null;                       // nie znamy pozycji stacji
+  if (!me) return null;                       // station position unknown
 
   let dx = gridToLatLon(grid);
   let source = 'grid';
