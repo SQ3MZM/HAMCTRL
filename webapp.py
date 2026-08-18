@@ -7217,35 +7217,35 @@ class App:
                     continue
 
                 if msg.get("type") == "startup_stats":
-                    # Diagnostyka: ile watkow faktycznie uzywa rayon (pula
-                    # rownoleglego dekodowania kandydatow) i ile logicznych
-                    # rdzeni widzi system, wyslane RAZ przy kazdym polaczeniu
-                    # Rust->Python. Slaba/nieoczekiwana rownoleglosc (np.
-                    # maszyna z rdzeniami wydajnosciowymi/energooszczednymi
-                    # gdzie rayon domyslnie widzi mniej watkow niz jest
-                    # rdzeni fizycznie) to jedna z niepotwierdzonych jeszcze
-                    # hipotez dlaczego decode_elapsed_s/pass_elapsed_s nie
-                    # reaguje na kolejne poprawki - ta linia rozstrzyga to
-                    # wprost, bez zgadywania.
+                    # Diagnostics: how many threads rayon (the parallel
+                    # candidate-decode pool) actually uses, and how many
+                    # logical cores the system sees, sent ONCE on every
+                    # Rust->Python connection. Weak/unexpected parallelism
+                    # (e.g. a machine with performance/efficiency cores
+                    # where rayon by default sees fewer threads than there
+                    # are physical cores) is one of the still-unconfirmed
+                    # hypotheses for why decode_elapsed_s/pass_elapsed_s
+                    # doesn't respond to further fixes - this line settles
+                    # it directly, without guessing.
                     print(f"[ft8dec] startup: rayon_threads={msg.get('rayon_threads', 0)} "
                           f"cpus={msg.get('cpus', 0)}", flush=True)
                     continue
 
                 if msg.get("type") == "pass_stats":
-                    # Diagnostyka: czas (mierzony w Rust, od startu dekodowania
-                    # TEGO okna) do momentu gdy TA PACZKA wynikow (jeden pass,
-                    # PRZED odjeciem sygnalu) byla gotowa do wyslania. To jest
-                    # dokladnie to, co zmiana "stream pass-0 results" mialy
-                    # przyspieszyc z ~1.1s do ~150-200ms. Linia ta pojawia sie
-                    # TUZ PRZED odpowiadajacymi jej liniami
-                    # "[ft8rx] dekod -> UI: ..." dla tej samej paczki.
-                    # spec_ms/find_cand_ms/par_decode_ms/n_cand: pelny rozklad
-                    # fazowy tego przebiegu — dodane po tym jak cztery kolejne
-                    # poprawki (streaming, cache FFT, cache LDPC, keep-alive
-                    # tokio) NIE ruszyly pass_elapsed_s na zywym sprzecie ani
-                    # trocha, wiec zgadywanie kolejnej przyczyny przestalo
-                    # miec sens — ten rozklad pokazuje z NAZWY ktora faza
-                    # faktycznie zjada czas.
+                    # Diagnostics: time (measured in Rust, from the start
+                    # of decoding THIS window) until THIS batch of results
+                    # (one pass, BEFORE signal subtraction) was ready to
+                    # send. This is exactly what the "stream pass-0
+                    # results" change was meant to speed up from ~1.1s to
+                    # ~150-200ms. This line appears RIGHT BEFORE the
+                    # corresponding "[ft8rx] decode -> UI: ..." lines for
+                    # the same batch. spec_ms/find_cand_ms/par_decode_ms/
+                    # n_cand: the full phase breakdown of this pass — added
+                    # after four consecutive fixes (streaming, FFT cache,
+                    # LDPC cache, tokio keep-alive) did NOT move
+                    # pass_elapsed_s on real hardware at all, so guessing
+                    # the next cause stopped making sense — this breakdown
+                    # shows BY NAME which phase actually eats the time.
                     print(f"[ft8dec] pass_elapsed_s={msg.get('pass_elapsed_s', 0):.3f} "
                           f"n={msg.get('n', 0)} spec_ms={msg.get('spec_ms', 0):.1f} "
                           f"find_cand_ms={msg.get('find_cand_ms', 0):.1f} "
@@ -7256,16 +7256,17 @@ class App:
                     continue
 
                 if msg.get("type") == "decode_stats":
-                    # Diagnostyka: CALKOWITY czas dekodowania w Rust
-                    # (decode_ft8/decode_ft4, ze WSZYSTKIMI przebiegami
-                    # odejmowania sygnalu) dla TEGO okna. Od 2026-08-14 Rust
-                    # wysyla wyniki KAZDEGO przebiegu strumieniowo, zaraz po
-                    # dekodowaniu+dedup, PRZED odejmowaniem sygnalu (patrz
-                    # decode_and_subtract w mod.rs) — wiec ta linia (i
-                    # decode_elapsed_s w niej) juz NIE odpowiada bezposrednio
-                    # pos_in_win pierwszych dekodow z tego okna (te docieraja
-                    # duzo wczesniej, zwykle po samym pass 0). To wciaz gorna
-                    # granica calkowitego kosztu (wszystkie przebiegi razem).
+                    # Diagnostics: TOTAL decode time in Rust (decode_ft8/
+                    # decode_ft4, with ALL signal-subtraction passes) for
+                    # THIS window. Since 2026-08-14 Rust streams the
+                    # results of EVERY pass as soon as they're
+                    # decoded+deduped, BEFORE signal subtraction (see
+                    # decode_and_subtract in mod.rs) — so this line (and
+                    # its decode_elapsed_s) no longer directly corresponds
+                    # to the pos_in_win of the first decodes from this
+                    # window (those arrive much earlier, usually right
+                    # after pass 0 alone). It's still an upper bound on the
+                    # total cost (all passes combined).
                     print(f"[ft8dec] decode_elapsed_s={msg.get('decode_elapsed_s', 0):.3f} "
                           f"n_results={msg.get('n_results', 0)}", flush=True)
                     continue
@@ -7273,14 +7274,14 @@ class App:
                 if msg.get("type") != "wsjtx_decode":
                     continue
 
-                # Dokladny (ulamkowy) znacznik czasu ODBIORU tego dekodu od
-                # Rusta — uzywany PONIZEJ zamiast timeStr (string HHMMSS,
-                # rozdzielczosc calej sekundy, ustawiany przez Rust PO
-                # zakonczeniu dekodowania, wiec prawie zawsze wskazuje juz
-                # NASTEPNE okno wzgledem tego w ktorym partner faktycznie
-                # nadawal) do wyliczania okresu TX (patrz _period_from_epoch).
-                # Ustawiany RAZ, tutaj, wiec jest niezalezny od tego jak
-                # dlugo pozniej operator bedzie zwlekal z klikinieciem stacji.
+                # Exact (fractional) RECEIVE timestamp of this decode from
+                # Rust — used BELOW instead of timeStr (an HHMMSS string,
+                # whole-second resolution, set by Rust AFTER decoding
+                # finishes, so it almost always already points to the NEXT
+                # window relative to the one the partner actually
+                # transmitted in) to compute the TX period (see
+                # _period_from_epoch). Set ONCE, here, so it's independent
+                # of how long the operator later takes to click the station.
                 msg["recvEpoch"] = time.time()
 
                 # Running total for internal use. The old per-message log was
@@ -7290,40 +7291,43 @@ class App:
                 # log every decode compactly so the count in the log matches
                 # what the operator sees in the UI.
                 self._ft8_dbg_count = getattr(self, "_ft8_dbg_count", 0) + 1
-                # pos_in_win: gdzie w biezacym oknie 15s/7.5s wypada CHWILA
-                # ODBIORU tego dekodu od Rusta. Diagnostyka dla podejrzenia
-                # ze przetwarzanie (dekodowanie + do 3 przebiegow odejmowania
-                # sygnalu) na zatloczonym pasmie moze trwac na tyle dlugo, ze
-                # recvEpoch wpada juz w NASTEPNE okno wzgledem tego w ktorym
-                # partner faktycznie nadawal — co przesuwaloby wyliczany
-                # period TX o cala dodatkowa runde (patrz _period_from_epoch).
-                # Male pos_in_win (~0-3s) = dekod dotarl swiezo, jak oczekiwano.
-                # Duze pos_in_win (~10s+) = podejrzanie pozno, warto zbadac.
+                # pos_in_win: where in the current 15s/7.5s window the
+                # MOMENT this decode was RECEIVED from Rust falls.
+                # Diagnostics for the suspicion that processing (decoding +
+                # up to 3 signal-subtraction passes) on a crowded band can
+                # take long enough that recvEpoch already falls in the NEXT
+                # window relative to the one the partner actually
+                # transmitted in — which would shift the computed TX period
+                # by a whole extra round (see _period_from_epoch). Small
+                # pos_in_win (~0-3s) = decode arrived fresh, as expected.
+                # Large pos_in_win (~10s+) = suspiciously late, worth investigating.
                 _win_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
                 _pos_in_win = msg["recvEpoch"] % _win_s
-                print(f"[ft8rx] dekod -> UI: {msg.get('message','?')} "
-                      f"(#{self._ft8_dbg_count}, klientow={len(self.online_users)}, "
+                print(f"[ft8rx] decode -> UI: {msg.get('message','?')} "
+                      f"(#{self._ft8_dbg_count}, clients={len(self.online_users)}, "
                       f"pos_in_win={_pos_in_win:.2f}s)",
                       flush=True)
 
-                # Broadcast do przegladarek
+                # Broadcast to browsers
                 await self.hub.broadcast(msg)
 
-                # Cache call->grid ze WSZYSTKICH dekodow. Partner odpowiadajacy
-                # na NASZE CQ nie wysyla grida (np. "XX0XXX JA3FYC +11"), wiec
-                # partner_grid bywa pusty przy auto-zapisie QSO ("raz zapisuje
-                # grid raz nie"). Ale ta stacja zwykle chwile wczesniej
-                # CQ-owala Z gridem — lookup z cache uzupelnia locator w logu.
+                # Cache call->grid from ALL decodes. A partner replying to
+                # OUR CQ doesn't send a grid (e.g. "XX0XXX JA3FYC +11"), so
+                # partner_grid is sometimes empty on QSO auto-save ("saves
+                # the grid sometimes, not others"). But this station
+                # usually called CQ WITH a grid a moment earlier — a cache
+                # lookup fills in the locator in the log.
                 try:
                     _cd = (msg.get("call_de") or "").strip().upper()
                     _rg = (msg.get("report_or_grid") or "").strip().upper()
                     if (_cd and len(_rg) == 4 and _rg[0].isalpha()
                             and _rg[1].isalpha() and _rg[2].isdigit()
                             and _rg[3].isdigit() and _rg != "RR73"):
-                        # RR73 formalnie pasuje do wzorca lokatora (litery A-R
-                        # + cyfry) — protokol CELOWO wybral grid z Antarktydy
-                        # jako zakonczenie QSO. Bez wykluczenia trafial do
-                        # cache i byl logowany jako "grid locator" partnera.
+                        # RR73 formally matches the locator pattern (letters
+                        # A-R + digits) — the protocol DELIBERATELY chose an
+                        # Antarctica grid to signal QSO end. Without this
+                        # exclusion it ended up in the cache and got logged
+                        # as the partner's "grid locator".
                         _gc = getattr(self, "_call_grid_cache", None)
                         if _gc is None:
                             _gc = self._call_grid_cache = {}
@@ -7333,8 +7337,8 @@ class App:
                 except Exception:
                     pass
 
-                # Zasil pule znanych znakow dla walidacji/korekty przekreconych
-                # znakow w dekodach CW. Zrodla: dekody FT8, log QSO, spoty DX cluster.
+                # Feed the known-callsign pool for validating/correcting
+                # garbled callsigns in CW decodes. Sources: FT8 decodes, QSO log, DX cluster spots.
                 try:
                     _calls = [msg.get("call_de"), msg.get("call_to")]
                     if deepcw_engine is not None:
@@ -7344,26 +7348,26 @@ class App:
                 except Exception:
                     pass
 
-                # Auto-follow RX/TX za stacja ktora do nas nadaje (respektuje
-                # Hold TX). Wywolywane ZAWSZE - metoda sama sprawdza czy TX
-                # jest zamrozony i decyduje ktore prazki przesuwac.
+                # Auto-follow RX/TX to the station transmitting to us
+                # (respects Hold TX). Called ALWAYS - the method itself
+                # checks whether TX is frozen and decides which markers to move.
                 await self._process_tx_freeze_rx_follow(msg)
                 if self._auto_seq_enabled:
                     await self._process_auto_qso(msg)
 
             except Exception as e:
-                print(f"[ft8rx] BLAD: {e}", flush=True)
+                print(f"[ft8rx] ERROR: {e}", flush=True)
                 await asyncio.sleep(1.0)
 
 
     async def _waterfall_loop(self):
         """
-        Petla w tle: co WF_INTERVAL_S strumieniuje kompaktowa kolumne widma
-        (scope/waterfall) do wszystkich klientow WS. Niezalezna od cyklu
-        dekodowania FT8 (ktory trwa 15s) — daje plynnie przewijajacy sie
-        wodospad niezaleznie od tempa dekodowania. Dziala TYLKO gdy FT8 RX jest
-        wlaczone (ten sam przelacznik co dekodowanie), zeby nie marnowac
-        CPU gdy nikt nie patrzy na zakladke.
+        Background loop: every WF_INTERVAL_S streams a compact spectrum
+        column (scope/waterfall) to all WS clients. Independent of the FT8
+        decode cycle (which runs every 15s) — gives a smoothly scrolling
+        waterfall regardless of decode cadence. Runs ONLY when FT8 RX is
+        enabled (the same switch as decoding), to avoid wasting CPU when
+        no one is looking at the tab.
         """
         WF_INTERVAL_S = 0.2
         while True:
@@ -7387,7 +7391,7 @@ class App:
                     "data": quantized,
                 })
             except Exception as e:
-                print(f"[waterfall] BLAD: {e}")
+                print(f"[waterfall] ERROR: {e}")
 
     async def _handle_rig_action(self, msg: dict, ws, role: str):
         """
@@ -7398,27 +7402,27 @@ class App:
         action_id = msg.get("id", "")
         if not action_id:
             return
-        # Radio lock: tylko trzymajacy TRX (lub admin) moze sterowac
+        # Radio lock: only the TRX holder (or admin) may control it
         can, why = self._can_control_radio(ws, role)
         if not can:
             await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
             return
         if not await self._dynamic_allowed(action_id, role, "action"):
-            print(f"[features] odmowa rig_action '{action_id}' dla roli {role}")
+            print(f"[features] rig_action '{action_id}' denied for role {role}")
             return
 
         if action_id.startswith("vfo_"):
             vfo_name = "VFOA" if action_id == "vfo_a" else "VFOB" if action_id == "vfo_b" else None
             if vfo_name:
-                self.rig.vfo = vfo_name  # stan takze w sim
+                self.rig.vfo = vfo_name  # state also in sim
                 if not self.rig.sim and hasattr(self.rig, "set_vfo"):
                     try:
                         await self.rig.set_vfo(vfo_name)
                     except Exception as e:
-                        print(f"[rig] set_vfo blad: {e}")
-                # Broadcast STANU vfo do wszystkich klientow — przyciski A/B
-                # podswietlane wg stanu radia, nie wg lokalnego kliku (nowy
-                # user po zalogowaniu widzi ktore VFO aktywne).
+                        print(f"[rig] set_vfo error: {e}")
+                # Broadcast the vfo STATE to all clients — A/B buttons are
+                # highlighted based on the radio's state, not the local
+                # click (a new user after login sees which VFO is active).
                 await self.hub.broadcast({"type": "vfo", "vfo": vfo_name})
                 await self.hub.broadcast({"type": "rig_action_ack", "id": action_id, "ok": True})
 
@@ -7429,9 +7433,10 @@ class App:
                 try:
                     await self.rig.set_power(value)
                     self._rig_power_on = value
-                    # Broadcast pod nazwa 'power_state' (frontend tego slucha!).
-                    # Wczesniej bylo 'rig_power' - inna nazwa - wiadomosc sie
-                    # gubila i przyciski innych userow sie nie aktualizowaly.
+                    # Broadcast under the name 'power_state' (the frontend
+                    # listens for this!). It used to be 'rig_power' - a
+                    # different name - the message got lost and other
+                    # users' buttons didn't update.
                     await self.hub.broadcast({"type": "power_state", "value": value})
                     if not value:
                         # Radio wyłączone — zresetuj waterfall u wszystkich
