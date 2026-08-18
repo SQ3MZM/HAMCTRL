@@ -1,7 +1,7 @@
 
 #!/usr/bin/env python3
 """
-webapp.py — WebSocket Hub + aplikacja (routing HTTP/WS, API).
+webapp.py — WebSocket Hub + application (HTTP/WS routing, API).
 """
 import re, time, json, asyncio, struct
 import numpy as np
@@ -9,14 +9,14 @@ import aiohttp
 import aiohttp.web as web
 
 # ══════════════════════════════════════════════════════════════════════════════
-# OPTYMALIZACJE WYDAJNOSCI (asynchroniczna wysylka, szybki JSON)
+# PERFORMANCE OPTIMIZATIONS (async sending, fast JSON)
 # ══════════════════════════════════════════════════════════════════════════════
-# orjson - jesli zainstalowany, 5-10x szybszy JSON niz stdlib. Fallback do stdlib.
-# Uzytkownik moze zainstalowac: py -m pip install orjson
+# orjson - if installed, 5-10x faster JSON than stdlib. Falls back to stdlib.
+# Can be installed with: py -m pip install orjson
 try:
     import orjson
     def _fast_json_bytes(msg):
-        """Encoduj wiadomosc do bytes UTF-8. Duzo szybsze niz json.dumps."""
+        """Encode a message to UTF-8 bytes. Much faster than json.dumps."""
         return orjson.dumps(msg, option=orjson.OPT_SERIALIZE_NUMPY)
     _JSON_BACKEND = "orjson"
 except ImportError:
@@ -24,8 +24,8 @@ except ImportError:
         return json.dumps(msg, ensure_ascii=False).encode('utf-8')
     _JSON_BACKEND = "stdlib"
 
-# winloop/uvloop - szybszy event loop niz standardowy asyncio.
-# Windows: winloop, Linux/Mac: uvloop. Instalacja:
+# winloop/uvloop - a faster event loop than plain asyncio.
+# Windows: winloop, Linux/Mac: uvloop. Install with:
 #   py -m pip install winloop  (Windows)
 #   pip install uvloop         (Linux/Mac)
 def _install_fast_loop():
@@ -46,23 +46,23 @@ _LOOP_BACKEND = _install_fast_loop()
 print(f"[perf] JSON={_JSON_BACKEND}, event_loop={_LOOP_BACKEND}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Static file cache — trzyma pliki JS/CSS/HTML w RAM (pre-compressed).
-# Kazdy GET /static-plik dostaje bytes bezposrednio z Map, bez read z dysku.
+# Static file cache — keeps JS/CSS/HTML files in RAM (pre-compressed).
+# Every GET for a static file gets bytes directly from the Map, no disk read.
 #
-# Pliki sa cache'owane leniwie (przy pierwszym zadaniu) i **niezmieniane** przy
-# starcie serwera - restart Python = purge cache. Dla dev-time uzytkownikow
-# to sluszne: podniosles serwer wiec pobrali dumps.
+# Files are cached lazily (on first request) and **unchanged** for the
+# server's lifetime - restarting Python purges the cache. Fine for dev-time
+# use: you restarted the server so they get the new build.
 #
-# Kompresja: gzip on-the-fly przy pierwszym cache, bytes zapisane raz.
-# Brotli lepszy ale wymaga instalacji, gzip jest w stdlib.
+# Compression: gzip on-the-fly on first cache, bytes stored once.
+# Brotli would be better but needs installing; gzip is in stdlib.
 # ══════════════════════════════════════════════════════════════════════════════
 import gzip
 # Map[str_path] -> (mtime, bytes_raw, bytes_gz | None, mime, etag)
 _STATIC_CACHE: dict = {}
-_STATIC_CACHE_LOCK = None  # asyncio.Lock stworzony przy starcie loop
+_STATIC_CACHE_LOCK = None  # asyncio.Lock created when the loop starts
 
-# MIME types ktore warto gzipowac (tekstowe). Binarne (png, opus) juz sa
-# skompresowane wiec gzip nie da nic ale doda overhead.
+# MIME types worth gzipping (text-based). Binary ones (png, opus) are
+# already compressed so gzip gains nothing but adds overhead.
 _GZIP_MIMES = {
     "text/html", "text/css", "text/plain", "text/javascript",
     "application/javascript", "application/json", "application/xml",
@@ -70,18 +70,18 @@ _GZIP_MIMES = {
 }
 
 def _cache_static_file(fpath, mime: str) -> tuple:
-    """Wczytaj plik z dysku, pre-compress jesli tekstowy, zwroc entry cache."""
+    """Read a file from disk, pre-compress if text-based, return a cache entry."""
     import hashlib
     raw = fpath.read_bytes()
     mtime = fpath.stat().st_mtime
-    # ETag = hash zawartosci (silny) - klient moze wysyłać If-None-Match
+    # ETag = content hash (strong) - the client can send If-None-Match
     etag = '"' + hashlib.md5(raw).hexdigest()[:16] + '"'
-    # gzip jesli tekstowy i > 1KB (mniejsze pliki nie warte overhead-u)
+    # gzip if text-based and > 1KB (smaller files aren't worth the overhead)
     gz = None
     if mime.split(";")[0].strip() in _GZIP_MIMES and len(raw) > 1024:
         try:
-            gz = gzip.compress(raw, compresslevel=6)  # 6 = balans speed/ratio
-            # Zapisz gzip tylko jesli faktycznie mniejszy (dla juz skompresowanych ratio ~0.95)
+            gz = gzip.compress(raw, compresslevel=6)  # 6 = speed/ratio balance
+            # Only keep the gzip version if it's actually smaller (already-compressed files have ~0.95 ratio)
             if len(gz) >= len(raw) * 0.95:
                 gz = None
         except Exception:
@@ -111,7 +111,7 @@ try:
     from webrtc_audio import WebRTCAudioReceiver
     _WEBRTC = True
 except Exception as e:
-    print(f"[webrtc] niedostepne: {e}")
+    print(f"[webrtc] unavailable: {e}")
     _WEBRTC = False
 from wsjtx_udp import WsjtxUdpServer
 from tunnel_manager import TunnelManager
@@ -125,20 +125,20 @@ try:
     from dxcluster import ClusterManager
     _DXCLUSTER_OK = True
 except Exception as e:
-    print(f"[dxcluster] modul niedostepny: {e}")
+    print(f"[dxcluster] module unavailable: {e}")
     _DXCLUSTER_OK = False
 try:
     from relay_controller import RelayController, list_serial_ports, MAX_PULSE_S, RELAY_COUNT
     _RELAY_OK = True
 except Exception as e:
-    print(f"[relay] modul niedostepny: {e}")
+    print(f"[relay] module unavailable: {e}")
     _RELAY_OK = False
 import ft8_rx_decoder
 try:
     from deepcw_engine import deepcw_engine
 except Exception as _e:
     deepcw_engine = None
-    print(f"[deepcw] silnik niedostepny: {_e}", flush=True)
+    print(f"[deepcw] engine unavailable: {_e}", flush=True)
 import ft4_rx_decoder
 import waterfall
 import qso_engine
@@ -150,16 +150,16 @@ from rigs.features import (FEATURES, effective_features, features_for_admin,
 # ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET HUB (aiohttp)
 # ══════════════════════════════════════════════════════════════════════════════
-# Mapowanie typu wiadomosci -> kanal. Wszystko co nie jest tu wymienione
-# idzie na 'control' (default). Pozwala na przezroczyste routowanie bez
-# modyfikacji setek istniejacych wywolan hub.broadcast() - wystarczy
-# ustawic kanaly wg schematu i broadcast sam pouzupelnia channel.
+# Message type -> channel mapping. Anything not listed here goes to
+# 'control' (the default). This allows transparent routing without
+# modifying hundreds of existing hub.broadcast() calls — just set the
+# channels per the table below and broadcast fills in the channel itself.
 _MSG_TYPE_TO_CHANNEL = {
-    # Waterfall CI-V (panel Radio) - duzy volumen, tylko dla Radio tab
+    # CI-V waterfall (Radio panel) - high volume, only for the Radio tab
     'scope_frame':       'scope',
     'scope_reset':       'scope',
 
-    # FT8/FT4/WSJT-X - duzy volumen decodowan i waterfallu, tylko dla FT8 tab
+    # FT8/FT4/WSJT-X - high volume of decodes and waterfall, only for the FT8 tab
     'ft8_waterfall':     'ft8',
     'wsjtx_decode':      'ft8',
     'wsjtx_clear':       'ft8',
@@ -187,44 +187,46 @@ _MSG_TYPE_TO_CHANNEL = {
     'tune_status':       'ft8',
     'hound_status':      'ft8',
     'hound_step':        'ft8',
-    # Dekoder CW dziala niezaleznie od zakladki FT8 — okno mozna otworzyc
-    # z panelu keyera przy pracy CW. Na kanale 'ft8' tekst dochodzil TYLKO do
-    # klientow zasubskrybowanych do FT8: backend logowal dekody, a okno CW
-    # milczalo, bo lista odbiorcow byla pusta. 'control' ma kazdy klient,
-    # a to kilka znakow na sekunde — koszt zerowy.
+    # The CW decoder works independently of the FT8 tab — the window can
+    # be opened from the keyer panel while operating CW. On the 'ft8'
+    # channel the text only reached clients subscribed to FT8: the backend
+    # logged decodes, but the CW window stayed silent because the
+    # recipient list was empty. Every client has 'control', and this is
+    # only a few characters per second — zero cost.
     'deepcw_text':       'control',
 
-    # DX Cluster - tylko dla DXCluster tab
+    # DX Cluster - only for the DXCluster tab
     'dx_spot':           'dxcluster',
     'dx_status':         'dxcluster',
 }
 
 def _channel_for_msg(msg: dict) -> str:
-    """Wybierz kanal na podstawie typu wiadomosci. Default = 'control'."""
+    """Pick a channel based on the message type. Default = 'control'."""
     return _MSG_TYPE_TO_CHANNEL.get(msg.get('type', ''), 'control')
 
 
 class WSHub:
-    """Broadcast hub z subskrypcja kanalow.
+    """Broadcast hub with channel subscriptions.
 
-    Klienci subskrybuja tylko kanaly ktore ich interesuja (np. zakladka Log
-    nie potrzebuje scope_frame ani ft8_waterfall). Broadcast filtruje odbiorcow
-    wg channel parameter — klient nieзаsubskrybowany nie dostaje wiadomosci.
+    Clients subscribe only to the channels they care about (e.g. the Log
+    tab doesn't need scope_frame or ft8_waterfall). Broadcast filters
+    recipients by the channel parameter — an unsubscribed client doesn't
+    get the message.
 
-    Kanaly:
-      - 'control':  default - wszystko co dotyczy stanu radia i systemu
+    Channels:
+      - 'control':  default - everything about radio and system state
                     (freq, mode, ptt, radio_lock, chat, presence, toasts)
-      - 'scope':    scope_frame z CI-V (waterfall panelu Radio)
+      - 'scope':    scope_frame from CI-V (Radio panel waterfall)
       - 'ft8':      ft8_waterfall, wsjtx_decode, auto_seq_status, tune_status etc.
       - 'dxcluster': dx_spot, dx_status
-    Kanal 'audio' NIE jest tutaj - audio idzie przez osobny WebSocket path
-    (audio_stream.py) z wlasnym subscribers mechanizmem.
+    The 'audio' channel is NOT here - audio goes through a separate
+    WebSocket path (audio_stream.py) with its own subscriber mechanism.
     """
 
     def __init__(self):
         self._clients: set = set()
-        # dict: ws -> set kanalow do ktorych klient subskrybowal
-        # Default przy add() to {'control'} - kazdy dostaje kontrole radia.
+        # dict: ws -> set of channels the client subscribed to
+        # Default on add() is {'control'} - everyone gets radio control.
         self._subs: dict = {}
         self._lock = asyncio.Lock()
         self._loop = None
@@ -235,13 +237,14 @@ class WSHub:
     async def add(self, ws):
         async with self._lock:
             self._clients.add(ws)
-            # Default: ALL kanaly - klient odejmie te ktorych nie chce przez
-            # subscribe {mode:'set'}. To rozwiązuje race condition:
-            # nowy klient dostaje wsjtx_decode NAWET gdy nie zdazyl wyslac
-            # subscribe {channels:['ft8']} przed pierwszym broadcastem.
-            # Wygrana z filtrowania kanalow tak samo zachowana - klient
-            # w Log wysyla subscribe {channels:['control']} chwile pozniej
-            # i przestaje dostawac scope_frame/ft8_waterfall.
+            # Default: ALL channels - the client will drop the ones it
+            # doesn't want via subscribe {mode:'set'}. This resolves a
+            # race condition: a new client gets wsjtx_decode EVEN IF it
+            # hasn't yet sent subscribe {channels:['ft8']} before the
+            # first broadcast. Channel filtering still wins the same way
+            # — a client on the Log tab sends subscribe
+            # {channels:['control']} a moment later and stops getting
+            # scope_frame/ft8_waterfall.
             self._subs[ws] = {'control', 'scope', 'ft8', 'dxcluster'}
 
     async def remove(self, ws):
@@ -250,49 +253,50 @@ class WSHub:
             self._subs.pop(ws, None)
 
     async def subscribe(self, ws, channels):
-        """Klient dodaje kanaly do swojej subskrypcji (nie zastepuje)."""
+        """Client adds channels to its subscription (doesn't replace it)."""
         async with self._lock:
             if ws not in self._subs:
                 self._subs[ws] = set()
             self._subs[ws].update(channels)
 
     async def unsubscribe(self, ws, channels):
-        """Klient usuwa kanaly ze swojej subskrypcji. 'control' zawsze zostaje."""
+        """Client removes channels from its subscription. 'control' always stays."""
         async with self._lock:
             if ws not in self._subs:
                 return
             self._subs[ws].difference_update(channels)
-            self._subs[ws].add('control')  # nigdy nie mozna zrezygnowac
+            self._subs[ws].add('control')  # can never be dropped
 
     async def set_channels(self, ws, channels):
-        """Ustaw pelen zestaw kanalow (uzywane przy zmianie zakladki)."""
+        """Set the full channel set (used when switching tabs)."""
         async with self._lock:
             self._subs[ws] = set(channels) | {'control'}
 
     async def broadcast(self, msg: dict, skip=None, channel: str = None):
-        """Rownolegly broadcast do subskrybentow danego kanalu.
+        """Parallel broadcast to a channel's subscribers.
 
-        Jesli channel=None, kanal wybierany automatycznie na podstawie
-        msg['type'] przez _channel_for_msg() — dzieki temu istniejacy kod
-        wywolujacy hub.broadcast(msg) nie musi byc modyfikowany.
+        If channel=None, the channel is auto-picked based on msg['type']
+        via _channel_for_msg() — so existing code calling hub.broadcast(msg)
+        doesn't need to be modified.
 
-        OPTYMALIZACJE:
-        1. orjson zamiast json.dumps (5-10x szybciej dla duzych obiektow)
-        2. Pre-encode raz do stringa (nie encoduje N razy dla N klientow)
-        3. asyncio.gather zamiast sekwencyjnego await (rownolegly send)
-        4. Subscription filtering - klient dostaje tylko kanaly ktore chce
-        5. Usuniete printy z hot-path
+        OPTIMIZATIONS:
+        1. orjson instead of json.dumps (5-10x faster for large objects)
+        2. Encode once to a string (not N times for N clients)
+        3. asyncio.gather instead of sequential await (parallel send)
+        4. Subscription filtering - a client only gets the channels it wants
+        5. Removed prints from the hot path
 
-        UWAGA: uzywamy send_str (nie send_bytes) bo frontend rozroznia:
+        NOTE: we use send_str (not send_bytes) because the frontend
+        distinguishes:
           - Binary (ArrayBuffer)  -> Opus audio frame
           - Text                  -> JSON control message
         """
         if not self._clients:
             return
-        # Auto-routing kanalu jesli nie podano jawnie
+        # Auto-route the channel if not given explicitly
         if channel is None:
             channel = _channel_for_msg(msg)
-        # Snapshot klientow bez locka + filtrowanie wg kanału
+        # Snapshot clients without the lock + filter by channel
         clients = [
             ws for ws in self._clients
             if ws is not skip and channel in self._subs.get(ws, set())
@@ -307,22 +311,24 @@ class WSHub:
         except Exception:
             data = json.dumps(msg, ensure_ascii=False, default=str)
 
-        # Kanaly ULOTNE (scope, audio, ft8_waterfall) — dane przychodza wiele
-        # razy na sekunde, wiec pojedyncza ramka jest nieistotna. Gdy klient
-        # odbiera wolno, TLS-owy send blokuje petle czekajac az bufor sie
-        # oprozni (backpressure — wykryte przez looplag: sslproto _do_write).
-        # Dajemy krotki timeout: nie nadaza = pomijamy go w TEJ ramce, zamiast
-        # zamrazac wszystkich. Kanaly wazne (control, chat) wysylamy normalnie.
+        # EPHEMERAL channels (scope, audio, ft8_waterfall) — data arrives
+        # many times per second, so a single dropped frame doesn't matter.
+        # When a client reads slowly, a TLS send blocks the loop waiting
+        # for the buffer to drain (backpressure — found via looplag:
+        # sslproto _do_write). We give it a short timeout: not keeping up
+        # = skip it for THIS frame, instead of freezing everyone. Important
+        # channels (control, chat) are sent normally.
         _ephemeral = channel in ("scope", "audio", "ft8_waterfall")
 
         async def _send_one(ws):
             if _ephemeral:
-                # Wolny klient: dane pietrza sie w buforze TLS, kolejny zapis
-                # blokuje petle (backpressure). Krotki timeout — nie nadaza w
-                # 0.25s = pomijamy dla niego te ulotna ramke (scope/audio
-                # przyjdzie kolejna). Bufor ograniczony przez writer_limit przy
-                # tworzeniu WS (patrz ws_handler), wiec send_str szybko sygnalizuje
-                # zapchanie zamiast rosnac w nieskonczonosc.
+                # Slow client: data piles up in the TLS buffer, the next
+                # write blocks the loop (backpressure). Short timeout — not
+                # keeping up within 0.25s = skip this ephemeral frame for
+                # it (scope/audio, the next one will come). The buffer is
+                # capped by writer_limit when the WS is created (see
+                # ws_handler), so send_str quickly signals congestion
+                # instead of growing without bound.
                 try:
                     await asyncio.wait_for(ws.send_str(data), timeout=0.25)
                 except asyncio.TimeoutError:
@@ -342,8 +348,8 @@ class WSHub:
                     self._subs.pop(ws, None)
 
     def broadcast_sync(self, msg: dict, channel: str = None):
-        """Broadcast z wątku niesynchronicznego (thread-safe).
-        Kanal auto-routowany na podstawie msg['type'] jesli nie podano."""
+        """Broadcast from a non-async thread (thread-safe).
+        The channel is auto-routed based on msg['type'] if not given."""
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 self.broadcast(msg, channel=channel), self._loop
@@ -351,12 +357,12 @@ class WSHub:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# APLIKACJA
+# APPLICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 def _adif_field(name: str, value) -> str:
-    """Zbuduj pole ADIF: <nazwa:dlugosc>wartosc. Puste -> pomijane."""
+    """Build an ADIF field: <name:length>value. Empty -> skipped."""
     if value is None:
         return ""
     s = str(value).strip()
@@ -367,16 +373,17 @@ def _adif_field(name: str, value) -> str:
 
 def qso_to_adif(qso: dict) -> str:
     """
-    Zamien QSO (dict z naszej bazy) na ciag ADIF wymagany przez Cloudlog/WaveLog.
+    Convert a QSO (a dict from our database) into the ADIF string required
+    by Cloudlog/WaveLog.
 
-    Cloudlog API /index.php/api/qso oczekuje:
+    The Cloudlog API /index.php/api/qso expects:
       {"key":..., "station_profile_id":..., "type":"adif", "string":"<call:5>...<eor>"}
 
-    NIE przyjmuje pol JSON (call, band, mode...) — to byl bug: QSO nie trafialy
-    do Cloudloga mimo odpowiedzi HTTP 200.
+    It does NOT accept JSON fields (call, band, mode...) — that was a bug:
+    QSOs weren't reaching Cloudlog despite an HTTP 200 response.
 
-    Czestotliwosc: ADIF wymaga MHz (np. 14.074). Nasza baza trzyma Hz lub MHz
-    zaleznie od zrodla (WSJT-X vs reczny wpis) - normalizujemy.
+    Frequency: ADIF requires MHz (e.g. 14.074). Our database holds Hz or
+    MHz depending on the source (WSJT-X vs manual entry) - we normalize it.
     """
     freq_raw = str(qso.get("freq", "")).strip()
     freq_mhz = ""
@@ -387,7 +394,7 @@ def qso_to_adif(qso: dict) -> str:
                 freq_mhz = f"{f / 1_000_000:.6f}".rstrip("0").rstrip(".")
             elif f > 1000:           # kHz
                 freq_mhz = f"{f / 1000:.6f}".rstrip("0").rstrip(".")
-            else:                    # juz MHz
+            else:                    # already MHz
                 freq_mhz = f"{f:.6f}".rstrip("0").rstrip(".")
         except (ValueError, TypeError):
             freq_mhz = ""
@@ -441,15 +448,16 @@ class App:
     def __init__(self):
         self.hub      = WSHub()
         self.cfg      = get_cfg()
-        # Wybierz backend od razu na podstawie zapisanego modelu w config.json,
-        # zeby na starcie nie tworzyc niepotrzebnie RigCAT (rigctld) dla modelu
-        # ktory i tak pojdzie przez CivRig (SCOPE_MODELS) — unika konfliktu
-        # o port szeregowy miedzy dwoma backendami.
+        # Pick the backend right away based on the saved model in
+        # config.json, so we don't needlessly create a RigCAT (rigctld) at
+        # startup for a model that's going to go through CivRig
+        # (SCOPE_MODELS) anyway — avoids a serial-port conflict between the
+        # two backends.
         _rigs = self.cfg.get("rigs") or [{}]
         _saved_model = str(_rigs[0].get("model", ""))
         if _saved_model in SCOPE_MODELS:
             self.rig = CivRig(self.cfg, self._rig_bcast, log=print)
-            print(f"[rig] start backend -> CI-V bezposredni (zapisany model {_saved_model})")
+            print(f"[rig] start backend -> direct CI-V (saved model {_saved_model})")
         else:
             self.rig = RigCAT()
         self.rotators: list[Rotator] = []
@@ -458,16 +466,16 @@ class App:
         self.audio    = AudioStream()
         self.audio.cfg = self.cfg.get("audio", {})
 
-        # Auto-detekcja karty audio radia — jesli w konfiguracji NIE ma
-        # ustawionych kart RX/TX (albo user_audio_auto=True), wykryj karte
-        # automatycznie po nazwie. Rozpoznaje IC-7300, IC-705, FT-991 itp.
+        # Radio audio card auto-detection — if the config has NO RX/TX
+        # devices set (or user_audio_auto=True), detect the card
+        # automatically by name. Recognizes IC-7300, IC-705, FT-991, etc.
         self._audio_auto = self.cfg.setdefault("audio_auto_detect", True)
         if self._audio_auto:
             try:
                 detection = auto_detect_radio_audio()
                 if detection["detected"]:
                     if "audio" not in self.cfg: self.cfg["audio"] = {}
-                    # Nadpisz tylko jesli user nie ustawil recznie
+                    # Only overwrite if the user hasn't set it manually
                     if not self.cfg["audio"].get("rxDevice") and detection["rx"]:
                         self.cfg["audio"]["rxDevice"] = detection["rx"]
                     if not self.cfg["audio"].get("txDevice") and detection["tx"]:
@@ -476,56 +484,59 @@ class App:
                     print(f"[audio] auto-detect: {detection['pattern']} -> RX={detection['rx']!r}, TX={detection['tx']!r}")
                     self._audio_detection = detection
                 else:
-                    print("[audio] auto-detect: karta radia nie wykryta, uzyj recznej konfiguracji")
+                    print("[audio] auto-detect: radio card not detected, use manual configuration")
                     self._audio_detection = detection
             except Exception as e:
-                print(f"[audio] auto-detect blad: {e}")
+                print(f"[audio] auto-detect error: {e}")
                 self._audio_detection = {"detected": False, "rx": None, "tx": None,
                                           "pattern": None, "all_rx": [], "all_tx": []}
         else:
             self._audio_detection = {"detected": False, "rx": None, "tx": None,
                                       "pattern": None, "all_rx": [], "all_tx": []}
 
-        self.rust_audio = None  # ustawiane przez server.py gdy ham_audio.exe dostępny
-        self._rig_power_on = True  # stan zasilania radia — aktualizowany przez power_toggle
+        self.rust_audio = None  # set by server.py when ham_audio.exe is available
+        self._rig_power_on = True  # radio power state — updated by power_toggle
         self._ft8_tx_abort = False
         self._ft8_rx_enabled = False
-        # Kto uruchomil WSJT-X (uid) — potrzebne do auto-stop przy disconnect
-        # lub oddaniu radia. Nie ma znaczenia dla wielu userow bo tylko jeden
-        # naraz moze dekodowac (backend jest global), ale musimy wiedziec KTO
-        # zeby wiedziec kiedy zatrzymac.
+        # Who started WSJT-X (uid) — needed for auto-stop on disconnect or
+        # when the radio is released. Doesn't matter for multiple users
+        # since only one can decode at a time (the backend is global), but
+        # we need to know WHO in order to know when to stop.
         self._ft8_rx_owner_uid: str | None = None
-        self._autoqso_uid: str | None = None  # operator ktory zainicjowal biezace CQ/auto-QSO
+        self._autoqso_uid: str | None = None  # the operator who started the current CQ/auto-QSO
         self._last_auto_tx_key = None
-        self._last_auto_tx_action = None  # dict ostatnio wyslanej wiadomosci auto-QSO, do retransmisji
-        self._pre_pcm_cache = None  # (call_to, call_de, report, pcm_bytes, duration)  # dedup auto-TX: (call_to, report_or_grid)
-        self._tx_watchdog_task = None  # asyncio Task auto-off PTT
-        self._tune_stop = False  # przerywa Tune tone
+        self._last_auto_tx_action = None  # dict of the last sent auto-QSO message, for retransmission
+        self._pre_pcm_cache = None  # (call_to, call_de, report, pcm_bytes, duration)  # auto-TX dedup: (call_to, report_or_grid)
+        self._tx_watchdog_task = None  # asyncio Task for auto-off PTT
+        self._tune_stop = False  # aborts the Tune tone
 
-        # COM Bridge WS - dla klientow EXE Windows tworzacych virtual COM.
-        # Klienci lacza sie WSS na /ws/com-bridge, dostaja mapping serwis->COM
-        # i forwarduja bajty w obu stronach. Uzywane przez CW Skimmer, Logger32,
-        # HRD do zdalnego dostepu do CI-V IC-7300 (i w przyszlosci Yaesu/Kenwood).
-        # Uwaga: self.rig moze byc RigCAT() gdy CI-V wylaczony - wtedy bridge
-        # nie ma nic do zaoferowania i klienci widza service_status civ=false.
+        # COM Bridge WS - for Windows EXE clients that create a virtual COM.
+        # Clients connect over WSS to /ws/com-bridge, get a service->COM
+        # mapping, and forward bytes in both directions. Used by CW Skimmer,
+        # Logger32, HRD for remote access to the CI-V IC-7300 (and Yaesu/
+        # Kenwood in the future).
+        # Note: self.rig may be RigCAT() when CI-V is disabled - then the
+        # bridge has nothing to offer and clients see service_status civ=false.
         civ_for_bridge = self.rig if isinstance(self.rig, CivRig) else None
-        # can_write: user moze PISAC do radia przez COM Bridge tylko gdy ma
-        # radio_lock albo jest adminem. Bez tego user bez locka moglby kręcic
-        # freq przez CW Skimmer/HRD omijajac blokady UI (fix 2026-07-05).
+        # can_write: a user may WRITE to the radio through the COM Bridge
+        # only when they hold radio_lock or are an admin. Without this a
+        # user without the lock could tune the frequency via CW Skimmer/HRD,
+        # bypassing the UI locks.
         def _com_can_write(uid: str) -> bool:
             """
-            Czy user moze PISAC do radia przez COM Bridge (zmieniac freq/mode/
-            PTT z CW Skimmer/HRD)?
+            May this user WRITE to the radio through the COM Bridge
+            (change freq/mode/PTT from CW Skimmer/HRD)?
 
-            Uwaga: viewer jest ODRZUCANY juz przy polaczeniu WS (com_bridge_ws_
-            handler), wiec tutaj obslugujemy tylko admina i operatorow.
+            Note: a viewer is already REJECTED at the WS connection stage
+            (com_bridge_ws_handler), so only admin and operators are
+            handled here.
 
-            Prawo do pisania ma:
-              - admin (zawsze)
-              - operator TRZYMAJACY radio_lock
-            Nie ma:
-              - operator BEZ locka (tylko podglad)
-              - ktokolwiek bez konta
+            Write access is granted to:
+              - admin (always)
+              - an operator HOLDING radio_lock
+            Not granted to:
+              - an operator WITHOUT the lock (view only)
+              - anyone without an account
             """
             if not uid:
                 return False
@@ -534,18 +545,18 @@ class App:
                 return False
             if u.get('role') == 'admin':
                 return True
-            # Operator - tylko gdy trzyma radio_lock
-            # (viewer nie dotrze tutaj - odrzucony przy polaczeniu)
+            # Operator - only when holding radio_lock
+            # (a viewer won't reach here - rejected at connection)
             return self.radio_lock.get('user_id') == uid
         self.com_bridge_ws = ComBridgeWs(civ_rig=civ_for_bridge, hub=self.hub,
                                           log=print, can_write=_com_can_write)
 
         # ── DX Cluster manager (per-user telnet connections) ──────────────────
         self.dxcluster = None
-        self._server_start_time = time.time()  # do liczenia uptime w /api/status
+        self._server_start_time = time.time()  # for computing uptime in /api/status
         if _DXCLUSTER_OK:
             async def _dx_broadcast(user_id: str, msg: dict):
-                # Wyslij WS tylko do konkretnego usera (znajdz jego ws w online_users)
+                # Send WS only to the specific user (find their ws in online_users)
                 for ws, info in list(self.online_users.items()):
                     if info.get("user_id") == user_id:
                         try:
@@ -566,84 +577,86 @@ class App:
                     )
                     asyncio.ensure_future(self._relay_connect_task())
                 except Exception as e:
-                    print(f"[relay] init blad: {e}")
+                    print(f"[relay] init error: {e}")
 
-        # ── Stan scope/wodospadu i TX marker ──────────────────────────────────
-        self._ft8_tx_freq_hz = 1000.0   # aktualna docelowa czestotliwosc nadawania
-        # UWAGA: NIE 1500Hz — to udokumentowany "sweet spot"/punkt odniesienia
-        # wewnetrznego przetwarzania cyfrowego IC-7300 w trybie USB-D, ktory
-        # generuje stały notch (~185Hz szerokosci) dokladnie na tej czestotliwosci
-        # w torze audio RX, niezalezny od NB/NR/Notch/AGC/PTT. Potwierdzone na
-        # dwoch niezaleznych nagraniach (Audacity, bez naszego kodu) — obecny w
-        # USB-D, nieobecny w zwyklym USB. 1000Hz jest bezpiecznym dystansem od
-        # tego punktu.
-        self._ft8_tx_locked = False     # STARY mechanizm — do usuniecia, zachowany
-        # tymczasowo do przyszlego wykorzystania w funkcji "TX Hound" (warstwa
-        # zaznaczana, osobna sesja). NIE jest juz uzywany przez biezacy kod.
-        self._ft8_tx_frozen = False     # NOWY mechanizm: TX zamrozone na miejscu,
-        # a RX automatycznie przeskakuje na czestotliwosc kazdej odebranej
-        # wiadomosci adresowanej do NAS (call_to == CALLSIGN) — pozwala
-        # operatorowi "zamrozic" TX i sledzic stacje ktora wlasnie do niego
-        # nadaje, bez recznego przesuwania znacznika RX.
-        self._ft8_split_enabled = False # tryb split: TX tylko powyzej _ft8_split_min_hz
+        # ── Scope/waterfall state and TX marker ──────────────────────────────────
+        self._ft8_tx_freq_hz = 1000.0   # current target transmit frequency
+        # NOTE: NOT 1500Hz — that's a documented "sweet spot"/reference
+        # point of the IC-7300's internal digital processing in USB-D mode,
+        # which produces a fixed notch (~185Hz wide) at exactly that
+        # frequency in the RX audio path, independent of NB/NR/Notch/AGC/
+        # PTT. Confirmed on two independent recordings (Audacity, no code
+        # of ours involved) — present in USB-D, absent in plain USB. 1000Hz
+        # is a safe distance from that point.
+        self._ft8_tx_locked = False     # OLD mechanism — to be removed, kept
+        # temporarily for future use in a "TX Hound" feature (planned
+        # layer, separate session). NO LONGER used by the current code.
+        self._ft8_tx_frozen = False     # NEW mechanism: TX frozen in place,
+        # while RX automatically jumps to the frequency of every received
+        # message addressed to US (call_to == CALLSIGN) — lets the operator
+        # "freeze" TX and track the station currently transmitting to them,
+        # without manually moving the RX marker.
+        self._ft8_split_enabled = False # split mode: TX only above _ft8_split_min_hz
         self._ft8_split_min_hz = 1200.0
-        self._ft8_rx_freq_hz = 1000.0   # niezalezny znacznik RX (Rx Frequency panel) —
-        # startuje na tej samej wartosci co TX, ale moze byc przesuwany calkowicie
-        # niezaleznie (np. nasluch na innej czestotliwosci niz aktualne nadawanie)
+        self._ft8_rx_freq_hz = 1000.0   # independent RX marker (Rx Frequency panel) —
+        # starts at the same value as TX, but can be moved completely
+        # independently (e.g. listening on a different frequency than the current TX)
 
         # ── Fake Split (Rig Split) ───────────────────────────────────────────
-        # Przesuwa VFO PRZED nadawaniem tak, zeby audio TX bylo blisko srodka
-        # filtra SSB (~1500Hz), zamiast blisko jego krawedzi — na krawedziach
-        # filtr tlumi sygnal (moc spada, ALC/splattery). Po nadaniu VFO wraca
-        # na miejsce. Logika (niezmiennik freq_eteru = dial+audio) pochodzi z
-        # fake_split_prototype.py. Stan wlaczenia zapamietany w configu.
+        # Moves the VFO BEFORE transmitting so the TX audio lands near the
+        # center of the SSB filter (~1500Hz), instead of near its edge —
+        # at the edges the filter attenuates the signal (power drops,
+        # ALC/splatter). The VFO is restored after transmitting. The logic
+        # (the invariant on-air-freq = dial+audio) comes from
+        # fake_split_prototype.py. The enabled state is remembered in the config.
         self._fake_split_enabled = bool(self.cfg.get("ft8", {}).get("fakeSplit", False))
-        self._fake_split_state = None  # dict {dial_hz, audio_hz} do przywrocenia po TX, albo None
+        self._fake_split_state = None  # dict {dial_hz, audio_hz} to restore after TX, or None
 
-        # ── Automatyka QSO (pelna automatyka FT8) ────────────────────────────
+        # ── QSO automation (full FT8 automation) ────────────────────────────
         self._qso_engine = qso_engine.QsoEngine(my_call=CALLSIGN, my_grid=LOCATOR)
-        self._auto_seq_enabled = True    # ZAWSZE aktywne (nie ma juz toggle w UI);
-                                          # klik na makro to reczne wymuszenie
-        # Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") - False oznacza ze
-        # operator NIE potwierdzil ostatnio obecnosci (klik/TX makro) mimo
-        # wlaczonego Call 1st, i automat MUSI przestac reagowac na
-        # wolajacych (patrz _process_auto_qso) dopoki nie przyjdzie
-        # "ft8_timer_confirm" z frontu (FT8Timer.confirm() w wsjtx.js).
-        # CELOWO osobna flaga od _auto_call_1st - Call 1st samo w sobie juz
-        # NIE gates auto-start przy bezczynnosci (patrz 2026-08-15,
-        # "automat nie reaguje"), wiec wylaczenie Call 1st nie zastapiloby
-        # tej blokady.
+        self._auto_seq_enabled = True    # ALWAYS active (there's no longer a
+                                          # UI toggle); clicking a macro is a manual override
+        # FT8 safety timer (WSJT-X's "Tx Watchdog") - False means the
+        # operator has NOT recently confirmed presence (click/TX macro)
+        # despite Call 1st being enabled, and the automation MUST stop
+        # reacting to callers (see _process_auto_qso) until an
+        # "ft8_timer_confirm" arrives from the frontend (FT8Timer.confirm()
+        # in wsjtx.js). DELIBERATELY a separate flag from _auto_call_1st -
+        # Call 1st by itself no longer gates auto-start on idleness, so
+        # disabling Call 1st wouldn't replace this guard.
         self._ft8_operator_present = True
-        self._auto_call_1st = False      # czy automatycznie startowac QSO z pierwsza
-        # stacja ktora odpowie na nasze CQ (zamiast czekac na reczny wybor z kolejki)
-        self._auto_cq_text = None        # tresc CQ jaka aktualnie "nadajemy" (do
-        # rozpoznawania ze odebrana odpowiedz dotyczy NASZEGO CQ, nie przypadkowej
-        # wiadomosci do nas adresowanej spoza kontekstu QSO)
-        # Wiadomosc zaplanowana do wyslania w NASTEPNYM dostepnym oknie 15s,
-        # generowana przez automatyke (on_decode) — pojedynczy "slot", bo w danym
-        # momencie moze byc tylko jedna nastepna automatyczna transmisja oczekujaca.
-        self._auto_pending_tx = None  # dict {call_to, call_de, report_or_grid, r_flag} lub None
-        # ── Cykliczne wolanie CQ (2026-07-05) ────────────────────────────────
-        # Gdy user wola CQ, nie nadajemy raz - powtarzamy co pelny okres (2 okna)
-        # az ktos odpowie albo user/timer zatrzyma. Bez tego CQ szlo tylko raz.
-        self._cq_calling = False          # czy aktywnie wolamy CQ w petli
-        self._cq_call_de = None           # nasz znak (dla powtarzanego CQ)
-        self._cq_report = None            # nasz grid (CQ CALL GRID)
-        self._cq_task = None              # task petli ponawiania CQ
-        # Mutex chroniacy przed ROWNOLEGLYM wykonaniem _ft8_tx_sequence — bez
-        # tego, jesli dekoder zwroci wiele wiadomosci w jednym oknie i wiecej
-        # niz jedna wyzwoli automatyczna odpowiedz (lub automatyka zbiegnie sie
-        # czasowo z recznym TX), dwa rownolegle PTT/audio-feed kolidowalyby ze
-        # soba. KAZDE wywolanie _ft8_tx_sequence (reczne i automatyczne) musi
-        # przejsc przez ten lock.
+        self._auto_call_1st = False      # whether to automatically start a
+        # QSO with the first station answering our CQ (instead of waiting
+        # for a manual pick from the queue)
+        self._auto_cq_text = None        # the CQ text we're currently
+        # "transmitting" (used to recognize that a received reply concerns
+        # OUR CQ, not some unrelated message addressed to us outside a QSO context)
+        # Message scheduled to be sent in the NEXT available 15s window,
+        # generated by the automation (on_decode) — a single "slot", since
+        # at any moment there can be only one pending automatic transmission.
+        self._auto_pending_tx = None  # dict {call_to, call_de, report_or_grid, r_flag} or None
+        # ── Periodic CQ calling ────────────────────────────────
+        # When the user calls CQ, we don't transmit just once - we repeat
+        # every full period (2 windows) until someone answers or the
+        # user/timer stops it. Without this, CQ only went out once.
+        self._cq_calling = False          # whether we're actively calling CQ in a loop
+        self._cq_call_de = None           # our call (for the repeating CQ)
+        self._cq_report = None            # our grid (CQ CALL GRID)
+        self._cq_task = None              # the CQ-repeat loop task
+        # Mutex protecting against PARALLEL execution of _ft8_tx_sequence —
+        # without this, if the decoder returns multiple messages in one
+        # window and more than one triggers an automatic reply (or the
+        # automation coincides in time with a manual TX), two parallel
+        # PTT/audio-feed calls would collide with each other. EVERY call to
+        # _ft8_tx_sequence (manual and automatic) must go through this lock.
         self._ft8_tx_lock = asyncio.Lock()
-        self._ft8_tx_period = 1  # 1 = okna xx:00/xx:30 (domyslny), 2 = xx:15/xx:45
-        self._qso_period_locked = False  # True gdy period wykryty dla biezacego QSO
-        # Licznik "ktora automatyczna akcja TX jest AKTUALNIE ta ostatnia
-        # zlecona" — patrz komentarz przy uzyciu w _send_auto_tx/
-        # _ft8_tx_sequence_inner (stale-TX-guard).
+        self._ft8_tx_period = 1  # 1 = xx:00/xx:30 windows (default), 2 = xx:15/xx:45
+        self._qso_period_locked = False  # True once a period is locked in for the current QSO
+        # Counter for "which automatic TX action is CURRENTLY the most
+        # recently scheduled one" — see the comment where it's used in
+        # _send_auto_tx/_ft8_tx_sequence_inner (stale-TX-guard).
         self._autoqso_tx_seq = 0
-        self._ft8_decode_mode = "FT8"  # "FT8" lub "FT4" — ktorego enkodera/timingu uzywac
+        self._ft8_decode_mode = "FT8"  # "FT8" or "FT4" — which encoder/timing to use
 
         self.webrtc   = WebRTCAudioReceiver(
             on_pcm_frame=self.audio.feed_tx_pcm,
@@ -654,11 +667,11 @@ class App:
         self.tunnel   = TunnelManager(self.hub)
         self._caps_cache = {}
 
-        # ── Radio Lock — jeden operator na raz ────────────────────────────────
-        # Kto aktualnie "trzyma" radio (moze strojic, naciskac PTT, zmienic mod).
-        # Pozostali uzytkownicy widza UI w trybie read-only.
-        # timeout_min: minuty bezczynnosci po ktorych radio jest zwalniane automatycznie.
-        # last_activity: czas ostatniej akcji aktywnego operatora (do auto-release).
+        # ── Radio Lock — one operator at a time ────────────────────────────────
+        # Who currently "holds" the radio (can tune, key PTT, change mode).
+        # Other users see the UI in read-only mode.
+        # timeout_min: minutes of inactivity after which the radio is auto-released.
+        # last_activity: time of the active operator's last action (for auto-release).
         self.radio_lock: dict = {
             "user_id":       None,
             "username":      None,
@@ -671,35 +684,36 @@ class App:
         self.radio_requests: dict = {}
         # Online users: {ws: {"user_id", "username", "callsign", "role", "joined_at"}}
         self.online_users: dict = {}
-        # Rate limiting logowania (brute-force protection) - patrz _login_* metody
+        # Login rate limiting (brute-force protection) - see the _login_* methods
         self._login_fails_ip: dict = {}    # {ip: {fails: [ts], blocked_until: ts}}
         self._login_fails_user: dict = {}  # {username: {...}}
-        # Petle tla pod NADZOREM - jesli padna, supervisor je restartuje
-        # (z rosnacym backoffem). Bez tego jeden nieprzewidziany blad zabija
-        # funkcje az do recznego restartu serwera.
+        # Background loops under SUPERVISION - if they crash, the supervisor
+        # restarts them (with growing backoff). Without this, one
+        # unexpected error kills the feature until the server is manually restarted.
         self._supervise(lambda: self._radio_lock_watchdog(), "radio_lock_watchdog")
-        # Watchdog urzadzen: co 1h sprawdza radio/rotatory/przekazniki i
-        # reconnectuje zawieszone porty COM (tylko gdy radio nie nadaje i
-        # nikt nie trzyma locka - zeby nie przerwac QSO).
+        # Device watchdog: checks the radio/rotators/relays every 1h and
+        # reconnects stuck COM ports (only when the radio isn't
+        # transmitting and no one holds the lock - so as not to interrupt a QSO).
         self._supervise(lambda: self._device_watchdog(), "device_watchdog")
-        # Detektor lagu petli zdarzen — DIAGNOSTYKA skokow latency.
-        # Mierzy, czy asyncio nie zamarza. Gdy petla stoi dluzej niz prog
-        # (cos synchronicznego ja blokuje), wypisuje to w logu z czasem blokady.
-        # To wskazuje winowajce skokow RTT/audio przy niskim CPU.
+        # Event-loop lag detector — DIAGNOSTICS for latency spikes.
+        # Measures whether asyncio is freezing up. When the loop stalls
+        # longer than a threshold (something synchronous is blocking it),
+        # it prints this to the log along with the block duration. Points
+        # at the culprit behind RTT/audio spikes at low CPU usage.
         self._supervise(lambda: self._loop_lag_monitor(), "loop_lag_monitor")
-        # Pompa scope — wysyla najswiezsza ramke waterfalla w stalym tempie
-        # 15 fps Z POZIOMU PETLI ASYNCIO (nie z watku readera). Reader tylko
-        # zapisuje _latest_scope; ta pompa ja czyta i broadcastuje. Dzieki temu
-        # strumien scope z radia NIE synchronizuje sie z petla przy kazdej
-        # ramce — co wczesniej blokowalo asyncio na 100-500ms.
+        # Scope pump — sends the freshest waterfall frame at a steady
+        # 15fps FROM THE ASYNCIO LOOP (not from the reader thread). The
+        # reader only writes _latest_scope; this pump reads and broadcasts
+        # it. This way the radio's scope stream does NOT synchronize with
+        # the loop on every frame — which used to block asyncio for 100-500ms.
         self._supervise(lambda: self._scope_pump(), "scope_pump")
         # Update check: once at startup, in the background, admin-only notice.
         # Never blocks startup and stays silent on any network error.
         self._supervise(lambda: self._update_check_loop(), "update_check")
 
     async def _scope_pump(self):
-        """Czyta najswiezsza ramke scope z radia i wysyla ja co ~66ms (15fps).
-        Odsprzega strumien scope (watek readera) od petli zdarzen."""
+        """Reads the freshest scope frame from the radio and sends it every
+        ~66ms (15fps). Decouples the scope stream (reader thread) from the event loop."""
         while True:
             await asyncio.sleep(0.066)
             rig = self.rig
@@ -770,13 +784,13 @@ class App:
                         _deepest = _stack[-1] if _stack else ""
                         if any(_m in _deepest for _m in _IDLE_MARKERS):
                             continue   # healthy idle wait, not a block
-                        print(f"[looplag] Petla ZABLOKOWANA ~{_behind:.0f}ms "
-                              f"(prawdziwa blokada, nie bezczynnosc):", flush=True)
+                        print(f"[looplag] Loop BLOCKED ~{_behind:.0f}ms "
+                              f"(a real block, not idleness):", flush=True)
                         for _line in _stack[-5:]:
                             print("  " + _line.strip().replace("\n", " | "),
                                   flush=True)
                     except Exception as _e:
-                        print(f"  (zrzut nieudany: {_e})", flush=True)
+                        print(f"  (dump failed: {_e})", flush=True)
 
         _th = _threading.Thread(target=_watchdog, daemon=True, name="loop-watchdog")
         _th.start()
@@ -842,8 +856,8 @@ class App:
         if latest and self._version_is_newer(latest, SERVER_VERSION):
             self._update_info = {"latest": latest, "current": SERVER_VERSION,
                                  "url": url}
-            print(f"[update] Dostepna nowsza wersja: {latest} "
-                  f"(masz {SERVER_VERSION}) — {url}", flush=True)
+            print(f"[update] Newer version available: {latest} "
+                  f"(you have {SERVER_VERSION}) — {url}", flush=True)
             # Email the admin — but only ONCE per version. The check runs on
             # every startup, so without this guard a restart would re-send the
             # same notice. We remember the last version we emailed about in cfg;
