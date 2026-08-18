@@ -1,12 +1,12 @@
 
 /**
- * cw.js (frontend) — panel kluczowania CW
- * Obsługuje wszystkie TRX: auto/CAT/DTR/RTS
+ * cw.js (frontend) — CW keying panel
+ * Handles all TRX methods: auto/CAT/DTR/RTS
  *
- * MAKRA: edytowalne przez kazdego usera, we wlasnym zakresie — zapisywane
- * w localStorage przegladarki (per-user/per-urzadzenie, bez wplywu na
- * innych operatorow czy konfiguracje serwera). Dwuklik na karcie makra
- * otwiera edycje (etykieta + tekst CW); F1-F15 wysyla makro.
+ * MACROS: editable by every user, in their own scope — saved in the
+ * browser's localStorage (per-user/per-device, no effect on other
+ * operators or server config). Double-click on a macro card opens editing
+ * (label + CW text); F1-F15 sends the macro.
  */
 (function () {
 'use strict';
@@ -16,9 +16,9 @@ const MACROS_KEY = 'cwMacros';
 let macros      = [];
 let cwActive    = false;
 let cwMethod    = 'auto';
-let catCapable  = null; // null=nieznany
+let catCapable  = null; // null=unknown
 
-// Domyslne makra (uzyte przy pierwszym uruchomieniu / braku zapisu w localStorage)
+// Default macros (used on first run / when nothing is saved in localStorage)
 const DEFAULT_MACROS = [
   { id: 1, label: 'CQ',   text: 'CQ CQ DE {MYCALL} {MYCALL} K' },
   { id: 2, label: 'RST',  text: 'UR 599 599 BK' },
@@ -28,7 +28,7 @@ const DEFAULT_MACROS = [
   { id: 6, label: 'QSL',  text: 'TU QSL 73' },
 ];
 
-// ── Ładuj makra (localStorage, per-user/per-przegladarka) i status ───────────
+// ── Load macros (localStorage, per-user/per-browser) and status ─────────────
 async function loadMacros() {
   try {
     const token = localStorage.getItem('token') || '';
@@ -44,7 +44,7 @@ async function loadMacros() {
   } catch(e) {
     macros = DEFAULT_MACROS.map(m => ({...m}));
   }
-  // Dopelnij brakujace id (1-6) defaultami
+  // Fill in missing ids (1-6) with defaults
   for (const def of DEFAULT_MACROS) {
     if (!macros.find(m => m.id === def.id)) macros.push({...def});
   }
@@ -84,11 +84,11 @@ function updateCapsBadge(caps) {
   }
 }
 
-// ── Render makr ───────────────────────────────────────────────────────────────
+// ── Render macros ────────────────────────────────────────────────────────────
 function renderMacros() {
   const el = document.getElementById('cw-macros-grid');
   if (!el) return;
-  // Aktualizuj tylko etykiety i teksty istniejących kart (siatka 2×3 jest statyczna w HTML)
+  // Only update the labels/text of existing cards (the 2×3 grid is static in the HTML)
   const display = macros.slice(0, 6);
   display.forEach(m => {
     const lbl = document.getElementById('cwm-lbl-' + m.id);
@@ -137,7 +137,7 @@ async function _saveMacros() {
       body: JSON.stringify({ macros }),
     });
   } catch(e) {
-    console.warn('[cw] zapis makr nie powiodl sie:', e);
+    console.warn('[cw] macro save failed:', e);
     window.UI?.showToast('✗ Nie udało się zapisać makra', 'error');
   }
 }
@@ -147,7 +147,7 @@ function closeEdit() {
   if (m) m.style.display = 'none';
 }
 
-// ── Wysyłanie ─────────────────────────────────────────────────────────────────
+// ── Sending ───────────────────────────────────────────────────────────────────
 async function sendMacro(id) {
   const m = macros.find(x => x.id === id);
   if (m?.text) await sendText(m.text);
@@ -155,10 +155,10 @@ async function sendMacro(id) {
 
 async function sendText(text, extra = {}) {
   if (cwActive) { stopCW(); return; }
-  // {CALL} i {RST} byly wczesniej wypelniane z formularza "Szybki log QSO"
-  // (usuniety). Pozostaja jako placeholdery do recznego wpisania w tresc
-  // makra przez uzytkownika (np. "UR 599 OP JAN") — {MYCALL} dziala
-  // automatycznie z ustawien stacji.
+  // {CALL} and {RST} used to be filled in from the "Quick QSO log" form
+  // (removed). They remain as placeholders for the user to type manually
+  // into the macro text (e.g. "UR 599 OP JAN") — {MYCALL} still works
+  // automatically from the station settings.
   const vars = {
     myCall: S.callsign || '',
     rst:    '599',
@@ -193,10 +193,11 @@ async function stopCW() {
   });
 }
 
-// Slider WPM w panelu CW KEYER (#cw-wpm-slider) steruje CI-V KEYSPD (14 0C)
-// — tym samym mechanizmem co slidery w lewej kolumnie (rig_slider). Krok 1
-// WPM. Wartosc startowa i live-sync (zmiana na panelu radia) obslugiwane
-// przez RadioFunctions (level_keyspd w _sliderEls, patrz radiofunctions.js).
+// The WPM slider in the CW KEYER panel (#cw-wpm-slider) controls CI-V
+// KEYSPD (14 0C) — the same mechanism as the sliders in the left column
+// (rig_slider). Step of 1 WPM. The initial value and live-sync (change on
+// the radio's own panel) are handled by RadioFunctions (level_keyspd in
+// _sliderEls, see radiofunctions.js).
 function setWPM(wpm) {
   const val = parseInt(wpm);
   const el = document.getElementById('cw-wpm-val');
@@ -249,7 +250,7 @@ function handleWS(msg) {
   }
 }
 
-// ── Klawisze F1-F15 ───────────────────────────────────────────────────────────
+// ── F1-F15 keys ───────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -280,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.CW._loaded = true;
 });
 
-// Zaladuj makra po zalogowaniu — dopiero wtedy mamy token i uid
+// Load macros after login — that's when we finally have the token and uid
 window.addEventListener('app:ready', () => { loadMacros(); });
 
 })();
