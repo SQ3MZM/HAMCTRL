@@ -1,11 +1,11 @@
 /**
- * ws.js — klient WebSocket + dekoder audio Opus (Web Audio API)
+ * ws.js — WebSocket client + Opus audio decoder (Web Audio API)
  *
- * Opus audio pipeline (RX — odbiór z radia):
- *   Serwer → Opus binary frames (WS) → OpusDecoderWorker (WASM) → PCM → AudioContext
+ * Opus audio pipeline (RX — receiving from the radio):
+ *   Server → Opus binary frames (WS) → OpusDecoderWorker (WASM) → PCM → AudioContext
  *
- * Opus audio pipeline (TX — nadawanie przez radio):
- *   Mikrofon → MediaStream → ScriptProcessor/AudioWorklet → PCM → opusEncoder (JS WASM) → WS → serwer
+ * Opus audio pipeline (TX — transmitting via the radio):
+ *   Microphone → MediaStream → ScriptProcessor/AudioWorklet → PCM → opusEncoder (JS WASM) → WS → server
  */
 
 (function() {
@@ -15,21 +15,21 @@ const S = window.AppState;
 let ws = null;
 let reconnectTimer = null;
 
-// DIAGNOSTYKA: PerformanceObserver na 'longtask' - przegladarka sama zglasza
-// KAZDA blokade glownego watku JS >50ms, niezaleznie od przyczyny. Uzyte do
-// rozstrzygniecia sporu "czy skok znacznika WS to jank JS czy realne
-// opoznienie sieci (LTE)" - jesli w chwili skoku WS NIE ma tu wpisu, to
-// watek JS byl wolny i przyczyna jest sieciowa/serwerowa, nie front-end.
-// Porownywac czas z ostrzezeniami "[ws] WYSOKI RTT" (case 'pong' nizej).
+// DIAGNOSTICS: PerformanceObserver on 'longtask' - the browser itself
+// reports EVERY main JS thread block >50ms, regardless of the cause. Used
+// to settle the question "is a WS badge spike JS jank or a real network
+// delay (LTE)" - if there's NO entry here at the moment of a WS spike,
+// the JS thread was not slow and the cause is network/server-side, not frontend.
+// Compare the timestamp with the "[ws] HIGH RTT" warnings (case 'pong' below).
 if (window.PerformanceObserver) {
   try {
     new PerformanceObserver((list) => {
       for (const e of list.getEntries()) {
         const t = new Date();
-        console.warn(`[longtask] ${Math.round(e.duration)}ms o ${t.toLocaleTimeString('pl-PL', {hour12:false})}.${String(t.getMilliseconds()).padStart(3,'0')} (start offset ${Math.round(e.startTime)}ms od nawigacji)`);
+        console.warn(`[longtask] ${Math.round(e.duration)}ms at ${t.toLocaleTimeString('pl-PL', {hour12:false})}.${String(t.getMilliseconds()).padStart(3,'0')} (start offset ${Math.round(e.startTime)}ms from navigation)`);
       }
     }).observe({ entryTypes: ['longtask'] });
-  } catch(e) { /* longtask API niedostepne w tej przegladarce */ }
+  } catch(e) { /* longtask API unavailable in this browser */ }
 }
 
 // ── Audio (Opus RX) ───────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ let audioCtx = null;
 Object.defineProperty(window, 'audioCtx', { get: () => audioCtx, set: v => { audioCtx = v; } });
 let audioQueue = [];
 let isPlayingAudio = false;
-let opusWorker = null;   // Web Worker z dekoderem opus-decoder WASM
+let opusWorker = null;   // Web Worker with the opus-decoder WASM decoder
 window._audioEnabled = false;
 
 function initAudioContext() {
@@ -50,22 +50,23 @@ function initAudioContext() {
       sampleRate: 48000,
     });
     window._masterGain = audioCtx.createGain();
-    window._masterGain.gain.value = 0.7;  // fallback zanim ponizej dojdzie realny per-user poziom
-    // _masterGain powstaje TUTAJ, dopiero gdy realnie startuje audio (gest
-    // uzytkownika / autoplay policy) — czyli PO tym jak initRxVol() juz raz
-    // probowal zastosowac zapisany poziom (app:ready, patrz nizej w tym
-    // pliku). W tamtym momencie _masterGain jeszcze nie istnial, wiec
-    // setRxVol() zaktualizowal tylko suwak w UI, a realny gain zostawal na
-    // sztywnych 0.7 z linii wyzej — suwak wygladal na zapamietany, ale
-    // glosnosc i tak zawsze wracala do 70%. Ponowne wywolanie teraz, gdy
-    // _masterGain juz istnieje, dociaga zapisana per-user wartosc do
-    // faktycznego dzwieku. Wykryte na zywo 2026-08-15.
+    window._masterGain.gain.value = 0.7;  // fallback until the real per-user level lands below
+    // _masterGain is created HERE, only once audio actually starts (user
+    // gesture / autoplay policy) — that is, AFTER initRxVol() already
+    // tried once to apply the saved level (app:ready, see below in this
+    // file). At that point _masterGain didn't exist yet, so setRxVol()
+    // only updated the slider in the UI while the real gain stayed at
+    // the hardcoded 0.7 from the line above — the slider looked
+    // remembered, but the volume always reverted to 70% anyway. Calling
+    // it again now, once _masterGain already exists, applies the saved
+    // per-user value to the actual sound.
     window.AudioControls?.initRxVol?.();
 
-    // Przyciszanie RX podczas WLASNEGO TX (FT8/FT4). Radio z wlaczonym MONI
-    // podaje na USB-out swoj sygnal TX — w przegladarce slychac piszczace
-    // tony wlasnego nadawania (meczy sluch). Duck: na czas TX gain=0,
-    // po TX przywracamy poprzedni poziom. Wolane z wsjtx.js (ft8_tx_status).
+    // Mute RX during OUR OWN TX (FT8/FT4). With MONI enabled, the radio
+    // puts its TX signal on the USB-out — in the browser you hear
+    // squealing tones of your own transmission (fatiguing). Duck: gain=0
+    // during TX, restore the previous level afterward. Called from
+    // wsjtx.js (ft8_tx_status).
     window.setTxAudioDuck = function(on) {
       const g = window._masterGain;
       if (!g) return;
@@ -90,12 +91,12 @@ function initAudioContext() {
 
     if (audioCtx.state === 'suspended') audioCtx.resume();
 
-    // Ustaw domyslne urzadzenie wyjsciowe (nie VB-Cable)
-    // Szukamy Realtek/Speakers jako "default" — nie communications/VB
+    // Set the default output device (not VB-Cable)
+    // We look for Realtek/Speakers as "default" — not communications/VB
     if (audioCtx.setSinkId) {
       navigator.mediaDevices.enumerateDevices().then(devs => {
         const outputs = devs.filter(d => d.kind === 'audiooutput');
-        // Priorytet: zapisany w localStorage > 'default' > pierwszy nie-VB
+        // Priority: saved in localStorage > 'default' > first non-VB
         const saved = localStorage.getItem('ham_audio_sinkId');
         const defaultDev = outputs.find(d => d.deviceId === 'default');
         const nonVB = outputs.find(d =>
@@ -117,12 +118,12 @@ function initAudioContext() {
   }
 }
 
-// Zaladuj glosnosc RX i TX GAIN per user po zalogowaniu
+// Load the per-user RX volume and TX GAIN after login
 window.addEventListener('app:ready', () => {
   window.AudioControls?.initRxVol?.();
   window.AudioControls?.initTxGain?.();
 });
-// (kliknięcie, dotknięcie, klawisz) — polityka autoplay przegladarki
+// (click, touch, key) — the browser's autoplay policy
 function _resumeAudioOnGesture() {
   if (audioCtx) {
     audioCtx.resume();
@@ -137,29 +138,29 @@ document.addEventListener('click',      _resumeAudioOnGesture, { once: true });
 document.addEventListener('touchstart', _resumeAudioOnGesture, { once: true });
 document.addEventListener('keydown',    _resumeAudioOnGesture, { once: true });
 
-// Przegladarki tworza AudioContext w stanie 'suspended' jesli nie ma
-// poprzedzajacego gestu uzytkownika (klikniecie/dotkniecie/klawisz) —
-// poniewaz audio RX teraz wlacza sie automatycznie przy polaczeniu WS
-// (bez przycisku), context moze utknac w 'suspended' mimo poprawnego
-// dekodowania ramek. Wznawiamy go przy pierwszej interakcji ze strona.
+// Browsers create the AudioContext in 'suspended' state if there's no
+// prior user gesture (click/touch/key) — since RX audio now turns on
+// automatically when the WS connects (no button), the context can get
+// stuck in 'suspended' even though frames are decoding correctly. We
+// resume it on the first interaction with the page.
 let _audioResumeBound = false;
 function _bindAudioResumeOnFirstInteraction() {
   if (_audioResumeBound) return;
   _audioResumeBound = true;
   const resume = () => {
     if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().then(() => console.log('[audio] AudioContext wznowiony po interakcji'));
+      audioCtx.resume().then(() => console.log('[audio] AudioContext resumed after interaction'));
     }
   };
   ['click', 'keydown', 'touchstart'].forEach(ev =>
     document.addEventListener(ev, resume, { once: true, passive: true }));
 }
 
-// Dekoder Opus przez Web Codecs AudioDecoder API (natywny, bez WASM)
-// Potwierdzono dzialanie: 960 sampli/ramke, 48kHz, 20ms frame
+// Opus decoder via the Web Codecs AudioDecoder API (native, no WASM)
+// Confirmed working: 960 samples/frame, 48kHz, 20ms frame
 function initOpusDecoder() {
   if (!window.AudioDecoder) {
-    console.warn('[audio] AudioDecoder (Web Codecs) niedostepny w tej przegladarce');
+    console.warn('[audio] AudioDecoder (Web Codecs) unavailable in this browser');
     window._opusDecoder = null;
     return;
   }
@@ -182,10 +183,10 @@ function initOpusDecoder() {
           frame.close();
         }
       },
-      error: (e) => console.error('[audio] AudioDecoder blad:', e),
+      error: (e) => console.error('[audio] AudioDecoder error:', e),
     });
     dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 });
-    // Interfejs kompatybilny z poprzednim _opusDecoder API
+    // Interface compatible with the previous _opusDecoder API
     window._opusDecoder = {
       _dec: dec,
       _ts: 0,
@@ -197,65 +198,65 @@ function initOpusDecoder() {
           data: opusData,
         }));
         this._first = false;
-        this._ts += 20000; // 20ms w mikrosekundach
+        this._ts += 20000; // 20ms in microseconds
       },
       ready: Promise.resolve(),
     };
-    console.log('[audio] AudioDecoder (Web Codecs) gotowy');
+    console.log('[audio] AudioDecoder (Web Codecs) ready');
   } catch(e) {
-    console.error('[audio] AudioDecoder init blad:', e);
+    console.error('[audio] AudioDecoder init error:', e);
     window._opusDecoder = null;
   }
 }
 
-// ── Audio scheduler — plynne odtwarzanie bez przerw miedzy ramkami ───────────
-// Problem: src.start(audioCtx.currentTime) odtwarza kazda ramke "teraz",
-// ale "teraz" zmienia sie miedzy ramkami przez opoznienia sieci/JS event loop,
-// co daje mikroprzerwy (klikniecia) w odtwarzanym dzwieku.
-// Rozwiazanie: planujemy kazda ramke na scisle okreslony czas w przyszlosci,
-// jedna po drugiej bez szczelin. _nextAudioTime sluzy jako "wskaznik" gdzie
-// skonczy sie poprzednia ramka.
+// ── Audio scheduler — smooth playback with no gaps between frames ───────────
+// Problem: src.start(audioCtx.currentTime) plays each frame "now", but
+// "now" shifts between frames due to network/JS event loop delays, which
+// causes micro-gaps (clicks) in the played sound.
+// Solution: schedule each frame at a precisely defined time in the
+// future, back to back with no gaps. _nextAudioTime acts as a "pointer"
+// to where the previous frame ends.
 let _nextAudioTime = 0;
 let _aheadAvg = 0;
-// POPRAWKA 2026-08-17: staly cel 180ms dawal PRAWIE ZERO zapasu wobec
-// realnego jittera zaobserwowanego na zywo przez usera przez tunel LTE
-// (sq3mzmremote.duckdns.org) - pojedynczy skok RTT 183ms (bez blokady JS,
-// bez reakcji adaptacyjnego bitrate w ham_audio.exe - za maly zeby
-// przepelnic 5.12s bufor Rust) w zupelnosci wystarczal zeby oproznic ten
-// bufor i dac slyszalne przyciecie. Zamiast na sztywno podnosic cel (co
-// placi wyzsza latencja NAWET gdy lacze jest akurat dobre), cel jest teraz
-// ADAPTACYJNY: startuje nisko (baza), rosnie skokowo po kazdym realnym
-// niedoborze (ahead<0 w _scheduleAudioBuffer), i powoli opada z powrotem
-// do bazy gdy lacze jest czyste przez dluzszy czas — ten sam wzorzec
-// histerezy co adaptacyjny bitrate HI/LO w ham_audio.exe (patrz
-// RECOVERY_CLEAN_SECS w main.rs).
-let _audioTarget = 0.18;          // aktualny cel — startuje na bazie
-const _AUDIO_TARGET_BASE = 0.18;  // dolna granica adaptacji (dobre lacze)
-const _AUDIO_TARGET_CEIL = 0.30;  // gorna granica adaptacji (budzet 200-300ms, RCForb)
-const _AUDIO_TARGET_STEP = 0.03;  // krok wzrostu po niedoborze (30ms)
-const _AUDIO_TARGET_DECAY_STEP = 0.02; // krok powrotu w dol przy spokoju
-// POPRAWKA 2026-08-17: zaobserwowane na zywo niedobory powtarzaly sie co
-// dokladnie ~60s (13:26:10.289 -> 13:27:10.289, potem 13:31:10.311 - zbyt
-// precyzyjne na przypadkowy jitter, wyglada na cykl infrastruktury sieci
-// np. LTE RRC/DRX). Przy 20s ciszy do decaya bufor zdazal wrocic do bazy
-// ZANIM przyszedl kolejny taki sam ~60s cykl, wiec uczyl sie od nowa za
-// kazdym razem zamiast pamietac. Wydluzone do 90s, zeby nauczona wartosc
-// przetrwala co najmniej jeden pelny cykl 60s zanim zaczniemy schodzic.
-const _AUDIO_TARGET_CLEAN_MS = 90000;  // ile ms bez niedoboru zanim zaczniemy schodzic
+// A fixed 180ms target left ALMOST NO margin against the real jitter
+// observed live by the user over an LTE tunnel (sq3mzmremote.duckdns.org)
+// - a single 183ms RTT spike (no JS blocking, no reaction from the
+// adaptive bitrate in ham_audio.exe - too small to overflow the 5.12s
+// Rust buffer) was fully enough to drain this buffer and produce an
+// audible glitch. Instead of hard-raising the target (which pays higher
+// latency EVEN when the link happens to be good), the target is now
+// ADAPTIVE: starts low (base), grows in steps after each real shortage
+// (ahead<0 in _scheduleAudioBuffer), and slowly decays back to base once
+// the link has been clean for a while — the same hysteresis pattern as
+// the adaptive HI/LO bitrate in ham_audio.exe (see RECOVERY_CLEAN_SECS in main.rs).
+let _audioTarget = 0.18;          // current target — starts at base
+const _AUDIO_TARGET_BASE = 0.18;  // lower bound of adaptation (good link)
+const _AUDIO_TARGET_CEIL = 0.30;  // upper bound of adaptation (200-300ms budget, RCForb)
+const _AUDIO_TARGET_STEP = 0.03;  // growth step after a shortage (30ms)
+const _AUDIO_TARGET_DECAY_STEP = 0.02; // step back down when calm
+// Live-observed shortages repeated at EXACTLY ~60s intervals
+// (13:26:10.289 -> 13:27:10.289, then 13:31:10.311 - too precise for
+// random jitter, looks like a network infrastructure cycle, e.g. LTE
+// RRC/DRX). With 20s of silence before decaying, the buffer would return
+// to base BEFORE the next identical ~60s cycle hit, so it re-learned
+// from scratch every time instead of remembering. Extended to 90s, so
+// the learned value survives at least one full 60s cycle before we start
+// decaying.
+const _AUDIO_TARGET_CLEAN_MS = 90000;  // ms without a shortage before we start decaying
 let _lastUnderrunAt = 0;
 const _AUDIO_MIN = 0.05;
-const _AUDIO_MAX = 0.40;     // twardy sufit (poza adaptacja) — powyzej niej PRZYTNIJ bufor
-let _audioBadgeAt = 0;       // throttle aktualizacji DOM (ramki leca co 20ms)
+const _AUDIO_MAX = 0.40;     // hard ceiling (outside adaptation) — above it, TRIM the buffer
+let _audioBadgeAt = 0;       // throttle DOM updates (frames arrive every 20ms)
 
-// Powolny powrot do niskiego bufora gdy lacze sie uspokoi. Sprawdzane co 5s,
-// niezalezne od tego czy audio akurat gra (nieszkodliwe gdy wylaczone).
+// Slow return to a low buffer once the link calms down. Checked every
+// 5s, regardless of whether audio is currently playing (harmless when disabled).
 setInterval(() => {
   if (_audioTarget <= _AUDIO_TARGET_BASE) return;
   if (performance.now() - _lastUnderrunAt < _AUDIO_TARGET_CLEAN_MS) return;
   const before = _audioTarget;
   _audioTarget = Math.max(_AUDIO_TARGET_BASE, _audioTarget - _AUDIO_TARGET_DECAY_STEP);
   if (_audioTarget !== before) {
-    console.log(`[audio] lacze spokojne ${Math.round(_AUDIO_TARGET_CLEAN_MS/1000)}s — cel bufora ${Math.round(before*1000)}ms -> ${Math.round(_audioTarget*1000)}ms`);
+    console.log(`[audio] link calm for ${Math.round(_AUDIO_TARGET_CLEAN_MS/1000)}s — buffer target ${Math.round(before*1000)}ms -> ${Math.round(_audioTarget*1000)}ms`);
   }
 }, 5000);
 
@@ -272,9 +273,9 @@ function _updateAudioLatencyBadge() {
   }
   const ms = Math.round(_aheadAvg * 1000);
   badge.textContent = ms + ' ms';
-  // Cel adaptacyjny 180-300ms (_audioTarget), twardy sufit 400ms (_AUDIO_MAX)
-  // — powyzej niego scheduler i tak przycina bufor, wiec czerwony = bufor
-  // stale dobija do sufitu niezaleznie od aktualnego celu adaptacji.
+  // Adaptive target 180-300ms (_audioTarget), hard ceiling 400ms
+  // (_AUDIO_MAX) — above it, the scheduler trims the buffer anyway, so
+  // red = the buffer keeps hitting the ceiling regardless of the current adaptation target.
   badge.style.color = ms < 300 ? 'var(--green)' : ms < 400 ? 'var(--amber)' : 'var(--red)';
   badge.style.borderColor = ms < 300 ? 'var(--green2)' : ms < 400 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
 }
@@ -301,23 +302,23 @@ function _scheduleAudioBuffer(audioBuffer) {
     }
   }
 
-  // DWUSTRONNE ograniczenie — kluczowe, zeby bufor NIE ROSL bez konca.
-  // Gdy spadnie za nisko: dolej (przeciw przycieciom).
-  // Gdy urosnie za wysoko: PRZYTNIJ (przeciw narastaniu latency do 700ms).
+  // TWO-SIDED clamp — key to keeping the buffer from growing unbounded.
+  // When it drops too low: top it up (against clicks).
+  // When it grows too high: TRIM it (against latency creeping up to 700ms).
   if (ahead > 0 && ahead < _AUDIO_MIN) {
     _nextAudioTime = now + _audioTarget; ahead = _audioTarget; _aheadAvg = _audioTarget;
   } else if (ahead > _AUDIO_MAX) {
-    // bufor spuchl (Python sie dlawil) — zetnij nadmiar, wroc do celu
+    // the buffer bloated (Python choked) — cut the excess, return to the target
     _nextAudioTime = now + _audioTarget; ahead = _audioTarget; _aheadAvg = _audioTarget;
   }
   if (ahead < 0) {
-    // Realny niedobor — bufor calkiem sie oproznil, to jest SLYSZALNE
-    // przyciecie. Dowod ze aktualny cel jest za ciasny na biezacy jitter
-    // lacza — podnies go (do sufitu adaptacji), zamiast czekac na kolejny
-    // taki sam glitch. Powrot w dol obsluguje osobny interval powyzej.
+    // Real shortage — the buffer completely drained, this is an AUDIBLE
+    // glitch. Proof the current target is too tight for the link's
+    // current jitter — raise it (up to the adaptation ceiling), instead
+    // of waiting for the next identical glitch. The interval above handles the decay back down.
     const grown = Math.min(_AUDIO_TARGET_CEIL, _audioTarget + _AUDIO_TARGET_STEP);
     if (grown > _audioTarget) {
-      console.warn(`[audio] niedobor bufora — cel ${Math.round(_audioTarget*1000)}ms -> ${Math.round(grown*1000)}ms`);
+      console.warn(`[audio] buffer shortage — target ${Math.round(_audioTarget*1000)}ms -> ${Math.round(grown*1000)}ms`);
       _audioTarget = grown;
     }
     _lastUnderrunAt = performance.now();
@@ -335,9 +336,9 @@ function _scheduleAudioBuffer(audioBuffer) {
 
 function playOpusFrame(buffer) {
   if (!window._audioEnabled || !audioCtx || !window._opusDecoder) return;
-  // Format naglowka:
-  // Rust ham_audio: [0xA1][seq 4B LE][opus...] — pomijamy 5 bajtow
-  // Python fallback: [0xA1][opus...]            — pomijamy 1 bajt
+  // Header format:
+  // Rust ham_audio: [0xA1][seq 4B LE][opus...] — skip 5 bytes
+  // Python fallback: [0xA1][opus...]            — skip 1 byte
   const view = new Uint8Array(buffer);
   const skip = (view[0] === 0xA1 && window._rustAudio) ? 5 : 1;
   const opusData = view.slice(skip);
@@ -347,20 +348,20 @@ function playOpusFrame(buffer) {
 }
 
 
-// Debounce helper — ogranicza liczbę wysyłanych wiadomości
+// Debounce helper — limits how many messages get sent
 function _debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
-// Bufor zmian VFO — wysyłaj max 1 raz na 50ms (20Hz) zamiast przy każdym ticku scroll
+// VFO change buffer — send at most once per 50ms (20Hz) instead of on every scroll tick
 const _sendFreqDebounced = _debounce((freq) => {
-  // Sprawdz blokade radia przed wyslaniem freq
+  // Check the radio lock before sending the freq
   const lock  = window.AppState?.radio_lock;
   const myUid = String(window.AppState?.my_uid || window.CurrentUser?.id || '');
   const role  = window.CurrentUser?.role;
   if (role !== 'admin' && (!lock?.locked || String(lock.user_id) !== myUid)) {
-    // Przywroc wyswietlacz do aktualnej freq radia
+    // Revert the display to the radio's actual freq
     if (window.AppState?.freq) {
       window.AppState.freq = window.AppState.freq; // trigger re-render
       window.UI?.updateFreqDisplay?.();
@@ -378,8 +379,8 @@ function connect() {
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
-  // WebSocket na tym samym hoście co HTTP, endpoint /ws
-  // Działa lokalnie i przez proxy Replit (wss://hostname/ws)
+  // WebSocket on the same host as HTTP, endpoint /ws
+  // Works locally and through the Replit proxy (wss://hostname/ws)
   const wsBase = `${proto}://${location.host}/ws`;
   const wsUrl  = token
     ? `${wsBase}?token=${encodeURIComponent(token)}`
@@ -390,17 +391,17 @@ function connect() {
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
-    console.log('[ws] Połączono');
-    // Auto-ping co 30s dla biezacego pomiaru latency
+    console.log('[ws] Connected');
+    // Auto-ping every 30s for ongoing latency measurement
     clearInterval(window._autoPingInterval);
     window._autoPingInterval = setInterval(() => { if (window.WS) window.WS.ping(); }, 30000);
     setTimeout(() => { if (window.WS) window.WS.ping(); }, 500);
     S.connected = true;
     window.UI?.updateConnectionStatus(true);
 
-    // Subskrybuj kanaly wg AKTUALNIE aktywnej zakladki (nie tylko 'control').
-    // Bez tego po reconnecte klient by nie dostawal scope_frame/ft8_waterfall
-    // dopoki nie przelaczy zakladki.
+    // Subscribe to channels per the CURRENTLY active tab (not just
+    // 'control'). Without this, after a reconnect the client wouldn't get
+    // scope_frame/ft8_waterfall until switching tabs.
     const activePage = document.querySelector('.tab-btn.active')?.getAttribute('onclick')?.match(/'(\w+)'/)?.[1] || 'radio';
     const channelsForPage = {
       radio:     ['control', 'scope'],
@@ -410,22 +411,22 @@ function connect() {
     const channels = channelsForPage[activePage] || ['control'];
     ws.send(JSON.stringify({ type: 'subscribe', channels }));
 
-    // Audio RX zawsze wlaczone (przycisk recznego wlaczania usuniety —
-    // serwer teraz auto-startuje fizyczny strumien audio przy starcie,
-    // wiec klient od razu subskrybuje sie do jego odbioru).
+    // RX audio is always enabled (the manual enable button was removed —
+    // the server now auto-starts the physical audio stream on startup,
+    // so the client subscribes to receive it right away).
     _bindAudioResumeOnFirstInteraction();
     window.WS?.enableAudio(true);
   };
 
   ws.onclose = () => {
-    console.log('[ws] Rozłączono');
+    console.log('[ws] Disconnected');
     S.connected = false;
     window.UI?.updateConnectionStatus(false);
     reconnectTimer = setTimeout(connect, 3000);
   };
 
   ws.onerror = (e) => {
-    console.warn('[ws] Błąd:', e);
+    console.warn('[ws] Error:', e);
   };
 
   ws.onmessage = (e) => {
@@ -438,15 +439,16 @@ function connect() {
       const msg = JSON.parse(e.data);
       handleMessage(msg);
     } catch(err) {
-      console.warn('[ws] Błąd parsowania:', err);
+      console.warn('[ws] Parse error:', err);
     }
   };
 }
 
-// Trzyma przycisk "#tx-mic-btn" (PROFIL/RADIO) w zgodzie z realnym stanem
-// mikrofonu TX, niezaleznie od zrodla wlaczenia - reczny klik (onclick w
-// index.html) czy zdalny most WSJT-X (wsjtx_tx_start/stop ponizej). Te same
-// stany wizualne co dotychczasowy onclick, zeby nie bylo rozjazdu.
+// Keeps the "#tx-mic-btn" button (PROFILE/RADIO) in sync with the actual
+// TX microphone state, regardless of what triggered it - a manual click
+// (onclick in index.html) or the remote WSJT-X bridge (wsjtx_tx_start/stop
+// below). Same visual states as the previous onclick, so there's no
+// mismatch.
 function _syncTxMicButton(active) {
   const btn = document.getElementById('tx-mic-btn');
   if (!btn) return;
@@ -473,17 +475,17 @@ function handleMessage(msg) {
         tuner:     msg.tuner     ?? false,
         connected: msg.connected ?? false,
         models:    msg.models    || {},
-        // KRYTYCZNE: backend (webapp.py) NIGDY nie wysyla klucza "bands" w
-        // wiadomosci init — lista pasm przychodzi osobno przez
-        // loadBandsConfig() (-> /api/config/bands), wolane niezaleznie po
-        // 'app:ready'. 'init' (WS) i 'app:ready' (auth.js) to dwa NIEZALEZNE
-        // zdarzenia asynchroniczne ktore moga przyjsc w dowolnej kolejnosci.
-        // Poprzedni kod (`msg.bands || {}`) bezwarunkowo nadpisywal S.bands
-        // na PUSTY obiekt gdy 'init' przychodzilo PO tym jak
-        // loadBandsConfig() juz poprawnie ustawilo 14 pasm — co wlaczalo
-        // fallback w buildBandGrid() pokazujacy tylko '20m'. Teraz: gdy
-        // msg.bands nie istnieje, zachowujemy to co juz jest w S.bands
-        // (ten sam defensywny wzorzec co freq/mode/itp. ponizej, ?? zamiast ||).
+        // CRITICAL: the backend (webapp.py) NEVER sends a "bands" key in
+        // the init message — the band list arrives separately via
+        // loadBandsConfig() (-> /api/config/bands), called independently
+        // after 'app:ready'. 'init' (WS) and 'app:ready' (auth.js) are two
+        // INDEPENDENT async events that can arrive in any order. The
+        // previous code (`msg.bands || {}`) unconditionally overwrote
+        // S.bands with an EMPTY object when 'init' arrived AFTER
+        // loadBandsConfig() had already correctly set 14 bands — which
+        // triggered the fallback in buildBandGrid() showing only '20m'.
+        // Now: when msg.bands doesn't exist, we keep whatever is already
+        // in S.bands (the same defensive pattern as freq/mode/etc. below, ?? instead of ||).
         bands:     msg.bands     ?? S.bands,
         modes:     msg.modes     || [],
         rigs:      msg.rigs      || [],
@@ -492,21 +494,22 @@ function handleMessage(msg) {
         operatorLocator: msg.operatorLocator || S.operatorLocator,
       });
       window.UI?.fullRefresh();
-      // Podswietl przyciski VFO A/B i SPLIT wg stanu z init — nowy user musi
-      // od wejscia widziec ktore VFO aktywne i czy radio w splicie (wczesniej
-      // wszystko wygaszone do pierwszego kliku).
+      // Highlight the VFO A/B and SPLIT buttons per the state from init —
+      // a new user must see which VFO is active and whether the radio is
+      // split from the moment they log in (previously everything stayed
+      // dimmed until the first click).
       window.UI?.updateVFOBadges?.();
       window.RadioFunctions?.syncStates?.({vfo: S.vfo, split: S.split});
       window.Settings?.populateModels(S.models, S.rigs);
       if (msg.rotators && typeof window.RotW?.handleWS === 'function') RotW.handleWS(msg);
-      // Stan zasilania radia z get_status - KLUCZOWE przy logowaniu nowego
-      // usera: musi zobaczyc czy radio jest ON/OFF zgodnie z rzeczywistoscia
-      // (inaczej przycisk pokazuje ON gdy ktos inny wylaczyl radio).
+      // Radio power state from get_status - CRUCIAL when a new user logs
+      // in: they must see whether the radio is ON/OFF matching reality
+      // (otherwise the button shows ON when someone else turned the radio off).
       if (msg.rigPowerOn !== undefined) {
         if (window.AppState) window.AppState.rigPowerOn = !!msg.rigPowerOn;
         window.RadioFunctions?.handlePowerState?.(!!msg.rigPowerOn);
       }
-      // Ustaw stan blokady radia z init
+      // Set the radio lock state from init
       if (window.AppState && msg.locked !== undefined) {
         window.AppState.radio_lock = {
           locked:   msg.locked,
@@ -515,7 +518,7 @@ function handleMessage(msg) {
           callsign: msg.callsign,
         };
       }
-      // Przekaz stan operatorow do OpPanel
+      // Pass the operator state to OpPanel
       if (window.OpPanel?.handleWS) window.OpPanel.handleWS(msg);
       break;
     }
@@ -535,13 +538,13 @@ function handleMessage(msg) {
       break;
 
     case 'level_value':
-      // Zmiana wartosci suwaka (poller CIV wykryl zmiane na radiu, albo
-      // inny admin przesunal slider — WS broadcast dla wszystkich)
+      // Slider value change (the CIV poller detected a change on the
+      // radio, or another admin moved the slider — WS broadcast to everyone)
       window.RadioFunctions?.handleLevelValue?.(msg);
       break;
     case 'rig_slider_ack':
-      // ACK zmiany suwaka od innego usera - aktualizuj slider u tego
-      // ktory nie zmienial (skip=ws w serwerze pomija autora zmiany).
+      // ACK of a slider change from another user - update the slider for
+      // whoever didn't change it (skip=ws on the server skips the author of the change).
       window.RadioFunctions?.handleLevelValue?.(msg);
       break;
     case 'func_state':
@@ -553,15 +556,16 @@ function handleMessage(msg) {
     case 'audio_ready':
       window._rustAudio = !!(msg.status && msg.status.rust);
       console.log('[audio] ready rust=' + window._rustAudio);
-      // Po restarcie ham_audio (np. zmiana karty) strumien Opus zaczyna sie od
-      // nowa. Dekoder WebCodecs musi potraktowac pierwsza ramke nowego strumienia
-      // jako 'key', nie 'delta' - inaczej gubi sie i nie ma dzwieku mimo ze WS
-      // audio polaczony i ramki naplywaja. Reset _first wymusza keyframe.
+      // After ham_audio restarts (e.g. a card change), the Opus stream
+      // starts over. The WebCodecs decoder must treat the new stream's
+      // first frame as a 'key', not a 'delta' - otherwise it loses sync
+      // and there's no sound even though the WS audio connection is up
+      // and frames are arriving. Resetting _first forces a keyframe.
       if (window._opusDecoder) {
         window._opusDecoder._first = true;
         window._opusDecoder._ts = 0;
       }
-      // Wymus reconnect audio WS na nowy proces Rusta (stary strumien padl)
+      // Force an audio WS reconnect to the new Rust process (the old stream died)
       if (window._audioEnabled) {
         try { if (window._audioWs) window._audioWs.close(); } catch(e) {}
         setTimeout(() => { if (typeof _connectAudioWs === 'function') _connectAudioWs(); }, 500);
@@ -583,15 +587,15 @@ function handleMessage(msg) {
       _txMic.onRemoteIce(msg);
       break;
     case 'webrtc_error':
-      console.warn('[txmic] serwer:', msg.error);
+      console.warn('[txmic] server:', msg.error);
       _txMic.stop();
       break;
     case 'wsjtx_tx_start':
-      // Zewnetrzny WSJT-X/JTDX (przez most wsjtx_local.py + emulacja Hamlib)
-      // wlaczyl PTT - uruchom strumien mikrofonu (tu: wirtualny kabel audio
-      // typu VB-Audio, wybrany w PROFIL jako "MIKROFON TX"), tak samo jak
-      // przy recznym PTT. Bylo calkowicie nieobslugiwane - radio dostawalo
-      // PTT ale bez zadnego audio (cisza w eterze).
+      // An external WSJT-X/JTDX (via the wsjtx_local.py bridge + Hamlib
+      // emulation) turned on PTT - start the microphone stream (here: a
+      // virtual audio cable like VB-Audio, selected in PROFILE as "TX
+      // MICROPHONE"), the same as with manual PTT. This used to be
+      // completely unhandled - the radio got PTT but with no audio at all (silence on air).
       _txMic.start();
       _syncTxMicButton(true);
       break;
@@ -609,31 +613,30 @@ function handleMessage(msg) {
         badge.style.color = rtt < 50 ? 'var(--green)' : rtt < 150 ? 'var(--amber)' : 'var(--red)';
         badge.style.borderColor = rtt < 50 ? 'var(--green2)' : rtt < 150 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
       }
-      // DIAGNOSTYKA: zapisz kazdy podejrzanie wysoki RTT z dokladnym czasem
-      // zegarowym, zeby dalo sie porownac z logiem konsoli ham_audio.exe
-      // (znaczniki -> LOW/HIGH bitrate) i z longtask obserwerem ponizej -
-      // rozstrzyga czy skok to blokada watku JS czy realne opoznienie sieci.
+      // DIAGNOSTICS: log every suspiciously high RTT with the exact
+      // wall-clock time, so it can be compared with the ham_audio.exe
+      // console log (LOW/HIGH bitrate markers) and the longtask observer
+      // below - settles whether a spike is a JS thread block or a real network delay.
       if (rtt >= 150) {
-        console.warn(`[ws] WYSOKI RTT ${rtt}ms o ${new Date().toLocaleTimeString('pl-PL', {hour12:false})}.${String(new Date().getMilliseconds()).padStart(3,'0')}`);
+        console.warn(`[ws] HIGH RTT ${rtt}ms at ${new Date().toLocaleTimeString('pl-PL', {hour12:false})}.${String(new Date().getMilliseconds()).padStart(3,'0')}`);
       }
       break;
     }
     case 'txmeter': window.UI?.updateTxMeter(msg); break;
     case 'freq':
-      // Grace period: ignoruj przychodzacy freq z serwera przez ~1s po
-      // wlasnej, lokalnej zmianie (sendFreq). Bez tego: przy szybkim scroll-
-      // strojeniu (wiele krokow w krotkim czasie), radio CI-V moze jeszcze
-      // nie zdazyc fizycznie przestroic sie miedzy kolejnymi krokami, a
-      // serwer (civ.py transceive handler) potrafi w tym oknie zlapac
-      // "posredni"/nieaktualny odczyt czestotliwosci z radia i rozeslac go
-      // do WSZYSTKICH klientow (wlacznie z tym ktory wlasnie scrollowal) —
-      // bez tej ochrony nadpisywalo to S.freq stara wartoscia, co cofalo
-      // podswietlenie przycisku pasma do poprzedniego pasma. Potwierdzone
-      // na zywo 2026-06-21 (scroll 14MHz->28MHz, podswietlony zostawal 20m).
+      // Grace period: ignore an incoming freq from the server for ~1s
+      // after our own, local change (sendFreq). Without this: during fast
+      // scroll-tuning (many steps in a short time), the CI-V radio may
+      // not have physically settled between consecutive steps yet, and
+      // the server (civ.py transceive handler) can, in that window, catch
+      // an "intermediate"/stale frequency reading from the radio and
+      // broadcast it to ALL clients (including the one that was just
+      // scrolling) — without this guard it overwrote S.freq with the old
+      // value, which reverted the band-button highlight to the previous band.
       if (S._localFreqSetAt && (Date.now() - S._localFreqSetAt) < 1000) break;
       S.freq = msg.freq;
       window.UI?.updateFreqDisplay();
-      window.UI?.updateVFOBadges?.();  // aktualizuj tez badge pasma
+      window.UI?.updateVFOBadges?.();  // also update the band badge
       window.UI?.updatePTT?.();        // cross-band guard
       break;
     case 'mode':
@@ -644,7 +647,7 @@ function handleMessage(msg) {
         if (sel) sel.value = String(msg.filterNum);
       }
       window.UI?.updateModeButtons();
-      window.UI?.updateVFOBadges?.();  // aktualizuj tez badge trybu
+      window.UI?.updateVFOBadges?.();  // also update the mode badge
       break;
     case 'ptt':   S.ptt  = msg.ptt;  window.UI?.updatePTT(); break;
     case 'tuner':
@@ -683,8 +686,8 @@ function handleMessage(msg) {
       window.RadioFunctions?.syncStates?.({split: S.split});
       break;
     case 'init_patch':
-      // Czesciowa aktualizacja stanu (np. admin zmienil lokator stacji).
-      // Bez przeladowania strony — azymut rotora przeliczy sie sam.
+      // Partial state update (e.g. the admin changed the station
+      // locator). Without a page reload — the rotator azimuth recomputes on its own.
       if (msg.stationLocator !== undefined) {
         S.stationLocator = msg.stationLocator;
         if (window.AppState) window.AppState.stationLocator = msg.stationLocator;
@@ -692,21 +695,21 @@ function handleMessage(msg) {
       break;
     case 'vfo':
     case 'vfo_sel':
-      // Stan aktywnego VFO z serwera — podswietl przyciski A/B u WSZYSTKICH
-      // klientow (nie tylko u tego kto kliknal).
+      // Active VFO state from the server — highlight the A/B buttons for
+      // ALL clients (not just the one who clicked).
       S.vfo = msg.vfo || 'VFOA';
       window.UI?.updateFreqB?.();
       window.UI?.updateVFOBadges?.();
       window.RadioFunctions?.syncStates?.({vfo: S.vfo});
       break;
     case 'config_update':
-      // Admin zmienil liste wlaczonych pasm w ustawieniach — odswiez S.bands
-      // i siatke przyciskow bez przeladowania strony.
+      // The admin changed the list of enabled bands in settings — refresh
+      // S.bands and the button grid without reloading the page.
       window.UI?.loadBandsConfig?.();
       break;
     case 'online_update':
     case 'radio_lock_state':
-      // Zapisz stan blokady do AppState — uzywane przez VFO i sendFreq
+      // Save the lock state to AppState — used by VFO and sendFreq
       if (window.AppState) {
         window.AppState.radio_lock = {
           locked:   msg.locked,
@@ -716,7 +719,7 @@ function handleMessage(msg) {
         };
       }
       if (typeof window.OpPanel?.handleWS === 'function') window.OpPanel.handleWS(msg);
-      // Zaktualizuj wizualne wyszarzenie panelu Radio (readonly mode)
+      // Update the visual graying of the Radio panel (readonly mode)
       window.UI?.applyRadioLockUI?.();
       break;
     case 'radio_request':
@@ -733,18 +736,18 @@ function handleMessage(msg) {
       if (typeof window.Waterfall?.handleScopeData === 'function') Waterfall.handleScopeData(msg);
       break;
     case 'scope_reset':
-      // Radio wylaczone - wyczysc waterfall i pokaz stan OFF
+      // Radio turned off - clear the waterfall and show the OFF state
       if (typeof window.Waterfall?.onPowerReset === 'function') Waterfall.onPowerReset();
       break;
     case 'rotator_update':
       if (typeof window.RotW?.handleWS === 'function') RotW.handleWS(msg);
       if (typeof window.Rotator?.handleWS   === 'function') Rotator.handleWS(msg);
-      // Ten typ ma wlasny case (powyzej), wiec NIGDY nie spadal do 'default'
-      // ponizej, gdzie normalnie leci do WSJTX.handleWS — zywy odczyt pozycji
-      // rotora w panelu WSJT-X (wiersz ANTENA) nigdy nie dostawal biezacych
-      // aktualizacji, tylko jednorazowy fetch z init(). Zglaszane na zywo:
-      // "odswiezanie pozycji rotora jest tylko wtedy kiedy zmienisz zakladke"
-      // — w rzeczywistosci to byl jedyny raz kiedy w ogole dostawal wartosc.
+      // This type has its own case (above), so it NEVER fell through to
+      // 'default' below, where it would normally reach WSJTX.handleWS —
+      // the live rotator position reading in the WSJT-X panel (ANTENNA
+      // row) never got ongoing updates, only a one-time fetch from
+      // init(). Reported live as: "the rotator position only refreshes
+      // when you switch tabs" — in reality that was the only time it ever got a value at all.
       if (typeof window.WSJTX?.handleWS === 'function') WSJTX.handleWS(msg);
       break;
     case 'deepcw_text':
@@ -775,7 +778,7 @@ function handleMessage(msg) {
       if (typeof window.Tunnel?.handleWS === 'function') Tunnel.handleWS(msg);
       break;
     default:
-      // WSJTX i inne moduły
+      // WSJTX and other modules
       if (typeof window.WSJTX?.handleWS  === 'function') WSJTX.handleWS(msg);
       if (typeof window.Chat?.handleWS   === 'function') Chat.handleWS(msg);
       if (typeof window._wsRotatorHandler === 'function') window._wsRotatorHandler(msg);
@@ -783,14 +786,14 @@ function handleMessage(msg) {
   }
 }
 
-// ── Publiczne API ─────────────────────────────────────────────────────────────
+// ── Public API ─────────────────────────────────────────────────────────────
 
-// ── Lokalne audio (gdy FFmpeg niedostępny na serwerze) ─────────────────────
-// Używa getUserMedia → Web Audio API → odtwarza lokalną kartę dźwiękową
-// Działa gdy przeglądarka i radio są na tym samym komputerze
+// ── Local audio (when FFmpeg is unavailable on the server) ─────────────────
+// Uses getUserMedia → Web Audio API → plays through the local sound card
+// Works when the browser and radio are on the same computer
 async function initLocalAudio() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    console.warn('[audio] getUserMedia niedostępne');
+    console.warn('[audio] getUserMedia unavailable');
     return false;
   }
   try {
@@ -810,10 +813,10 @@ async function initLocalAudio() {
     gain.connect(window._masterGain || audioCtx.destination);
     window._localAudioStream = stream;
     window._localAudioGain   = gain;
-    console.log('[audio] Lokalne audio aktywne (getUserMedia)');
+    console.log('[audio] Local audio active (getUserMedia)');
     return true;
   } catch(e) {
-    console.warn('[audio] getUserMedia błąd:', e.message);
+    console.warn('[audio] getUserMedia error:', e.message);
     return false;
   }
 }
@@ -828,7 +831,7 @@ function stopLocalAudio() {
 function setLocalAudioGain(val) {
   if (window._localAudioGain) window._localAudioGain.gain.value = Math.max(0, Math.min(3, val));
 }
-// ── AudioControls — TX GAIN z VU metrem + RX VOL ─────────────────────────────
+// ── AudioControls — TX GAIN with a VU meter + RX VOL ─────────────────────────
 window.AudioControls = (function() {
   let _txGain    = 1.0;
   let _rxVol     = 0.7;
@@ -837,10 +840,10 @@ window.AudioControls = (function() {
   let _txActive  = false;
 
   // ── TX GAIN ────────────────────────────────────────────────────────────────
-  // Per-user zapis w localStorage (taki sam wzorzec jak RX VOL nizej) — bez
-  // tego suwak wracal po kazdym odswiezeniu/przelogowaniu do sztywnej
-  // wartosci 0.15 z HTML, wiec kazdy user musial reczne ustawiac modulacje
-  // SSB od nowa za kazdym razem. Dodane 2026-08-15.
+  // Per-user save in localStorage (same pattern as RX VOL below) — without
+  // this, the slider reverted after every refresh/relogin to the
+  // hardcoded 0.15 from the HTML, so every user had to manually re-set
+  // their SSB modulation level every time.
   function _txGainKey() {
     const uid = window.AppState?.my_uid || window.CurrentUser?.id || 'default';
     return `txGain_${uid}`;
@@ -856,9 +859,9 @@ window.AudioControls = (function() {
   function setTxGain(val) {
     _txGain = Math.max(0.01, Math.min(1.0, val));
     window._txGain = _txGain;
-    // Podepnij do GainNode jesli istnieje (TX aktywne)
+    // Apply to the GainNode if it exists (TX active)
     if (window._txGainNode) window._txGainNode.gain.value = _txGain;
-    // Aktualizuj UI
+    // Update the UI
     const el = document.getElementById('tx-gain-val');
     if (el) el.textContent = _txGain.toFixed(2) + 'x';
     const sl = document.getElementById('tx-gain-slider');
@@ -871,7 +874,7 @@ window.AudioControls = (function() {
     setTxGain(_loadTxGain());
   }
 
-  // Kolor suwaka TX GAIN wg poziomu
+  // TX GAIN slider color by level
   function _updateSliderColor(gain) {
     const sl = document.getElementById('tx-gain-slider');
     if (!sl) return;
@@ -900,7 +903,7 @@ window.AudioControls = (function() {
     if (el) el.textContent = pct + '%';
     const sl = document.getElementById('rx-vol-slider');
     if (sl) sl.value = pct;
-    // Zapisz per user
+    // Save per user
     try { localStorage.setItem(_rxVolKey(), pct); } catch(e) {}
   }
 
@@ -909,7 +912,7 @@ window.AudioControls = (function() {
     setRxVol(saved);
   }
 
-  // ── VU meter — dynamiczny pomiar poziomu mikrofonu TX ───────────────────────
+  // ── VU meter — live measurement of the TX microphone level ──────────────────
   function startVU(sourceNode) {
     if (!audioCtx) return;
     _txActive = true;
@@ -922,16 +925,16 @@ window.AudioControls = (function() {
     function loop() {
       if (!_txActive) return;
       _analyser.getByteTimeDomainData(buf);
-      // RMS amplitudy
+      // Amplitude RMS
       let sum = 0;
       for (let i = 0; i < buf.length; i++) {
         const v = (buf[i] - 128) / 128;
         sum += v * v;
       }
       const rms = Math.sqrt(sum / buf.length);
-      const pct = Math.min(100, rms * 300); // skalowanie wizualne
+      const pct = Math.min(100, rms * 300); // visual scaling
 
-      // Kolor wg poziomu
+      // Color by level
       let color;
       if (pct < 50)      color = 'var(--green)';
       else if (pct < 80) color = 'var(--amber)';
@@ -942,7 +945,7 @@ window.AudioControls = (function() {
         fill.style.width  = pct + '%';
         fill.style.background = color;
       }
-      // Kolor suwaka TX GAIN tez reaguje na faktyczny poziom
+      // The TX GAIN slider color also reacts to the actual level
       const sl = document.getElementById('tx-gain-slider');
       if (sl) sl.style.accentColor = color;
 
@@ -954,41 +957,41 @@ window.AudioControls = (function() {
   function stopVU() {
     _txActive = false;
     if (_vuFrame) { cancelAnimationFrame(_vuFrame); _vuFrame = null; }
-    // Reset VU baru
+    // Reset the VU bar
     const fill = document.getElementById('tx-vu-fill');
     if (fill) { fill.style.width = '0%'; fill.style.background = 'var(--green)'; }
-    // Reset koloru suwaka wg pozycji
+    // Reset the slider color by position
     _updateSliderColor(_txGain);
     if (_analyser) { try { _analyser.disconnect(); } catch(e) {} _analyser = null; }
   }
 
-  // Monitoring _txGainNode — gdy TX startuje, podepnij VU meter
-  // Sprawdzamy co 200ms czy _txGainNode pojawil sie lub zniknal
+  // Monitor _txGainNode — when TX starts, hook up the VU meter
+  // We check every 200ms whether _txGainNode appeared or disappeared
   let _vuWasActive = false;
   setInterval(() => {
     const hasNode = !!window._txGainNode;
     if (hasNode && !_vuWasActive) {
-      // TX wlaczone — startuj VU
+      // TX enabled — start the VU meter
       startVU(window._txGainNode);
       _vuWasActive = true;
     } else if (!hasNode && _vuWasActive) {
-      // TX wylaczone — stopuj VU
+      // TX disabled — stop the VU meter
       stopVU();
       _vuWasActive = false;
     }
   }, 200);
 
-  // Publiczne API
+  // Public API
   return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain };
 })();
 
-// ── Audio WebSocket — bezposrednie polaczenie z Rust WSS (port 9443) ─────────
+// ── Audio WebSocket — direct connection to the Rust WSS (port 9443) ─────────
 let _audioWs = null;
 
 function _connectAudioWs() {
   if (_audioWs && _audioWs.readyState <= 1) return;
 
-  // Rust WSS na porcie 9443 — bezposrednio, bez Python proxy
+  // Rust WSS on port 9443 — directly, no Python proxy
   const proto   = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const rustPort = location.protocol === 'https:' ? 9443 : 9401;
   const rustUrl  = `${proto}//${location.hostname}:${rustPort}`;
@@ -997,7 +1000,7 @@ function _connectAudioWs() {
   _audioWs.binaryType = 'arraybuffer';
 
   _audioWs.onopen = () => {
-    console.log('[audio] Rust WSS połączony:', rustUrl);
+    console.log('[audio] Rust WSS connected:', rustUrl);
     window._rustAudio = true;
   };
 
@@ -1008,7 +1011,7 @@ function _connectAudioWs() {
   };
 
   _audioWs.onclose = (e) => {
-    console.log('[audio] Rust WSS rozłączony:', e.code, '— retry za 3s');
+    console.log('[audio] Rust WSS disconnected:', e.code, '— retry in 3s');
     window._rustAudio = false;
     _audioWs = null;
     if (window._audioEnabled) {
@@ -1017,14 +1020,14 @@ function _connectAudioWs() {
   };
 
   _audioWs.onerror = (e) => {
-    console.warn('[audio] Rust WSS błąd:', e);
+    console.warn('[audio] Rust WSS error:', e);
   };
 }
 
-// ── TX mikrofon (WebRTC: getUserMedia -> RTCPeerConnection -> serwer) ───────
-// Wysyla audio z mikrofonu uzytkownika do serwera, ktory odtwarza je na
-// karcie dzwiekowej radia. Serwer obsluguje sygnalizacje przez WebSocket
-// (webrtc_offer/answer/ice).
+// ── TX microphone (WebRTC: getUserMedia -> RTCPeerConnection -> server) ─────
+// Sends audio from the user's microphone to the server, which plays it
+// back on the radio's sound card. The server handles signaling over
+// WebSocket (webrtc_offer/answer/ice).
 const _txMic = (() => {
   let pc = null;              // RTCPeerConnection
   let stream = null;          // MediaStream z mikrofonu
@@ -1043,19 +1046,20 @@ const _txMic = (() => {
       return false;
     }
     try {
-      // Zapisany wybor z PROFIL ("MIKROFON TX", patrz profile_audio.js) -
-      // KLUCZOWA POPRAWKA: tu bylo "ham_tx_micId", ktorego NIC w calym
-      // kodzie nigdy nie zapisywalo (profile_audio.js zapisuje pod
-      // "ham_audio_micId") - wybor mikrofonu w PROFIL nie mial ZADNEGO
-      // wplywu na realnie nadawane audio, zawsze leciala ponizsza
-      // heurystyka auto-wyboru. Krytyczne dla mostu do zewnetrznego
-      // WSJT-X/JTDX przez wirtualny kabel audio (VB-Audio) - ta heurystyka
-      // CELOWO omija urzadzenia z "virtual"/"cable" w nazwie, wiec kabel
-      // wybrany recznie w PROFIL byl ignorowany, a leciala inna, prawdziwa
-      // karta (albo cisza, jesli zadnej nie znalazla).
+      // Saved selection from PROFILE ("TX MICROPHONE", see
+      // profile_audio.js) - KEY FIX: this used to read "ham_tx_micId",
+      // which NOTHING in the entire codebase ever wrote
+      // (profile_audio.js saves under "ham_audio_micId") - the microphone
+      // choice in PROFILE had NO effect at all on the actually
+      // transmitted audio, the auto-select heuristic below always ran
+      // instead. Critical for the bridge to an external WSJT-X/JTDX via a
+      // virtual audio cable (VB-Audio) - this heuristic DELIBERATELY
+      // skips devices with "virtual"/"cable" in the name, so a cable
+      // manually chosen in PROFILE was ignored and some other, real card
+      // got used instead (or silence, if none was found).
       let preferredMicId = localStorage.getItem('ham_audio_micId');
-      // Auto-wybor mikrofonu (gdy user nic nie skonfigurowal w PROFIL):
-      // unikaj wirtualnych kabli i wbudowanych array.
+      // Auto-select a microphone (when the user hasn't configured
+      // anything in PROFILE): avoid virtual cables and built-in arrays.
       if (!preferredMicId) {
         try {
           const devs = await navigator.mediaDevices.enumerateDevices();
@@ -1079,7 +1083,7 @@ const _txMic = (() => {
           const chosen = realMic || anyRealMic;
           if (chosen) {
             preferredMicId = chosen.deviceId;
-            console.log('[txmic] Auto-wybrany mikrofon:', chosen.label);
+            console.log('[txmic] Auto-selected microphone:', chosen.label);
           }
         } catch(e) {}
       }
@@ -1094,7 +1098,7 @@ const _txMic = (() => {
       }
       stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
     } catch (e) {
-      console.warn('[txmic] getUserMedia blad:', e.message);
+      console.warn('[txmic] getUserMedia error:', e.message);
       window.UI?.showToast('Brak dostepu do mikrofonu: ' + e.message, 'error');
       return false;
     }
@@ -1103,7 +1107,7 @@ const _txMic = (() => {
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     });
 
-    // Wyslij wszystkie ICE candidates do serwera
+    // Send every ICE candidate to the server
     pc.onicecandidate = (ev) => {
       if (ev.candidate) {
         window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
@@ -1117,9 +1121,9 @@ const _txMic = (() => {
       }
     };
 
-    // Podepnij przez lancuch EQ z modulu TxEq (presety/custom per-user).
-    // Filtry sa rejestrowane w TxEq zeby zmiany presetow/suwakow aktualizowaly
-    // je na zywo bez restartu polaczenia.
+    // Route through the EQ chain from the TxEq module (per-user
+    // presets/custom). The filters are registered in TxEq so that preset/
+    // slider changes update them live without restarting the connection.
     let processedStream = stream;
     try {
       if (!window._audioCtx && typeof initAudioContext === 'function') initAudioContext();
@@ -1140,24 +1144,24 @@ const _txMic = (() => {
         processedStream = dest.stream;
       }
     } catch (e) {
-      console.warn('[txmic] EQ chain nie podlaczony, wysylam surowy stream:', e.message);
+      console.warn('[txmic] EQ chain not connected, sending raw stream:', e.message);
     }
 
-    // Dodaj processed track (z EQ + limiter) do peer connection
+    // Add the processed track (with EQ + limiter) to the peer connection
     processedStream.getAudioTracks().forEach(t => pc.addTrack(t, processedStream));
 
-    // Wygeneruj offer i wyslij do serwera
+    // Generate the offer and send it to the server
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
     } catch (e) {
-      console.warn('[txmic] offer blad:', e.message);
+      console.warn('[txmic] offer error:', e.message);
       cleanup();
       return false;
     }
 
-    // VU meter (uzywa Web Audio API zeby pokazywac poziom mikrofonu lokalnie)
+    // VU meter (uses the Web Audio API to show the microphone level locally)
     try {
       if (!window._audioCtx && typeof initAudioContext === 'function') initAudioContext();
       const ctx = window._audioCtx || audioCtx;
@@ -1185,23 +1189,23 @@ const _txMic = (() => {
         };
         tick();
       }
-    } catch (e) { /* VU meter to nice-to-have, nie blokuj */ }
+    } catch (e) { /* the VU meter is nice-to-have, don't block on it */ }
 
     active = true;
-    console.log('[txmic] aktywny (WebRTC do serwera)');
+    console.log('[txmic] active (WebRTC to the server)');
     return true;
   }
 
   function onAnswer(msg) {
     if (!pc) return;
     pc.setRemoteDescription({ type: msg.sdpType || 'answer', sdp: msg.sdp })
-      .catch(e => console.warn('[txmic] setRemoteDescription blad:', e.message));
+      .catch(e => console.warn('[txmic] setRemoteDescription error:', e.message));
   }
 
   function onRemoteIce(msg) {
     if (!pc || !msg.candidate) return;
     pc.addIceCandidate(msg.candidate)
-      .catch(e => console.warn('[txmic] addIceCandidate blad:', e.message));
+      .catch(e => console.warn('[txmic] addIceCandidate error:', e.message));
   }
 
   function cleanup() {
@@ -1229,7 +1233,7 @@ const _txMic = (() => {
     active = false;
     window.WS?.send({ type: 'webrtc_stop' });
     cleanup();
-    console.log('[txmic] zatrzymany');
+    console.log('[txmic] stopped');
   }
 
   return {
@@ -1240,20 +1244,20 @@ const _txMic = (() => {
 
 window.WS = {
   ping() {
-    // Wyslij ping przez WS i zmierz RTT (round-trip time)
+    // Send a ping over WS and measure RTT (round-trip time)
     const t0 = Date.now();
     const badge = document.getElementById('badge-latency');
     if (badge) { badge.textContent = '...'; badge.style.color = 'var(--dim)'; }
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       if (badge) { badge.textContent = 'OFFLINE'; badge.style.color = 'var(--red)'; }
-      // Sprobuj reconnect
+      // Try to reconnect
       connect();
       return;
     }
-    // Tymczasowy handler na wiadomosc pong
+    // Temporary handler for the pong message
     window._pingT0 = t0;
     this.send({ type: 'ping', t: t0 });
-    // Fallback - jesli serwer nie odpowie w 3s
+    // Fallback - if the server doesn't respond within 3s
     clearTimeout(window._pingTimeout);
     window._pingTimeout = setTimeout(() => {
       if (badge) { badge.textContent = 'TIMEOUT'; badge.style.color = 'var(--red)'; }
@@ -1269,7 +1273,7 @@ window.WS = {
     if (on) {
       initAudioContext();
       initOpusDecoder();
-      // Sprawdz czy Rust audio jest dostepne (port 9401)
+      // Check whether Rust audio is available (port 9401)
       _connectAudioWs();
     } else {
       if (window._audioWs && window._audioWs.readyState === WebSocket.OPEN) {
@@ -1286,7 +1290,7 @@ window.WS = {
   stopLocalAudio,
   setLocalAudioGain,
   sendFreqFast:  (f) => _sendFreqDebounced(f),
-  // TX mikrofon przez WebRTC (uzywany przez przycisk tx-mic-btn w UI)
+  // TX microphone over WebRTC (used by the tx-mic-btn button in the UI)
   startTX:       () => _txMic.start(),
   stopTX:        () => _txMic.stop(),
   isTxActive:    () => _txMic.isActive(),
