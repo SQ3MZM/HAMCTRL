@@ -110,7 +110,7 @@ window.AdminStatus = (function() {
       const a = document.createElement('a');
       const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g, '-');
       a.href = url;
-      a.download = `sp3gsk-backup-${ts}.json`;
+      a.download = `hamctrl-backup-${ts}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
