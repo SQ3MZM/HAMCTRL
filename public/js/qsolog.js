@@ -1,6 +1,5 @@
 /**
- * qsolog.js — Log QSO per użytkownik
- * Szkielet — integracja z backendem w kolejnym kroku
+ * qsolog.js — per-user QSO log
  */
 (function() {
 'use strict';
@@ -12,9 +11,9 @@ let _perPage  = 50;
 let _total    = 0;
 let _sortCol  = 'date';
 let _sortDir  = 'desc';
-let _editId   = null;  // null = nowe QSO, string = edycja
+let _editId   = null;  // null = new QSO, string = editing
 
-// ── Filtry ────────────────────────────────────────────────────────────────────
+// ── Filters ───────────────────────────────────────────────────────────────────
 function _getFilters() {
   return {
     from:    document.getElementById('log-filter-from')?.value  || '',
@@ -35,7 +34,7 @@ async function _loadAdminUsers() {
     const token = localStorage.getItem('token') || '';
     const r = await fetch('/api/users', {headers: token ? {'Authorization': `Bearer ${token}`} : {}});
     const data = await r.json();
-    // /api/users zwraca tablice bezposrednio
+    // /api/users returns the array directly
     const users = Array.isArray(data) ? data : (data.users || []);
     sel.innerHTML = `<option value="">${I18n.t('log_filter_all_users')}</option>` +
       users.map(u => `<option value="${u.id}">${u.callsign || u.username}</option>`).join('');
@@ -52,7 +51,7 @@ function clearFilters() {
   load();
 }
 
-// ── Sortowanie ────────────────────────────────────────────────────────────────
+// ── Sorting ───────────────────────────────────────────────────────────────────
 function sort(col) {
   if (_sortCol === col) _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
   else { _sortCol = col; _sortDir = 'desc'; }
@@ -60,7 +59,7 @@ function sort(col) {
   load();
 }
 
-// ── Ładowanie danych ──────────────────────────────────────────────────────────
+// ── Loading data ──────────────────────────────────────────────────────────────
 async function load() {
   const tbody = document.getElementById('log-table-body');
   if (!tbody) return;
@@ -92,7 +91,7 @@ async function load() {
   }
 }
 
-// ── Renderowanie tabeli ───────────────────────────────────────────────────────
+// ── Rendering the table ────────────────────────────────────────────────────────
 function _renderTable(qsos) {
   const tbody = document.getElementById('log-table-body');
   if (!tbody) return;
@@ -131,7 +130,7 @@ function _renderTable(qsos) {
   }).join('');
 }
 
-// ── Paginacja ─────────────────────────────────────────────────────────────────
+// ── Pagination ────────────────────────────────────────────────────────────────
 function _renderPagination() {
   const totalPages = Math.max(1, Math.ceil(_total / _perPage));
   const el = document.getElementById('log-page-info');
@@ -144,21 +143,22 @@ function nextPage() {
   if (_page < totalPages) { _page++; load(); }
 }
 
-// ── Modal: nowe / edytuj QSO ─────────────────────────────────────────────────
-// Sekcja satelitarna (SAT_NAME/SAT_MODE/FREQ_RX/BAND_RX) chowana pod
-// checkboxem - wiekszosc QSO nie jest satelitarna, nie ma sensu zajmowac
-// miejsca na stale. toggleSatFields steruje widocznoscia (grid<->none).
+// ── Modal: new / edit QSO ─────────────────────────────────────────────────────
+// The satellite section (SAT_NAME/SAT_MODE/FREQ_RX/BAND_RX) is hidden
+// behind a checkbox - most QSOs aren't satellite ones, no point taking up
+// permanent space. toggleSatFields controls visibility (grid<->none).
 function toggleSatFields(show) {
   const box = document.getElementById('qso-sat-fields');
   if (box) box.style.display = show ? 'grid' : 'none';
 }
 
-// Podpowiedz KRAJ (i kontynent, w tle) z lokalnej tabeli prefiksow (dxcc.js) —
-// dziala natychmiast przy samym wpisywaniu znaku, zanim user w ogole zdazy
-// kliknac lookup QRZ/HamQTH (patrz lookupCall() nizej - realny lookup
-// NADPISUJE, bo jest wiarygodniejszy niz zgadywanie z prefiksu). Ten
-// auto-fill NIE nadpisuje jesli user juz cos tam wpisal recznie — patrz ten
-// sam wzorzec co updateRstDefaults.
+// Suggest the COUNTRY (and continent, in the background) from the local
+// prefix table (dxcc.js) — works instantly as the callsign is typed,
+// before the user even gets to click the QRZ/HamQTH lookup (see
+// lookupCall() below - the real lookup OVERWRITES this, since it's more
+// reliable than guessing from the prefix). This auto-fill does NOT
+// overwrite if the user already typed something there manually — same
+// pattern as updateRstDefaults.
 function autoFillCountry() {
   const callEl    = document.getElementById('qso-call');
   const countryEl = document.getElementById('qso-country');
@@ -172,15 +172,15 @@ function autoFillCountry() {
   countryEl.dataset.cont = info.continent || '';
 }
 
-// Lookup realny (QRZ.com / HamQTH, wg konfiguracji usera w USTAWIENIACH) —
-// wolany recznie klikniecien ikonki 🔍, nie automatycznie na kazde wpisanie
-// znaku (obie uslugi maja limity zapytan, nie ma sensu ich zuzywac na
-// kazdy klawisz). W odroznieniu od autoFillCountry() ten NADPISUJE
-// NAME/QTH/KRAJ/LOKATOR - dane z realnego lookupu sa wiarygodniejsze niz to
-// co juz tam bylo (recznie wpisane albo zgadniete z prefiksu).
-// DXCC/CQZ/ITUZ/STATE/IOTA nie maja jeszcze pola w formularzu - trzymane po
-// cichu w dataset #qso-country, trafiaja do zapisu (patrz saveQSO) i eksportu
-// ADIF dla innych programow, ale nie zaśmiecaja naszego widoku logu.
+// The real lookup (QRZ.com / HamQTH, per the user's config in SETTINGS) —
+// triggered manually by clicking the 🔍 icon, not automatically on every
+// keystroke (both services have query limits, no point burning them on
+// every keypress). Unlike autoFillCountry(), this one OVERWRITES
+// NAME/QTH/COUNTRY/LOCATOR - data from a real lookup is more reliable
+// than whatever was already there (manually typed or guessed from the prefix).
+// DXCC/CQZ/ITUZ/STATE/IOTA don't have their own form fields yet - kept
+// quietly in the #qso-country dataset, they make it into the save (see
+// saveQSO) and ADIF export for other programs, but don't clutter our log view.
 async function lookupCall() {
   const callEl = document.getElementById('qso-call');
   const btn    = document.getElementById('qso-lookup-btn');
@@ -312,7 +312,7 @@ function closeModal() {
   if (modal) modal.style.display = 'none';
 }
 
-// ── Zapis QSO ─────────────────────────────────────────────────────────────────
+// ── Save QSO ──────────────────────────────────────────────────────────────────
 async function saveQSO() {
   const call = document.getElementById('qso-call')?.value?.trim().toUpperCase();
   if (!call) { window.UI?.showToast(I18n.t('log_missing_callsign'), 'error'); return; }
@@ -327,7 +327,7 @@ async function saveQSO() {
     gridsquare: document.getElementById('qso-gridsquare')?.value?.trim().toUpperCase() || '',
     qso_date,
     time_on,
-    time_off: time_on,  // ten sam czas
+    time_off: time_on,  // same time
     band:     document.getElementById('qso-band')?.value || '',
     mode:     document.getElementById('qso-mode')?.value || '',
     freq:     document.getElementById('qso-freq')?.value || '',
@@ -337,13 +337,13 @@ async function saveQSO() {
     comment:  document.getElementById('qso-comment')?.value || '',
     my_call:  S?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
-                   || S?.stationLocator || ''),  // lokator OPERATORA
+                   || S?.stationLocator || ''),  // OPERATOR's locator
     name:     document.getElementById('qso-name')?.value?.trim() || '',
     qth:      document.getElementById('qso-qth')?.value?.trim() || '',
     country:  document.getElementById('qso-country')?.value?.trim() || '',
-    // DXCC/CQZ/ITUZ/STATE/IOTA — bez wlasnego pola w formularzu, ale jesli
-    // przyszly z lookupCall() (QRZ/HamQTH) sa trzymane w dataset i wchodza
-    // do zapisu, zeby eksport ADIF mial komplet danych dla innych programow.
+    // DXCC/CQZ/ITUZ/STATE/IOTA — no dedicated form field, but if they came
+    // from lookupCall() (QRZ/HamQTH) they're kept in the dataset and go
+    // into the save, so the ADIF export has complete data for other programs.
     cont:     document.getElementById('qso-country')?.dataset.cont  || '',
     dxcc:     document.getElementById('qso-country')?.dataset.dxcc  || '',
     cqz:      document.getElementById('qso-country')?.dataset.cqz   || '',
@@ -352,8 +352,8 @@ async function saveQSO() {
     iota:     document.getElementById('qso-country')?.dataset.iota  || '',
   };
 
-  // Lacznosc satelitarna — tylko gdy checkbox zaznaczony. PASMO/FREQ wyzej
-  // to uplink, band_rx/freq_rx to downlink (patrz komentarz przy polu w HTML).
+  // Satellite QSO — only when the checkbox is checked. BAND/FREQ above is
+  // the uplink, band_rx/freq_rx is the downlink (see the comment on the field in the HTML).
   if (document.getElementById('qso-is-sat')?.checked) {
     qso.prop_mode = 'SAT';
     qso.sat_name  = document.getElementById('qso-sat-name')?.value?.trim().toUpperCase() || '';
@@ -388,7 +388,7 @@ async function saveQSO() {
   }
 }
 
-// ── Usuń QSO ──────────────────────────────────────────────────────────────────
+// ── Delete QSO ────────────────────────────────────────────────────────────────
 async function deleteQSO(id) {
   if (!await window.UI?.confirmModal(I18n.t('log_confirm_delete_one'), { danger: true, okLabel: I18n.t('common_delete_btn') })) return;
   const token = localStorage.getItem('token') || '';
@@ -408,17 +408,17 @@ async function deleteQSO(id) {
 // ── Export ────────────────────────────────────────────────────────────────────
 async function _exportFetch(format) {
   const token = localStorage.getItem('token') || '';
-  // Priorytet 1: jesli operator ZAZNACZYL konkretne QSO — eksportuj tylko te.
+  // Priority 1: if the operator SELECTED specific QSOs — export only those.
   const selectedIds = [...document.querySelectorAll('.qso-chk:checked')]
     .map(el => el.dataset.id).filter(Boolean);
 
   const params = new URLSearchParams({ format });
   if (selectedIds.length) {
-    // Eksport wybranych wpisow po ID
+    // Export the selected entries by ID
     params.set('ids', selectedIds.join(','));
   } else {
-    // Priorytet 2: brak zaznaczenia — eksportuj wg filtrow (w tym zakres dat
-    // od-do). Bez filtrow: caly log. NIE ograniczamy do widocznej strony.
+    // Priority 2: nothing selected — export by filters (including a
+    // from-to date range). No filters: the whole log. We do NOT limit to the visible page.
     const filters = _getFilters();
     for (const [k, v] of Object.entries(filters)) {
       if (v) params.set(k, v);
@@ -457,18 +457,18 @@ function _setField(id, val) {
 
 function _freqToBand(hz) {
   const mhz = hz / 1e6;
-  // Zakresy CELOWO SZEROKIE — suma alokacji amatorskich ze wszystkich 3
-  // regionow ITU (Europa/Afryka/pln.Azja = R1, Ameryki = R2, reszta Azji/
-  // Pacyfik = R3), nie tylko Europy. Ten soft moze trafic gdziekolwiek na
-  // swiecie, wiec lepiej objac szerszy, prawdziwy zakres uzywany przez
-  // ktoregokolwiek hama niz zawezac pod jeden kraj/region. Gorne (mikrofalowe)
-  // pasma dopisane m.in. pod QO-100 (13cm uplink / 3cm downlink) i lacznosci
-  // satelitarne w ogole (patrz pola SAT_NAME/SAT_MODE/FREQ_RX/BAND_RX w
-  // qso_db.py).
+  // Ranges are DELIBERATELY WIDE — the union of amateur allocations across
+  // all 3 ITU regions (Europe/Africa/N.Asia = R1, the Americas = R2, the
+  // rest of Asia/Pacific = R3), not just Europe. This soft can be worked
+  // from anywhere in the world, so it's better to cover the wider, real
+  // range used by any ham than to narrow it to one country/region. The
+  // upper (microwave) bands are added in part for QO-100 (13cm uplink /
+  // 3cm downlink) and satellite QSOs in general (see the SAT_NAME/
+  // SAT_MODE/FREQ_RX/BAND_RX fields in qso_db.py).
   if (mhz >= 1.8    && mhz <= 2.0)    return '160m';
-  if (mhz >= 3.5    && mhz <= 4.0)    return '80m';   // R2 siega do 4.0
-  if (mhz >= 5.06   && mhz <= 5.45)   return '60m';   // rozne kanaly/zakresy wg kraju
-  if (mhz >= 7.0    && mhz <= 7.3)    return '40m';   // R2/R3 siegaja do 7.3
+  if (mhz >= 3.5    && mhz <= 4.0)    return '80m';   // R2 goes up to 4.0
+  if (mhz >= 5.06   && mhz <= 5.45)   return '60m';   // various channels/ranges by country
+  if (mhz >= 7.0    && mhz <= 7.3)    return '40m';   // R2/R3 go up to 7.3
   if (mhz >= 10.1   && mhz <= 10.15)  return '30m';
   if (mhz >= 14.0   && mhz <= 14.35)  return '20m';
   if (mhz >= 18.0   && mhz <= 18.17)  return '17m';
@@ -476,27 +476,27 @@ function _freqToBand(hz) {
   if (mhz >= 24.8   && mhz <= 24.99)  return '12m';
   if (mhz >= 28.0   && mhz <= 29.7)   return '10m';
   if (mhz >= 50.0   && mhz <= 54.0)   return '6m';
-  if (mhz >= 70.0   && mhz <= 70.5)   return '4m';    // gl. Europa/Afryka, nieszkodliwe gdzie indziej
+  if (mhz >= 70.0   && mhz <= 70.5)   return '4m';    // mainly Europe/Africa, harmless elsewhere
   if (mhz >= 144    && mhz <= 148)    return '2m';
-  if (mhz >= 220    && mhz <= 225)    return '1.25m'; // R2 (USA/Kanada)
-  if (mhz >= 420    && mhz <= 450)    return '70cm';  // R2 siega do 420-450, nie tylko 430-440
+  if (mhz >= 220    && mhz <= 225)    return '1.25m'; // R2 (USA/Canada)
+  if (mhz >= 420    && mhz <= 450)    return '70cm';  // R2 goes up to 420-450, not just 430-440
   if (mhz >= 902     && mhz <= 928)    return '33cm';  // R2 (USA)
   if (mhz >= 1240   && mhz <= 1300)   return '23cm';
   if (mhz >= 2300   && mhz <= 2450)   return '13cm';
   if (mhz >= 3400   && mhz <= 3410)   return '9cm';
-  if (mhz >= 5650   && mhz <= 5925)   return '6cm';   // R2 siega do 5925
+  if (mhz >= 5650   && mhz <= 5925)   return '6cm';   // R2 goes up to 5925
   if (mhz >= 10000  && mhz <= 10500)  return '3cm';
-  if (mhz >= 24000  && mhz <= 24250)  return '1.2cm'; // R2 siega do 24250
+  if (mhz >= 24000  && mhz <= 24250)  return '1.2cm'; // R2 goes up to 24250
   return '20m';
 }
 
-// ── Szybkie logowanie z zakładki RADIO ───────────────────────────────────────
-// Podpowiedz raportu (RST) w polach SENT/RCVD zalezna od trybu: CW/CW-R -> 599,
-// telefonia (USB/LSB/AM/FM/...) -> 59 — automatycznie po przelaczeniu modulacji
-// (wolane z UI.updateModeButtons(), ktore i tak biegnie przy kazdej zmianie
-// trybu: klik, telemetria, WS 'mode'). Nadpisuje pole TYLKO gdy wciaz trzyma
-// jeden z dwoch znanych domyslnych raportow (albo jest puste) — recznie
-// wpisany prawdziwy raport QSO nigdy nie jest nadpisywany.
+// ── Quick log from the RADIO tab ──────────────────────────────────────────────
+// Suggest a report (RST) in the SENT/RCVD fields depending on the mode:
+// CW/CW-R -> 599, phone (USB/LSB/AM/FM/...) -> 59 — automatically after
+// switching modulation (called from UI.updateModeButtons(), which already
+// runs on every mode change: click, telemetry, WS 'mode'). Overwrites the
+// field ONLY while it still holds one of the two known defaults (or is
+// empty) — a manually typed real QSO report is never overwritten.
 const _RST_CW = '599';
 const _RST_PHONE = '59';
 function updateRstDefaults(mode) {
@@ -533,7 +533,7 @@ async function quickLog() {
     gridsquare: document.getElementById('qlog-grid')?.value?.trim().toUpperCase() || '',
     my_call:   S?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
-                   || S?.stationLocator || ''),  // lokator OPERATORA
+                   || S?.stationLocator || ''),  // OPERATOR's locator
     comment:   '',
   };
 
@@ -549,11 +549,11 @@ async function quickLog() {
     const res = await r.json();
     if (res.ok) {
       _setStatus(`✓ ${call} ${qso.band} ${qso.mode}`, 'green');
-      // Wyczysc pole CALL, RST zostaje na 599
+      // Clear the CALL field, RST stays at 599
       document.getElementById('qlog-call').value = '';
       document.getElementById('qlog-grid').value = '';
       document.getElementById('qlog-call').focus();
-      // Jesli jestesmy na stronie LOG — odswiez tabele
+      // If we're on the LOG page — refresh the table
       if (document.getElementById('page-log')?.classList.contains('active')) load();
     } else {
       _setStatus('✗ ' + (res.error || I18n.t('status_error_generic')), 'red');
@@ -570,12 +570,12 @@ function _setStatus(msg, color) {
   el.style.color = color === 'green' ? 'var(--green)'
                  : color === 'red'   ? 'var(--red)'
                  : 'var(--dim)';
-  // Wygaś po 4s
+  // Fade out after 4s
   clearTimeout(el._timer);
   el._timer = setTimeout(() => { el.textContent = ''; }, 4000);
 }
 
-// ── Import ADIF ──────────────────────────────────────────────────────────────
+// ── ADIF Import ───────────────────────────────────────────────────────────────
 async function importADIF(input) {
   const file = input.files?.[0];
   if (!file) return;
@@ -616,13 +616,13 @@ async function importADIF(input) {
     } catch(e) {
       skipped += chunk.length;
     }
-    // Aktualizuj toast postępu
+    // Update the progress toast
     const done = Math.min(i + CHUNK, qsos.length);
     window.UI?.showToast(I18n.t('log_importing_progress').replace('{done}', done).replace('{total}', qsos.length));
   }
 
-  // Komunikat: wczytane + osobno duplikaty (pominiete jako juz w logu)
-  // i ewentualne bledne wpisy.
+  // Message: imported + separately duplicates (skipped as already in the
+  // log) and any invalid entries.
   let msg = I18n.t('log_import_done').replace('{n}', inserted);
   if (duplicates) msg += I18n.t('log_import_duplicates_skipped').replace('{n}', duplicates);
   if (skipped)    msg += I18n.t('log_import_errors').replace('{n}', skipped);
@@ -632,18 +632,18 @@ async function importADIF(input) {
 
 function _parseADIF(text) {
   const qsos = [];
-  // Pomiń nagłówek (wszystko przed <EOH>)
+  // Skip the header (everything before <EOH>)
   const eohIdx = text.toUpperCase().indexOf('<EOH>');
   const body   = eohIdx >= 0 ? text.slice(eohIdx + 5) : text;
 
-  // Podziel na rekordy po <EOR>
+  // Split into records by <EOR>
   const records = body.split(/<EOR>/i);
 
   for (const rec of records) {
     if (!rec.trim()) continue;
     const fields = {};
 
-    // Parsuj pola: <FIELD:długość>wartość
+    // Parse fields: <FIELD:length>value
     const re = /<([A-Z0-9_]+):(\d+)(?::[A-Z])?>/gi;
     let match;
     while ((match = re.exec(rec)) !== null) {
@@ -653,7 +653,7 @@ function _parseADIF(text) {
       fields[tag] = val.trim();
     }
 
-    if (!fields.CALL) continue;  // pomijaj rekordy bez znaku
+    if (!fields.CALL) continue;  // skip records without a callsign
 
     qsos.push({
       call:          fields.CALL || '',
@@ -701,7 +701,7 @@ function _parseADIF(text) {
   return qsos;
 }
 
-// ── Zaznaczanie i usuwanie zbiorcze ──────────────────────────────────────────
+// ── Bulk selection and deletion ────────────────────────────────────────────
 function selectAll(chk) {
   document.querySelectorAll('.qso-chk').forEach(el => el.checked = chk.checked);
 }
@@ -741,9 +741,9 @@ async function deleteAll() {
   } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
 }
 
-// ── Eksport modułu ────────────────────────────────────────────────────────────
+// ── Module export ─────────────────────────────────────────────────────────────
 
-// Sprawdz czy dany call byl juz worked (debounced 500ms po ostatnim wpisaniu)
+// Check whether a callsign was already worked (debounced 500ms after the last keystroke)
 let _workedCheckTimer = null;
 async function checkWorkedBefore() {
   if (_workedCheckTimer) clearTimeout(_workedCheckTimer);
@@ -767,7 +767,7 @@ async function checkWorkedBefore() {
       if (!r.ok) return;
       const d = await r.json();
       if (!d.ok) return;
-      // Priorytet: identyczne QSO > tylko band > tylko mode > tylko call > new
+      // Priority: identical QSO > band only > mode only > call only > new
       if (d.worked_all) {
         badge.textContent = `⚠ DUPE (${d.count}× worked, ${d.last_qso.qso_date})`;
         badge.style.color = 'var(--red)';
@@ -786,7 +786,7 @@ async function checkWorkedBefore() {
         badge.style.background = 'rgba(102,208,255,0.15)';
       }
       badge.style.display = 'inline-block';
-    } catch(e) { console.warn('[qso] workedBefore blad:', e); }
+    } catch(e) { console.warn('[qso] workedBefore error:', e); }
   }, 500);
 }
 
