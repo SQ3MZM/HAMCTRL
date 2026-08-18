@@ -6745,32 +6745,33 @@ class App:
                                                "freqHz": self._ft8_tx_freq_hz,
                                                "frozen": False})
         except Exception as e:
-            print(f"[ft8] BLAD auto-follow: {e}")
+            print(f"[ft8] auto-follow ERROR: {e}")
 
     async def _advance_auto_qso_queue(self):
-        """Po zakonczeniu lub porzuceniu QSO: jesli Call 1st jest wlaczone
-        i kolejka nie jest pusta, startuje QSO z nastepna stacja. Wywolujacy
-        MUSI wczesniej ustawic silnik z powrotem w IDLE (abort_qso())."""
+        """After a QSO ends or is abandoned: if Call 1st is enabled and
+        the queue isn't empty, starts a QSO with the next station. The
+        caller MUST first put the engine back in IDLE (abort_qso())."""
         if self._auto_call_1st and self._qso_engine.queue:
             next_call, next_recv_epoch = self._qso_engine.pop_next_from_queue()
-            print(f"[autoqso] Nastepna stacja z kolejki: {next_call}")
-            # UWAGA: tu NIE mamy initial_decode (ta stacja odpowiedziala
-            # wczesniej, nie w tym samym cyklu) — startujemy normalnie
-            # od naszego Tx1 (grid), bo nie wiemy czy jej wczesniejsza
-            # wiadomosc nadal jest aktualna (mogla zmienic czestotliwosc/zniknac).
+            print(f"[autoqso] Next station from queue: {next_call}")
+            # NOTE: no initial_decode here (this station replied earlier,
+            # not in the same cycle) — start normally from our Tx1 (grid),
+            # since we don't know whether its earlier message is still
+            # current (it may have changed frequency/disappeared).
             self._qso_engine.start_qso(next_call)
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
                                        "partner": next_call})
-            # BEZ tego _send_auto_tx dziedziczyl self._ft8_tx_period
-            # zostawiony po POPRZEDNIM QSO zamiast wyliczyc wlasciwy dla TEJ
-            # stacji — jesli parzystosci sie nie zgadzaly, nadawalismy w
-            # oknie partnera (kolizja, brak odpowiedzi) losowo co drugie
-            # auto-advance z kolejki Call 1st. next_recv_epoch to czas
-            # odbioru dekodu ktory dodal ta stacje do kolejki (patrz
-            # enqueue_caller/_period_from_epoch) — moze byc None jesli
-            # stacja trafila do kolejki przed ta poprawka (restart serwera),
-            # wtedy _send_auto_tx bezpiecznie zostawia period bez zmian.
+            # WITHOUT this, _send_auto_tx inherited self._ft8_tx_period left
+            # over from the PREVIOUS QSO instead of computing the right one
+            # for THIS station — if the parities didn't match, we
+            # transmitted in the partner's window (collision, no reply) on
+            # random every-other auto-advance from the Call 1st queue.
+            # next_recv_epoch is the receive time of the decode that added
+            # this station to the queue (see enqueue_caller/
+            # _period_from_epoch) — can be None if the station entered the
+            # queue before this fix (server restart), in which case
+            # _send_auto_tx safely leaves the period unchanged.
             self._qso_period_locked = False
             _partner_decode = ({"recvEpoch": next_recv_epoch}
                                 if next_recv_epoch is not None else None)
@@ -6780,68 +6781,69 @@ class App:
 
     async def _process_auto_qso(self, m: dict):
         """
-        Przetwarza POJEDYNCZE zdekodowane FT8 (m, z decode_window) przez
-        silnik automatyki QSO. Wywolywane TYLKO gdy self._auto_seq_enabled.
+        Processes a SINGLE decoded FT8 message (m, from decode_window)
+        through the QSO automation engine. Called ONLY when self._auto_seq_enabled.
 
-        Krok po kroku:
-          1. parse_message() -> jesli None (nierozpoznany format), nic nie rob.
-          2. engine.on_decode(parsed) -> dict akcji lub None.
-          3. Jesli akcja to 'reply' z needs_measured_report=True, podstaw
-             realny zmierzony SNR (m['snr_db']) jako report_or_grid.
-          4. Zaplanuj wyslanie (asyncio.create_task na _ft8_tx_sequence) —
-             ta sama, sprawdzona sciezka co reczne TX (czeka na okno 15s).
-          5. Jesli akcja to 'enqueue' i jestesmy w stanie IDLE i auto_call_1st
-             jest wlaczone -> natychmiast start_qso z ta stacja (przekazujac
-             parsed jako initial_decode, zeby poprawnie pominac naszego Tx1
-             gdy partner juz przeslal grid/raport razem z odpowiedzia).
-          6. Jesli qso_complete=True w akcji -> zaplanuj zalogowanie QSO PO
-             wyslaniu naszej koncowej wiadomosci (nie przed — partner musi
-             dostac potwierdzenie), i sprawdz kolejke na nastepna stacje.
+        Step by step:
+          1. parse_message() -> if None (unrecognized format), do nothing.
+          2. engine.on_decode(parsed) -> an action dict or None.
+          3. If the action is 'reply' with needs_measured_report=True,
+             substitute the real measured SNR (m['snr_db']) as report_or_grid.
+          4. Schedule the send (asyncio.create_task on _ft8_tx_sequence) —
+             the same, proven path as manual TX (waits for the 15s window).
+          5. If the action is 'enqueue' and we're IDLE and auto_call_1st is
+             enabled -> immediately start_qso with this station (passing
+             parsed as initial_decode, to correctly skip our own Tx1 when
+             the partner already sent grid/report together with the reply).
+          6. If qso_complete=True in the action -> schedule logging the QSO
+             AFTER sending our final message (not before — the partner
+             needs to get the confirmation), and check the queue for the
+             next station.
         """
         try:
-            # isDxpedition (typ 0.1, patrz unpack_type0_1 w unpack.rs): Fox
-            # (albo stacja MSHV w trybie "Multi Answering", ktora uzywa
-            # TEGO SAMEGO formatu wiadomosci nawet w zwyklych QSO) laczy w
-            # jednej transmisji RR73 dla jednego Hounda i raport dla
-            # drugiego. call_to/call_de tu NIE sa adresat/nadawca w zwyklym
-            # sensie - parse_message() zwyklym parsowaniem tekstu by to
-            # zgubila (albo sparsowala cos bezsensownego, np. "RR73" jako
-            # znak). Dedykowany tlumacz zamiast tego.
+            # isDxpedition (type 0.1, see unpack_type0_1 in unpack.rs): a Fox
+            # (or an MSHV station in "Multi Answering" mode, which uses
+            # THIS SAME message format even in regular QSOs) combines RR73
+            # for one Hound and a report for another in a single
+            # transmission. call_to/call_de here are NOT the addressee/
+            # sender in the usual sense - parse_message()'s ordinary text
+            # parsing would lose that (or parse nonsense, e.g. "RR73" as a
+            # callsign). A dedicated translator is used instead.
             if m.get("isDxpedition"):
                 parsed = qso_engine.parse_dxpedition_message(
                     m.get("call_to"), m.get("call_de"), m.get("senderCall"),
                     m.get("report_or_grid"), self._qso_engine.my_call)
             else:
                 parsed = qso_engine.parse_message(m["message"])
-            # UWAGA (perf): usunieto print per-decode — logował KAZDE dekodowanie
-            # FT8/FT4 (20-40/sekunde przy aktywnym pasmie), kazdy print to
-            # blokujacy syscall zapychajacy event loop.
-            # Odkomentuj przy debugowaniu autoQSO:
+            # NOTE (perf): removed the per-decode print — it logged EVERY
+            # FT8/FT4 decode (20-40/sec on a busy band), and each print is a
+            # blocking syscall clogging the event loop.
+            # Uncomment when debugging autoQSO:
             # print(f"[autoqso] DECODE: msg={m['message']!r} mode={m.get('mode')} parsed={parsed} engine_state={self._qso_engine.state} partner={self._qso_engine.partner_call}")
             if parsed is None:
                 return
-            # Ignoruj wlasny sygnal (echo z USB audio) — call_de to MY
+            # Ignore our own signal (echo from USB audio) — call_de is US
             if parsed.get('call_de', '').upper() == self._qso_engine.my_call.upper():
                 return
 
-            # Timer bezpieczenstwa FT8 wygasl i operator jeszcze nie
-            # potwierdzil obecnosci (patrz "ft8_timer_expired"/
-            # "ft8_timer_confirm" w _ws_msg) - CALKOWICIE ignorujemy dekod
-            # do celow automatyki (nie startujemy, nie retransmitujemy, nie
-            # odpowiadamy nawet partnerowi w trakcie QSO). haltTx() na
-            # froncie juz przerwal biezaca transmisje przed wyslaniem tego
-            # sygnalu; ta flaga pilnuje zeby NIC nowego nie ruszylo dopoki
-            # operator sie nie odezwie.
+            # The FT8 safety timer expired and the operator hasn't
+            # confirmed presence yet (see "ft8_timer_expired"/
+            # "ft8_timer_confirm" in _ws_msg) - COMPLETELY ignore the
+            # decode for automation purposes (don't start, don't
+            # retransmit, don't even reply to a partner mid-QSO). haltTx()
+            # on the frontend has already stopped the current transmission
+            # before sending this signal; this flag ensures NOTHING new
+            # starts until the operator responds.
             if not self._ft8_operator_present:
                 return
 
             result = self._qso_engine.on_decode(parsed, recv_epoch=m.get("recvEpoch"))
             if result is None:
-                # Widocznosc w UI: on_decode() mogl cicho dopisac stacje do
-                # kolejki Call 1st (bo jestesmy w trakcie innego QSO, wiec
-                # zwrocil None zamiast akcji 'enqueue') — bez tego broadcastu
-                # operator nie widzial ze cokolwiek sie stalo, dopoki biezace
-                # QSO sie nie zakonczylo.
+                # UI visibility: on_decode() may have silently added the
+                # station to the Call 1st queue (because we're in another
+                # QSO, so it returned None instead of an 'enqueue' action)
+                # — without this broadcast the operator wouldn't see that
+                # anything happened until the current QSO ended.
                 if parsed.get('call_to') == self._qso_engine.my_call:
                     await self.hub.broadcast({"type": "auto_qso_queue",
                                                "queue": list(self._qso_engine.queue),
@@ -6865,19 +6867,19 @@ class App:
                 _max_retries = 4
                 if self._qso_engine.should_retransmit(_retry_period_s):
                     if self._qso_engine.should_give_up(_max_retries):
-                        print(f"[autoqso] {self._qso_engine.partner_call} nie "
-                              f"odpowiada po {_max_retries} probach — porzucam QSO")
+                        print(f"[autoqso] {self._qso_engine.partner_call} not "
+                              f"responding after {_max_retries} tries — abandoning QSO")
                         self._qso_engine.abort_qso()
                         self._qso_period_locked = False
-                        self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
+                        self._autoqso_tx_seq += 1  # see comment at REST /api/ft8/halt
                         await self.hub.broadcast({"type": "auto_qso_status",
                                                    "state": "IDLE", "partner": None})
                         await self._advance_auto_qso_queue()
                     elif self._last_auto_tx_action:
                         self._qso_engine.note_retry()
-                        print(f"[autoqso] Brak odpowiedzi od "
-                              f"{self._qso_engine.partner_call} — powtarzam "
-                              f"(proba {self._qso_engine.retry_count}/{_max_retries}): "
+                        print(f"[autoqso] No reply from "
+                              f"{self._qso_engine.partner_call} — retrying "
+                              f"(attempt {self._qso_engine.retry_count}/{_max_retries}): "
                               f"{self._last_auto_tx_action['call_to']} "
                               f"{self._last_auto_tx_action['call_de']} "
                               f"{self._last_auto_tx_action.get('report_or_grid')}")
@@ -6887,23 +6889,23 @@ class App:
 
             if result.get("action") == "enqueue":
                 call_de = result["call_de"]
-                # Ktos odpowiedzial na nasz CQ - zatrzymaj cykliczne wolanie CQ
-                # (przechodzimy w QSO z ta stacja).
+                # Someone replied to our CQ - stop the periodic CQ calling
+                # (we're moving into a QSO with this station).
                 if self._cq_calling:
-                    print(f"[cq] {call_de} odpowiedzial na CQ - koncze wolanie, zaczynam QSO")
+                    print(f"[cq] {call_de} replied to CQ - stopping CQ, starting QSO")
                     self._stop_cq_calling()
-                # UWAGA: auto-start gdy IDLE dziala ZAWSZE, niezaleznie od
-                # Call 1st. Call 1st kontroluje WYLACZNIE czy po zakonczeniu
-                # jednego QSO automat sam przechodzi do NASTEPNEJ stacji z
-                # kolejki (_advance_auto_qso_queue) - to jest decyzja o
-                # KOLEJNOSCI przy wielu jednoczesnych wolajacych. Bezposrednie
-                # wolanie gdy stoimy calkowicie bezczynnie to nie jest zadna
-                # decyzja o kolejnosci (jest tylko jedna stacja), wiec nie
-                # powinno zalezec od tego ustawienia. Wczesniej: wylaczony
-                # Call 1st + wolanie w trakcie bezczynnosci = calkowita cisza,
-                # zglaszane na zywo jako "automat nie reaguje".
+                # NOTE: auto-start when IDLE always applies, regardless of
+                # Call 1st. Call 1st ONLY controls whether, after one QSO
+                # ends, the automation moves on by itself to the NEXT
+                # station in the queue (_advance_auto_qso_queue) - that's
+                # an ORDERING decision for multiple simultaneous callers. A
+                # direct call while we're completely idle isn't an
+                # ordering decision at all (there's only one station), so
+                # it shouldn't depend on that setting. Previously: Call 1st
+                # disabled + a call while idle = total silence, reported
+                # live as "the automation doesn't respond".
                 if not self._qso_engine.is_active():
-                    print(f"[autoqso] Auto-start QSO z {call_de} (bezczynnosc)")
+                    print(f"[autoqso] Auto-starting QSO with {call_de} (idle)")
                     start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
                     if start_result and start_result.get("action") == "reply":
                         await self._dispatch_auto_reply(start_result, m,
@@ -6914,21 +6916,23 @@ class App:
                 return
 
             if result.get("action") == "partner_busy":
-                # Nasz partner nadaje juz do KOGOS INNEGO - zauwazony dowod
-                # ze zajal sie inna stacja, nie ma sensu dalej go wolac ani
-                # czekac na retry-timeout (patrz komentarz w qso_engine.py
-                # on_decode). Porzucamy od razu, tak samo jak przy give-up
-                # po wyczerpaniu prob, tylko szybciej i bez zgadywania.
-                print(f"[autoqso] {result['call_de']} nadaje juz do innej "
-                      f"stacji — porzucam wolanie, przechodze do kolejki")
+                # Our partner is already transmitting to SOMEONE ELSE -
+                # observed proof they've moved on to another station, no
+                # point calling them further or waiting for the
+                # retry-timeout (see the comment in qso_engine.py
+                # on_decode). Abandon right away, same as give-up after
+                # exhausting retries, just faster and without guessing.
+                print(f"[autoqso] {result['call_de']} already transmitting to "
+                      f"another station — abandoning call, moving to queue")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
-                # Bez tego juz zaplanowana (w locie) retransmisja do TEGO
-                # partnera i tak leciala w eter mimo abort_qso() - zaobserwowane
-                # na zywo: partner_busy trafial poprawnie, ale wczesniej
-                # zlecona retransmisja (asyncio.create_task w tym samym bloku
-                # co "Brak odpowiedzi — powtarzam") juz czekala na okno z
-                # NIEZMIENIONYM tx_seq, wiec stale-TX-guard jej nie zlapal.
+                # Without this, an already-scheduled (in-flight) retransmit
+                # to THIS partner still went out on air despite
+                # abort_qso() - observed live: partner_busy was correctly
+                # detected, but an earlier-scheduled retransmit
+                # (asyncio.create_task in the same block as "No reply —
+                # retrying") was already waiting for its window with an
+                # UNCHANGED tx_seq, so the stale-TX guard didn't catch it.
                 self._autoqso_tx_seq += 1
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": "IDLE", "partner": None})
@@ -6939,35 +6943,36 @@ class App:
                 await self._dispatch_auto_reply(result, m, tx_seq=self._reserve_tx_seq())
 
                 if result.get("qso_complete"):
-                    print(f"[autoqso] QSO z {self._qso_engine.partner_call} zakonczone (73)")
-                    # Wyslij PELNE dane QSO do wstepnego wypelnienia formularza
-                    # logowania PRZED abort_qso() (ktory resetuje partner_call/
-                    # grid/raporty z powrotem do None) — uzytkownik musi sam
-                    # zatwierdzic (przycisk "+ LOG QSO"), automatyka NIE zapisuje
-                    # bezposrednio do dziennika.
-                    # UWAGA: prefix "R" (np. "R-15") to marker protokolu FT8
-                    # ("potwierdzam + oto moj raport"), NIE czesc wlasciwej
-                    # wartosci raportu sygnalu — usuwamy go przed wstawieniem
-                    # do pola logu, zeby zachowac standardowy format ADIF.
+                    print(f"[autoqso] QSO with {self._qso_engine.partner_call} completed (73)")
+                    # Send the FULL QSO data to pre-fill the logging form
+                    # BEFORE abort_qso() (which resets partner_call/grid/
+                    # reports back to None) — the user must confirm it
+                    # themselves ("+ LOG QSO" button), the automation does
+                    # NOT write directly to the log.
+                    # NOTE: the "R" prefix (e.g. "R-15") is an FT8 protocol
+                    # marker ("acknowledging + here's my report"), NOT part
+                    # of the actual signal report value — strip it before
+                    # putting it in the log field, to keep the standard
+                    # ADIF format.
                     rst_rcvd = self._qso_engine.partner_report_recv or ""
                     if rst_rcvd.startswith("R"):
                         rst_rcvd = rst_rcvd[1:]
                     rst_sent = self._qso_engine.partner_report_sent or ""
                     if rst_sent.startswith("R"):
                         rst_sent = rst_sent[1:]
-                    # AUTO-ZAPIS QSO do dziennika operatora (decyzja projektowa
-                    # lipiec 2026: automat zapisuje sam, operator moze potem
-                    # edytowac w MOJ LOG QSO — zamiast recznego zatwierdzania,
-                    # ktore przy stacji klubowej z automatem bylo pomijane i
-                    # lacznosci ginely).
+                    # AUTO-SAVE the QSO to the operator's log (design
+                    # decision: the automation saves it itself, the operator
+                    # can edit it afterward in MY QSO LOG — instead of
+                    # manual confirmation, which at a club station running
+                    # unattended used to get skipped and QSOs were lost).
                     try:
                         from datetime import datetime as _dtx, timezone as _tzx
                         _now = _dtx.now(_tzx.utc)
                         _uid = getattr(self, "_autoqso_uid", None)
                         _freq_hz = int(getattr(self.rig, "freq", 0) or 0)
                         _band = self._get_band_for_freq(_freq_hz) or ""
-                        # Grid: z QSO jesli partner go wyslal; inaczej z cache
-                        # dekodow (jego wczesniejsze CQ z gridem).
+                        # Grid: from the QSO if the partner sent it;
+                        # otherwise from the decode cache (their earlier CQ with a grid).
                         _grid = (self._qso_engine.partner_grid or
                                  getattr(self, "_call_grid_cache", {}).get(
                                      (self._qso_engine.partner_call or "").upper(), ""))
