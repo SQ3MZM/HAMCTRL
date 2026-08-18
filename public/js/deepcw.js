@@ -1,6 +1,6 @@
 /**
  * deepcw.js — DeepCW client
- * Streamuje PCM Float32 przez WebSocket do serwera (Python+ONNX)
+ * Streams Float32 PCM over WebSocket to the server (Python+ONNX)
  */
 (function () {
 'use strict';
@@ -13,10 +13,11 @@ let _running = false;
 
 async function startDecoding(source) {
   if (_running) return;
-  // Dekoder pracuje na SERWERZE, na surowym audio prosto z karty radia.
-  // Przegladarka juz NIE wysyla dzwieku: przechodzil przez kodek Opus, ktory
-  // rozmywal krawedzie kluczowania (kontrast obwiedni 6.4x zamiast >20x)
-  // i model dostawal rozmyty sygnal — stad kasza mimo mocnej stacji.
+  // The decoder runs on the SERVER, on raw audio straight from the
+  // radio's sound card. The browser no longer sends audio: it used to go
+  // through the Opus codec, which blurred the keying edges (envelope
+  // contrast 6.4x instead of >20x) and the model got a smeared signal —
+  // hence garbled output despite a strong station.
   try {
     window.WS?.send({ type: 'cw_rx_enable', enabled: true });
     _running = true;
@@ -39,16 +40,16 @@ async function _startDecodingOLD(source) {
   if (_running) return;
   try {
     if (source === 'radio') {
-      // Użyj istniejącego AudioContext radia (przez window lub z _masterGain.context)
+      // Use the radio's existing AudioContext (via window or via _masterGain.context)
       const radioCtx = window._masterGain?.context || window.audioCtx;
       if (!radioCtx) { _setLog('✗ Brak audio radia — uruchom radio najpierw'); return; }
       _ctx = radioCtx;
       if (_ctx.state === 'suspended') { try { await _ctx.resume(); } catch(e){} }
 
-      // Utwórz ScriptProcessor w kontekście radia
+      // Create a ScriptProcessor in the radio's context
       _proc = _ctx.createScriptProcessor(4096, 1, 1);
 
-      // Podepnij _masterGain → _proc → destination
+      // Chain _masterGain → _proc → destination
       const gain = window._masterGain || _ctx.destination;
       gain.connect(_proc);
       _proc.connect(_ctx.destination);
@@ -61,7 +62,7 @@ async function _startDecodingOLD(source) {
         _updateVU(data);
       };
     } else {
-      // Mikrofon — własny AudioContext
+      // Microphone — its own AudioContext
       _ctx = new AudioContext({ sampleRate: 8000 });
       _stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
@@ -94,7 +95,7 @@ function toggleStart() {
   else startDecoding(document.getElementById('deepcw-source')?.value || 'mic');
 }
 
-// ── Wyślij PCM przez główny WS ────────────────────────────────────────────────
+// ── Send PCM over the main WS ──────────────────────────────────────────────
 function _sendPCM(f32data, srcRate) {
   const ws = window._mainWS;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -111,13 +112,13 @@ function _sendPCM(f32data, srcRate) {
   ws.send(msg.buffer);
 }
 
-// ── Odbierz tekst z serwera ───────────────────────────────────────────────────
+// ── Receive text from the server ──────────────────────────────────────────────
 let _rxCount = 0;
-let _liveLine = null;   // element biezacej linii (podmieniany, nie doklejany)
+let _liveLine = null;   // the current line's element (replaced, not appended)
 function handleText(msg1, msg2) {
-  // Obsluga dwoch formatow wywolania:
-  //   handleText({block, preview, close})  — nowy, z ws.js
-  //   handleText(text, preview)            — stary, dla zgodnosci
+  // Handles two call formats:
+  //   handleText({block, preview, close})  — new, from ws.js
+  //   handleText(text, preview)            — old, for compatibility
   let block, preview, close;
   if (msg1 && typeof msg1 === 'object') {
     ({ block, preview, close } = msg1);
@@ -128,11 +129,11 @@ function handleText(msg1, msg2) {
   const el = document.getElementById('deepcw-output');
   if (!el) return;
 
-  // Podglad "NA ZYWO" ma wlasna linie pod oknem.
+  // The "LIVE" preview has its own line below the window.
   const pv = document.getElementById('deepcw-preview');
   if (pv) pv.textContent = preview || '';
 
-  // Koniec transmisji — zamknij biezaca linie, nastepna stacja zacznie nowa.
+  // End of transmission — close the current line, the next station starts a new one.
   if (close) {
     _liveLine = null;
     return;
@@ -141,18 +142,19 @@ function handleText(msg1, msg2) {
   if (block) {
     _rxCount++;
     _setLog(`🎧 Dekodowanie… (odebrano ${_rxCount} fragm.)`);
-    // PODMIANA calej linii zamiast doklejania fragmentow. Silnik przysyla
-    // pelny biezacy odczyt, wiec nadpisujemy nim ostatnia linie — dzieki temu
-    // tekst nie jest sklejany ze strzepow i nie ma powtorzen ani dziur.
+    // REPLACE the whole line instead of appending fragments. The engine
+    // sends the full current reading, so we overwrite the last line with
+    // it — this way the text isn't stitched together from scraps and has
+    // no repeats or gaps.
     if (!_liveLine || !_liveLine.isConnected) {
       _liveLine = document.createElement('div');
       el.appendChild(_liveLine);
     }
     _liveLine.innerHTML = _colorize(block);
   }
-  // Ogranicz do ostatnich ~500 znakow
+  // Cap at the last ~500 characters
   if (el.textContent.length > 800) {
-    // Usun pierwsze dziecko az do 600 znakow
+    // Remove the first child until we're down to 600 characters
     while (el.textContent.length > 600 && el.firstChild
            && el.firstChild !== _liveLine) {
       el.removeChild(el.firstChild);
@@ -161,12 +163,13 @@ function handleText(msg1, msg2) {
   el.scrollTop = el.scrollHeight;
 }
 
-// ── Baza znanych znakow (walidacja kolorowania) ───────────────────────────────
-// Zrodla: dekody FT8 + log QSO (z serwera), spoty DX cluster (lokalne, kazdy
-// user ma swoj cluster). Znak z bazy kolorujemy PEWNIE; przepracowany innym
-// odcieniem — operator od razu widzi czy warto wolac.
+// ── Known-callsign database (for coloring) ────────────────────────────────────
+// Sources: FT8 decodes + QSO log (from the server), DX cluster spots
+// (local, each user has their own cluster). A callsign from the database
+// is colored as a CONFIRMED match; one already worked gets a different
+// shade — the operator immediately sees whether it's worth calling.
 let _knownCalls  = new Set();
-let _workedCalls = new Set(); // klucze CALL|BAND — kazde pasmo to nowa lacznosc
+let _workedCalls = new Set(); // CALL|BAND keys — each band is a new QSO
 
 function _workedKeyCW(call, band) {
   return `${(call||'').toUpperCase()}|${(band||'').toUpperCase()}`;
@@ -181,16 +184,16 @@ async function refreshKnownCalls() {
       fetch('/api/qsolog/calls',       {headers: hdr}).then(r => r.json()).catch(() => ({})),
     ]);
     if (k.calls) _knownCalls  = new Set(k.calls.map(c => c.toUpperCase()));
-    // w.calls to lista {call, mode, band} (patrz qso_db.py::worked_calls) —
-    // NIE lista stringow. c.toUpperCase() na obiekcie rzucalo TypeError,
-    // polykane przez catch(e){} ponizej, wiec _workedCalls nigdy sie nie
-    // wypelnial i szarzenie "juz w logu" bylo martwe. Band w kluczu, zeby
-    // stacja zrobiona na jednym pasmie nie gasla jako dupe na innym.
+    // w.calls is a list of {call, mode, band} (see qso_db.py::worked_calls)
+    // — NOT a list of strings. c.toUpperCase() on an object threw a
+    // TypeError, swallowed by the catch(e){} below, so _workedCalls never
+    // got populated and the "already in log" graying was dead. Band is in
+    // the key, so a station worked on one band doesn't gray out as a dupe on another.
     if (w.calls) _workedCalls = new Set(w.calls.map(c => _workedKeyCW(c.call, c.band)));
   } catch(e) {}
 }
 
-// Spoty z DX clustera usera — wolane z modulu clustera gdy przyjdzie spot.
+// Spots from the user's DX cluster — called from the cluster module when a spot arrives.
 function addClusterSpots(calls) {
   for (const c of calls || []) {
     const u = (c || '').trim().toUpperCase();
@@ -199,18 +202,18 @@ function addClusterSpots(calls) {
 }
 
 function _colorize(text) {
-  // Koloruj slowa kluczowe CW
+  // Color CW keywords
   const COLORS = {
-    // Zakonczenia QSO
-    '73':   '#fa0',  // pomaranczowy
+    // QSO endings
+    '73':   '#fa0',  // orange
     'TU':   '#fa0',
     'SK':   '#fa0',
     'AR':   '#fa0',
-    // Raporty RST obsługuje regex poniżej
-    // Wywolanie
-    'CQ':   '#4cf',  // jasnoniebieski
+    // RST reports handled by the regex below
+    // Calling
+    'CQ':   '#4cf',  // light blue
     'DE':   '#8af',
-    // Potwierdzenia
+    // Acknowledgments
     'R':    '#aaf',
     'RR':   '#aaf',
     'RRR':  '#aaf',
@@ -221,23 +224,23 @@ function _colorize(text) {
     'BK':   '#ff8',
   };
 
-  // Podziel na tokeny zachowujac spacje i nowe linie
+  // Split into tokens, keeping spaces and newlines
   let result = '';
   let i = 0;
   while (i < text.length) {
-    // Nowa linia
+    // Newline
     if (text[i] === '\n') {
       result += '<br>';
       i++;
       continue;
     }
-    // Spacja
+    // Space
     if (text[i] === ' ') {
       result += ' ';
       i++;
       continue;
     }
-    // Pobierz token (do spacji lub nowej linii)
+    // Read a token (up to a space or newline)
     let j = i;
     while (j < text.length && text[j] !== ' ' && text[j] !== '\n') j++;
     const token = text.slice(i, j);
@@ -247,24 +250,24 @@ function _colorize(text) {
     if (color) {
       result += `<span style="color:${color};font-weight:bold;">${_esc(token)}</span>`;
     } else if (_workedCalls.has(_workedKeyCW(TU, window.UI?.getBandName?.(window.AppState?.freq)))) {
-      // ZNAK JUZ PRZEPRACOWANY — szary, zeby nie kusil (dupe)
+      // ALREADY WORKED — gray, so it doesn't tempt the operator (dupe)
       result += `<span style="color:#888;font-weight:bold;" title="juz w logu">`
               + `${_esc(token)}</span>`;
     } else if (_knownCalls.has(TU)) {
-      // ZNAK POTWIERDZONY baza (FT8/log/cluster) — pewne trafienie, mocny akcent
+      // CONFIRMED by the database (FT8/log/cluster) — a sure match, strong accent
       result += `<span style="color:#0f8;font-weight:bold;text-shadow:0 0 4px rgba(0,255,136,.4);" `
               + `title="znak potwierdzony">${_esc(token)}</span>`;
     } else if (/^[A-R]{2}\d{2}([A-X]{2})?$/i.test(token)) {
-      // Lokator QTH: JO82, KO02, IN77, JO82AA itp.
+      // QTH locator: JO82, KO02, IN77, JO82AA etc.
       result += `<span style="color:#f90;font-weight:bold;">${_esc(token)}</span>`;
     } else if (/^\d{3}$|^[5T][59NT][19NT]$|^T{1,2}[019NT]{1,3}$/.test(TU)) {
-      // Raporty RST: 599, 5N9, 59N, 5NN, T001, T01, TT1 i podobne
+      // RST reports: 599, 5N9, 59N, 5NN, T001, T01, TT1 and similar
       result += `<span style="color:#4f4;">${_esc(token)}</span>`;
     } else if (/^\d{1,4}$/.test(TU)) {
-      // Numer kolejny w zawodach (po raporcie): 001, 14, 1234
+      // Contest serial number (after the report): 001, 14, 1234
       result += `<span style="color:#8f8;">${_esc(token)}</span>`;
     } else if (/^[A-Z0-9]{3,6}\/[A-Z0-9]/.test(TU) || /^[A-Z]{1,2}\d[A-Z]{1,4}$/.test(TU)) {
-      // Znak wywoławczy (wzorzec, niepotwierdzony baza) — slabszy akcent
+      // Callsign (pattern match, not confirmed by the database) — weaker accent
       result += `<span style="color:#4cf;font-weight:bold;">${_esc(token)}</span>`;
     } else {
       result += `<span style="color:var(--green);">${_esc(token)}</span>`;
@@ -278,7 +281,7 @@ function _esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// Diagnostyka: nagraj audio tak, jak slyszy je model, i pobierz do odsluchu.
+// Diagnostics: record the audio exactly as the model hears it, and download it for listening.
 async function capture() {
   const token = localStorage.getItem('token') || '';
   const hdr = token ? {'Authorization': `Bearer ${token}`} : {};
@@ -291,7 +294,7 @@ async function capture() {
     });
     const d = await r.json();
     if (!d.ok) { _setLog('✗ ' + (d.error || 'Blad')); return; }
-    // Poczekaj az nagranie sie skonczy, potem zaproponuj pobranie
+    // Wait for the recording to finish, then offer the download
     setTimeout(() => {
       _setLog('✓ Nagranie gotowe — pobieram...');
       window.open('/api/deepcw/capture_file' + (token ? `?token=${token}` : ''), '_blank');
@@ -306,7 +309,7 @@ function clearOutput() {
   if (el) el.innerHTML = '';
   _liveLine = null;
   const pv = document.getElementById('deepcw-preview');
-  if (pv) pv.textContent = '';   // wyczysc takze linie "NA ZYWO"
+  if (pv) pv.textContent = '';   // also clear the "LIVE" line
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────
@@ -337,9 +340,10 @@ function _updateVU(data) {
   ctx.fillRect(0, 0, W * level, H);
 }
 
-// Bargraf zasilany POZIOMEM Z SERWERA. Po przejsciu na audio z karty
-// przegladarka nie ma juz wlasnego strumienia — poziom liczy serwer
-// (z tego samego surowego audio, ktore trafia do modelu) i przysyla gotowy.
+// The bargraph is driven by the LEVEL FROM THE SERVER. After switching to
+// card audio the browser no longer has its own stream — the level is
+// computed by the server (from the same raw audio that feeds the model)
+// and sent ready-made.
 function handleVU(level) {
   const canvas = document.getElementById('deepcw-vu');
   if (!canvas) return;
@@ -351,10 +355,10 @@ function handleVU(level) {
   ctx.fillRect(0, 0, W * lv, H);
 }
 
-// ── Przeciaganie okna ─────────────────────────────────────────────────────────
-// Okno chwytamy za pasek tytulu. Pozycje pamietamy w pamieci sesji, zeby po
-// zamknieciu i ponownym otwarciu zostalo tam, gdzie je operator postawil.
-let _dragPos = null;   // {left, top} albo null = pozycja domyslna
+// ── Window dragging ────────────────────────────────────────────────────────
+// The window is grabbed by its title bar. The position is remembered in
+// session memory, so after closing and reopening it stays where the operator put it.
+let _dragPos = null;   // {left, top} or null = default position
 
 function _initDrag() {
   const modal = document.getElementById('deepcw-modal');
@@ -366,12 +370,12 @@ function _initDrag() {
   let sx = 0, sy = 0, sl = 0, st = 0, dragging = false;
 
   const onDown = (e) => {
-    // Nie przechwytuj klikniec w przyciski na pasku (CLR / zamknij)
+    // Don't capture clicks on buttons in the bar (CLR / close)
     if (e.target.closest('button')) return;
     dragging = true;
     const r = modal.getBoundingClientRect();
-    // Przejdz z prawego/dolnego kotwiczenia na lewe/gorne, zeby dalo sie
-    // swobodnie przesuwac w kazda strone.
+    // Switch from right/bottom anchoring to left/top, so it can be
+    // dragged freely in any direction.
     modal.style.left   = r.left + 'px';
     modal.style.top    = r.top  + 'px';
     modal.style.right  = 'auto';
@@ -382,7 +386,7 @@ function _initDrag() {
 
   const onMove = (e) => {
     if (!dragging) return;
-    // Trzymaj okno w obrebie ekranu (zostaw margines, zeby pasek byl chwytny)
+    // Keep the window within the screen (leave a margin so the bar stays grabbable)
     const w = modal.offsetWidth, h = modal.offsetHeight;
     let nl = Math.min(Math.max(0, sl + e.clientX - sx), window.innerWidth  - 60);
     let nt = Math.min(Math.max(0, st + e.clientY - sy), window.innerHeight - 30);
@@ -397,7 +401,7 @@ function _initDrag() {
   document.addEventListener('mousemove', onMove);
   document.addEventListener('mouseup',   onUp);
 
-  // Dotyk (tablet przy radiu)
+  // Touch (a tablet next to the radio)
   bar.addEventListener('touchstart', (e) => {
     if (e.target.closest('button')) return;
     const t = e.touches[0];
@@ -417,7 +421,7 @@ function openModal() {
   const m = document.getElementById('deepcw-modal');
   if (m) {
     m.style.display = 'block';
-    // Przywroc pozycje z poprzedniego otwarcia
+    // Restore the position from the previous time it was opened
     if (_dragPos) {
       m.style.left = _dragPos.left + 'px';
       m.style.top  = _dragPos.top  + 'px';
@@ -425,7 +429,7 @@ function openModal() {
     }
   }
   _initDrag();
-  refreshKnownCalls();   // swieza baza znakow do kolorowania
+  refreshKnownCalls();   // a fresh callsign database for coloring
   fetch('/api/deepcw/engine_status').then(r => r.json()).then(d => {
     if (!d.hasModel)   _setLog('⚠ Model nie pobrany — USTAWIENIA → DeepCW → POBIERZ');
     else if (!d.ready) _setLog('⏳ Model ładuje się...');
@@ -447,17 +451,18 @@ function openModal() {
 function closeModal() {
   const m = document.getElementById('deepcw-modal');
   if (m) m.style.display = 'none';
-  // WAZNE: zamkniecie panelu ZATRZYMUJE dekoder. Inaczej przegladarka dalej
-  // slalaby PCM, a serwer liczyl inferencje ONNX w tle — niepotrzebne
-  // obciazenie procesora przy zamknietym oknie.
+  // IMPORTANT: closing the panel STOPS the decoder. Otherwise the browser
+  // would keep streaming PCM and the server would keep running ONNX
+  // inference in the background — unnecessary CPU load with the window closed.
   if (_running) stopDecoding();
 }
 
-// ── SKALOWANIE OKNA DEKODERA CW ──────────────────────────────────────────────
-// Okno CW mialo staly wymiar, czcionka bywala za mala. Tu: (1) uchwyt do
-// rozciagania okna mysza (jak w prawdziwym oknie), (2) przyciski powiekszania
-// /pomniejszania czcionki. Rozmiary zapamietane w configu przegladarki
-// (localStorage NIE dziala w artifactach, ale to prawdziwa aplikacja — dziala).
+// ── CW DECODER WINDOW SCALING ─────────────────────────────────────────────────
+// The CW window used to have a fixed size, and the font was sometimes too
+// small. Here: (1) a handle to resize the window with the mouse (like a
+// real window), (2) buttons to increase/decrease the font size. Sizes
+// remembered in the browser's storage (localStorage doesn't work in
+// artifacts, but this is a real app — it works).
 let _cwFontPx = 14;
 
 function _applyCwFont() {
@@ -475,7 +480,7 @@ function _initCwScaling() {
   const el = document.getElementById('deepcw-output');
   if (!el) return;
 
-  // Przywroc zapamietany rozmiar czcionki i wysokosc okna.
+  // Restore the remembered font size and window height.
   try {
     const f = parseInt(localStorage.getItem('deepcw_font_px'), 10);
     if (f) _cwFontPx = f;
@@ -484,13 +489,13 @@ function _initCwScaling() {
   } catch (e) {}
   _applyCwFont();
 
-  // Uczyn okno rozciagalnym w PIONIE i POZIOMIE natywnie (CSS resize).
+  // Make the window natively resizable VERTICALLY and HORIZONTALLY (CSS resize).
   el.style.resize = 'both';
   el.style.overflow = 'auto';
   el.style.minHeight = '80px';
   el.style.minWidth = '200px';
 
-  // Zapamietaj rozmiar po zakonczeniu rozciagania (ResizeObserver).
+  // Remember the size after resizing finishes (ResizeObserver).
   try {
     let _saveTimer = null;
     const ro = new ResizeObserver(() => {
@@ -500,10 +505,10 @@ function _initCwScaling() {
       }, 400);
     });
     ro.observe(el);
-  } catch (e) { /* ResizeObserver brak — trudno, resize dalej dziala */ }
+  } catch (e) { /* No ResizeObserver — oh well, resize still works */ }
 }
 
-// Inicjalizuj skalowanie gdy DOM gotowy (panel CW moze byc juz w HTML).
+// Initialize scaling once the DOM is ready (the CW panel may already be in the HTML).
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', _initCwScaling);
 } else {
