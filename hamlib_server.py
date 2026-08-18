@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 r"""
-hamlib_server.py — emulator rigctld (Hamlib NET rigctl) — broadcast virtual rig.
+hamlib_server.py — rigctld emulator (Hamlib NET rigctl) — broadcast virtual rig.
 
-Architektura Opcja C: N klientow moze sie podlaczyc jednoczesnie pod ten sam port.
-- Komendy odczytu (GET_FREQ, GET_MODE, GET_PTT itp.) → odpowiada kazdemu klientowi
-- Komendy zapisu (SET_FREQ, SET_MODE, SET_PTT itp.) → tylko gdy nikt nie zajal radia
-  lub gdy radio nie jest zablokowane. Jesli zablokowane → RPRT 0 (udaje sukces,
-  nie wykonuje nic) — programy jak WSJT-X nie rozlaczaja sie przy RPRT 0.
+Architecture, Option C: N clients can connect simultaneously to the same port.
+- Read commands (GET_FREQ, GET_MODE, GET_PTT etc.) → answered for every client
+- Write commands (SET_FREQ, SET_MODE, SET_PTT etc.) → only when no one holds
+  the radio, or when the radio isn't locked. If locked → RPRT 0 (fake
+  success, does nothing) — programs like WSJT-X don't disconnect on RPRT 0.
 
-Sekwencja WSJT-X przy starcie (Hamlib 4.x):
+WSJT-X's startup sequence (Hamlib 4.x):
   1. \chk_rig      → "RPRT 0\n"
-  2. \dump_caps    → blok "setting=value\n...\nRPRT 0\n"
-  3. \dump_state   → linie z mozliwosciami radia
+  2. \dump_caps    → a "setting=value\n...\nRPRT 0\n" block
+  3. \dump_state   → lines with the radio's capabilities
   4. \get_vfo      → "VFOA\nRPRT 0\n"
   5. \get_freq     → "14074000\nRPRT 0\n"
-  itp.
+  etc.
 """
 import asyncio
 
@@ -38,9 +38,9 @@ class HamlibSession:
     def __init__(self, rig, hub, reader, writer, slot_name, app=None):
         self.rig      = rig
         self.hub      = hub
-        # Referencja do aplikacji — potrzebna do sprawdzania radio_lock.
-        # Bez niej sesja nie wie kto trzyma TRX (hub jej nie ma), wiec
-        # blokada sterowania z sieci nie moglaby dzialac.
+        # Reference to the app — needed to check radio_lock. Without it the
+        # session wouldn't know who holds the TRX (the hub doesn't have
+        # that), so the network control lock couldn't work.
         self.app      = app
         self.reader   = reader
         self.writer   = writer
@@ -49,12 +49,13 @@ class HamlibSession:
         self._running = True
 
     async def run(self):
-        print(f"[hamlib:{self.slot}] Polaczono: {self.addr}", flush=True)
+        print(f"[hamlib:{self.slot}] Connected: {self.addr}", flush=True)
         try:
-            # WAZNE: protokol netrigctl NIE wysyla zadnego bannera po polaczeniu.
-            # Klient (Hamlib) ZAWSZE wysyla komende jako pierwszy. Wczesniej
-            # bylo tu blednie wyslane b'0\n' co przesuwalo CALY strumien o
-            # jedna linie i psulo parsowanie wszystkich kolejnych odpowiedzi.
+            # IMPORTANT: the netrigctl protocol does NOT send any banner
+            # after connecting. The client (Hamlib) ALWAYS sends a command
+            # first. This used to incorrectly send b'0\n' here, which
+            # shifted the WHOLE stream by one line and broke parsing of
+            # every subsequent response.
             while self._running:
                 line = await asyncio.wait_for(self.reader.readline(), timeout=60.0)
                 if not line:
@@ -74,33 +75,37 @@ class HamlibSession:
         except Exception as e:
             import traceback; traceback.print_exc()
         finally:
-            print(f"[hamlib:{self.slot}] Rozlaczono: {self.addr}", flush=True)
+            print(f"[hamlib:{self.slot}] Disconnected: {self.addr}", flush=True)
             try: self.writer.close()
             except: pass
 
     def _can_control(self) -> bool:
         """
-        Czy komendy STERUJACE (zmieniajace stan radia) sa dozwolone?
+        Are CONTROL commands (changing the radio's state) allowed?
 
-        ZASADA (jak w webappie i na portach COM): radiem steruje TYLKO
-        zalogowany operator, ktory PRZEJAL TRX (radio_lock). Porty rigctl sa
-        otwarte na internet i protokol NIE MA uwierzytelniania, wiec bez tego
-        kazdy skaner moglby wyslac 'T 1' i zostawic radio na nadawaniu.
+        RULE (same as in the webapp and on COM ports): the radio is
+        controlled ONLY by the logged-in operator who has TAKEN the TRX
+        (radio_lock). rigctl ports are open to the internet and the
+        protocol has NO authentication, so without this any scanner could
+        send 'T 1' and leave the radio transmitting.
 
-        Dozwolone gdy:
-          - radio w trybie SIM (testy), albo
-          - KTOS trzyma radio_lock — czyli operator zalogowal sie w webappie
-            i przejal TRX; jego zewnetrzny soft (WSJT-X, logger) dziala.
+        Allowed when:
+          - the radio is in SIM mode (testing), or
+          - SOMEONE holds radio_lock — meaning an operator logged into the
+            webapp and took the TRX; their external software (WSJT-X,
+            logger) is running.
 
-        Zablokowane gdy nikt nie trzyma locka — wtedy przychodzace komendy
-        sterujace to albo pomylka, albo obcy ruch z sieci.
+        Blocked when no one holds the lock — in that case incoming control
+        commands are either a mistake or unrelated network traffic.
 
-        UWAGA: to NIE jest odwrotnosc dawnej logiki "blokuj gdy ktos trzyma
-        lock" (chroniacej przed kolizja dwoch zrodel). Kolizji nie ma, bo
-        operator trzymajacy lock to TA SAMA osoba, ktora uzywa swojego softu.
+        NOTE: this is NOT the inverse of the old "block when someone holds
+        the lock" logic (which protected against a collision between two
+        sources). There's no collision here, because the operator holding
+        the lock is the SAME person using their own software.
 
-        Komendy ODCZYTU (GET_FREQ, GET_MODE, dump_caps...) dzialaja zawsze —
-        podglad nikomu nie szkodzi i nie psuje wykrywania radia przez soft.
+        READ commands (GET_FREQ, GET_MODE, dump_caps...) always work —
+        read-only access doesn't hurt anyone and doesn't break radio
+        detection by external software.
         """
         if self.rig.sim:
             return True
@@ -108,7 +113,7 @@ class HamlibSession:
                or getattr(self.hub, 'app', None)
                or getattr(self.hub, '_app', None))
         if app is None:
-            return False  # brak referencji do app — BEZPIECZNIE odmow sterowania
+            return False  # no reference to app — SAFELY deny control
         lock = getattr(app, 'radio_lock', {})
         return lock.get('user_id') is not None
 
@@ -127,21 +132,21 @@ class HamlibSession:
             if c in ('CHKRIG', 'CHK_RIG', 'CHECKRIG'):
                 return 'RPRT 0'
 
-            # ── dump_caps — format setting=value (WSJT-X sprawdza to pierwsze) ─
+            # ── dump_caps — setting=value format (WSJT-X checks this first) ────
             if c in ('DUMP_CAPS', 'DUMPCAPS'):
                 return self._dump_caps()
 
-            # ── dump_state — format liczbowy ───────────────────────────────────
+            # ── dump_state — numeric format ─────────────────────────────────────
             if c in ('DUMP_STATE', 'DUMPSTATE'):
                 return self._dump_state()
 
-            # ── Częstotliwość ──────────────────────────────────────────────────
+            # ── Frequency ──────────────────────────────────────────────────────
             if c in ('F', 'GET_FREQ', 'GETFREQ'):
                 if not args:
                     return f"{int(self.rig.freq)}\nRPRT 0"
             if c in ('F', 'SET_FREQ', 'SETFREQ') and args:
                 if not self._can_control():
-                    return 'RPRT 0'  # radio zajete — udaj sukces, nic nie rob
+                    return 'RPRT 0'  # radio busy — fake success, do nothing
                 hz = int(float(args[0]))
                 self.rig.freq = hz
                 if not self.rig.sim:
@@ -158,11 +163,11 @@ class HamlibSession:
             if c in ('SET_LOCK_MODE',) and args:
                 return 'RPRT 0'
 
-            # ── Tryb ───────────────────────────────────────────────────────────
+            # ── Mode ───────────────────────────────────────────────────────────
             if c in ('M', 'GET_MODE', 'GETMODE') and not args:
                 hm = MODE_TO_HAMLIB.get(self.rig.mode, self.rig.mode)
                 bw = getattr(self.rig, 'bw', 0) or 0
-                # Hamlib wymaga bw >= 0, -1 oznacza "domyslna"
+                # Hamlib requires bw >= 0, -1 means "default"
                 return f"{hm}\n{max(0, bw)}\nRPRT 0"
 
             if c in ('M', 'SET_MODE', 'SETMODE') and args:
@@ -177,7 +182,7 @@ class HamlibSession:
                     try:
                         await self.rig.set_mode(mode, bw)
                     except Exception as e:
-                        print(f"[hamlib] set_mode BLAD dla mode={mode!r}: {e!r}")
+                        print(f"[hamlib] set_mode ERROR for mode={mode!r}: {e!r}")
                 await self.hub.broadcast({"type":"mode","mode":mode,"bandwidth":bw,"src":"hamlib"})
                 return 'RPRT 0'
 
@@ -189,9 +194,9 @@ class HamlibSession:
                 if not self._can_control():
                     return 'RPRT 0'
                 # Hamlib PTT values: 0=OFF, 1=ON, 2=ON_MIC, 3=ON_DATA.
-                # JTDX/WSJT-X w trybie cyfrowym (USB-D/PKTUSB) wysyla '3'
-                # (RIG_PTT_ON_DATA) zamiast prostego '1' — kazda wartosc
-                # niezerowa oznacza TX.
+                # JTDX/WSJT-X in digital mode (USB-D/PKTUSB) sends '3'
+                # (RIG_PTT_ON_DATA) instead of a plain '1' — any nonzero
+                # value means TX.
                 raw_val = args[0]
                 if raw_val.lstrip('-').isdigit():
                     on = int(raw_val) != 0
@@ -205,9 +210,9 @@ class HamlibSession:
                             await self.rig.set_ptt(on)
                             print(f"[hamlib:{self.slot}] PTT CI-V OK", flush=True)
                         except Exception as e:
-                            print(f"[hamlib:{self.slot}] PTT CI-V BLAD: {e}", flush=True)
+                            print(f"[hamlib:{self.slot}] PTT CI-V ERROR: {e}", flush=True)
                     else:
-                        print(f"[hamlib:{self.slot}] PTT: brak portu szeregowego!", flush=True)
+                        print(f"[hamlib:{self.slot}] PTT: no serial port!", flush=True)
                 await self.hub.broadcast({"type":"ptt","ptt":on,"src":"hamlib"})
                 return 'RPRT 0'
 
@@ -232,7 +237,7 @@ class HamlibSession:
                 await self.hub.broadcast({"type":"split","split":on,"src":"hamlib"})
                 return 'RPRT 0'
 
-            # ── Poziomy ────────────────────────────────────────────────────────
+            # ── Levels ─────────────────────────────────────────────────────────
             if c in ('L', 'GET_LEVEL') and args:
                 lname = args[0].upper()
                 if lname == 'STRENGTH':
@@ -285,19 +290,19 @@ class HamlibSession:
                 self._running = False
                 return 'RPRT 0'
 
-            # ── Nieznana komenda ───────────────────────────────────────────────
-            # Skanery internetowe dobijaja sie TLS-em (ClientHello zaczyna sie
-            # od 0x16 0x03) i zasypywaly log setkami linii UNKNOWN z binarnymi
-            # smieciami. Takie polaczenie NIE jest klientem rigctl — konczymy
-            # je cicho, bez logowania kazdego pakietu.
+            # ── Unknown command ──────────────────────────────────────────────────
+            # Internet scanners knock with TLS (ClientHello starts with
+            # 0x16 0x03) and used to flood the log with hundreds of UNKNOWN
+            # lines full of binary junk. Such a connection is NOT a rigctl
+            # client — we close it quietly, without logging every packet.
             _binary_junk = any(ch < 32 and ch not in (9, 10, 13)
                                for ch in raw.encode("utf-8", "ignore")[:8])
             if _binary_junk:
-                self._running = False   # rozlacz — to nie jest rigctl
+                self._running = False   # disconnect — this isn't rigctl
                 if not getattr(self, "_junk_logged", False):
                     self._junk_logged = True
-                    print(f"[hamlib:{self.slot}] Odrzucono polaczenie "
-                          f"nie-rigctl (binarne dane — skaner/TLS)", flush=True)
+                    print(f"[hamlib:{self.slot}] Rejected a non-rigctl "
+                          f"connection (binary data — scanner/TLS)", flush=True)
                 return 'RPRT -1'
             print(f"[hamlib:{self.slot}] UNKNOWN: {raw!r}", flush=True)
             return 'RPRT 0'
@@ -308,9 +313,9 @@ class HamlibSession:
 
     def _dump_caps(self) -> str:
         """
-        DUMP_CAPS — format "setting=value" wymagany przez WSJT-X / Hamlib 4.x.
-        Kazda linia to para klucz=wartosc. Blok konczy sie "RPRT 0".
-        Zrodlo: hamlib/src/rig.c dump_caps_helper()
+        DUMP_CAPS — the "setting=value" format required by WSJT-X / Hamlib 4.x.
+        Each line is a key=value pair. The block ends with "RPRT 0".
+        Source: hamlib/src/rig.c dump_caps_helper()
         """
         name = getattr(self.rig, '_rig_name', 'Ham Radio Control Server')
         freq = int(self.rig.freq)
@@ -368,35 +373,35 @@ class HamlibSession:
 
     def _dump_state(self) -> str:
         """
-        DUMP_STATE — format scisle wg hamlib/rigs/dummy/netrigctl.c netrigctl_open().
-        Kolejnosc weryfikowana zrodlowo (Hamlib master):
-          1. prot_ver = atoi(linia1)          # "0"
-          2. read_string() — linia2 CZYTANA ale NIEUZYWANA (ignorowana)
-          3. read_string() — linia3 = ITU region -> atoi()
-          4. petla HAMLIB_FRQRANGESIZ x linii RX freq range (konczy sentinel 0 0 0 0 0 0 0)
-          5. petla HAMLIB_FRQRANGESIZ x linii TX freq range (konczy sentinel)
-          6. petla tuning steps (konczy "0 0")
-          7. petla filters (konczy "0 0")
+        DUMP_STATE — format matching hamlib/rigs/dummy/netrigctl.c's netrigctl_open() exactly.
+        Order verified against the source (Hamlib master):
+          1. prot_ver = atoi(line1)          # "0"
+          2. read_string() — line2 IS READ but UNUSED (ignored)
+          3. read_string() — line3 = ITU region -> atoi()
+          4. loop of HAMLIB_FRQRANGESIZ RX freq range lines (ends with sentinel 0 0 0 0 0 0 0)
+          5. loop of HAMLIB_FRQRANGESIZ TX freq range lines (ends with sentinel)
+          6. tuning steps loop (ends with "0 0")
+          7. filters loop (ends with "0 0")
           8. max_rit, max_xit, max_ifshift
-          9. announces (liczba)
-          10. preamp lista (liczby oddzielone spacja, konczy 0)
-          11. attenuator lista (jw.)
+          9. announces (count)
+          10. preamp list (space-separated numbers, ends with 0)
+          11. attenuator list (same)
           12. has_get_func, has_set_func (hex)
           13. has_get_level, has_set_level (hex)
           14. has_get_parm, has_set_parm (hex)
         """
         lines = [
             '0',                                    # 1. prot_ver
-            '2',                                    # 2. (czytane, ignorowane przez klienta)
+            '2',                                    # 2. (read, ignored by the client)
             '1',                                    # 3. ITU region
-            # 4. RX freq ranges — kazda linia: start end modemask low high vfo ant
+            # 4. RX freq ranges — each line: start end modemask low high vfo ant
             '1800000 30000000 0x1ff -1 -1 0x3 0',
             '50000000 54000000 0x1ff -1 -1 0x3 0',
-            '0 0 0 0 0 0 0',                       # sentinel konczacy RX
+            '0 0 0 0 0 0 0',                       # sentinel ending RX
             # 5. TX freq ranges
             '1800000 30000000 0x1ff -1 -1 0x3 0',
             '50000000 54000000 0x1ff -1 -1 0x3 0',
-            '0 0 0 0 0 0 0',                       # sentinel konczacy TX
+            '0 0 0 0 0 0 0',                       # sentinel ending TX
             # 6. Tuning steps: mode step
             '0x1ff 1',
             '0 0',                                  # sentinel
@@ -405,15 +410,15 @@ class HamlibSession:
             '0x1ff 2400',
             '0x1ff 3000',
             '0 0',                                  # sentinel
-            # 8. max_rit max_xit max_ifshift (3 oddzielne linie)
+            # 8. max_rit max_xit max_ifshift (3 separate lines)
             '0',
             '0',
             '0',
             # 9. announces
             '0',
-            # 10. preamp lista (zakonczona 0)
+            # 10. preamp list (ends with 0)
             '0',
-            # 11. attenuator lista (zakonczona 0)
+            # 11. attenuator list (ends with 0)
             '0',
             # 12. has_get_func has_set_func
             '0',
@@ -429,7 +434,7 @@ class HamlibSession:
         return '\n'.join(lines)
 
 
-# ── VirtualRigServer i HamlibManager ─────────────────────────────────────────
+# ── VirtualRigServer and HamlibManager ───────────────────────────────────────
 
 class VirtualRigServer:
     def __init__(self, port, slot_idx, app):
@@ -448,12 +453,14 @@ class VirtualRigServer:
 
     async def start(self):
         try:
-            # Porty rigctl sa CELOWO otwarte na siec — userzy klubu lacza sie
-            # z zewnetrznych sieci wlasnym softem (WSJT-X, loggery).
-            # UWAGA BEZPIECZENSTWA: protokol rigctl nie ma uwierzytelniania,
-            # wiec ochrona musi byc warstwe wyzej (zapora z lista adresow,
-            # VPN, albo autoryzacja po stronie serwera — patrz TODO nizej).
-            # Kto uzywa tylko lokalnie, moze zawezic w config.json:
+            # rigctl ports are DELIBERATELY open to the network — club users
+            # connect from external networks with their own software
+            # (WSJT-X, loggers).
+            # SECURITY NOTE: the rigctl protocol has no authentication, so
+            # protection has to live at a higher layer (a firewall with an
+            # address list, VPN, or server-side authorization — see the
+            # TODO below). Anyone using it only locally can narrow this in
+            # config.json:
             #   "hamlib_bind": "127.0.0.1"
             _bind = "0.0.0.0"
             try:
@@ -461,32 +468,33 @@ class VirtualRigServer:
                 _bind = str(_cfg.get("hamlib_bind", "0.0.0.0")).strip() or "0.0.0.0"
             except Exception:
                 pass
-            # UWAGA: family=0 (AF_UNSPEC) razem z host='0.0.0.0' to niejednoznaczna
-            # kombinacja na Windows — moze powodowac cichy blad bindowania.
-            # Uzywamy czystego IPv4 (zweryfikowane dzialajace przez telnet/PowerShell).
+            # NOTE: family=0 (AF_UNSPEC) together with host='0.0.0.0' is an
+            # ambiguous combination on Windows — it can cause a silent
+            # binding failure. We use plain IPv4 (verified working via
+            # telnet/PowerShell).
             self._server = await asyncio.start_server(
                 self._handle_connection, _bind, self.port,
             )
             self.running = True
             sockets_info = [s.getsockname() for s in self._server.sockets]
-            print(f"[hamlib] {self.name}: TCP nasluchuje na {sockets_info}", flush=True)
+            print(f"[hamlib] {self.name}: TCP listening on {sockets_info}", flush=True)
             task = asyncio.create_task(self._serve())
             task.add_done_callback(self._on_serve_done)
         except OSError as e:
-            print(f"[hamlib] {self.name}: BLAD BINDOWANIA portu {self.port}: {e}", flush=True)
+            print(f"[hamlib] {self.name}: BIND ERROR on port {self.port}: {e}", flush=True)
             self.running = False
 
     def _on_serve_done(self, task):
-        """Loguj jesli serve_forever() zakonczy sie nieoczekiwanie (cichy crash)."""
+        """Log if serve_forever() ends unexpectedly (a silent crash)."""
         if task.cancelled():
             return
         exc = task.exception()
         if exc:
-            print(f"[hamlib] {self.name}: SERWER PADL: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[hamlib] {self.name}: SERVER CRASHED: {type(exc).__name__}: {exc}", flush=True)
             import traceback
             traceback.print_exception(type(exc), exc, exc.__traceback__)
         else:
-            print(f"[hamlib] {self.name}: serve_forever() zakonczyl sie bez bledu (nieoczekiwane)", flush=True)
+            print(f"[hamlib] {self.name}: serve_forever() ended without an error (unexpected)", flush=True)
         self.running = False
 
     async def _serve(self):
@@ -525,10 +533,14 @@ class HamlibManager:
         self.servers = []
 
     def _get_config(self):
-        # Opcja C: jeden port broadcast dla wszystkich uzytkownikow.
-        # Wszyscy podlaczaja sie pod port 4532 — N klientow jednoczesnie.
-        # Dodatkowe porty (4533, 4534) sa opcjonalne dla specjalnych zastosowan
-        # (np. oddzielny skimmer ktory tylko czyta, bez kontroli).
+        # Option C: one broadcast port for all users. Everyone connects on
+        # port 4532 — N clients simultaneously. The extra ports (4533,
+        # 4534) are optional for special uses (e.g. a separate read-only
+        # skimmer with no control).
+        # NOTE: "label" values below are UI text (admin panel, see
+        # public/js/hamlib_ui.js - displayed raw, no I18n, and editable by
+        # the admin) - deliberately left in Polish, not in scope for the
+        # backend English translation pass.
         cfg = self.app.cfg.get('hamlibServers', [])
         defaults = [
             {"port": 4532, "enabled": True,  "label": "Broadcast (wszyscy uzytkownicy)"},
@@ -546,15 +558,15 @@ class HamlibManager:
             if not c.get('enabled', i == 0):
                 continue
             port = c['port']
-            # Sprawdz faktyczna dostepnosc — nie ufaj slepo zapisanej
-            # konfiguracji (port mogl zostac zajety przez rigctld lub inny
-            # proces od czasu ostatniego zapisu ustawien w panelu).
+            # Check actual availability — don't blindly trust the saved
+            # config (the port could have been taken by rigctld or another
+            # process since the settings panel last saved).
             import socket as _sk
             _t = _sk.socket(); _t.settimeout(0.3)
             _busy = _t.connect_ex(('127.0.0.1', port)) == 0
             _t.close()
             if _busy:
-                print(f"[hamlib] Port {port} zajety (inny proces) — pomijam slot {i+1}", flush=True)
+                print(f"[hamlib] Port {port} in use (another process) — skipping slot {i+1}", flush=True)
                 continue
             srv = VirtualRigServer(port, i, self.app)
             await srv.start()

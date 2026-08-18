@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""server.py — Ham Radio Control Server — punkt wejscia"""
+"""server.py — Ham Radio Control Server — entry point"""
 import os as _os
-# Limit watkow BLAS/numpy przed importem numpy (patrz launcher.py) — zeby FFT
-# audio nie porywalo wszystkich rdzeni i nie zatykalo dzwieku.
+# Limit BLAS/numpy threads before importing numpy (see launcher.py) — so
+# audio FFT doesn't grab every core and stall the audio.
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
            "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
     _os.environ.setdefault(_v, "2")
@@ -24,13 +24,13 @@ def _ensure_deps():
         try: import opus
         except ImportError: missing.append("opuslib")
     if missing:
-        print(f"[setup] Instaluje: {', '.join(missing)}")
+        print(f"[setup] Installing: {', '.join(missing)}")
         subprocess.run(
             [sys.executable,"-m","pip","install"]+missing+
             ["--quiet","--no-warn-script-location"],
             check=True
         )
-    # Audio — opcjonalne
+    # Audio — optional
     try:
         import opuslib, opuslib.api
         print("[setup] opuslib OK")
@@ -73,7 +73,7 @@ def _ensure_deps():
 
 _ensure_deps()
 
-# Importy po _ensure_deps (aiohttp musi byc juz zainstalowane)
+# Imports after _ensure_deps (aiohttp must already be installed)
 import aiohttp.web as web
 from config import PORT, ADMIN_PW, HAMLIB_PORT, DATA, VERBOSE
 import os as _os
@@ -91,36 +91,37 @@ async def amain():
     loop = asyncio.get_running_loop()
     app.hub.set_loop(loop)
 
-    # Audio RX zawsze wlaczone od startu serwera (wczesniej wymagalo recznego
-    # kliknieca przycisku w UI, ktory teraz jest usuniety — patrz settings.js/
-    # index.html). Uzywamy zapisanego urzadzenia z konfiguracji, identycznie
-    # jak robil to dotychczasowy endpoint POST /api/audio/rx/start.
+    # Audio RX is always enabled from server startup (previously required a
+    # manual button click in the UI, which has since been removed — see
+    # settings.js/index.html). Uses the saved device from config, the same
+    # way the old POST /api/audio/rx/start endpoint did.
     try:
         _rx_dev = app.cfg.get("audio", {}).get("rxDevice")
         if app.audio.start_rx(device=_rx_dev):
-            print(f"[audio] RX auto-start OK (device={_rx_dev or 'domyslne'})")
+            print(f"[audio] RX auto-start OK (device={_rx_dev or 'default'})")
         else:
-            print("[audio] RX auto-start NIEUDANE — sprawdz urzadzenie audio")
+            print("[audio] RX auto-start FAILED — check the audio device")
     except Exception as e:
-        print(f"[audio] RX auto-start blad: {e}")
+        print(f"[audio] RX auto-start error: {e}")
 
     async def _initial_rig_connect():
         await app.rig.connect(app.cfg)
         await app._refresh_caps_cache()
-        # Auto-start waterfall scope gdy podlaczono REALNE radio (nie SIM).
-        # Bez tego _enable_scope nigdy nie bylo wolane -> radio nie wysylalo
-        # ramek 0x27 -> waterfall pokazywal tylko symulacje. Frontend ma
-        # startScope() ale nikt go nie wolal - stad regresja "waterfall przestal
-        # dzialac". Teraz backend wlacza scope sam po polaczeniu.
+        # Auto-start the waterfall scope when a REAL radio is connected (not
+        # SIM). Without this, _enable_scope was never called -> the radio
+        # never sent 0x27 frames -> the waterfall only showed the
+        # simulation. The frontend has startScope() but nothing was calling
+        # it - hence the "waterfall stopped working" regression. The
+        # backend now enables the scope itself after connecting.
         try:
             if not app.rig.sim and hasattr(app.rig, "scope_start"):
-                await asyncio.sleep(1.0)  # daj radiu chwile po connect
-                # scope_start robi blokujace zapisy do portu (time.sleep) —
-                # w watku, zeby nie zamrozic petli przy starcie (looplag).
+                await asyncio.sleep(1.0)  # give the radio a moment after connect
+                # scope_start does blocking writes to the port (time.sleep) —
+                # run it in a thread so it doesn't freeze the loop on startup (looplag).
                 await asyncio.to_thread(app.rig.scope_start)
-                print("[rig] scope auto-wlaczony po polaczeniu z radiem", flush=True)
+                print("[rig] scope auto-enabled after connecting to the radio", flush=True)
         except Exception as e:
-            print(f"[rig] auto scope_start blad: {e}", flush=True)
+            print(f"[rig] auto scope_start error: {e}", flush=True)
 
     asyncio.create_task(_initial_rig_connect())
     app.init_rotators()
@@ -132,17 +133,17 @@ async def amain():
             tick += 1
             for r in app.rotators:
                 if r.moving:
-                    # Podczas ruchu: broadcastuj co 0.5s
+                    # While moving: broadcast every 0.5s
                     await app.hub.broadcast({"type": "rotator_update", "rotator": r.state()})
                 elif tick % 4 == 0:
-                    # Gdy stoi: odpytaj sprzęt o pozycję (STATUS) co 2s, potem broadcast
+                    # While stationary: poll the hardware for position (STATUS) every 2s, then broadcast
                     if not r.sim:
                         pos = await asyncio.to_thread(r._read_pos, 1.5)
                         if pos is not None:
                             r.az = pos
                     await app.hub.broadcast({"type": "rotator_update", "rotator": r.state()})
 
-    # Polling radia (tylko gdy podłączony realny sprzęt — w sim pomijany)
+    # Radio polling (only when real hardware is connected — skipped in sim)
     async def rig_poll():
         cnt = 0
         while True:
@@ -150,61 +151,62 @@ async def amain():
             if app.rig.sim or not app.rig.connected:
                 continue
             cnt += 1
-            # S-meter/mode/freq broadcast robi juz reader w civ.py (_poller_loop
-            # wysyla przez self.bcast). Tutaj tylko zywy status w konsoli.
-            # WCZESNIEJ byl tu dodatkowy polling z bugiem (get_smeter zwraca
-            # cached self.s_meter, wiec 'abs(lvl - s_meter)' zawsze 0 - nigdy
-            # nie broadcastowal, a przy okazji nadpisywal poprawne wartosci).
-            # Fix 2026-07-05.
+            # S-meter/mode/freq broadcast is already done by the reader in
+            # civ.py (_poller_loop sends it via self.bcast). This is just a
+            # console heartbeat.
+            # PREVIOUSLY there was extra polling here with a bug (get_smeter
+            # returns the cached self.s_meter, so 'abs(lvl - s_meter)' was
+            # always 0 - it never broadcast, and it also overwrote correct
+            # values). Fixed 2026-07-05.
 
-            # Żywy status w konsoli co ~2s (freq/mode/S-metr) - tylko w trybie
-            # VERBOSE (HAM_VERBOSE=1). Domyslnie cicho - nie zalewa konsoli.
+            # Console heartbeat every ~2s (freq/mode/S-meter) - only in
+            # VERBOSE mode (HAM_VERBOSE=1). Silent by default - doesn't flood the console.
             if VERBOSE and cnt % 8 == 0:
                 print(f"[rig] {app.rig.freq/1e6:.6f} MHz  {app.rig.mode}  "
-                      f"S-metr={app.rig.s_meter:.1f}", flush=True)
+                      f"S-meter={app.rig.s_meter:.1f}", flush=True)
 
-    # Petle tla pod nadzorem (_supervise restartuje je gdy padna).
-    # rot_poll/rig_poll maja wlasne try/except w petli, ale supervisor
-    # chroni przed nieprzewidzianym crashem calego taska.
+    # Supervised background loops (_supervise restarts them if they crash).
+    # rot_poll/rig_poll have their own try/except in the loop, but the
+    # supervisor protects against an unforeseen crash of the whole task.
     app._supervise(lambda: rot_poll(), "rot_poll")
     app._supervise(lambda: rig_poll(), "rig_poll")
     app.audio.set_loop(asyncio.get_running_loop())
     app._supervise(lambda: app._ft8_rx_loop(), "ft8_rx_loop")
     app._supervise(lambda: app._waterfall_loop(), "waterfall_loop")
     asyncio.create_task(app.tunnel.autostart())
-    print(f"[audio] Stream gotowy | opus={app.audio.get_status()['opus_lib']}")
+    print(f"[audio] Stream ready | opus={app.audio.get_status()['opus_lib']}")
 
     # ── WSJT-X UDP monitor — autostart ───────────────────────────────────────
-    # UWAGA: WSJT-X sam uzywa portu 2237 jako lokalny endpoint.
-    # Nasz serwer musi nasluchiwac na INNYM porcie (domyslnie 2238).
-    # W WSJT-X Settings → Reporting → UDP Server: localhost, Port: 2238
+    # NOTE: WSJT-X itself uses port 2237 as its local endpoint.
+    # Our server must listen on a DIFFERENT port (default 2238).
+    # In WSJT-X: Settings → Reporting → UDP Server: localhost, Port: 2238
     wsjtx_port = app.cfg.get("wsjtxUdpPort", 2238)
     wsjtx_auto = app.cfg.get("wsjtxAutostart", True)
     if wsjtx_auto:
         ok = await app.wsjtx.start(port=wsjtx_port)
         if ok:
-            print(f"[wsjtx] Monitor UDP aktywny na porcie {wsjtx_port}")
+            print(f"[wsjtx] UDP monitor active on port {wsjtx_port}")
         else:
-            print(f"[wsjtx] Autostart nieudany — port {wsjtx_port} zajety")
+            print(f"[wsjtx] Autostart failed — port {wsjtx_port} in use")
 
-    # ── Emulator rigctld (Hamlib NET rigctl) — port 4532 ─────────────────────
-    # UWAGA: NIE uruchamiamy prawdziwego rigctld.exe rownolegle do naszego
-    # CivRig — oba probowalyby otworzyc ten sam port COM (np. COM13 dla
-    # IC-7300), co powoduje konflikt: rigctld dostaje TCP connection ale
-    # "write_block() failed" przy kazdej komendzie, bo port szeregowy jest
-    # juz zajety przez nasz glowny serwer (civ.py).
+    # ── rigctld emulator (Hamlib NET rigctl) — port 4532 ─────────────────────
+    # NOTE: we do NOT run a real rigctld.exe alongside our own CivRig — both
+    # would try to open the same COM port (e.g. COM13 for the IC-7300),
+    # causing a conflict: rigctld gets a TCP connection but "write_block()
+    # failed" on every command, because the serial port is already held by
+    # our main server (civ.py).
     #
-    # Zamiast tego nasz emulator (hamlib_server.py) rozmawia z TYM SAMYM
-    # obiektem self.rig (CivRig) ktorego juz uzywa caly serwer — bez
-    # otwierania dodatkowego portu szeregowego. To jedyne bezkonfliktowe
-    # podejscie gdy jeden proces ma kontrolowac radio.
+    # Instead our emulator (hamlib_server.py) talks to the SAME self.rig
+    # (CivRig) object already used by the rest of the server — without
+    # opening an extra serial port. This is the only conflict-free approach
+    # when one process is meant to control the radio.
     try:
         from hamlib_server import HamlibManager
         app.hamlib = HamlibManager(app)
-        # WYMUS swiezy config przy KAZDYM starcie — nie ufaj zapisanej
-        # konfiguracji z cfg.json, ktora mogla zostac ustawiona na
-        # enabled=False podczas wczesniejszych testow w panelu UI i
-        # cicho blokowac wszystkie sloty bez zadnego logu bledu.
+        # FORCE a fresh config on EVERY startup — don't trust the saved
+        # config from cfg.json, which could have been set to enabled=False
+        # during earlier UI-panel testing and silently block every slot
+        # with no error log at all.
         app.cfg['hamlibServers'] = [
             {"port": 4532, "enabled": True,  "label": "Radio 1 — WSJT-X"},
             {"port": 4533, "enabled": False, "label": "Radio 2"},
@@ -214,12 +216,12 @@ async def amain():
         _n = len(app.hamlib.servers)
         if _n > 0:
             _ports = [s.port for s in app.hamlib.servers]
-            print(f"[hamlib] {_n} serwer(y) aktywne na portach: {_ports}", flush=True)
+            print(f"[hamlib] {_n} server(s) active on ports: {_ports}", flush=True)
         else:
-            print(f"[hamlib] UWAGA: ZERO serwerow wystartowalo!", flush=True)
+            print(f"[hamlib] WARNING: ZERO servers started!", flush=True)
     except Exception as e:
         import traceback
-        print(f"[hamlib] WYJATEK przy starcie: {e}", flush=True)
+        print(f"[hamlib] EXCEPTION on startup: {e}", flush=True)
         traceback.print_exc()
         app.hamlib = None
 
@@ -243,27 +245,26 @@ async def amain():
         audio_cfg = app.cfg.get("audio", {})
         started = await rust_audio.start(hub=app.hub, cfg=audio_cfg)
         if started:
-            print("[server] Rust audio bridge aktywny (niska latencja)", flush=True)
-            app.rust_audio = rust_audio  # dostepny ale nie zastepuje app.audio
+            print("[server] Rust audio bridge active (low latency)", flush=True)
+            app.rust_audio = rust_audio  # available but doesn't replace app.audio
         else:
-            print("[server] ham_audio.exe niedostępny — używam PyAudio", flush=True)
+            print("[server] ham_audio.exe unavailable — using PyAudio", flush=True)
             app.rust_audio = None
     except Exception as e:
-        print(f"[server] Rust bridge error: {e} — używam PyAudio", flush=True)
+        print(f"[server] Rust bridge error: {e} — using PyAudio", flush=True)
         app.rust_audio = None
 
-    # Uruchom HTTP (zawsze na PORT)
+    # Start HTTP (always on PORT)
     site_http = web.TCPSite(runner, BIND_HOST, PORT)
 
-    # DeepCW - opcjonalne. Jesli brak modulow deepcw_model/deepcw_engine
-    # server startuje bez neural CW decodera. Dostarczone w Sesji 6 (2026-06)
-    # ale moze byc usuniete lub przeniesione.
+    # DeepCW - optional. If the deepcw_model/deepcw_engine modules are
+    # missing, the server starts without the neural CW decoder.
     try:
         from deepcw_model import deepcw_manager
         deepcw_manager.load_from_disk()
         asyncio.ensure_future(deepcw_manager.auto_check_loop(app.hub.broadcast))
 
-        # Auto-instalacja zaleznosci DeepCW jesli brak
+        # Auto-install DeepCW dependencies if missing
         async def _ensure_deepcw_deps():
             import importlib, subprocess, sys
             missing = []
@@ -271,9 +272,9 @@ async def amain():
                 if importlib.util.find_spec(pkg) is None:
                     missing.append(pkg)
             if missing:
-                print(f"[deepcw] Instaluję brakujące pakiety: {missing}", flush=True)
+                print(f"[deepcw] Installing missing packages: {missing}", flush=True)
                 subprocess.check_call([sys.executable, '-m', 'pip', 'install'] + missing)
-                print("[deepcw] Instalacja zakończona", flush=True)
+                print("[deepcw] Installation complete", flush=True)
             from deepcw_engine import deepcw_engine
             await asyncio.sleep(1)
             ok = await deepcw_engine.load()
@@ -281,20 +282,20 @@ async def amain():
 
         asyncio.ensure_future(_ensure_deepcw_deps())
     except ImportError as e:
-        print(f"[server] DeepCW modul niedostepny ({e}) - server startuje bez neural CW decodera", flush=True)
+        print(f"[server] DeepCW module unavailable ({e}) - server starting without the neural CW decoder", flush=True)
     except Exception as e:
-        print(f"[server] DeepCW init blad: {e} - server kontynuuje", flush=True)
+        print(f"[server] DeepCW init error: {e} - server continuing", flush=True)
 
     # ── SSL / HTTPS ───────────────────────────────────────────────────────────
-    # getUserMedia (mikrofon TX) wymaga HTTPS lub localhost
-    # Sprawdz czy sa certyfikaty
+    # getUserMedia (TX microphone) requires HTTPS or localhost
+    # Check whether certificates exist
     import ssl as _ssl
     import pathlib as _pl
     import json as _json
 
     _ssl_ctx = None
 
-    # Najpierw sprawdz certyfikat z konfiguracji tunelu (Let's Encrypt)
+    # First check for a certificate from the tunnel config (Let's Encrypt)
     _tunnel_cfg_path = DATA / "tunnel_config.json"
     _letsencrypt_cert = None
     _letsencrypt_key  = None
@@ -306,27 +307,27 @@ async def amain():
             if _cp.exists() and _kp.exists():
                 _letsencrypt_cert = _cp
                 _letsencrypt_key  = _kp
-                print(f"[ssl] Let's Encrypt cert znaleziony: {_cp}")
+                print(f"[ssl] Let's Encrypt cert found: {_cp}")
         except Exception as _e:
-            print(f"[ssl] Blad odczytu tunnel_config.json: {_e}")
+            print(f"[ssl] Error reading tunnel_config.json: {_e}")
 
-    # cert.pem/key.pem zapisywane do DATA (zapisywalny katalog - obok EXE albo
-    # APPDATA gdy Program Files). Bez tego "Permission denied" przy instalacji
-    # do Program Files (read-only).
+    # cert.pem/key.pem are saved to DATA (the writable directory - next to
+    # the EXE or APPDATA when installed in Program Files). Without this,
+    # "Permission denied" occurs on a Program Files install (read-only).
     _cert = _letsencrypt_cert or (DATA / "cert.pem")
     _key  = _letsencrypt_key  or (DATA / "key.pem")
 
     if _cert.exists() and _key.exists():
-        # Uzywaj istniejacego certyfikatu (Let's Encrypt lub self-signed)
+        # Use the existing certificate (Let's Encrypt or self-signed)
         try:
             _ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
             _ssl_ctx.load_cert_chain(str(_cert), str(_key))
-            print(f"[ssl] Certyfikat zaladowany: {_cert}")
+            print(f"[ssl] Certificate loaded: {_cert}")
         except Exception as e:
-            print(f"[ssl] Blad certyfikatu: {e} — uruchamiam HTTP")
+            print(f"[ssl] Certificate error: {e} — starting HTTP")
             _ssl_ctx = None
     else:
-        # Auto-generuj self-signed cert (nie wymaga instalacji)
+        # Auto-generate a self-signed cert (no install required)
         try:
             from cryptography import x509
             from cryptography.x509.oid import NameOID
@@ -334,7 +335,7 @@ async def amain():
             from cryptography.hazmat.primitives.asymmetric import rsa
             import datetime
 
-            print("[ssl] Generuje self-signed certyfikat...")
+            print("[ssl] Generating a self-signed certificate...")
             _privkey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
             _subject = x509.Name([
                 x509.NameAttribute(NameOID.COMMON_NAME, u"your-server.ddns.net"),
@@ -361,35 +362,36 @@ async def amain():
             ))
             _ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
             _ssl_ctx.load_cert_chain(str(_cert), str(_key))
-            print(f"[ssl] Self-signed cert wygenerowany — cert.pem + key.pem")
+            print(f"[ssl] Self-signed cert generated — cert.pem + key.pem")
         except ImportError:
-            print("[ssl] Brak 'cryptography' — uruchamiam HTTP")
-            print("[ssl] Aby wlaczyc HTTPS: pip install cryptography")
+            print("[ssl] 'cryptography' missing — starting HTTP")
+            print("[ssl] To enable HTTPS: pip install cryptography")
             _ssl_ctx = None
 
-    # Uruchom HTTP (zawsze na PORT)
+    # Start HTTP (always on PORT)
     site_http = web.TCPSite(runner, BIND_HOST, PORT)
     await site_http.start()
 
-    # Uruchom HTTPS na PORT+1 jesli mamy certyfikat
+    # Start HTTPS on PORT+1 if we have a certificate
     _https_port = None
     if _ssl_ctx:
         _https_port = PORT + 1
         try:
             site_https = web.TCPSite(runner, BIND_HOST, _https_port, ssl_context=_ssl_ctx)
             await site_https.start()
-            print(f"[ssl] HTTPS dostepny na porcie {_https_port}")
+            print(f"[ssl] HTTPS available on port {_https_port}")
         except Exception as e:
-            print(f"[ssl] HTTPS blad: {e}")
+            print(f"[ssl] HTTPS error: {e}")
             _https_port = None
 
-    # ── Hot-reload certyfikatu (dla pracy 24/7) ──────────────────────────────
-    # Serwer laduje cert przy starcie. Gdy odnowisz go (--gen-cert albo
-    # auto-renew certbota), nowy plik trafia na dysk, ale zywy serwer trzyma
-    # stary w pamieci. Ten watek sprawdza co 6h czy plik certu sie zmienil i
-    # przeladowuje go NA ZYWO (load_cert_chain na istniejacym SSLContext) -
-    # nowe polaczenia dostaja nowy cert, BEZ restartu serwera. Kluczowe dla
-    # softu chodzacego 24h - cert odnawia sie sam, zero przerwy.
+    # ── Certificate hot-reload (for 24/7 operation) ──────────────────────────
+    # The server loads the cert at startup. When you renew it (--gen-cert or
+    # certbot's auto-renew), the new file lands on disk, but the running
+    # server still holds the old one in memory. This task checks every 6h
+    # whether the cert file changed and reloads it LIVE
+    # (load_cert_chain on the existing SSLContext) - new connections get the
+    # new cert, WITHOUT restarting the server. Essential for software
+    # running 24/7 - the cert renews itself with zero downtime.
     if _ssl_ctx and _cert and _key:
         async def _cert_reload_watcher():
             import os as _os
@@ -398,21 +400,21 @@ async def amain():
             except Exception:
                 last_mtime = 0
             while True:
-                await asyncio.sleep(6 * 3600)  # sprawdzaj co 6 godzin
+                await asyncio.sleep(6 * 3600)  # check every 6 hours
                 try:
-                    # Preferuj Let's Encrypt jesli pojawil sie swiezy
+                    # Prefer Let's Encrypt if a fresh one has appeared
                     cur_cert, cur_key = _cert, _key
                     m = _os.path.getmtime(str(cur_cert))
                     if m != last_mtime:
                         _ssl_ctx.load_cert_chain(str(cur_cert), str(cur_key))
                         last_mtime = m
-                        print(f"[ssl] Certyfikat przeladowany na zywo (bez restartu): "
+                        print(f"[ssl] Certificate reloaded live (no restart): "
                               f"{cur_cert}", flush=True)
                 except Exception as _e:
-                    print(f"[ssl] Hot-reload certu nieudany: {_e}", flush=True)
+                    print(f"[ssl] Certificate hot-reload failed: {_e}", flush=True)
         asyncio.create_task(_cert_reload_watcher())
-        print("[ssl] Hot-reload certu aktywny (sprawdzanie co 6h) - "
-              "odnowienie nie wymaga restartu", flush=True)
+        print("[ssl] Certificate hot-reload active (checking every 6h) - "
+              "renewal doesn't require a restart", flush=True)
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -428,38 +430,40 @@ async def amain():
 ╚══════════════════════════════════════════════╝
 ► HTTP:  http://localhost:{PORT}
 ► HTTP:  http://{local_ip}:{PORT}
-{f'► HTTPS: https://{local_ip}:{_https_port}  ← UZYJ TEGO (mikrofon TX)' if _https_port else '► HTTPS: niedostepny (pip install cryptography)'}
+{f'► HTTPS: https://{local_ip}:{_https_port}  ← USE THIS (TX microphone)' if _https_port else '► HTTPS: unavailable (pip install cryptography)'}
 ► Login: admin / {ADMIN_PW}
 ► WebSocket: ws://localhost:{PORT}/ws
 {f'► WebSocket SSL: wss://localhost:{_https_port}/ws' if _https_port else ''}
 ► Python {sys.version.split()[0]} | {sys.platform}
-{f'► UWAGA: self-signed cert — przegladarka pokaze ostrzezenie, kliknij Zaawansowane → Kontynuuj' if _https_port and not ((DATA / 'cert.pem').stat().st_size > 5000 if (DATA / 'cert.pem').exists() else False) else ''}
+{f'► NOTE: self-signed cert — the browser will show a warning, click Advanced -> Proceed' if _https_port and not ((DATA / 'cert.pem').stat().st_size > 5000 if (DATA / 'cert.pem').exists() else False) else ''}
 """)
 
     await asyncio.Event().wait()
 
 def main():
-    # Wycisz blad Windows WinError 10054 (ConnectionResetError) w asyncio —
-    # pojawia sie gdy przegladarka zamknie polaczenie zanim serwer to zrobi
-    # (np. odswiezenie strony, zamkniecie zakladki). To normalne zachowanie,
-    # nie blad aplikacji — domyslnie asyncio loguje to jako wyjatek co
-    # zasmiecal konsole.
+    # Silence the Windows WinError 10054 (ConnectionResetError) in asyncio —
+    # it shows up when the browser closes the connection before the server
+    # does (e.g. a page refresh, closing a tab). This is normal behavior,
+    # not an application bug — by default asyncio logs it as an exception,
+    # cluttering the console.
     import logging
-    # UWAGA (stabilnosc): NIE tlumimy calego loggera asyncio na CRITICAL, bo
-    # ukrywaloby to "Task exception was never retrieved" - sygnal ze petla tla
-    # cicho umarla. Zamiast tego filtrujemy tylko szum ConnectionResetError.
+    # NOTE (stability): we do NOT silence the whole asyncio logger to
+    # CRITICAL, since that would hide "Task exception was never retrieved" -
+    # a signal that a background loop died silently. Instead we filter out
+    # only the ConnectionResetError noise.
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     def _silence_reset(loop, context):
         exc = context.get("exception")
         if isinstance(exc, ConnectionResetError):
-            return  # ignoruj WinError 10054 (klient zerwal polaczenie)
-        # STABILNOSC: crash taska tla (np. _ft8_rx_loop, _device_watchdog)
-        # musi byc GLOSNY - inaczej funkcja przestaje dzialac po cichu.
+            return  # ignore WinError 10054 (client dropped the connection)
+        # STABILITY: a background task crash (e.g. _ft8_rx_loop,
+        # _device_watchdog) must be LOUD - otherwise the feature silently
+        # stops working.
         _msg = context.get("message", "")
         _task = context.get("future") or context.get("task")
         if exc is not None:
-            print(f"[asyncio] NIEOBSLUZONY WYJATEK w tasku: "
+            print(f"[asyncio] UNHANDLED EXCEPTION in task: "
                   f"{type(exc).__name__}: {exc}", flush=True)
             if _task is not None:
                 print(f"[asyncio]   task: {_task!r}", flush=True)
