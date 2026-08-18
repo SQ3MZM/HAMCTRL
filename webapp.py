@@ -102,6 +102,7 @@ from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
+from crypto_secrets import encrypt_secret, decrypt_secret
 import qso_db
 import callbook
 from audio import enumerate_audio_devices, auto_detect_radio_audio
@@ -453,6 +454,7 @@ class App:
             self.rig = RigCAT()
         self.rotators: list[Rotator] = []
         self.users    = get_users()
+        self._migrate_plaintext_secrets()
         self.audio    = AudioStream()
         self.audio.cfg = self.cfg.get("audio", {})
 
@@ -915,6 +917,36 @@ class App:
 
     def find_user_by_id(self, uid: str) -> dict | None:
         return next((u for u in self.users if u["id"] == uid), None)
+
+    def _migrate_plaintext_secrets(self):
+        """One-time startup pass: encrypt any CloudLog/QRZ/HamQTH credentials
+        still stored as plaintext from before encryption at rest was added
+        (see crypto_secrets.py). Idempotent - encrypt_secret() is a no-op on
+        values already carrying the enc1: prefix, so this is safe to run on
+        every startup."""
+        changed = False
+        for u in self.users:
+            cl = u.get("cloudlog")
+            if cl:
+                for key in ("apiKeyQso", "apiKeyRadio"):
+                    val = cl.get(key, "")
+                    if val:
+                        enc = encrypt_secret(val)
+                        if enc != val:
+                            cl[key] = enc
+                            changed = True
+            cb = u.get("callbook")
+            if cb:
+                for key in ("qrzPassword", "hamqthPassword"):
+                    val = cb.get(key, "")
+                    if val:
+                        enc = encrypt_secret(val)
+                        if enc != val:
+                            cb[key] = enc
+                            changed = True
+        if changed:
+            save_json(USR_F, self.users)
+            print("[secrets] zaszyfrowano dane logowania CloudLog/QRZ/HamQTH w users.json", flush=True)
 
     def _has_perm(self, uid: str, role: str, key: str) -> bool:
         """Admin ma zawsze dostep. Inaczej sprawdz granularne uprawnienie
@@ -3450,7 +3482,11 @@ class App:
             if not user:
                 return 401, {"error": "Brak autoryzacji"}
             u = self.find_user_by_id(user["id"])
-            return 200, (u or {}).get("cloudlog", {})
+            cl = dict((u or {}).get("cloudlog", {}))
+            for key in ("apiKeyQso", "apiKeyRadio"):
+                if cl.get(key):
+                    cl[key] = decrypt_secret(cl[key])
+            return 200, cl
 
         if p == "/api/cloudlog/config" and method == "POST":
             if not user:
@@ -3460,8 +3496,8 @@ class App:
                 return 404, {"error": "Uzytkownik nie istnieje"}
             u["cloudlog"] = {
                 "url":          body.get("url", "").strip(),
-                "apiKeyQso":    body.get("apiKeyQso", "").strip(),
-                "apiKeyRadio":  body.get("apiKeyRadio", "").strip(),
+                "apiKeyQso":    encrypt_secret(body.get("apiKeyQso", "").strip()),
+                "apiKeyRadio":  encrypt_secret(body.get("apiKeyRadio", "").strip()),
                 "stationId":    int(body.get("stationId", 1)),
                 "liveEnabled":  bool(body.get("liveEnabled", False)),
             }
@@ -3617,6 +3653,9 @@ class App:
             if not user: return 401, {"error": "Brak autoryzacji"}
             u = self.find_user_by_id(user["id"])
             cfg = dict((u or {}).get("callbook", {}))
+            for key in ("qrzPassword", "hamqthPassword"):
+                if cfg.get(key):
+                    cfg[key] = decrypt_secret(cfg[key])
             return 200, cfg
 
         if p == "/api/callbook/config" and method == "POST":
@@ -3625,9 +3664,9 @@ class App:
             if not u: return 404, {"error": "Uzytkownik nie istnieje"}
             u["callbook"] = {
                 "qrzUsername":    body.get("qrzUsername", "").strip(),
-                "qrzPassword":    body.get("qrzPassword", "").strip(),
+                "qrzPassword":    encrypt_secret(body.get("qrzPassword", "").strip()),
                 "hamqthUsername": body.get("hamqthUsername", "").strip(),
-                "hamqthPassword": body.get("hamqthPassword", "").strip(),
+                "hamqthPassword": encrypt_secret(body.get("hamqthPassword", "").strip()),
             }
             save_json(USR_F, self.users)
             return 200, {"ok": True}
@@ -3652,9 +3691,9 @@ class App:
                 return 400, {"ok": False, "error": "Brak znaku"}
             u = self.find_user_by_id(uid) or {}
             cb = u.get("callbook", {})
-            qrz_creds = ((cb.get("qrzUsername"), cb.get("qrzPassword"))
+            qrz_creds = ((cb.get("qrzUsername"), decrypt_secret(cb.get("qrzPassword")))
                          if cb.get("qrzUsername") and cb.get("qrzPassword") else None)
-            hamqth_creds = ((cb.get("hamqthUsername"), cb.get("hamqthPassword"))
+            hamqth_creds = ((cb.get("hamqthUsername"), decrypt_secret(cb.get("hamqthPassword")))
                             if cb.get("hamqthUsername") and cb.get("hamqthPassword") else None)
             if not qrz_creds and not hamqth_creds:
                 return 200, {"ok": False, "error": "Skonfiguruj QRZ.com lub HamQTH w USTAWIENIACH"}
@@ -4560,7 +4599,7 @@ class App:
             if not u: return
             cl = (u or {}).get("cloudlog", {})
             url     = cl.get("url", "").rstrip("/")
-            api_key = cl.get("apiKeyQso", "")
+            api_key = decrypt_secret(cl.get("apiKeyQso", ""))
             station = cl.get("stationId", 1)
             if not url or not api_key: return
             # Nie dubluj /index.php jesli user go wpisal
