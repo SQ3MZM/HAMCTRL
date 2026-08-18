@@ -1,8 +1,8 @@
 /**
- * waterfall.js — panel waterfall/spektrum
- * Styl zbliżony do IC-7300: ciemne tło, zielona linia spektrum,
- * paleta niebieski→cyan→żółty→czerwony, siatka offsetów kHz,
- * wyraźny overlay filtra, oś z offsetami relative do VFO.
+ * waterfall.js — waterfall/spectrum panel
+ * IC-7300-like style: dark background, green spectrum line,
+ * blue→cyan→yellow→red palette, kHz offset grid,
+ * clear filter overlay, axis with offsets relative to the VFO.
  */
 (function () {
 'use strict';
@@ -21,25 +21,25 @@ let lastMeta = {
   mode: 'USB', dataMode: false, filterHz: 2400, scopeMode: 0, outOfRange: false,
 };
 
-// ── Paleta IC-7300: czarny → granatowy → niebieski → cyan → żółty → czerwony ──
+// ── IC-7300 palette: black → navy → blue → cyan → yellow → red ────────────────
 const PALETTE = (() => {
   const p = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
     let r, g, b;
     if (i < 40) {
-      // Czarny → bardzo ciemny granatowy (szum tła)
+      // Black → very dark navy (background noise)
       r = 0; g = 0; b = Math.round(i * 3.5);
     } else if (i < 90) {
-      // Granatowy → niebieski
+      // Navy → blue
       r = 0; g = Math.round((i-40)*1.5); b = Math.min(255, 140 + Math.round((i-40)*2));
     } else if (i < 140) {
-      // Niebieski → cyan
+      // Blue → cyan
       r = 0; g = Math.min(255, 75 + Math.round((i-90)*3.6)); b = 255 - Math.round((i-90)*2);
     } else if (i < 190) {
-      // Cyan → żółty
+      // Cyan → yellow
       r = Math.round((i-140)*5.1); g = 255; b = Math.max(0, 155 - Math.round((i-140)*3.1));
     } else {
-      // Żółty → czerwony
+      // Yellow → red
       r = 255; g = Math.max(0, 255 - Math.round((i-190)*5.1)); b = 0;
     }
     p[i] = (255<<24)|(b<<16)|(g<<8)|r; // ABGR
@@ -117,7 +117,7 @@ function attachClickToTune() {
   });
 }
 
-// ── Dane z WS ─────────────────────────────────────────────────────────────────
+// ── Data from WS ──────────────────────────────────────────────────────────────
 function handleScopeData(msg) {
   if (msg.type !== 'scope_frame' && msg.type !== 'scope_data') return;
   lastScopeData = msg.data;
@@ -143,18 +143,18 @@ function handleFilterWidth(msg) {
   drawAxis();
 }
 
-// ── Rysuj ramkę ───────────────────────────────────────────────────────────────
-// Peak-hold state — najwyzsza wartosc w kazdym binie ze zdefiniowanym decay.
-// Reset gdy zmienia sie ilosc bins albo szerokosc canvasu.
+// ── Draw a frame ────────────────────────────────────────────────────────────
+// Peak-hold state — the highest value in each bin with a defined decay.
+// Reset when the bin count or canvas width changes.
 let _peakHold = null;
-let _peakDecay = 0.985; // per frame — im blizsze 1, tym wolniejszy fade
+let _peakDecay = 0.985; // per frame — the closer to 1, the slower the fade
 
 function drawFrame(data) {
   if (!specCtx || !wfCtx || !data?.length) return;
   const W  = specCanvas.width, Hs = specCanvas.height;
   const Ww = wfCanvas.width,   Hw = wfCanvas.height;
 
-  // Aktualizuj peak-hold (dopasuj do dlugosci danych)
+  // Update peak-hold (match the data length)
   if (!_peakHold || _peakHold.length !== data.length) {
     _peakHold = new Float32Array(data.length);
   }
@@ -167,9 +167,9 @@ function drawFrame(data) {
     }
   }
 
-  // Interpolacja liniowa pomiedzy binami — zamiast Math.floor(i * data.length / W)
-  // ktora daje "schodkowanie" gdy W < data.length. Interpolacja daje gladki
-  // wykres nawet gdy piksele mapowane sa na frakcje binu.
+  // Linear interpolation between bins — instead of Math.floor(i *
+  // data.length / W) which produces "stepping" when W < data.length.
+  // Interpolation gives a smooth plot even when pixels map to fractional bins.
   const interpolate = (arr, x) => {
     const scale = arr.length / W;
     const src = x * scale;
@@ -179,18 +179,18 @@ function drawFrame(data) {
     return (arr[i0] || 0) * (1 - frac) + (arr[i1] || 0) * frac;
   };
 
-  // ── SPEKTRUM ──────────────────────────────────────────────────────────────
-  // Tło
+  // ── SPECTRUM ────────────────────────────────────────────────────────────────
+  // Background
   specCtx.fillStyle = '#050708';
   specCtx.fillRect(0, 0, W, Hs);
 
-  // Siatka pozioma (dB) — jak IC-7300
+  // Horizontal grid (dB) — like the IC-7300
   drawSpecGrid(specCtx, W, Hs);
 
-  // Overlay filtra (przed krzywą)
+  // Filter overlay (before the curve)
   drawFilterOverlay(specCtx, W, Hs);
 
-  // Gradient pod krzywą spektrum
+  // Gradient under the spectrum curve
   const grad = specCtx.createLinearGradient(0, 0, 0, Hs);
   grad.addColorStop(0,   'rgba(0,255,80,0.28)');
   grad.addColorStop(0.5, 'rgba(0,200,60,0.10)');
@@ -208,13 +208,13 @@ function drawFrame(data) {
   specCtx.fillStyle = grad;
   specCtx.fill();
 
-  // Linia spektrum — jasna zielona jak IC-7300
-  // KRYTYCZNE dla latency: shadowBlur wlaczal sie na KAZDEJ z 15 ramek/s
-  // scope_frame ilekroc source==='radio' (czyli caly czas przy realnym
-  // nasluchu) - renderowanie rozmycia calej ~900-punktowej linii to jeden z
-  // najkosztowniejszych efektow Canvas 2D, na tym samym watku JS co
-  // ping/pong (WS) i dekodowanie audio (_audioWs). Usuniete - sama grubsza
-  // jasna linia daje podobny wizualny efekt "swiecenia" bez kosztu.
+  // Spectrum line — bright green like the IC-7300
+  // CRITICAL for latency: shadowBlur used to fire on EVERY one of 15
+  // scope_frame frames/sec whenever source==='radio' (i.e. all the time
+  // during actual listening) - rendering a blur over a whole ~900-point
+  // line is one of the most expensive Canvas 2D effects, on the same JS
+  // thread as ping/pong (WS) and audio decoding (_audioWs). Removed - just
+  // a thicker bright line gives a similar visual "glow" effect at no cost.
   specCtx.beginPath();
   specCtx.strokeStyle = source === 'radio' ? '#00e040' : 'rgba(0,200,60,0.5)';
   specCtx.lineWidth   = source === 'radio' ? 2 : 1.5;
@@ -225,7 +225,7 @@ function drawFrame(data) {
   }
   specCtx.stroke();
 
-  // Peak-hold — cienka pomarańczowa linia (jesli wlaczony)
+  // Peak-hold — thin orange line (if enabled)
   if (_peakEnabled !== false && _peakHold) {
     specCtx.beginPath();
     specCtx.strokeStyle = 'rgba(255,180,60,0.55)';
@@ -238,7 +238,7 @@ function drawFrame(data) {
     specCtx.stroke();
   }
 
-  // Marker centrum VFO — pionowa żółta linia jak IC-7300
+  // VFO center marker — vertical yellow line like the IC-7300
   specCtx.strokeStyle = 'rgba(255,220,0,0.85)';
   specCtx.lineWidth   = 1;
   specCtx.setLineDash([]);
@@ -246,7 +246,7 @@ function drawFrame(data) {
   specCtx.moveTo(W/2, 0); specCtx.lineTo(W/2, Hs);
   specCtx.stroke();
 
-  // Badge źródła
+  // Source badge
   specCtx.font = '9px Share Tech Mono,monospace';
   specCtx.fillStyle = source === 'radio' ? 'rgba(0,230,60,0.7)' : 'rgba(200,160,60,0.45)';
   specCtx.textAlign = 'right';
@@ -258,19 +258,20 @@ function drawFrame(data) {
     specCtx.fillText('OUT OF RANGE', 4, 11);
   }
 
-  // ── WATERFALL ─────────────────────────────────────────────────────────────
-  // Przesun caly waterfall o 1 piksel w dol (najstarsze linie schodza).
-  // KRYTYCZNE dla latency: to leci 15x/s (scope_frame z backendu) w tym samym
-  // watku JS co ping/pong (badge WS) i dekodowanie audio (_audioWs). Poprzednio
-  // getImageData/putImageData alokowaly nowa tablice ~kilkaset KB PRZY KAZDEJ
-  // ramce (15x/s) - okresowe pauzy GC blokowaly watek na tyle dlugo, ze pong
-  // przychodzil z opoznieniem (falszywy skok "WS") a audio realnie sie
-  // przycinalo (opoznione playOpusFrame/planowanie bufora). drawImage kopiuje
-  // canvas na siebie samego bez zadnej alokacji widocznej z JS.
+  // ── WATERFALL ───────────────────────────────────────────────────────────────
+  // Shift the whole waterfall down by 1 pixel (the oldest lines scroll off).
+  // CRITICAL for latency: this runs 15x/sec (scope_frame from the backend)
+  // on the same JS thread as ping/pong (the WS badge) and audio decoding
+  // (_audioWs). Previously getImageData/putImageData allocated a new
+  // ~several-hundred-KB array on EVERY frame (15x/sec) - periodic GC
+  // pauses blocked the thread long enough that pong arrived late (a false
+  // "WS" spike) and audio actually stuttered (delayed
+  // playOpusFrame/buffer scheduling). drawImage copies the canvas onto
+  // itself with no allocation visible from JS.
   wfCtx.drawImage(wfCanvas, 0, 0, Ww, Hw - 1, 0, 1, Ww, Hw - 1);
 
-  // Narysuj nowa linie z INTERPOLACJA — kazdy piksel canvasa dostaje
-  // interpolowana wartosc, zamiast dyskretnego "step" na Math.floor
+  // Draw the new line WITH INTERPOLATION — every canvas pixel gets an
+  // interpolated value, instead of a discrete "step" via Math.floor
   const lineImg = wfCtx.createImageData(Ww, 1);
   const d32     = new Uint32Array(lineImg.data.buffer);
   const scale = data.length / Ww;
@@ -285,7 +286,7 @@ function drawFrame(data) {
   }
   wfCtx.putImageData(lineImg, 0, 0);
 
-  // Pionowa linia centrum na waterfalllu (żółta, krótka)
+  // Vertical center line on the waterfall (yellow, short)
   wfCtx.strokeStyle = 'rgba(255,220,0,0.5)';
   wfCtx.lineWidth   = 1;
   wfCtx.beginPath();
@@ -293,20 +294,20 @@ function drawFrame(data) {
   wfCtx.stroke();
 }
 
-// ── Siatka spektrum (poziome linie dB, pionowe linie offsetów kHz) ────────────
+// ── Spectrum grid (horizontal dB lines, vertical kHz offset lines) ───────────
 function drawSpecGrid(ctx, W, H) {
   ctx.strokeStyle = 'rgba(80,120,100,0.18)';
   ctx.lineWidth   = 0.5;
   ctx.setLineDash([2, 4]);
   ctx.beginPath();
 
-  // Poziome — co 25% wysokości (4 linie)
+  // Horizontal — every 25% of height (4 lines)
   for (let i = 1; i < 4; i++) {
     const y = Math.round(H * i / 4) + 0.5;
     ctx.moveTo(0, y); ctx.lineTo(W, y);
   }
 
-  // Pionowe — siatka offsetów kHz (co 5kHz przy 25kHz span)
+  // Vertical — kHz offset grid (every 5kHz at a 25kHz span)
   const span = lastMeta.spanHz || 25000;
   const step = span <= 10000 ? 1000 :
                span <= 25000 ? 5000 :
@@ -315,7 +316,7 @@ function drawSpecGrid(ctx, W, H) {
   const lo     = lastMeta.loHz || (center - span/2);
   for (let f = Math.ceil(lo/step)*step; f <= (lo+span); f += step) {
     const x = Math.round((f - lo) / span * W) + 0.5;
-    if (Math.abs(f - center) < step * 0.1) continue; // pomiń centrum (ma własny marker)
+    if (Math.abs(f - center) < step * 0.1) continue; // skip the center (has its own marker)
     ctx.moveTo(x, 0); ctx.lineTo(x, H);
   }
 
@@ -323,7 +324,7 @@ function drawSpecGrid(ctx, W, H) {
   ctx.setLineDash([]);
 }
 
-// ── Overlay filtra ─────────────────────────────────────────────────────────────
+// ── Filter overlay ────────────────────────────────────────────────────────────
 function drawFilterOverlay(ctx, W, H) {
   const span = lastMeta.spanHz || 25000;
   const filt = lastMeta.filterHz || 0;
@@ -332,7 +333,7 @@ function drawFilterOverlay(ctx, W, H) {
   const filtPx = Math.max(2, (filt / span) * W);
   const cx = W / 2;
 
-  // Jaśniejszy niż poprzednio, bardziej jak IC-7300
+  // Brighter than before, closer to the IC-7300
   ctx.fillStyle = 'rgba(100,180,130,0.10)';
   ctx.fillRect(cx - filtPx/2, 0, filtPx, H);
 
@@ -345,7 +346,7 @@ function drawFilterOverlay(ctx, W, H) {
   ctx.stroke();
 }
 
-// ── Oś częstotliwości — offsety kHz relative do VFO (jak IC-7300) ────────────
+// ── Frequency axis — kHz offsets relative to the VFO (like the IC-7300) ──────
 function drawAxis() {
   if (!axisCtx) return;
   const W = axisCanvas.width, H = axisCanvas.height;
@@ -360,7 +361,7 @@ function drawAxis() {
   axisCtx.font = '13px Share Tech Mono,monospace';
   axisCtx.lineWidth = 1;
 
-  // Siatka pionowa — te same linie co w spektrum
+  // Vertical grid — the same lines as in the spectrum
   const step = span <= 10000 ? 1000 :
                span <= 25000 ? 5000 :
                span <= 50000 ? 10000 : 25000;
@@ -383,7 +384,7 @@ function drawAxis() {
     axisCtx.fillText(label, x, H - 2);
   }
 
-  // Tryb + filtr w lewym rogu
+  // Mode + filter in the top-left corner
   if (lastMeta.filterHz) {
     axisCtx.textAlign = 'left';
     axisCtx.fillStyle = 'rgba(100,180,130,0.5)';
@@ -393,7 +394,7 @@ function drawAxis() {
   }
 }
 
-// ── Symulacja / audio FFT ─────────────────────────────────────────────────────
+// ── Simulation / audio FFT ────────────────────────────────────────────────────
 function startAudioFFT() {
   if (!window.AudioContext && !window.webkitAudioContext) return;
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -420,10 +421,10 @@ function start() {
     lastFrame = Date.now();
     if (!lastScopeData) {
       const W = specCanvas?.width || 600;
-      // Symulacja: noise floor + losowe "sygnały"
+      // Simulation: noise floor + random "signals"
       const sim = new Array(W).fill(0).map((_, i) => {
-        let v = Math.floor(Math.random() * 18 + 8); // szum tła
-        // kilka "sygnałów" na stałych pozycjach
+        let v = Math.floor(Math.random() * 18 + 8); // background noise
+        // a few "signals" at fixed positions
         const cx = W / 2;
         [cx-80, cx-20, cx, cx+35, cx+110].forEach(sx => {
           const d = Math.abs(i - sx);
@@ -455,14 +456,15 @@ function updateSourceBadge() {
                    source === 'audio' ? 'var(--amber)' : 'rgba(200,200,200,0.3)';
 }
 
-// Radio wylaczone przez usera (scope_reset broadcast). Czyscimy waterfall i
-// pokazujemy stan OFF zamiast mylacej "SYMULACJI" (user mial wrazenie ze
-// waterfall "w stanie testu"). Gdy radio wroci (power ON + potwierdzenie),
-// backend zacznie znowu slac scope_frame source=radio -> badge wroci.
+// Radio turned off by the user (scope_reset broadcast). We clear the
+// waterfall and show the OFF state instead of a misleading "SIMULATION"
+// (the user had the impression the waterfall was "in test mode"). When
+// the radio comes back (power ON + confirmation), the backend starts
+// sending scope_frame source=radio again -> the badge goes back.
 function onPowerReset() {
   source = 'off';
   updateSourceBadge();
-  // Wyczysc canvas (czarny)
+  // Clear the canvas (black)
   const canvas = document.getElementById('waterfall-canvas') ||
                  document.querySelector('.tile-wf canvas');
   if (canvas) {
@@ -486,8 +488,8 @@ async function startScope(port, civAddr) {
   } catch(e) { window.UI?.showToast('✗ Błąd uruchamiania scope', 'error'); }
 }
 
-// Zmien span waterfallu (Hz) — wysyla do serwera, ktory ustawia w radiu.
-// IC-7300 wspiera: 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000 Hz.
+// Change the waterfall span (Hz) — sends it to the server, which sets it on the radio.
+// The IC-7300 supports: 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000 Hz.
 async function setSpan(spanHz) {
   try {
     const token = localStorage.getItem('token');
@@ -500,20 +502,20 @@ async function setSpan(spanHz) {
     const data = await r.json();
     if (data.ok) {
       window.UI?.showToast?.(`Span waterfall: ±${spanHz/1000}kHz`, 'info');
-      // Reset peak-hold przy zmianie spanu (skala inna)
+      // Reset peak-hold on span change (different scale)
       _peakHold = null;
     } else {
       window.UI?.showToast?.('Blad zmiany spanu: ' + (data.error || ''), 'error');
     }
   } catch(e) {
-    console.warn('[wf] setSpan blad:', e);
+    console.warn('[wf] setSpan error:', e);
   }
 }
 
-// Wlacz/wylacz peak-hold
+// Enable/disable peak-hold
 function setPeakHold(enabled) {
   if (!enabled) {
-    _peakHold = null; // wylaczone - dalej beda rysowac
+    _peakHold = null; // disabled - it will keep drawing anyway
     _peakEnabled = false;
   } else {
     _peakEnabled = true;
@@ -522,14 +524,14 @@ function setPeakHold(enabled) {
 
 let _peakEnabled = true;
 
-// Fullscreen waterfall — natywne Fullscreen API na tile-wf.
-// F na klawiaturze rowniez toggluje (obsluga w ui.js listener).
+// Fullscreen waterfall — native Fullscreen API on tile-wf.
+// The F key also toggles it (handled by the listener in ui.js).
 function toggleFullscreen() {
   const el = document.querySelector('.tile-wf');
   if (!el) return;
   if (!document.fullscreenElement) {
     el.classList.add('wf-fullscreen');
-    if (el.requestFullscreen) el.requestFullscreen().catch(e => console.warn('[wf] fs blad:', e));
+    if (el.requestFullscreen) el.requestFullscreen().catch(e => console.warn('[wf] fs error:', e));
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
   } else {
     if (document.exitFullscreen) document.exitFullscreen();
@@ -538,11 +540,11 @@ function toggleFullscreen() {
   }
 }
 
-// Nasluchuj na zmiane fullscreen zeby wyczyscic klase gdy user wciska Esc
+// Listen for fullscreen changes to clear the class when the user presses Esc
 document.addEventListener('fullscreenchange', () => {
   const el = document.querySelector('.tile-wf');
   if (!document.fullscreenElement && el) el.classList.remove('wf-fullscreen');
-  // Wymus resize canvas przy zmianie fullscreen
+  // Force a canvas resize on fullscreen change
   if (typeof resize === 'function') resize();
 });
 
