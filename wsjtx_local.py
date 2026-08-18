@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 wsjtx_local.py / wsjtx_local.exe
-Ham Radio Control — adapter WSJT-X
+Ham Radio Control — WSJT-X adapter
 
-Uruchom dwuklikiem. Nie wymaga instalacji Pythona (wersja .exe).
-Laczy WSJT-X na Twoim komputerze z radiem na serwerze zdalnym.
+Run by double-clicking. Doesn't require a Python install (the .exe version).
+Connects WSJT-X on your computer to the radio on the remote server.
 
-Co robi:
-  - pyta o adres serwera i dane logowania (jednorazowo, zapamietuje)
-  - uruchamia lokalny port 4532 dla WSJT-X
-  - przekazuje PTT / czestotliwosc / tryb przez WebSocket do serwera
-  - synchronizuje VFO miedzy WSJT-X a panelem www
+What it does:
+  - asks for the server address and login credentials (once, then remembers them)
+  - starts a local port 4532 for WSJT-X
+  - forwards PTT / frequency / mode to the server over WebSocket
+  - syncs VFO between WSJT-X and the web panel
 """
 
 import asyncio
@@ -22,7 +22,7 @@ import urllib.request
 import urllib.error
 import pathlib
 
-# ── Konfiguracja zapisywana lokalnie ─────────────────────────────────────────
+# ── Locally saved configuration ───────────────────────────────────────────────
 CFG_FILE = pathlib.Path.home() / ".hamradio_wsjtx.json"
 LOCAL_PORT = 4532
 
@@ -38,16 +38,16 @@ def save_cfg(cfg):
     except Exception:
         pass
 
-# ── Tryb konsoli / GUI ────────────────────────────────────────────────────────
+# ── Console / GUI mode ──────────────────────────────────────────────────────────
 def is_frozen():
     return getattr(sys, 'frozen', False)
 
 def log(msg):
     print(msg, flush=True)
 
-# ── Logowanie i pobranie tokenu ───────────────────────────────────────────────
+# ── Login and token retrieval ─────────────────────────────────────────────────
 def _ssl_ctx():
-    """SSL context - ignoruj bledy certyfikatu (self-signed)."""
+    """SSL context - ignore certificate errors (self-signed)."""
     import ssl
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -55,7 +55,7 @@ def _ssl_ctx():
     return ctx
 
 def _make_req(url, data=None, token=None):
-    """Request z naglowkami przegladarki - omija blokady Cloudflare."""
+    """Request with browser-like headers - avoids Cloudflare blocks."""
     headers = {
         "Content-Type": "application/json",
         "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -74,12 +74,12 @@ def get_token(server_http, login, password):
         body = json.loads(resp.read())
         if body.get("ok") and body.get("token"):
             return body["token"], None
-        return None, body.get("error", "Nieznany blad")
+        return None, body.get("error", "Unknown error")
     except urllib.error.HTTPError as e:
         msg = e.read().decode(errors='replace')[:100]
         return None, f"HTTP {e.code}: {msg}"
     except urllib.error.URLError as e:
-        return None, f"Brak polaczenia z {server_http}: {e.reason}"
+        return None, f"No connection to {server_http}: {e.reason}"
     except Exception as e:
         return None, str(e)
 
@@ -93,7 +93,7 @@ def test_server(server_http):
         return False
     return True
 
-# ── Stan lokalny (zsync z serwerem) ──────────────────────────────────────────
+# ── Local state (synced with the server) ─────────────────────────────────────
 _state = {
     "freq":  14074000,
     "freqB": 14074000,
@@ -114,7 +114,7 @@ MODE_FROM_HAMLIB = {
     "DATA":"PKTUSB","PKT":"PKTUSB","DIGI":"PKTUSB",
 }
 
-# ── WebSocket z serwerem ──────────────────────────────────────────────────────
+# ── WebSocket to the server ───────────────────────────────────────────────────
 class ServerLink:
     def __init__(self, ws_url):
         self.ws_url   = ws_url
@@ -128,10 +128,10 @@ class ServerLink:
             import websockets
             import ssl
         except ImportError:
-            log("[ERROR] Brak biblioteki websockets")
+            log("[ERROR] The websockets library is missing")
             return
 
-        # SSL context - ignoruj self-signed cert
+        # SSL context - ignore the self-signed cert
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode    = ssl.CERT_NONE
@@ -152,7 +152,7 @@ class ServerLink:
                     self._ws       = ws
                     self.connected = True
                     self._ready.set()
-                    log(f"[OK] Polaczono z serwerem")
+                    log(f"[OK] Connected to the server")
                     await asyncio.gather(
                         self._recv(ws),
                         self._send(ws),
@@ -161,8 +161,8 @@ class ServerLink:
                 self.connected = False
                 self._ready.clear()
                 self._ws = None
-                log(f"[!] Serwer rozlaczony: {e}")
-                log(f"[.] Ponawiam za 5s...")
+                log(f"[!] Server disconnected: {e}")
+                log(f"[.] Retrying in 5s...")
                 await asyncio.sleep(5)
 
     async def _recv(self, ws):
@@ -209,20 +209,20 @@ class ServerLink:
     async def set_ptt(self, on):
         _state["ptt"] = on
         await self.send({"type": "ptt", "ptt": on})
-        # Gdy PTT ON — wyslij tez sygnal do przegladarki zeby uruchomila TX mikrofon
+        # When PTT turns ON — also send a signal to the browser to start the TX microphone
         if on:
             await self.send({"type": "wsjtx_tx_start"})
         else:
             await self.send({"type": "wsjtx_tx_stop"})
         log(f"[PTT] {'>>> TX <<<' if on else 'RX'}")
 
-# ── Hamlib TCP dla WSJT-X ────────────────────────────────────────────────────
-# Prawidlowy dump_state dla WSJT-X / Hamlib netrigctl protokol v0
-# Zgodny z Hamlib 4.5 network.c read_transaction()
+# ── Hamlib TCP for WSJT-X ─────────────────────────────────────────────────────
+# A valid dump_state for the WSJT-X / Hamlib netrigctl protocol v0
+# Matches Hamlib 4.5's network.c read_transaction()
 DUMP_STATE_RESPONSE = "\n".join([
-    "0",                                          # protokol v0
+    "0",                                          # protocol v0
     "2",                                          # rig model (Dummy=1, NET=2)
-    "2",                                          # ITU region 2 (Europa)
+    "2",                                          # ITU region 2 (Europe)
     # RX ranges: start end modes low_power high_power vfo ant
     "1800000 2000000 0x900000ff -1 -1 0x10000003 0x3",
     "3500000 4000000 0x900000ff -1 -1 0x10000003 0x3",
@@ -233,8 +233,8 @@ DUMP_STATE_RESPONSE = "\n".join([
     "21000000 21450000 0x900000ff -1 -1 0x10000003 0x3",
     "24890000 24990000 0x900000ff -1 -1 0x10000003 0x3",
     "28000000 29700000 0x900000ff -1 -1 0x10000003 0x3",
-    "0 0 0 0 0 0 0",                              # koniec RX ranges
-    # TX ranges: identyczne
+    "0 0 0 0 0 0 0",                              # end of RX ranges
+    # TX ranges: identical
     "1800000 2000000 0x900000ff -1 -1 0x10000003 0x3",
     "3500000 4000000 0x900000ff -1 -1 0x10000003 0x3",
     "7000000 7300000 0x900000ff -1 -1 0x10000003 0x3",
@@ -244,13 +244,13 @@ DUMP_STATE_RESPONSE = "\n".join([
     "21000000 21450000 0x900000ff -1 -1 0x10000003 0x3",
     "24890000 24990000 0x900000ff -1 -1 0x10000003 0x3",
     "28000000 29700000 0x900000ff -1 -1 0x10000003 0x3",
-    "0 0 0 0 0 0 0",                              # koniec TX ranges
+    "0 0 0 0 0 0 0",                              # end of TX ranges
     # Tuning steps: mode step
     "0x900000ff 1",
-    "0 0",                                        # koniec tuning steps
+    "0 0",                                        # end of tuning steps
     # Filters: mode width
     "0x900000ff 0",
-    "0 0",                                        # koniec filters
+    "0 0",                                        # end of filters
     "0",                                          # max_rit
     "0",                                          # max_xit
     "0",                                          # max_ifshift
@@ -279,11 +279,11 @@ DUMP_STATE_RESPONSE = "\n".join([
 async def handle_cmd(cmd, link):
     parts = cmd.strip().split()
     if not parts: return "RPRT 0"
-    # WSJT-X wysyla komendy z backslashem: \dump_state, \get_freq itp.
-    # Normalizuj: usun backslash i zamien na uppercase
+    # WSJT-X sends commands with a backslash: \dump_state, \get_freq etc.
+    # Normalize: strip the backslash and uppercase it
     c = parts[0].lstrip('\\').upper()
 
-    # ── Częstotliwość ─────────────────────────────────────────────────────────
+    # ── Frequency ────────────────────────────────────────────────────────────
     if c == "GET_FREQ" or (c == "F" and len(parts) == 1):
         return f"{_state['freq']}\nRPRT 0"
 
@@ -294,7 +294,7 @@ async def handle_cmd(cmd, link):
             return "RPRT 0"
         except: return "RPRT -1"
 
-    # ── Tryb ──────────────────────────────────────────────────────────────────
+    # ── Mode ─────────────────────────────────────────────────────────────────
     if c == "GET_MODE" or (c == "M" and len(parts) == 1):
         hm = MODE_TO_HAMLIB.get(_state["mode"], _state["mode"])
         return f"{hm}\n{_state['bw']}\nRPRT 0"
@@ -306,7 +306,7 @@ async def handle_cmd(cmd, link):
         await link.set_mode(mode, bw)
         return "RPRT 0"
 
-    # ── PTT ───────────────────────────────────────────────────────────────────
+    # ── PTT ──────────────────────────────────────────────────────────────────
     if c == "GET_PTT" or (c == "T" and len(parts) == 1):
         return f"{'1' if _state['ptt'] else '0'}\nRPRT 0"
 
@@ -315,46 +315,46 @@ async def handle_cmd(cmd, link):
         await link.set_ptt(on)
         return "RPRT 0"
 
-    # ── VFO ───────────────────────────────────────────────────────────────────
+    # ── VFO ──────────────────────────────────────────────────────────────────
     if c in ("GET_VFO", "V") and len(parts) == 1:
         return "VFOA\nRPRT 0"
     if c in ("SET_VFO", "V"):
         return "RPRT 0"
 
-    # ── Split ─────────────────────────────────────────────────────────────────
+    # ── Split ────────────────────────────────────────────────────────────────
     if c in ("GET_SPLIT_VFO", "S") and len(parts) == 1:
         return f"{'1' if _state['split'] else '0'}\nVFOB\nRPRT 0"
     if c in ("SET_SPLIT_VFO", "S"):
         return "RPRT 0"
 
-    # ── S-metr ────────────────────────────────────────────────────────────────
+    # ── S-meter ──────────────────────────────────────────────────────────────
     if c in ("GET_LEVEL", "L"):
         lvl = parts[1].upper() if len(parts) > 1 else ""
         if lvl == "STRENGTH":
             return "-54\nRPRT 0"
         return "0\nRPRT 0"
 
-    # ── Info / handshake ──────────────────────────────────────────────────────
+    # ── Info / handshake ─────────────────────────────────────────────────────
     if c in ("_", "GET_INFO"):
         return "Info: Ham Radio Control wsjtx_local\nRPRT 0"
 
-    # ── DUMP_STATE — wymagane przez WSJT-X przy starcie
+    # ── DUMP_STATE — required by WSJT-X at startup
     if c == "DUMP_STATE":
         return DUMP_STATE_RESPONSE
 
     if c in ("Q", "QUIT"):
         return "RPRT 0"
 
-    # Nieznana — loguj ale nie przerywaj
-    log(f"[?] Nieznana komenda: {cmd!r}")
-    return "RPRT 0"   # zwroc 0 zamiast -11 zeby WSJT-X nie przerwal
+    # Unknown — log but don't abort
+    log(f"[?] Unknown command: {cmd!r}")
+    return "RPRT 0"   # return 0 instead of -11 so WSJT-X doesn't abort
 
 async def handle_wsjtx(reader, writer, link):
     peer = writer.get_extra_info('peername')
-    log(f"[WSJT-X] Polaczono: {peer}")
+    log(f"[WSJT-X] Connected: {peer}")
     try:
-        # netrigctl oczekuje natychmiastowej odpowiedzi po polaczeniu
-        # Wyslij pusty bajt jako handshake - bez tego WSJT-X zamknie polaczenie
+        # netrigctl expects an immediate response after connecting.
+        # Send an empty byte as a handshake - without this WSJT-X closes the connection
         writer.write(b"\n")
         await writer.drain()
 
@@ -388,16 +388,16 @@ async def handle_wsjtx(reader, writer, link):
     except ConnectionResetError:
         pass
     except Exception as e:
-        log(f"[WSJT-X] Blad: {type(e).__name__}: {e}")
+        log(f"[WSJT-X] Error: {type(e).__name__}: {e}")
         import traceback; log(traceback.format_exc())
     finally:
         try: writer.close()
         except: pass
-        log(f"[WSJT-X] Rozlaczono: {peer}")
+        log(f"[WSJT-X] Disconnected: {peer}")
 
 
 async def handle_cmd_safe(cmd, link):
-    """Wersja handle_cmd ktora nie wisi gdy link nie jest gotowy."""
+    """Version of handle_cmd that doesn't hang when the link isn't ready."""
     parts = cmd.strip().split()
     if not parts:
         return "RPRT 0"
@@ -410,18 +410,18 @@ async def handle_cmd_safe(cmd, link):
     if c == "_" or c == "GET_INFO":
         return "Info: Ham Radio Control wsjtx_local\nRPRT 0"
 
-    # CHK_VFO — zwroc 0 = VFO mode wylaczony (wymagane przez netrigctl_open)
+    # CHK_VFO — return 0 = VFO mode disabled (required by netrigctl_open)
     if c == "CHK_VFO":
         return "0\nRPRT 0"
 
-    # GET_POWERSTAT — radio jest wlaczone
+    # GET_POWERSTAT — the radio is on
     if c == "GET_POWERSTAT":
         return "1\nRPRT 0"
 
     if c in ("Q", "QUIT"):
         return "RPRT 0"
 
-    # Odczyt stanu lokalnego — bez czekania na WebSocket
+    # Read local state — without waiting on the WebSocket
     if c in ("GET_FREQ", "F") and len(parts) == 1:
         return f"{_state['freq']}\nRPRT 0"
 
@@ -441,10 +441,10 @@ async def handle_cmd_safe(cmd, link):
     if c in ("GET_LEVEL", "L"):
         return "0\nRPRT 0"
 
-    # Komendy ustawiania — wysylaj do serwera z timeout
+    # Set commands — sent to the server with a timeout
     if not link.connected:
-        log(f"    [!] Serwer nie polaczony — zwracam RPRT 0")
-        return "RPRT 0"  # udawaj sukces zeby WSJT-X nie zerwal
+        log(f"    [!] Server not connected — returning RPRT 0")
+        return "RPRT 0"  # fake success so WSJT-X doesn't drop the connection
 
     try:
         if c in ("SET_FREQ", "F") and len(parts) == 2:
@@ -470,21 +470,21 @@ async def handle_cmd_safe(cmd, link):
             return "RPRT 0"
 
     except asyncio.TimeoutError:
-        log(f"    [!] Timeout wysylania do serwera")
+        log(f"    [!] Timeout sending to the server")
         return "RPRT 0"
     except Exception as e:
-        log(f"    [!] Blad: {e}")
+        log(f"    [!] Error: {e}")
         return "RPRT 0"
 
-    log(f"    [?] Nieznana komenda: {c!r}")
-    return "RPRT 0"  # zawsze OK - nie przerywaj polaczenia
+    log(f"    [?] Unknown command: {c!r}")
+    return "RPRT 0"  # always OK - don't break the connection
 
-# ── Sprawdz czy port 4532 jest wolny ─────────────────────────────────────────
+# ── Check whether port 4532 is free ───────────────────────────────────────────
 def port_free(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('127.0.0.1', port)) != 0
 
-# ── Glowna petla ──────────────────────────────────────────────────────────────
+# ── Main loop ──────────────────────────────────────────────────────────────────
 async def run(ws_url):
     link = ServerLink(ws_url)
     tcp  = await asyncio.start_server(
@@ -498,13 +498,13 @@ async def run(ws_url):
     log(f"    Port: {LOCAL_PORT}")
     log(f"    PTT:  CAT")
     log(f"")
-    log(f"  Kliknij 'Test CAT' w WSJT-X...")
-    log(f"  Zamknij to okno aby zatrzymac.")
+    log(f"  Click 'Test CAT' in WSJT-X...")
+    log(f"  Close this window to stop.")
     log(f"")
     async with tcp:
         await asyncio.gather(link.run(), tcp.serve_forever())
 
-# ── Setup (pierwsze uruchomienie) ─────────────────────────────────────────────
+# ── Setup (first run) ─────────────────────────────────────────────────────────
 def setup():
     cfg = load_cfg()
 
@@ -513,22 +513,22 @@ def setup():
     print("=" * 56)
     print()
 
-    # Adres serwera
+    # Server address
     default_srv = cfg.get("server", "https://your-server.example.com")
-    print(f"  Adres serwera [{default_srv}]: ", end="")
+    print(f"  Server address [{default_srv}]: ", end="")
     inp = input().strip()
     server = inp if inp else default_srv
     if not server.startswith("http"):
         server = "http://" + server
 
-    # Sprawdz czy serwer odpowiada
-    print(f"  Sprawdzam {server}...", end=" ")
+    # Check whether the server responds
+    print(f"  Checking {server}...", end=" ")
     if test_server(server):
         print("OK")
     else:
-        print("BRAK ODPOWIEDZI")
-        print(f"  Sprawdz adres i czy serwer dziala.")
-        input("  Nacisnij Enter aby kontynuowac mimo to...")
+        print("NO RESPONSE")
+        print(f"  Check the address and whether the server is running.")
+        input("  Press Enter to continue anyway...")
 
     # Login
     default_login = cfg.get("login", "")
@@ -536,18 +536,18 @@ def setup():
     inp = input().strip()
     login = inp if inp else default_login
 
-    print(f"  Haslo: ", end="")
+    print(f"  Password: ", end="")
     password = input().strip()
 
-    print(f"  Logowanie...", end=" ")
+    print(f"  Logging in...", end=" ")
     token, err = get_token(server, login, password)
     if not token:
-        print(f"BLAD: {err}")
-        input("Nacisnij Enter aby zamknac...")
+        print(f"ERROR: {err}")
+        input("Press Enter to close...")
         sys.exit(1)
     print("OK")
 
-    # Zapisz konfiguracje (bez hasla)
+    # Save the config (without the password)
     cfg = {"server": server, "login": login, "token": token}
     save_cfg(cfg)
 
@@ -558,68 +558,68 @@ CURRENT_SERVER = "https://your-server.example.com"
 def main():
     cfg = load_cfg()
 
-    # Jesli zapisany adres rozni sie od aktualnego — wymuś aktualizacje
+    # If the saved address differs from the current one — force an update
     if cfg.get("server") and cfg["server"] != CURRENT_SERVER:
         print("=" * 56)
         print("  Ham Radio Control — WSJT-X Adapter")
         print("=" * 56)
-        print(f"  UWAGA: adres serwera zmienil sie!")
-        print(f"  Stary:  {cfg['server']}")
-        print(f"  Nowy:   {CURRENT_SERVER}")
+        print(f"  NOTE: the server address has changed!")
+        print(f"  Old:  {cfg['server']}")
+        print(f"  New:  {CURRENT_SERVER}")
         print()
         cfg["server"] = CURRENT_SERVER
-        cfg.pop("token", None)  # token moze byc nieaktualny
+        cfg.pop("token", None)  # the token may be stale
         save_cfg(cfg)
-        print("  Zaloguj sie ponownie z nowym adresem.")
+        print("  Log in again with the new address.")
         print()
 
-    # Jesli mamy token — sprobuj od razu, pytaj tylko jesli blad
+    # If we have a token — try it immediately, only prompt on failure
     if cfg.get("token") and cfg.get("server"):
         server = cfg["server"]
         token  = cfg["token"]
         print("=" * 56)
         print("  Ham Radio Control — WSJT-X Adapter")
         print("=" * 56)
-        print(f"  Serwer: {server}")
+        print(f"  Server: {server}")
         print(f"  Login:  {cfg.get('login','?')}")
         print()
     else:
         server, token = setup()
 
-    # Sprawdz port 4532
+    # Check port 4532
     if not port_free(LOCAL_PORT):
-        print(f"[!] Port {LOCAL_PORT} jest zajety!")
-        print(f"    Sprawdz czy inny program nie uzywa portu {LOCAL_PORT}.")
-        print(f"    (np. rigctld, inny adapter)")
-        input("Nacisnij Enter aby zamknac...")
+        print(f"[!] Port {LOCAL_PORT} is in use!")
+        print(f"    Check whether another program is using port {LOCAL_PORT}.")
+        print(f"    (e.g. rigctld, another adapter)")
+        input("Press Enter to close...")
         sys.exit(1)
 
-    # Buduj URL WebSocket
+    # Build the WebSocket URL
     ws_url = server.replace("http://", "ws://").replace("https://", "wss://")
     ws_url = ws_url.rstrip("/") + f"/ws?token={token}"
-    print(f"[..] Laczenie z {ws_url[:50]}...")
+    print(f"[..] Connecting to {ws_url[:50]}...")
 
     try:
         asyncio.run(run(ws_url))
     except KeyboardInterrupt:
-        print("\n[OK] Zatrzymano")
+        print("\n[OK] Stopped")
     except Exception as e:
-        print(f"\n[!] Blad: {e}")
-        # Jesli blad autoryzacji - skasuj token i uruchom setup ponownie
+        print(f"\n[!] Error: {e}")
+        # If it's an authorization error - clear the token and run setup again
         if "401" in str(e) or "403" in str(e) or "token" in str(e).lower():
-            print("[!] Problem z autoryzacja — zaloguj sie ponownie")
+            print("[!] Authorization problem — please log in again")
             cfg.pop("token", None)
             save_cfg(cfg)
             main()
         else:
-            input("Nacisnij Enter aby zamknac...")
+            input("Press Enter to close...")
 
 if __name__ == "__main__":
-    # Instaluj websockets jesli brak
+    # Install websockets if missing
     try:
         import websockets
     except ImportError:
-        print("[..] Instaluje websockets...")
+        print("[..] Installing websockets...")
         import subprocess
         subprocess.run([sys.executable, "-m", "pip", "install",
                         "websockets", "--quiet"])
