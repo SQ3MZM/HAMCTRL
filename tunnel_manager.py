@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """
-tunnel_manager.py — zarządza procesem cloudflared
-Tryby:
-  quick  — Cloudflare Quick Tunnel (losowy adres, bez konta)
-  named  — własna domena przez token Cloudflare Tunnel
-  off    — wyłączony
+tunnel_manager.py — manages the cloudflared process
+Modes:
+  quick  — Cloudflare Quick Tunnel (random address, no account)
+  named  — own domain via a Cloudflare Tunnel token
+  off    — disabled
+
+NOTE ON TRANSLATION SCOPE: every literal string assigned to self._error /
+self._last_cert_error, and every string passed to _broadcast_msg(), reaches
+the browser unmodified — self._error via the "tunnel_update" WS broadcast's
+"error" field (public/js/tunnel.js's renderError() sets it as raw
+el.textContent, no I18n), and _broadcast_msg() via the "toast" WS message
+(public/js/ws.js's case 'toast' calls UI.showToast(msg.message) directly).
+Those strings are deliberately left in Polish throughout this file; only
+comments, docstrings, and print() console-log text are translated.
 """
 import asyncio
 import json
@@ -14,8 +23,8 @@ import re
 import subprocess
 import sys
 
-# DATA = zapisywalny katalog danych (obok EXE albo APPDATA). Pliki tunelu
-# (config, certy) musza tam trafiac, nie do read-only Program Files.
+# DATA = writable data directory (next to the EXE or in APPDATA). Tunnel
+# files (config, certs) must go there, not into read-only Program Files.
 try:
     from config import DATA as _DATA
 except Exception:
@@ -42,9 +51,9 @@ DEFAULT_CFG = {
 
 
 def load_cfg() -> dict:
-    """Wczytaj config i odszyfruj tokeny — w pamieci (self._cfg) trzymamy
-    zawsze plaintext, bo cloudflared/certbot uzywaja ich bezposrednio;
-    tylko plik na dysku jest zaszyfrowany (patrz save_cfg)."""
+    """Load the config and decrypt tokens — in memory (self._cfg) we always
+    keep plaintext, since cloudflared/certbot use it directly; only the
+    on-disk file is encrypted (see save_cfg)."""
     try:
         raw = {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
     except Exception:
@@ -58,17 +67,18 @@ def load_cfg() -> dict:
                 needs_migration = True
             cfg[key] = decrypt_secret(val)
     if needs_migration:
-        # Stary plik mial jawne tokeny (sprzed szyfrowania w spoczynku) —
-        # dopisz je zaszyfrowane od razu, bez czekania na kolejny zapis.
+        # The old file had plaintext tokens (from before encryption at
+        # rest) — write them back encrypted right away, without waiting
+        # for the next save.
         save_cfg(cfg)
-        print("[tunnel] zaszyfrowano tokeny w tunnel_config.json", flush=True)
+        print("[tunnel] encrypted tokens in tunnel_config.json", flush=True)
     return cfg
 
 
 def save_cfg(cfg: dict):
-    """Zapisz config na dysk z zaszyfrowanymi tokenami (Cloudflare Tunnel,
-    DuckDNS) — nie mutuje przekazanego dict (to zywy self._cfg uzywany
-    bezposrednio do uruchamiania procesow, musi zostac plaintext)."""
+    """Save the config to disk with encrypted tokens (Cloudflare Tunnel,
+    DuckDNS) — does not mutate the passed-in dict (that's the live
+    self._cfg used directly to launch processes, it must stay plaintext)."""
     on_disk = dict(cfg)
     for key in _SECRET_KEYS:
         if on_disk.get(key):
@@ -76,7 +86,7 @@ def save_cfg(cfg: dict):
     try:
         CFG_FILE.write_text(json.dumps(on_disk, indent=2))
     except Exception as e:
-        print(f"[tunnel] Błąd zapisu konfiguracji: {e}")
+        print(f"[tunnel] Config write error: {e}")
 
 
 class TunnelManager:
@@ -90,7 +100,7 @@ class TunnelManager:
         self._local_url  = "http://localhost:8000"
         self._cfg        = load_cfg()
 
-    # ── Stan ──────────────────────────────────────────────────────────────────
+    # ── State ──────────────────────────────────────────────────────────────────
 
     def get_status(self) -> dict:
         cert_days = None
@@ -122,10 +132,10 @@ class TunnelManager:
     # ── cloudflared binary ────────────────────────────────────────────────────
 
     def _find_cloudflared(self) -> pathlib.Path | None:
-        """Znajdź cloudflared w folderze projektu lub PATH."""
+        """Find cloudflared in the project folder or PATH."""
         if CF_EXE.exists():
             return CF_EXE
-        # Szukaj w PATH
+        # Search PATH
         import shutil
         found = shutil.which("cloudflared")
         if found:
@@ -133,10 +143,10 @@ class TunnelManager:
         return None
 
     async def _download_cloudflared(self) -> bool:
-        """Pobierz cloudflared jeśli brak."""
+        """Download cloudflared if missing."""
         if self._find_cloudflared():
             return True
-        print("[tunnel] Pobieranie cloudflared...")
+        print("[tunnel] Downloading cloudflared...")
         self._status = "starting"
         await self._broadcast()
         try:
@@ -154,7 +164,7 @@ class TunnelManager:
             urllib.request.urlretrieve(url, dest)
             if sys.platform != "win32":
                 dest.chmod(0o755)
-            print(f"[tunnel] cloudflared pobrany: {dest}")
+            print(f"[tunnel] cloudflared downloaded: {dest}")
             return True
         except Exception as e:
             self._error = f"Nie można pobrać cloudflared: {e}"
@@ -162,7 +172,7 @@ class TunnelManager:
             return False
 
     def check_available(self) -> dict:
-        """Sprawdź czy cloudflared jest dostępny + informacje o śmieciach."""
+        """Check whether cloudflared is available + info on stale processes."""
         cf = self._find_cloudflared()
         result = {
             "available":    cf is not None,
@@ -183,7 +193,7 @@ class TunnelManager:
         return result
 
     def _count_stale_processes(self) -> int:
-        """Policz stare procesy cloudflared w systemie."""
+        """Count stale cloudflared processes on the system."""
         try:
             if sys.platform == "win32":
                 r = subprocess.run(
@@ -198,7 +208,7 @@ class TunnelManager:
             return 0
 
     def _is_service_installed(self) -> bool:
-        """Sprawdź czy cloudflared jest zainstalowany jako usługa Windows."""
+        """Check whether cloudflared is installed as a Windows service."""
         if sys.platform != "win32":
             return False
         try:
@@ -210,15 +220,15 @@ class TunnelManager:
             return False
 
     async def cleanup(self) -> dict:
-        """Wyczyść stare procesy i usuń usługę Windows cloudflared."""
+        """Clean up stale processes and remove the cloudflared Windows service."""
         killed = 0
         svc_removed = False
         msgs = []
 
-        # 1. Zatrzymaj aktualny tunel
+        # 1. Stop the current tunnel
         await self.stop()
 
-        # 2. Zabij wszystkie procesy cloudflared
+        # 2. Kill all cloudflared processes
         try:
             if sys.platform == "win32":
                 r = subprocess.run(
@@ -234,15 +244,15 @@ class TunnelManager:
         except Exception as e:
             msgs.append(f"Procesy: {e}")
 
-        # 3. Odinstaluj usługę Windows
+        # 3. Uninstall the Windows service
         if sys.platform == "win32":
             cf = self._find_cloudflared()
             if cf:
                 try:
-                    # Najpierw odinstaluj przez cloudflared service uninstall
+                    # First uninstall via cloudflared service uninstall
                     subprocess.run([str(cf), "service", "uninstall"],
                         capture_output=True, timeout=10)
-                    # Potem usuń przez sc delete
+                    # Then remove via sc delete
                     r = subprocess.run(["sc", "delete", "cloudflared"],
                         capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
                     if "SUCCESS" in r.stdout or "[SC]" in r.stdout:
@@ -251,7 +261,7 @@ class TunnelManager:
                 except Exception as e:
                     msgs.append(f"Usługa: {e}")
 
-        # 4. Usuń plik cloudflared.exe jeśli lokalny
+        # 4. Remove the cloudflared.exe file if it's local
         local_exe = CF_EXE
         removed_exe = False
         if local_exe.exists() and local_exe.is_file():
@@ -274,7 +284,7 @@ class TunnelManager:
     # ── Start / Stop ──────────────────────────────────────────────────────────
 
     async def start(self, mode: str = None, token: str = None, hostname: str = None):
-        """Uruchom tunel."""
+        """Start the tunnel."""
         await self.stop()
 
         if mode:     self._cfg["mode"]     = mode
@@ -291,7 +301,7 @@ class TunnelManager:
         self._error      = ""
         await self._broadcast()
 
-        # Tryby bez cloudflared
+        # Modes that don't use cloudflared
         if mode == "duckdns":
             await self._start_duckdns()
             return
@@ -302,7 +312,7 @@ class TunnelManager:
             await self._start_customcert()
             return
 
-        # Tryby Cloudflare — pobierz cloudflared jeśli brak
+        # Cloudflare modes — download cloudflared if missing
         if not await self._download_cloudflared():
             self._status = "error"
             await self._broadcast()
@@ -312,7 +322,7 @@ class TunnelManager:
         if mode == "quick":
             cmd = [str(cf), "tunnel", "--url", self._local_url]
         else:
-            # Named tunnel przez token
+            # Named tunnel via token
             tok = self._cfg.get("token", "").strip()
             if not tok:
                 self._error  = "Brak tokenu Cloudflare Tunnel"
@@ -329,25 +339,28 @@ class TunnelManager:
     async def _duckdns_update_ip(self) -> bool:
         domain = self._cfg.get("duckDomain", "").strip()
         token  = self._cfg.get("duckToken", "").strip()
-        # Usun .duckdns.org jesli user wkleił pełną domenę
+        # Strip .duckdns.org if the user pasted the full domain
         domain = domain.replace(".duckdns.org", "").strip()
         if not domain or not token:
             self._error = "Brak domeny lub tokenu DuckDNS"
             return False
         try:
             import urllib.request, urllib.parse, ssl
-            # urllib.urlopen jest BLOKUJACE (DNS + HTTP + timeout do 10s). Mimo
-            # ze ta funkcja jest async, samo urlopen zamrazalo cala petle zdarzen
-            # na czas zapytania — wykryte przez looplag (stos: getaddrinfo w
-            # tunnel DuckDNS update). Wynosimy do watku, zeby petla plynela.
+            # urllib.urlopen is BLOCKING (DNS + HTTP + up to a 10s timeout).
+            # Even though this function is async, the urlopen call itself
+            # was freezing the whole event loop for the duration of the
+            # request — caught via looplag (stack: getaddrinfo in the
+            # DuckDNS tunnel update). Offloaded to a thread so the loop
+            # keeps running.
             def _do_update():
-                # PELNA weryfikacja certyfikatu - duckdns.org ma normalny,
-                # publicznie zaufany cert, nie ma powodu jej wylaczac.
-                # Wczesniej (check_hostname=False, verify_mode=CERT_NONE) tunel
-                # do DuckDNS byl podatny na MITM, co przy przesylaniu TOKENU w
-                # URL oznaczalo mozliwosc jego przechwycenia. Bez komentarza w
-                # kodzie tlumaczacego dlaczego weryfikacja miala byc wylaczona -
-                # usunieta, DuckDNS nie wymaga tego wyjatku.
+                # FULL certificate verification - duckdns.org has a normal,
+                # publicly trusted cert, no reason to disable it. This used
+                # to be disabled (check_hostname=False, verify_mode=
+                # CERT_NONE), which made the DuckDNS tunnel vulnerable to
+                # MITM - since the TOKEN travels in the URL, that meant it
+                # could be intercepted. No comment in the code explained
+                # why verification was supposed to be off - removed,
+                # DuckDNS doesn't need this exception.
                 ctx = ssl.create_default_context()
                 _d = urllib.parse.quote(domain, safe='')
                 _t = urllib.parse.quote(token, safe='')
@@ -374,7 +387,7 @@ class TunnelManager:
         self._status = "starting"
         await self._broadcast()
 
-        # Zaktualizuj IP
+        # Update the IP
         ok = await self._duckdns_update_ip()
         if not ok:
             self._status = "error"
@@ -384,19 +397,19 @@ class TunnelManager:
         fqdn = f"{domain}.duckdns.org"
         port = self._cfg.get("staticPort", "8001")
 
-        # Sprawdź istniejący certyfikat
+        # Check for an existing certificate
         cert = self._cfg.get("certPath", "")
         key  = self._cfg.get("keyPath", "")
 
-        # PIERWSZENSTWO: jesli istnieje prawdziwy cert Let's Encrypt w live/,
-        # uzyj go - nawet jesli config wskazuje na self-signed. Inaczej raz
-        # zapisany self-signed blokowalby uzycie LE na zawsze (bo "cert
-        # istnieje" = warunek nizej falszywy).
+        # PRIORITY: if a real Let's Encrypt cert exists in live/, use it -
+        # even if the config points to a self-signed one. Otherwise a
+        # once-saved self-signed cert would block using LE forever (since
+        # "cert exists" = the condition below would be false).
         le_cert = _DATA / "letsencrypt" / "config" / "live" / fqdn / "fullchain.pem"
         le_key  = _DATA / "letsencrypt" / "config" / "live" / fqdn / "privkey.pem"
         _is_selfsigned = "selfsigned" in str(cert).lower()
         if le_cert.exists() and le_key.exists() and (not cert or _is_selfsigned or not pathlib.Path(cert).exists()):
-            print(f"[tunnel] Uzywam istniejacego certu Let's Encrypt: {le_cert}", flush=True)
+            print(f"[tunnel] Using existing Let's Encrypt cert: {le_cert}", flush=True)
             cert = str(le_cert)
             key  = str(le_key)
             self._cfg["certPath"] = cert
@@ -404,7 +417,7 @@ class TunnelManager:
             save_cfg(self._cfg)
 
         if not cert or not pathlib.Path(cert).exists():
-            # Spróbuj Let's Encrypt
+            # Try Let's Encrypt
             cert, key = await self._get_letsencrypt_cert(fqdn, domain)
             if cert and key:
                 self._cfg["certPath"] = cert
@@ -420,7 +433,7 @@ class TunnelManager:
                     self._cfg["keyPath"]  = key
                     save_cfg(self._cfg)
 
-        # Sprawdź czy cert wymaga odnowienia (< 30 dni do wygaśnięcia)
+        # Check whether the cert needs renewal (< 30 days to expiry)
         if cert and key:
             try:
                 import ssl as _ssl, datetime as _dt
@@ -431,9 +444,9 @@ class TunnelManager:
                 from cryptography import x509 as _x509
                 c = _x509.load_pem_x509_certificate(cert_data)
                 days_left = (c.not_valid_after_utc.replace(tzinfo=None) - _dt.datetime.utcnow()).days
-                print(f"[tunnel] cert ważny jeszcze {days_left} dni", flush=True)
+                print(f"[tunnel] cert valid for {days_left} more days", flush=True)
                 if days_left < 30:
-                    print("[tunnel] Odnawiam certyfikat...", flush=True)
+                    print("[tunnel] Renewing certificate...", flush=True)
                     new_cert, new_key = await self._get_letsencrypt_cert(fqdn, domain)
                     if new_cert:
                         cert, key = new_cert, new_key
@@ -441,7 +454,7 @@ class TunnelManager:
                         self._cfg["keyPath"]  = key
                         save_cfg(self._cfg)
             except Exception as e:
-                print(f"[tunnel] sprawdzenie cert: {e}", flush=True)
+                print(f"[tunnel] cert check: {e}", flush=True)
 
         self._public_url = f"https://{fqdn}:{port}"
         self._status     = "connected"
@@ -451,18 +464,18 @@ class TunnelManager:
         await self._broadcast()
         print(f"[tunnel] DuckDNS running: {self._public_url}", flush=True)
 
-        # Odświeżaj IP co 5 minut
+        # Refresh the IP every 5 minutes
         self._task = asyncio.create_task(self._duckdns_loop(domain))
 
     async def _get_letsencrypt_cert(self, fqdn: str, duck_domain: str) -> tuple:
-        """Pobierz certyfikat Let's Encrypt przez ACME DNS-01 challenge z DuckDNS."""
+        """Get a Let's Encrypt certificate via an ACME DNS-01 challenge through DuckDNS."""
         duck_token = self._cfg.get("duckToken", "").strip()
         if not duck_token:
             return "", ""
 
-        print(f"[tunnel] Let's Encrypt: próba dla {fqdn}", flush=True)
+        print(f"[tunnel] Let's Encrypt: attempting for {fqdn}", flush=True)
 
-        # Sprawdź istniejący certyfikat w standardowych lokalizacjach
+        # Check for an existing certificate in the standard locations
         for base in [
             pathlib.Path(f"C:/Certbot/live/{fqdn}"),
             pathlib.Path(f"/etc/letsencrypt/live/{fqdn}"),
@@ -471,7 +484,7 @@ class TunnelManager:
             cp = base / "fullchain.pem"
             kp = base / "privkey.pem"
             if cp.exists() and kp.exists():
-                print(f"[tunnel] Znaleziono cert: {cp}", flush=True)
+                print(f"[tunnel] Found cert: {cp}", flush=True)
                 return str(cp), str(kp)
 
         # Running certbot requires Administrator rights on Windows. The server
@@ -487,25 +500,25 @@ class TunnelManager:
             except Exception:
                 _is_admin = 0
             if not _is_admin:
-                print("[tunnel] Brak certu Let's Encrypt i brak uprawnien admina "
-                      "— uzywam self-signed. Aby uzyskac prawdziwy certyfikat, "
-                      "uruchom skrot 'Wygeneruj certyfikat (jako admin)' z menu Start.",
+                print("[tunnel] No Let's Encrypt cert and no admin rights "
+                      "- using self-signed. To get a real certificate, "
+                      "run the 'Generate certificate (as admin)' shortcut from the Start menu.",
                       flush=True)
                 return "", ""
 
-        # Instaluj certbot jeśli brak
+        # Install certbot if missing
         certbot = await self._ensure_certbot()
         print(f"[tunnel] certbot path: {certbot!r}", flush=True)
         if not certbot:
-            print("[tunnel] certbot niedostępny — używam self-signed", flush=True)
+            print("[tunnel] certbot unavailable - using self-signed", flush=True)
             return "", ""
 
-        # Utwórz hook DuckDNS
-        print(f"[tunnel] tworzę hook DuckDNS dla {duck_domain}", flush=True)
+        # Create the DuckDNS hook
+        print(f"[tunnel] creating DuckDNS hook for {duck_domain}", flush=True)
         hook = self._create_duckdns_hook(duck_domain, duck_token)
         print(f"[tunnel] hook: {hook}", flush=True)
 
-        # Uruchom certbot
+        # Run certbot
         cmd = [
             certbot, "certonly",
             "--manual", "--preferred-challenges", "dns",
@@ -514,24 +527,25 @@ class TunnelManager:
             "-d", fqdn,
             "--non-interactive", "--agree-tos",
             "--email", f"admin@{fqdn}",
-            # --disable-hook-validation: certbot domyslnie waliduje hook przed
-            # uzyciem, co na Windows ze sciezkami ze spacjami (Program Files)
-            # daje falszywy blad. Hook i tak dziala - wylaczamy walidacje.
+            # --disable-hook-validation: certbot validates the hook by
+            # default before use, which on Windows with paths containing
+            # spaces (Program Files) produces a false error. The hook works
+            # fine anyway - validation is disabled.
             "--disable-hook-validation",
-            # nie probuj bindowac uprawnien do standardowych lokalizacji
+            # don't try to bind permissions to the standard locations
             "--work-dir", str(_DATA / "letsencrypt" / "work"),
             "--logs-dir", str(_DATA / "letsencrypt" / "logs"),
             "--config-dir", str(_DATA / "letsencrypt" / "config"),
         ]
-        print(f"[tunnel] uruchamiam certbot: {cmd[0]}", flush=True)
-        # Uruchom certbot w osobnym watku (Windows subprocess issue)
+        print(f"[tunnel] running certbot: {cmd[0]}", flush=True)
+        # Run certbot in a separate thread (Windows subprocess issue)
         def _run_certbot():
             import subprocess
             try:
                 (_DATA / "letsencrypt" / "work").mkdir(parents=True, exist_ok=True)
                 (_DATA / "letsencrypt" / "logs").mkdir(parents=True, exist_ok=True)
                 (_DATA / "letsencrypt" / "config").mkdir(parents=True, exist_ok=True)
-                # Usun zablokowane instancje certbota z poprzednich prob
+                # Remove stuck certbot instances from previous attempts
                 # ("Another instance of Certbot is already running").
                 if sys.platform == "win32":
                     try:
@@ -539,14 +553,14 @@ class TunnelManager:
                                        capture_output=True, timeout=10)
                     except Exception:
                         pass
-                # Usun pliki blokady (.certbot.lock) z katalogow certbota
+                # Remove lock files (.certbot.lock) from certbot's directories
                 for _ld in (_DATA / "letsencrypt" / "work",
                             _DATA / "letsencrypt" / "config",
                             _DATA / "letsencrypt" / "logs"):
                     for _lock in _ld.glob(".certbot.lock"):
                         try: _lock.unlink()
                         except Exception: pass
-                print(f"[tunnel] certbot subprocess start", flush=True)
+                print(f"[tunnel] certbot subprocess starting", flush=True)
                 r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
                 print(f"[tunnel] certbot exit={r.returncode}", flush=True)
                 if r.stdout: print(f"[tunnel] certbot out: {r.stdout[-500:]}", flush=True)
@@ -570,7 +584,7 @@ class TunnelManager:
                     self._last_cert_error = ""
                 return r.returncode == 0
             except Exception as e:
-                print(f"[tunnel] certbot wyjątek: {e}", flush=True)
+                print(f"[tunnel] certbot exception: {e}", flush=True)
                 return False
 
         print("[tunnel] run_in_executor START", flush=True)
@@ -583,57 +597,57 @@ class TunnelManager:
                 if cp.exists():
                     return str(cp), str(kp)
         except Exception as e:
-            print(f"[tunnel] certbot wyjątek: {e}", flush=True)
+            print(f"[tunnel] certbot exception: {e}", flush=True)
         return "", ""
 
     async def _ensure_certbot(self) -> str:
         """
-        Znajdz certbot. W produkcie EXE certbot instaluje admin RECZNIE
-        (pip w EXE nie dziala). Sprawdzamy PATH + typowe lokalizacje instalacji
-        certbota na Windows.
+        Find certbot. In the EXE product, certbot is installed MANUALLY by
+        the admin (pip doesn't work inside the EXE). We check PATH + the
+        typical certbot install locations on Windows.
         """
         import shutil
         import pathlib
 
-        # 1. PATH (najczestsze)
+        # 1. PATH (most common)
         cb = shutil.which("certbot")
         if cb:
-            print(f"[tunnel] certbot znaleziony: {cb}", flush=True)
+            print(f"[tunnel] certbot found: {cb}", flush=True)
             return cb
 
-        # 2. Typowe lokalizacje instalacji certbota na Windows
-        #    (instalator z certbot.eff.org / EFF Windows installer)
+        # 2. Typical certbot install locations on Windows
+        #    (installer from certbot.eff.org / EFF Windows installer)
         win_paths = [
             pathlib.Path(r"C:\Program Files\Certbot\bin\certbot.exe"),
             pathlib.Path(r"C:\Program Files (x86)\Certbot\bin\certbot.exe"),
         ]
-        # Certbot moze byc tez w Scripts obok jakiegos Pythona systemowego
+        # Certbot may also be in Scripts next to some system Python
         for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("APPDATA", "")):
             if base:
                 win_paths.append(pathlib.Path(base) / "Programs" / "Certbot" / "bin" / "certbot.exe")
         for p in win_paths:
             if p.exists():
-                print(f"[tunnel] certbot znaleziony: {p}", flush=True)
+                print(f"[tunnel] certbot found: {p}", flush=True)
                 return str(p)
 
-        # 3. Nie znaleziono. W EXE nie probujemy pip (nie zadziala) - dajemy
-        #    adminowi jasna instrukcje.
+        # 3. Not found. In the EXE we don't try pip (won't work) - give the
+        #    admin clear instructions.
         if getattr(sys, "frozen", False):
             print("[tunnel] ============================================", flush=True)
-            print("[tunnel] CERTBOT NIE ZNALEZIONY", flush=True)
-            print("[tunnel] Let's Encrypt wymaga zainstalowania certbota.", flush=True)
-            print("[tunnel] Admin: pobierz instalator z https://certbot.eff.org", flush=True)
-            print("[tunnel]   (wybierz: Software=None, System=Windows)", flush=True)
-            print("[tunnel] Po instalacji zrestartuj serwer.", flush=True)
-            print("[tunnel] Alternatywa: uzyj Cloudflare tunnel (bez certbota).", flush=True)
+            print("[tunnel] CERTBOT NOT FOUND", flush=True)
+            print("[tunnel] Let's Encrypt requires certbot to be installed.", flush=True)
+            print("[tunnel] Admin: download the installer from https://certbot.eff.org", flush=True)
+            print("[tunnel]   (choose: Software=None, System=Windows)", flush=True)
+            print("[tunnel] Restart the server after installing.", flush=True)
+            print("[tunnel] Alternative: use a Cloudflare tunnel (no certbot needed).", flush=True)
             print("[tunnel] ============================================", flush=True)
             self._error = ("Certbot nie zainstalowany. Pobierz z certbot.eff.org "
                            "(Software=None, System=Windows) i zrestartuj serwer, "
                            "albo uzyj Cloudflare tunnel.")
             return ""
 
-        # 4. Tryb dev (nie-frozen): probuj pip
-        print("[tunnel] Instaluję certbot przez pip...", flush=True)
+        # 4. Dev mode (not frozen): try pip
+        print("[tunnel] Installing certbot via pip...", flush=True)
         try:
             def _pip_install():
                 import subprocess
@@ -649,52 +663,53 @@ class TunnelManager:
             if ok:
                 cb = shutil.which("certbot")
                 if cb:
-                    print(f"[tunnel] certbot zainstalowany: {cb}", flush=True)
+                    print(f"[tunnel] certbot installed: {cb}", flush=True)
                     return cb
-                # Windows: certbot może być w Scripts
+                # Windows: certbot may be in Scripts
                 import pathlib
                 scripts = pathlib.Path(sys.executable).parent / "Scripts" / "certbot.exe"
                 if scripts.exists():
                     print(f"[tunnel] certbot Scripts: {scripts}", flush=True)
                     return str(scripts)
         except Exception as e:
-            print(f"[tunnel] pip błąd: {e}", flush=True)
+            print(f"[tunnel] pip error: {e}", flush=True)
         return ""
 
     def _create_duckdns_hook(self, domain: str, token: str) -> str:
         """
-        Utwórz skrypt hook dla certbot DNS challenge przez DuckDNS.
+        Create the hook script for the certbot DNS challenge via DuckDNS.
 
-        WAZNE: certbot na Windows uruchamia hook przez PowerShell. Sciezka ze
-        SPACJAMI (np. 'C:\\Program Files (x86)\\HAM RADIO CTRL\\') rozwala sie -
-        PowerShell traktuje 'C:\\Program' jako komende. Dlatego hook MUSI byc w
-        katalogu BEZ spacji. Uzywamy %TEMP% (albo dedykowanego C:\\HAMCTRL).
+        IMPORTANT: certbot on Windows runs the hook via PowerShell. A path
+        WITH SPACES (e.g. 'C:\\Program Files (x86)\\HAM RADIO CTRL\\')
+        breaks this - PowerShell treats 'C:\\Program' as a command. So the
+        hook MUST be in a directory WITHOUT spaces. We use %TEMP% (or a
+        dedicated C:\\HAMCTRL).
         """
         import tempfile
-        # Katalog bez spacji: preferuj C:\HAMCTRL-tmp, fallback TEMP
+        # Directory without spaces: prefer C:\HAMCTRL-tmp, fall back to TEMP
         hook_dir = None
         for cand in (pathlib.Path(r"C:\HAMCTRL"),
                      pathlib.Path(tempfile.gettempdir())):
             try:
                 cand.mkdir(parents=True, exist_ok=True)
-                # Test braku spacji w sciezce
+                # Check the path has no spaces
                 if " " not in str(cand):
                     hook_dir = cand
                     break
             except Exception:
                 continue
         if hook_dir is None:
-            hook_dir = _DATA  # ostatecznosc (moze miec spacje)
+            hook_dir = _DATA  # last resort (may have spaces)
 
         if sys.platform == "win32":
             hook = hook_dir / "duckdns_hook.bat"
-            # BEZ -k: curl domyslnie weryfikuje cert duckdns.org (publicznie
-            # zaufany, nie ma powodu tego wylaczac - patrz ten sam komentarz
-            # przy _duckdns_update_ip, ktory mial identyczny problem).
+            # WITHOUT -k: curl verifies the duckdns.org cert by default
+            # (publicly trusted, no reason to disable it - see the same
+            # comment at _duckdns_update_ip, which had the identical issue).
             hook.write_text(
                 f"@echo off\n"
                 f"curl \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=%CERTBOT_VALIDATION%&verbose=true\"\n"
-                f"echo Czekam 120 sekund na propagacje DNS...\n"
+                f"echo Waiting 120 seconds for DNS propagation...\n"
                 f"timeout /t 120 /nobreak >nul\n",
                 encoding="utf-8",
             )
@@ -703,7 +718,7 @@ class TunnelManager:
             hook.write_text(
                 f"#!/bin/bash\n"
                 f"curl -s \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=$CERTBOT_VALIDATION\"\n"
-                f"echo 'Czekam 120s na propagacje DNS...'\n"
+                f"echo 'Waiting 120s for DNS propagation...'\n"
                 f"sleep 120\n",
                 encoding="utf-8",
             )
@@ -718,7 +733,7 @@ class TunnelManager:
             except Exception:
                 pass
 
-    # ── Stałe IP ─────────────────────────────────────────────────────────────
+    # ── Static IP ─────────────────────────────────────────────────────────────
 
     async def _start_staticip(self):
         ip   = self._cfg.get("staticIp", "").strip()
@@ -744,23 +759,25 @@ class TunnelManager:
             self._error      = "Brak certyfikatu SSL"
             self._public_url = f"http://{ip}:{port}"
         await self._broadcast()
-        print(f"[tunnel] Stałe IP: {self._public_url}", flush=True)
+        print(f"[tunnel] Static IP: {self._public_url}", flush=True)
 
-    # ── Własna domena + własny certyfikat ────────────────────────────────────
+    # ── Own domain + own certificate ────────────────────────────────────
 
     async def _start_customcert(self):
         """
-        Admin ma juz WLASNA domene (DNS wskazujacy na jego stale IP/router z
-        przekierowanym portem) i WLASNY, gdzies wykupiony/wystawiony
-        certyfikat SSL - w odroznieniu od _start_staticip (zawsze generuje
-        self-signed) i _start_duckdns (zawsze Let's Encrypt), tu NIC nie
-        generujemy. Tylko wskazujemy istniejace pliki PEM.
+        The admin already has THEIR OWN domain (DNS pointing at their
+        static IP/router with a forwarded port) and their OWN SSL
+        certificate obtained/issued elsewhere - unlike _start_staticip
+        (always generates self-signed) and _start_duckdns (always Let's
+        Encrypt), here we generate NOTHING. We just point at existing PEM
+        files.
 
-        server.py (glowny serwer HTTP/HTTPS) juz umie zaladowac certPath/
-        keyPath z tunnel_config.json - to DOKLADNIE ten sam mechanizm co
-        certyfikat Let's Encrypt z trybu DuckDNS (patrz "Najpierw sprawdz
-        certyfikat z konfiguracji tunelu" w server.py), wiec tu wystarczy
-        zwalidowac ze pliki istnieja i ustawic te same dwa pola.
+        server.py (the main HTTP/HTTPS server) already knows how to load
+        certPath/keyPath from tunnel_config.json - this is EXACTLY the same
+        mechanism as the Let's Encrypt certificate from DuckDNS mode (see
+        "check the tunnel config for a certificate first" in server.py), so
+        here it's enough to validate that the files exist and set those
+        same two fields.
         """
         hostname = self._cfg.get("customHostname", "").strip()
         port     = (self._cfg.get("customPort", "8001") or "8001").strip()
@@ -770,9 +787,9 @@ class TunnelManager:
             await self._broadcast()
             return
 
-        # Puste pola = domyslna lokalizacja ktorej server.py i tak szuka jako
-        # fallback (cert.pem/key.pem w katalogu danych) - user moze tam po
-        # prostu podmienic pliki i nic wiecej nie wpisywac.
+        # Empty fields = the default location server.py already looks for
+        # as a fallback (cert.pem/key.pem in the data directory) - the user
+        # can just drop files there and not fill in anything else.
         cert = (self._cfg.get("customCertPath", "") or "").strip() or str(_DATA / "cert.pem")
         key  = (self._cfg.get("customKeyPath", "")  or "").strip() or str(_DATA / "key.pem")
 
@@ -790,13 +807,14 @@ class TunnelManager:
         self._public_url = f"https://{hostname}:{port}"
         self._status     = "connected"
         await self._broadcast()
-        print(f"[tunnel] Wlasny certyfikat: {self._public_url} (cert={cert})", flush=True)
-        # server.py laduje cert PRZY STARCIE; jesli HTTPS juz wtedy dzialal
-        # (choc self-signed), hot-reload watcher (co 6h) sam podmieni go na
-        # zywo po podmianie plikow na dysku. Jesli HTTPS w ogole nie wstal
-        # (np. brak "cryptography" albo to pierwszy start bez zadnego certu)
-        # - potrzebny restart. Nie da sie stad wiarygodnie odroznic ktory to
-        # przypadek, wiec informujemy zawsze, na wszelki wypadek.
+        print(f"[tunnel] Own certificate: {self._public_url} (cert={cert})", flush=True)
+        # server.py loads the cert AT STARTUP; if HTTPS was already working
+        # then (even if self-signed), the hot-reload watcher (every 6h)
+        # will swap it in live once the files on disk change. If HTTPS
+        # never came up at all (e.g. no "cryptography" module, or this is
+        # the first start with no cert at all) - a restart is needed. There
+        # is no reliable way to tell which case it is from here, so we
+        # inform the user every time, just in case.
         await self._broadcast_msg(
             "✓ Wskazano własny certyfikat. Jeśli HTTPS jeszcze nie działał "
             "(pierwsze uruchomienie), zrestartuj serwer — inaczej wystarczy "
@@ -839,14 +857,14 @@ class TunnelManager:
             print(f"[tunnel] Self-signed cert: {cp}", flush=True)
             return str(cp), str(kp)
         except ImportError:
-            print("[tunnel] Brak cryptography — pip install cryptography", flush=True)
+            print("[tunnel] cryptography module missing - pip install cryptography", flush=True)
             return "", ""
         except Exception as e:
-            print(f"[tunnel] Błąd cert: {e}", flush=True)
+            print(f"[tunnel] Cert error: {e}", flush=True)
             return "", ""
 
     async def install_certbot_task(self):
-        """Zainstaluj certbot przez pip i powiadom UI."""
+        """Install certbot via pip and notify the UI."""
         print("[tunnel] install_certbot_task START", flush=True)
         await self._broadcast_msg("Instaluję certbot...")
         cb = await self._ensure_certbot()
@@ -856,7 +874,7 @@ class TunnelManager:
             await self._broadcast_msg("✗ Instalacja certbot nie powiodła się — spróbuj ręcznie: pip install certbot")
 
     async def gen_cert_task(self):
-        """Wygeneruj certyfikat Let's Encrypt dla DuckDNS."""
+        """Generate a Let's Encrypt certificate for DuckDNS."""
         domain = self._cfg.get("duckDomain", "").strip().replace(".duckdns.org", "")
         if not domain:
             await self._broadcast_msg("✗ Brak domeny DuckDNS w konfiguracji")
@@ -864,7 +882,7 @@ class TunnelManager:
         fqdn = f"{domain}.duckdns.org"
         await self._broadcast_msg(f"Generuję certyfikat dla {fqdn}...")
         print(f"[tunnel] gen_cert_task: {fqdn}", flush=True)
-        # Wyczysc stary cert zeby wymusic nowy
+        # Clear the old cert to force a new one
         self._cfg["certPath"] = ""
         self._cfg["keyPath"]  = ""
         cert, key = await self._get_letsencrypt_cert(fqdn, domain)
@@ -872,18 +890,19 @@ class TunnelManager:
             self._cfg["certPath"] = cert
             self._cfg["keyPath"]  = key
             save_cfg(self._cfg)
-            # WAZNE: serwer HTTPS zaladowal certyfikat przy STARCIE i trzyma go
-            # w pamieci. Nowy cert Let's Encrypt zapisany do configu, ale zeby
-            # serwer go uzyl - MUSI byc restart. Bez tego dalej serwuje stary
-            # self-signed (przegladarka pokazuje ostrzezenie).
+            # IMPORTANT: the HTTPS server loaded its certificate AT STARTUP
+            # and holds it in memory. The new Let's Encrypt cert is saved to
+            # the config, but for the server to use it - a restart is
+            # REQUIRED. Without this it keeps serving the old self-signed
+            # cert (the browser shows a warning).
             await self._broadcast_msg(
                 "✓ Certyfikat Let's Encrypt gotowy! ZRESTARTUJ serwer, "
                 "aby zaczal go uzywac (teraz dziala jeszcze stary certyfikat).")
             print("[tunnel] ============================================", flush=True)
-            print("[tunnel] CERTYFIKAT LET'S ENCRYPT GOTOWY", flush=True)
+            print("[tunnel] LET'S ENCRYPT CERTIFICATE READY", flush=True)
             print(f"[tunnel] cert: {cert}", flush=True)
-            print("[tunnel] ZRESTARTUJ SERWER aby zaczal uzywac nowego certu.", flush=True)
-            print("[tunnel] (serwer laduje cert przy starcie - teraz trzyma stary)", flush=True)
+            print("[tunnel] RESTART THE SERVER to start using the new cert.", flush=True)
+            print("[tunnel] (the server loads the cert at startup - it's still holding the old one)", flush=True)
             print("[tunnel] ============================================", flush=True)
         else:
             # Show the specific reason if we captured one (e.g. certbot needs
@@ -894,14 +913,14 @@ class TunnelManager:
             await self._broadcast_msg("✗ " + _reason)
 
     async def _broadcast_msg(self, msg: str):
-        """Wyślij toast do UI."""
+        """Send a toast to the UI."""
         try:
             await self.hub.broadcast({"type": "toast", "message": msg})
         except Exception:
             print(f"[tunnel] {msg}", flush=True)
 
     async def stop(self):
-        """Zatrzymaj tunel."""
+        """Stop the tunnel."""
         if self._task:
             self._task.cancel()
             try:
@@ -920,19 +939,19 @@ class TunnelManager:
         self._status     = "stopped"
         self._public_url = ""
         await self._broadcast()
-        print("[tunnel] Zatrzymany")
+        print("[tunnel] Stopped")
 
     async def _run(self, cmd: list):
-        """Uruchom cloudflared i parsuj URL z output."""
+        """Run cloudflared and parse the URL from its output."""
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            print(f"[tunnel] Uruchomiony PID={self._proc.pid}")
+            print(f"[tunnel] Started PID={self._proc.pid}")
 
-            # Czytaj output i szukaj publicznego URL
+            # Read the output and look for the public URL
             async for raw in self._proc.stdout:
                 line = raw.decode(errors="replace").strip()
                 if not line:
@@ -943,10 +962,10 @@ class TunnelManager:
                 if m and not self._public_url:
                     self._public_url = m.group()
                     self._status     = "connected"
-                    print(f"[tunnel] Publiczny URL: {self._public_url}")
+                    print(f"[tunnel] Public URL: {self._public_url}")
                     await self._broadcast()
 
-                # Named tunnel — szukaj "Connected" lub hostname
+                # Named tunnel — look for "Connected" or a hostname
                 if "Connected" in line or "connection registered" in line.lower():
                     if not self._public_url:
                         host = self._cfg.get("hostname", "")
@@ -955,7 +974,7 @@ class TunnelManager:
                     self._status = "connected"
                     await self._broadcast()
 
-                # Named tunnel URL z loga
+                # Named tunnel URL from the log
                 m2 = re.search(r'https://[a-zA-Z0-9.-]+\.[a-z]{2,}', line)
                 if m2 and not self._public_url and self._status == "starting":
                     url = m2.group()
@@ -964,13 +983,13 @@ class TunnelManager:
                         self._status     = "connected"
                         await self._broadcast()
 
-                # Błędy
+                # Errors
                 if "error" in line.lower() and self._status != "connected":
                     self._error = line[:200]
 
             await self._proc.wait()
             rc = self._proc.returncode
-            print(f"[tunnel] Zakończony, kod={rc}")
+            print(f"[tunnel] Exited, code={rc}")
             if self._status != "stopped":
                 self._status = "stopped"
                 self._public_url = ""
@@ -981,17 +1000,17 @@ class TunnelManager:
         except Exception as e:
             self._error  = str(e)
             self._status = "error"
-            print(f"[tunnel] Błąd: {e}")
+            print(f"[tunnel] Error: {e}")
             await self._broadcast()
 
     # ── Autostart ─────────────────────────────────────────────────────────────
 
     async def autostart(self):
-        """Uruchom automatycznie przy starcie serwera jeśli skonfigurowane."""
+        """Start automatically at server startup if configured."""
         cfg = load_cfg()
         if cfg.get("autoStart") and cfg.get("mode", "off") != "off":
-            print(f"[tunnel] Autostart: tryb={cfg['mode']}")
-            await asyncio.sleep(2)  # poczekaj na pełny start serwera
+            print(f"[tunnel] Autostart: mode={cfg['mode']}")
+            await asyncio.sleep(2)  # wait for the server to fully start
             await self.start()
 
     # ── Broadcast ─────────────────────────────────────────────────────────────
