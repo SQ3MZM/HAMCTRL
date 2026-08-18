@@ -1,19 +1,19 @@
 """
-FT8 RX Decoder - pelny pipeline: audio (15s, 12000Hz, mono float) -> lista
-zdekodowanych wiadomosci.
+FT8 RX Decoder - full pipeline: audio (15s, 12000Hz, mono float) -> list of
+decoded messages.
 
-Etapy (kazdy zweryfikowany osobno):
-  1. sync.find_candidates       - zgrubne wyszukiwanie pozycji (czas, freq)
-  2. demod.extract_tone_power   - demodulacja (macierz mocy 79 symboli x 8 tonow)
-  3. demod.extract_llr174       - miekkie LLR dla 174 bitow LDPC
-  4. ldpc_decode.bp_decode      - belief propagation, poprawia bledy bitowe
-  5. CRC-14 check                - odrzuca falszywe/bledne dekodowania
-  6. unpack.unpack77             - bity -> czytelny tekst (callsign/grid/raport)
+Stages (each verified independently):
+  1. sync.find_candidates       - coarse position search (time, freq)
+  2. demod.extract_tone_power   - demodulation (79-symbol x 8-tone power matrix)
+  3. demod.extract_llr174       - soft LLRs for the 174 LDPC bits
+  4. ldpc_decode.bp_decode      - belief propagation, corrects bit errors
+  5. CRC-14 check                - rejects false/bad decodes
+  6. unpack.unpack77             - bits -> readable text (callsign/grid/report)
 
-Zweryfikowane end-to-end na prawdziwym nagraniu FT8 (210703_133430.wav):
-5/12 kandydatow sync zdekodowanych poprawnie do sensownych komunikatow FT8.
+Verified end-to-end against a real FT8 recording (210703_133430.wav):
+5/12 sync candidates decoded correctly into sensible FT8 messages.
 
-Uzycie:
+Usage:
     from ft8_rx_decoder import decode_window
     messages = decode_window(audio_15s_float_array)
     for m in messages:
@@ -74,15 +74,15 @@ def _estimate_snr_db(psd, freqs, noise_floor, freq_hz):
 def decode_window(audio, sample_rate=12000, min_score=0.15, max_candidates=60,
                    ldpc_max_iters=50, dedup_freq_hz=8.0, dedup_time_s=0.1):
     """
-    Dekoduje jedno okno audio (typowo 15s, ale dziala na dowolnej dlugosci
-    >= ok. 13s) i zwraca liste zdekodowanych wiadomosci.
+    Decodes one audio window (typically 15s, but works with any length
+    >= roughly 13s) and returns a list of decoded messages.
 
-    Zwraca: lista dict, posortowana po freq_hz:
+    Returns: a list of dicts, sorted by freq_hz:
         {freq_hz, time_offset_s, message, call_to, call_de, report_or_grid,
          snr_db, ldpc_iters, sync_quality}
     """
     if sample_rate != 12000:
-        raise ValueError(f"decode_window oczekuje sample_rate=12000, otrzymano {sample_rate}")
+        raise ValueError(f"decode_window expects sample_rate=12000, got {sample_rate}")
 
     candidates = find_candidates(audio, max_candidates=max_candidates, min_score=min_score)
 
@@ -132,10 +132,10 @@ def decode_window(audio, sample_rate=12000, min_score=0.15, max_candidates=60,
 
 def _dedup(decoded, freq_tol_hz, time_tol_s):
     """
-    Usuwa duplikaty: rozne kandydaci sync moga czasem zbiegac do tej samej
-    fizycznej ramki (np. przy szerokim przeszukiwaniu non-max-suppression).
-    Dwie dekodowane wiadomosci sa duplikatem jesli maja IDENTYCZNY tekst
-    wiadomosci ORAZ sa blisko siebie w czasie/czestotliwosci.
+    Removes duplicates: different sync candidates can sometimes converge on
+    the same physical frame (e.g. with a wide non-max-suppression search).
+    Two decoded messages are duplicates if they have IDENTICAL message text
+    AND are close to each other in time/frequency.
     """
     if not decoded:
         return decoded

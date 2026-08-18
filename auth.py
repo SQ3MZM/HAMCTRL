@@ -1,24 +1,24 @@
 """
-auth.py — autoryzacja i kryptografia dla Ham Radio Control Server.
+auth.py — authentication and cryptography for Ham Radio Control Server.
 
-Funkcje:
+Functions:
   jwt_sign(payload)       -> token string
   jwt_verify(token)       -> payload dict | None
-  hash_pw(password)       -> hex string (SHA-256, kompatybilny z oryginalna implementacja)
+  hash_pw(password)       -> hex string (SHA-256, compatible with the original implementation)
   make_reset_token()      -> token_str
   consume_reset_token()   -> payload | None
   RESET_TOKENS            -> dict {token: {user_id, expires}}
 
-hash_pw uzywa prostego SHA-256 (bez HMAC) — tak jak oryginalna implementacja,
-zeby istniejace hasla w users.json dzialaly bez zmian po aktualizacji.
-JWT podpisywane HMAC-SHA256 z SECRET z config.py (rowniez bez zmian).
+hash_pw uses plain SHA-256 (no HMAC) — same as the original implementation,
+so existing password hashes in users.json keep working unchanged after an update.
+JWT is signed with HMAC-SHA256 using SECRET from config.py (also unchanged).
 """
 import json, time, hmac, hashlib, base64, secrets
 from typing import Optional
 
-# SECRET pochodzi z config.py (tak jak w oryginalnej implementacji)
-# — nie generujemy wlasnego klucza, zeby JWT z poprzednich sesji
-# nadal byly wazne po aktualizacji.
+# SECRET comes from config.py (same as the original implementation)
+# — we don't generate our own key, so JWTs from previous sessions
+# stay valid after an update.
 try:
     from config import SECRET
 except ImportError:
@@ -31,11 +31,11 @@ except ImportError:
     # is a last-resort guard, not a normal path.
     import sys as _sys
     SECRET = secrets.token_hex(32)
-    print("[auth] OSTRZEZENIE: brak SECRET z config.py — uzyto losowego klucza "
-          "na czas dzialania procesu (stare tokeny wygasly). Sprawdz .env / config.py.",
+    print("[auth] WARNING: no SECRET from config.py — using a random key "
+          "for this process's lifetime (old tokens have expired). Check .env / config.py.",
           file=_sys.stderr, flush=True)
 
-# ── JWT (HMAC-SHA256) — identyczny z oryginalna implementacja ────────────────
+# ── JWT (HMAC-SHA256) — identical to the original implementation ────────────
 def _b64u(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -63,7 +63,7 @@ def jwt_verify(token: str) -> Optional[dict]:
     except Exception:
         return None
 
-# ── Hashowanie hasel (SHA-256 — kompatybilne ze starymi hasłami w users.json) ─
+# ── Password hashing (SHA-256 — compatible with old hashes in users.json) ───
 def hash_pw(pw: str) -> str:
     """Legacy SHA-256 hash — kept ONLY so old users.json hashes still verify.
     New passwords use hash_pw_secure(); verify_pw() understands both and
@@ -111,13 +111,13 @@ def needs_rehash(stored: str) -> bool:
     scrypt the next time we have the plaintext (i.e. on successful login)."""
     return not (stored or "").startswith("scrypt$")
 
-# ── Tokeny resetowania hasla (jednorazowe, wygasajace) ───────────────────────
+# ── Password reset tokens (one-time, expiring) ───────────────────────────────
 RESET_TOKENS: dict[str, dict] = {}
-RESET_TOKEN_TTL = 3600  # 1 godzina
+RESET_TOKEN_TTL = 3600  # 1 hour
 
 def make_reset_token(user_id: str, username: str, email: str) -> str:
-    """Wygeneruj jednorazowy token resetowania hasla (wazny 1h)."""
-    # Usun stare tokeny dla tego usera i wygasle
+    """Generate a one-time password reset token (valid for 1h)."""
+    # Remove stale tokens for this user, and expired ones
     stale = [t for t, v in RESET_TOKENS.items()
              if v["user_id"] == user_id or v["expires"] < time.time()]
     for t in stale:
@@ -132,7 +132,7 @@ def make_reset_token(user_id: str, username: str, email: str) -> str:
     return token
 
 def consume_reset_token(token: str) -> Optional[dict]:
-    """Wez i usun token (jednorazowy). Zwraca payload lub None jesli wygas/nieznany."""
+    """Fetch and remove a token (one-time use). Returns the payload, or None if expired/unknown."""
     entry = RESET_TOKENS.pop(token, None)
     if not entry or entry["expires"] < time.time():
         return None

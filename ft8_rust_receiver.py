@@ -1,11 +1,11 @@
 """
-ft8_rust_receiver.py — Odbiera wyniki dekodowania FT8/FT4 z Rust (ham_audio.exe)
-przez TCP port 9444 i przekazuje do webapp.py przez asyncio queue.
+ft8_rust_receiver.py — Receives FT8/FT4 decode results from Rust (ham_audio.exe)
+over TCP port 9444 and hands them to webapp.py via an asyncio queue.
 
-Architektura:
+Architecture:
   ham_audio.exe → TCP 9444 → ft8_rust_receiver → asyncio.Queue → webapp.py
 
-Format wiadomości z Rust (jedna linia JSON):
+Message format from Rust (one line of JSON):
   {"type":"wsjtx_decode","timeStr":"183045","snr":-12,"deltaTime":0.2,
    "deltaFreq":1234,"message":"CQ XX0XXX JO72","call_to":"CQ",
    "call_de":"XX0XXX","report_or_grid":"JO72","mode":"FT8"}
@@ -23,8 +23,8 @@ RECONNECT_DELAY = 3.0
 
 class Ft8RustReceiver:
     """
-    Nasluchuje na porcie TCP (Rust łączy się jako KLIENT, Python jest SERWEREM).
-    Rust połączy się automatycznie gdy decode_loop wystartuje.
+    Listens on a TCP port (Rust connects as the CLIENT, Python is the SERVER).
+    Rust connects automatically once decode_loop starts.
     """
 
     def __init__(self, port: int = DECODE_PORT):
@@ -35,10 +35,10 @@ class Ft8RustReceiver:
         self._mode = "FT8"
 
     async def start(self):
-        """Uruchamia TCP server nasłuchujący na wyniki decode z Rust."""
-        # reuse_address=True: pozwala przejac port ktory jest w TIME_WAIT po
-        # poprzednim uruchomieniu (typowe przy restarcie serwera) zamiast
-        # padac z "address already in use".
+        """Starts the TCP server that listens for decode results from Rust."""
+        # reuse_address=True: lets us take over a port stuck in TIME_WAIT from
+        # a previous run (typical on server restart) instead of failing with
+        # "address already in use".
         try:
             self._server = await asyncio.start_server(
                 self._handle_rust_connection,
@@ -47,21 +47,21 @@ class Ft8RustReceiver:
                 reuse_address=True,
             )
         except OSError as e:
-            # Port wciaz zajety przez ZYWY proces (nie TIME_WAIT). Zwykle stary
-            # ham_audio.exe/Python nie zostal ubity. Zamiast wywalac caly
-            # serwer - zaloguj i pozwol reszcie dzialac (audio nie wstanie, ale
-            # sterowanie radiem/waterfall tak).
-            print(f"[ft8rx] UWAGA: port {self.port} zajety ({e}). "
-                  f"Zabij stary ham_audio.exe/Python i zrestartuj. "
-                  f"FT8 decode nieaktywny.", flush=True)
+            # Port still held by a LIVE process (not TIME_WAIT) — usually an
+            # old ham_audio.exe/Python process wasn't killed. Instead of
+            # crashing the whole server, log it and let the rest keep running
+            # (audio won't come up, but radio control/waterfall still will).
+            print(f"[ft8rx] WARNING: port {self.port} in use ({e}). "
+                  f"Kill the old ham_audio.exe/Python process and restart. "
+                  f"FT8 decode is inactive.", flush=True)
             self._server = None
             return
         addr = self._server.sockets[0].getsockname()
-        print(f"[ft8rx] Rust decoder receiver na {addr}", flush=True)
+        print(f"[ft8rx] Rust decoder receiver on {addr}", flush=True)
 
     async def _handle_rust_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         peer = writer.get_extra_info('peername')
-        print(f"[ft8rx] Rust połączony z {peer}", flush=True)
+        print(f"[ft8rx] Rust connected from {peer}", flush=True)
         try:
             while True:
                 line = await reader.readline()
@@ -75,31 +75,31 @@ class Ft8RustReceiver:
                 except json.JSONDecodeError:
                     continue
                 if msg.get("type") == "heartbeat":
-                    continue  # ignoruj heartbeat
-                # Diagnostyczne typy (startup_stats/decode_stats/pass_stats)
-                # ida do kolejki NIEZALEZNIE od self._enabled - to tylko info
-                # do logu (rayon_threads, timing), nie wynik dekodowania.
-                # startup_stats leci RAZ, od razu po polaczeniu TCP - jesli
-                # w tym momencie self._enabled jeszcze nie zdazylo zostac
-                # ustawione na True (wyscig ze startem serwera), stary kod
-                # cicho gubil ta linie na zawsze (polaczenie jest jednorazowe
-                # per uruchomienie ham_audio.exe) - stąd "nic nie ma" mimo
-                # ze Rust na pewno ja wyslal.
+                    continue  # ignore heartbeat
+                # Diagnostic types (startup_stats/decode_stats/pass_stats) go
+                # to the queue REGARDLESS of self._enabled - they're just log
+                # info (rayon_threads, timing), not a decode result.
+                # startup_stats fires ONCE, right after the TCP connection is
+                # made - if self._enabled hasn't been set to True yet at that
+                # point (a race with server startup), the old code silently
+                # dropped this line forever (the connection is one-shot per
+                # ham_audio.exe run) - hence "nothing shows up" even though
+                # Rust definitely sent it.
                 is_diag = msg.get("type") in ("startup_stats", "decode_stats", "pass_stats")
                 if not self._enabled and not is_diag:
                     continue
                 try:
                     self._queue.put_nowait(msg)
                 except asyncio.QueueFull:
-                    pass  # Pomiń gdy kolejka pełna
+                    pass  # drop when the queue is full
         except asyncio.IncompleteReadError:
             pass
         finally:
-            print(f"[ft8rx] Rust rozłączony {peer}", flush=True)
+            print(f"[ft8rx] Rust disconnected {peer}", flush=True)
             writer.close()
 
     async def get_decode(self) -> dict | None:
-        """Pobierz jeden wynik dekodowania. Czeka do 0.1s."""
+        """Fetch one decode result. Waits up to 0.1s."""
         try:
             return await asyncio.wait_for(self._queue.get(), timeout=0.1)
         except asyncio.TimeoutError:
@@ -126,9 +126,10 @@ class Ft8RustReceiver:
             self._server.close()
 
     async def stop(self):
-        """Zamyka serwer i CZEKA na pelne zwolnienie portu 9444.
-        Wazne przy restarcie ham_audio - nowy receiver musi dostac czysty port,
-        inaczej stary przechwytuje polaczenie Rusta a dekodowania nie docieraja."""
+        """Closes the server and WAITS for port 9444 to be fully released.
+        Important on ham_audio restart - the new receiver must get a clean
+        port, otherwise the old one keeps grabbing Rust's connection and no
+        decodes get through."""
         if self._server:
             self._server.close()
             try:
@@ -136,7 +137,7 @@ class Ft8RustReceiver:
             except Exception:
                 pass
             self._server = None
-        # Wyczysc kolejke po starym polaczeniu
+        # Clear the queue left over from the old connection
         try:
             while not self._queue.empty():
                 self._queue.get_nowait()

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-data.py — magazyn JSON (config, użytkownicy, log QSO) i wartości domyślne.
+data.py — JSON storage (config, users, QSO log) and default values.
 
-STABILNOSC (2026-07-05):
-- save_json zapisuje ATOMOWO (tmp + rename) i trzyma kopie .bak.
-  Bez tego crash/brak pradu w trakcie zapisu uszkadza users.json -> utrata kont.
-- load_json przy uszkodzonym pliku probuje odtworzyc z .bak i GLOSNO loguje.
-  Wczesniej cicho zwracal default (pusta lista userow!) i nikt nie wiedzial.
+STABILITY (2026-07-05):
+- save_json writes ATOMICALLY (tmp + rename) and keeps a .bak copy.
+  Without this, a crash/power loss mid-write corrupts users.json -> lost accounts.
+- load_json falls back to .bak on a corrupted file and logs LOUDLY.
+  It used to silently return the default (an empty user list!) with no warning.
 """
 import json
 import os
@@ -19,80 +19,80 @@ from auth import hash_pw, hash_pw_secure
 
 def load_json(path: Path, default):
     """
-    Wczytaj JSON. Przy uszkodzonym pliku sprobuj kopii .bak.
-    Bledy sa LOGOWANE (nie cicho ignorowane) - uszkodzony users.json
-    oznaczalby utrate wszystkich kont bez ostrzezenia.
+    Load JSON. Falls back to the .bak copy on a corrupted file.
+    Errors are LOGGED (not silently ignored) - a corrupted users.json
+    would mean losing every account with no warning.
     """
     if not path.exists():
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
-        print(f"[data] BLAD odczytu {path.name}: {e}", flush=True)
+        print(f"[data] READ ERROR {path.name}: {e}", flush=True)
 
-    # Plik uszkodzony - sprobuj kopii zapasowej
+    # File corrupted - try the backup copy
     bak = path.with_suffix(path.suffix + ".bak")
     if bak.exists():
         try:
             data = json.loads(bak.read_text(encoding="utf-8"))
-            print(f"[data] ODZYSKANO {path.name} z kopii {bak.name}", flush=True)
-            # Odtworz glowny plik z backupu
+            print(f"[data] RECOVERED {path.name} from backup {bak.name}", flush=True)
+            # Restore the main file from the backup
             try:
                 shutil.copy2(bak, path)
             except Exception:
                 pass
             return data
         except Exception as e:
-            print(f"[data] kopia {bak.name} tez uszkodzona: {e}", flush=True)
+            print(f"[data] backup {bak.name} is also corrupted: {e}", flush=True)
 
-    # Zachowaj uszkodzony plik do analizy (nie nadpisuj go slepo)
+    # Keep the corrupted file for analysis (don't blindly overwrite it)
     try:
         broken = path.with_suffix(path.suffix + ".broken")
         shutil.copy2(path, broken)
-        print(f"[data] uszkodzony plik zachowany jako {broken.name}", flush=True)
+        print(f"[data] corrupted file kept as {broken.name}", flush=True)
     except Exception:
         pass
-    print(f"[data] UWAGA: uzywam wartosci domyslnych dla {path.name}!", flush=True)
+    print(f"[data] WARNING: using default values for {path.name}!", flush=True)
     return default
 
 
 def save_json(path: Path, data):
     """
-    Zapis ATOMOWY: najpierw do pliku tymczasowego w tym samym katalogu,
-    fsync, potem atomowy os.replace(). Dzieki temu plik docelowy jest
-    ZAWSZE kompletny - crash w trakcie zapisu nie moze go uszkodzic.
+    ATOMIC write: first to a temp file in the same directory, fsync, then
+    an atomic os.replace(). This guarantees the target file is ALWAYS
+    complete - a crash mid-write cannot corrupt it.
 
-    Przed podmiana robi kopie .bak (poprzednia dobra wersja).
+    Makes a .bak copy of the previous good version before replacing it.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2, ensure_ascii=False)
 
-    # Kopia poprzedniej dobrej wersji (jesli istnieje i jest niepusta)
+    # Copy of the previous good version (if it exists and is non-empty)
     try:
         if path.exists() and path.stat().st_size > 0:
             shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     except Exception as e:
-        print(f"[data] nie udalo sie zrobic .bak dla {path.name}: {e}", flush=True)
+        print(f"[data] could not create .bak for {path.name}: {e}", flush=True)
 
     tmp_path = None
     try:
-        # Plik tymczasowy MUSI byc na tym samym dysku co docelowy,
-        # inaczej os.replace nie bedzie atomowy.
+        # The temp file MUST be on the same disk as the target,
+        # otherwise os.replace won't be atomic.
         fd, tmp_path = tempfile.mkstemp(
             dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)
             f.flush()
-            os.fsync(f.fileno())   # wymus zapis na dysk (nie tylko cache OS)
-        # Atomowa podmiana - na Windows i POSIX os.replace jest atomowe
+            os.fsync(f.fileno())   # force the write to disk (not just the OS cache)
+        # Atomic replace - os.replace is atomic on both Windows and POSIX
         os.replace(tmp_path, path)
         tmp_path = None
     except Exception as e:
-        print(f"[data] BLAD zapisu {path.name}: {e}", flush=True)
+        print(f"[data] WRITE ERROR {path.name}: {e}", flush=True)
         raise
     finally:
-        # Posprzataj plik tymczasowy jesli cos poszlo nie tak
+        # Clean up the temp file if something went wrong
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
