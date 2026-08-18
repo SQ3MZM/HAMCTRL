@@ -1,12 +1,12 @@
 
 /**
- * settings.js — panel ustawień (frontend)
+ * settings.js — settings panel (frontend)
  */
 (function() {
 'use strict';
 
-let _brands = {};   // cache modeli Hamlib
-let _rigs   = [];   // cache konfiguracji radia
+let _brands = {};   // Hamlib model cache
+let _rigs   = [];   // radio config cache
 const BAUDS = ['1200','2400','4800','9600','19200','38400','57600','115200'];
 
 function buildModelOptions(sel, brands, current) {
@@ -34,8 +34,8 @@ function renderRigs(brands, rigs) {
   const isAdmin   = window.AppState?.role === 'admin';
 
   if (!container) return;
-  // Przycisk "DODAJ RADIO" ukryty — obecna architektura obsluguje jedno radio.
-  // (patrz addRig() ponizej). Zostaje w DOM, ale niewidoczny.
+  // The "ADD RADIO" button is hidden — the current architecture only
+  // supports one radio. (see addRig() below). Stays in the DOM, but hidden.
   if (addBtn) addBtn.style.display = 'none';
 
   container.innerHTML = '';
@@ -44,7 +44,7 @@ function renderRigs(brands, rigs) {
     container.appendChild(buildRigPanel(id, rig, isAdmin));
   });
 
-  // Ładuj karty dźwiękowe po wyrenderowaniu DOM (krótkie opóźnienie)
+  // Load audio cards after the DOM has rendered (short delay)
   setTimeout(() => loadAudioCards(), 100);
 }
 
@@ -116,7 +116,7 @@ function buildRigPanel(id, rig, isAdmin) {
       </div>
     </div>
 
-    <!-- CW KEYER — metoda i port DTR/RTS -->
+    <!-- CW KEYER — method and DTR/RTS port -->
     <div class="sg" style="grid-column:1/-1;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
       <label style="color:var(--amber);">${I18n.t('cfg_cw_keyer_hdr')}</label>
       <select id="cfg-cw-method-${id}" style="font-family:var(--mono);font-size:11px;margin-bottom:8px;"
@@ -163,31 +163,32 @@ function buildRigPanel(id, rig, isAdmin) {
   return div;
 }
 
-// Admin: dodaj nowe radio
+// Admin: add a new radio
 //
-// WYLACZONE: obecna architektura obsluguje TYLKO JEDNO radio naraz — jeden
-// strumien audio, jeden radio_lock, jedna instancja CI-V, jeden zestaw portow
-// Rusta. Dodanie drugiego radia zapisywaloby sie do listy, ale serwer i tak
-// laczy sie tylko z rigs[0], wiec operator dostawalby ciche, niedzialajace
-// radio. Zeby nie wprowadzac w blad, blokujemy dodawanie. Pelna obsluga wielu
-// radiow (rownolegla praca) to osobny, duzy etap — patrz notatki projektu.
+// DISABLED: the current architecture supports only ONE radio at a time —
+// one audio stream, one radio_lock, one CI-V instance, one set of Rust
+// ports. Adding a second radio would save to the list, but the server
+// still only connects to rigs[0], so the operator would get a silent,
+// non-functional radio. To avoid misleading anyone, adding is blocked.
+// Full multi-radio support (parallel operation) is a separate, large
+// undertaking — see the project notes.
 function addRig() {
   window.UI?.showToast?.(I18n.t('cfg_single_rig_notice'), 'info');
 }
 
-// Admin: usuń radio (nie można usunąć radio 1)
+// Admin: remove a radio (radio 1 cannot be removed)
 function removeRig(id) {
   if (!window.AppState || window.AppState.role !== 'admin' || id === 1) return;
   _rigs = _rigs.filter(r => r.id !== id);
   renderRigs(_brands, _rigs);
 }
 
-// Alias dla kompatybilności wstecz
+// Backward-compatibility alias
 function populateModels(brands, rigs) {
   renderRigs(brands, rigs);
 }
 
-// ── Karty dźwiękowe ──────────────────────────────────────────────────────────
+// ── Audio cards ───────────────────────────────────────────────────────────────
 let _audioDevices = { rx:[], tx:[] };   // cache
 
 async function loadAudioCards(rigId) {
@@ -197,23 +198,23 @@ async function loadAudioCards(rigId) {
     const data = await r.json();
     _audioDevices = data.devices || { rx:[], tx:[] };
 
-    // Wypełnij wszystkie widoczne radia
+    // Populate every visible radio
     const ids = rigId
       ? [rigId]
       : _rigs.map(r => r.id).filter(Boolean);
 
-    if (!ids.length) ids.push(1);  // fallback do radio 1
+    if (!ids.length) ids.push(1);  // fallback to radio 1
 
     for (const id of ids) {
       fillAudioSelect(`cfg-audio-rx-${id}`, _audioDevices.rx);
       fillAudioSelect(`cfg-audio-tx-${id}`, _audioDevices.tx);
     }
 
-    // Przywróć zapisane wartości z _rigs. Dopasowanie dokladne, z fallbackiem
-    // na dopasowanie czesciowe (zawiera sie w / zawiera) - Windows potrafi
-    // zwrocic nazwe karty USB troche inaczej zapisana miedzy kolejnymi
-    // odpytaniami, a select.value przy braku dokladnego dopasowania cicho
-    // wraca na pierwsza opcje mimo ze karta jest nadal zapisana poprawnie.
+    // Restore saved values from _rigs. Exact match, with a fallback to a
+    // partial match (contained in / contains) - Windows can return a USB
+    // card's name slightly differently between successive queries, and
+    // select.value silently falls back to the first option when there's
+    // no exact match, even though the card is still saved correctly.
     const _selectFuzzy = (sel, wanted) => {
       if (!sel || !wanted) return;
       for (const opt of sel.options) if (opt.value === wanted) { sel.value = wanted; return; }
@@ -228,9 +229,9 @@ async function loadAudioCards(rigId) {
 
     const cnt = _audioDevices.rx?.length || 0;
     if (cnt > 0) {
-      console.log(`[audio] ${cnt} kart audio załadowanych`);
+      console.log(`[audio] ${cnt} audio cards loaded`);
     } else {
-      console.log('[audio] Brak kart (Windows: wymagany FFmpeg lub PowerShell WMI)');
+      console.log('[audio] No cards found (Windows: requires FFmpeg or PowerShell WMI)');
     }
   } catch(e) {
     console.warn('[audio] loadAudioCards:', e.message);
@@ -240,9 +241,9 @@ async function loadAudioCards(rigId) {
 function fillAudioSelect(elId, devices) {
   const sel = document.getElementById(elId);
   if (!sel) return;
-  // Zachowaj obecną wartość (może być z zapisanej konfiguracji)
+  // Keep the current value (may come from the saved config)
   const current = sel.value || sel.getAttribute('data-saved') || '';
-  // Zachowaj opcję "zapisana karta" jeśli nie ma jej w liście
+  // Keep the "saved card" option if it's not in the list
   const savedOpt = current && !(devices||[]).includes(current) ? current : null;
 
   sel.innerHTML = `<option value="">${I18n.t('cfg_choose_card_generic')}</option>`;
@@ -252,9 +253,10 @@ function fillAudioSelect(elId, devices) {
     opt.selected = true;
     sel.appendChild(opt);
   }
-  // Urzadzenia "USB Audio CODEC" (wbudowany kodek radia IC-7300/7610/9700/705
-  // itp.) sortujemy na gore i oznaczamy ⭐ — to jest poprawny wybor, bo audio
-  // do/z radia idzie przez USB, nie przez zewnetrzne gniazda ACC/AF Out/Mic.
+  // "USB Audio CODEC" devices (the built-in codec of the IC-7300/7610/
+  // 9700/705 etc.) are sorted to the top and marked ⭐ — this is the
+  // correct choice, since audio to/from the radio goes over USB, not
+  // through the external ACC/AF Out/Mic jacks.
   const sorted = [...(devices || [])].sort((a, b) => {
     const au = /usb audio/i.test(a) ? 0 : 1;
     const bu = /usb audio/i.test(b) ? 0 : 1;
@@ -274,7 +276,7 @@ function setAudioSelects(rigId, audioRx, audioTx) {
   const rx = document.getElementById(`cfg-audio-rx-${rigId}`);
   const tx = document.getElementById(`cfg-audio-tx-${rigId}`);
   if (rx) {
-    // Jeśli wartość nie ma opcji jeszcze — dodaj ją tymczasowo
+    // If the value doesn't have an option yet — add it temporarily
     if (audioRx && !rx.querySelector(`option[value="${audioRx}"]`)) {
       const opt = document.createElement('option');
       opt.value = opt.textContent = audioRx;
@@ -307,7 +309,7 @@ async function saveRig(id) {
     cwDtrLine:  get(`cfg-cw-dtr-line-${id}`) || 'DTR',
     active:  id === 1,
   };
-  // Uaktualnij cache
+  // Update the cache
   const idx = _rigs.findIndex(r => r.id === id);
   if (idx >= 0) _rigs[idx] = { ..._rigs[idx], ...body };
 
@@ -331,7 +333,7 @@ async function connectRig(id) {
   if (statusEl) statusEl.textContent = I18n.t('cfg_connecting');
   UI.showToast(I18n.t('cfg_toast_connecting_radio'));
   try {
-    // Pobierz aktualne ustawienia z formularza
+    // Get the current settings from the form
     const model = document.getElementById(`cfg-model-${id}`)?.value;
     const port  = document.getElementById(`cfg-port-${id}`)?.value;
     const speed = document.getElementById(`cfg-speed-${id}`)?.value;
@@ -353,8 +355,8 @@ async function connectRig(id) {
           : I18n.t('cfg_connected_status');
         statusEl.style.color = res.sim ? 'var(--amber)' : 'var(--green)';
       }
-      // Odswiez panel funkcji radia (VFO A/B, sliders, func toggle) —
-      // nowe radio moze miec inny zestaw capabilities
+      // Refresh the radio features panel (VFO A/B, sliders, func toggle) —
+      // the new radio may have a different set of capabilities
       window.RadioFunctions?.refresh();
       window.Admin?.loadRigFeatures?.();
     } else {
@@ -387,16 +389,16 @@ async function loadStatus() {
 
 async function toggleAudio(on) {
   const rxDevice = document.getElementById('cfg-audio-rx-1')?.value || null;
-  // KRYTYCZNE: WS.enableAudio() tylko rejestruje tego klienta jako
-  // subskrybenta strumienia audio (WS 'audio_start') — to NIE uruchamia
-  // fizycznego odczytu z karty dzwiekowej/mikrofonu po stronie serwera.
-  // To osobna operacja: audio_stream.py::start_rx() jest wolane WYLACZNIE
-  // przez HTTP POST /api/audio/rx/start, ktorego nic w froncie nigdy nie
-  // wywolywalo — efekt: kliknij "Wlacz audio RX", subskrypcja sie rejestruje,
-  // OpusDecoder dziala poprawnie, ale serwer nigdy nie otwiera PyAudio
-  // input stream (brak "[audio] RX START" w logach) wiec nie ma zadnych
-  // danych do wyslania — totalna cisza bez zadnego bledu. Wywolujemy teraz
-  // obie sciezki rownolegle przy wlaczaniu/wylaczaniu.
+  // CRITICAL: WS.enableAudio() only registers this client as a subscriber
+  // to the audio stream (WS 'audio_start') — it does NOT start the actual
+  // read from the sound card/microphone on the server side. That's a
+  // separate operation: audio_stream.py::start_rx() is called ONLY via
+  // HTTP POST /api/audio/rx/start, which nothing in the frontend ever
+  // called — effect: click "Enable RX audio", the subscription registers,
+  // OpusDecoder works fine, but the server never opens the PyAudio input
+  // stream (no "[audio] RX START" in the logs) so there's no data to
+  // send — total silence with no error at all. We now call both paths in
+  // parallel when enabling/disabling.
   if (on) {
     try {
       const r = await fetch('/api/audio/rx/start', {
@@ -432,7 +434,7 @@ async function _cwMethodChange(id) {
   const method = document.getElementById(`cfg-cw-method-${id}`)?.value;
   const dtrSection = document.getElementById(`cfg-cw-dtr-section-${id}`);
   if (dtrSection) dtrSection.style.display = (method === 'dtr' || method === 'rts') ? '' : 'none';
-  // Zapisz metode od razu
+  // Save the method right away
   const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
   await fetch('/api/cw/method', {
     method: 'POST',
@@ -460,14 +462,14 @@ async function _cwDtrSave(id) {
   }
 }
 
-// ── Inicjalizacja stanu CW method przy ladowaniu rig settings ─────────────────
+// ── Initialize the CW method state when loading rig settings ─────────────────
 async function _initCwStatus() {
   const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
   try {
     const d = await fetch('/api/cw/status', {
       headers: {'Authorization': `Bearer ${token}`}
     }).then(r => r.json());
-    // Ustaw select i widocznosc sekcji DTR dla kazdego zaladowanego radu
+    // Set the select and DTR section visibility for every loaded radio
     document.querySelectorAll('[id^="cfg-cw-method-"]').forEach(sel => {
       const id = sel.id.replace('cfg-cw-method-','');
       sel.value = d.method || 'auto';
