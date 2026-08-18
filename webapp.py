@@ -1108,14 +1108,14 @@ class App:
             await self.hub.broadcast({"type": "tune_status", "active": True,
                                       "duration": duration_s, "tone": tone_hz})
 
-            # Wlacz PTT
+            # Turn on PTT
             self.rig.ptt = True
             if not self.rig.sim:
                 try: await self.rig.set_ptt(True)
-                except Exception as e: print(f"[tune] set_ptt blad: {e}")
+                except Exception as e: print(f"[tune] set_ptt error: {e}")
             await self.hub.broadcast({"type": "ptt", "ptt": True})
 
-            # Generuj tone PCM i puszczaj przez audio stream
+            # Generate the tone PCM and feed it through the audio stream
             sample_rate = 12000
             chunk_size = 4800  # 400ms per chunk
             total_samples = int(duration_s * sample_rate)
@@ -1348,7 +1348,7 @@ class App:
                     print(f"[watchdog] rotator {rot.name} reconnect: "
                           f"{'OK' if ok else 'FAILED (simulation)'}", flush=True)
             except Exception as e:
-                print(f"[watchdog] rotator {getattr(rot,'name','?')} blad: {e}",
+                print(f"[watchdog] rotator {getattr(rot,'name','?')} error: {e}",
                       flush=True)
 
     async def _watchdog_check_relay(self):
@@ -6297,7 +6297,7 @@ class App:
             try:
                 await self.rig.set_freq(split["new_dial_hz"])
             except Exception as e:
-                print(f"[ft8] Fake Split set_freq blad: {e!r}")
+                print(f"[ft8] Fake Split set_freq error: {e!r}")
                 self._fake_split_state = None
                 return False
         self._ft8_tx_freq_hz = split["new_audio_hz"]
