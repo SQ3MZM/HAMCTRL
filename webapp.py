@@ -4677,18 +4677,18 @@ class App:
                 ) as resp:
                     txt = await resp.text()
                     if resp.status in (200, 201):
-                        # Cloudlog zwraca np. {"status":"created","adif_count":1}
-                        # albo {"status":"failed","reason":"..."}
+                        # Cloudlog returns e.g. {"status":"created","adif_count":1}
+                        # or {"status":"failed","reason":"..."}
                         try:
                             rdata = await resp.json(content_type=None)
                         except Exception:
                             rdata = {}
                         if isinstance(rdata, dict) and rdata.get("status") == "failed":
-                            print(f"[cloudlog] {qso.get('call')}: odrzucone — "
+                            print(f"[cloudlog] {qso.get('call')}: rejected — "
                                   f"{rdata.get('reason', '?')}", flush=True)
                             return
-                        print(f"[cloudlog] {qso.get('call')} wyslane OK", flush=True)
-                        # Zapisz ID z Cloudloga jesli zwrocone
+                        print(f"[cloudlog] {qso.get('call')} sent OK", flush=True)
+                        # Save the Cloudlog ID if one was returned
                         cl_id = ""
                         if isinstance(rdata, dict):
                             cl_id = rdata.get("id") or rdata.get("qso_id") or ""
@@ -4702,10 +4702,10 @@ class App:
                         print(f"[cloudlog] {qso.get('call')}: HTTP {resp.status} "
                               f"— {txt[:100]}", flush=True)
         except Exception as e:
-            print(f"[cloudlog] push QSO blad: {e}", flush=True)
+            print(f"[cloudlog] push QSO error: {e}", flush=True)
 
     def _save_cloudlog_id(self, qso_id: str, cloudlog_id: str):
-        """Zapisz ID z Cloudloga przy QSO (sync - wolane przez to_thread)."""
+        """Save the Cloudlog ID against the QSO (sync - called via to_thread)."""
         with qso_db._conn_lock:
             conn = qso_db._get_conn()
             conn.execute("UPDATE qso SET cloudlog_id=? WHERE id=?",
@@ -4713,15 +4713,16 @@ class App:
             conn.commit()
 
     def _is_band_allowed(self) -> bool:
-        """Sprawdz czy aktualna czestotliwosc radia jest w dozwolonym pasmie.
-        Uzywa self._BAND_RANGES (ta sama tabela co _get_band_for_freq / cross-band
-        split) - wczesniej mial tu byc osobny, niezaleznie utrzymywany slownik
-        ktory rozjechal sie z _BAND_RANGES dla 160m/60m/6m (rozne granice w
-        dwoch miejscach tego samego pliku dla tej samej blokady bezpieczenstwa).
+        """Check whether the radio's current frequency is within an allowed band.
+        Uses self._BAND_RANGES (the same table as _get_band_for_freq /
+        cross-band split) - this used to have a separate, independently
+        maintained dict that drifted apart from _BAND_RANGES for
+        160m/60m/6m (different boundaries in two places in the same file
+        for the same safety guard).
         """
         freq    = self.rig.freq
         enabled = self.cfg.get("enabledBands", None)
-        if not enabled:          # brak konfiguracji = wszystkie pasma dozwolone
+        if not enabled:          # no configuration = all bands allowed
             return True
         for band in enabled:
             lo, hi = self._BAND_RANGES.get(band, (0, 0))
@@ -4729,19 +4730,20 @@ class App:
                 return True
         return False
 
-    # Wspolna tabela pasm dla wszystkich sprawdzen (unikamy powtarzania) -
-    # 160m/60m/6m celowo WEZSZE (realna alokacja PL/EU) - to jest tabela
-    # uzywana m.in. przez blokade TX (_is_band_allowed), wiec bezpieczniej
-    # zawezac niz ryzykowac nadanie poza prawdziwym przydzialem pasma.
+    # Shared band table for all checks (avoids duplication) - 160m/60m/6m
+    # are deliberately NARROWER (the real PL/EU allocation) - this is the
+    # table used, among others, by the TX guard (_is_band_allowed), so it's
+    # safer to be conservative than to risk transmitting outside the real
+    # band allocation.
     #
-    # MUSI pokrywac KAZDE pasmo z ktoregokolwiek profilu radia w
-    # rigs/civ_profiles.py (IC-9100/IC-9700 oferuja "23cm" w PASMA) - inaczej
-    # blokada TX odrzuca jako "niedozwolone" pasmo, ktore admin jawnie
-    # wlaczyl i ktore radio fizycznie ma. 23cm dopisane z tym samym zakresem
-    # co _BAND_23CM w civ_profiles.py (1240-1300 MHz). 13cm NIE dopisane -
-    # zaden aktualny profil radia go jeszcze nie oferuje w "bands" (patrz
-    # _BAND_13CM w civ_profiles.py - zdefiniowany, ale nieuzywany), wiec
-    # dodanie teraz byloby zgadywaniem bez pokrycia w rzeczywistym sprzecie.
+    # MUST cover EVERY band from any radio profile in rigs/civ_profiles.py
+    # (the IC-9100/IC-9700 offer "23cm" in their BANDS) - otherwise the TX
+    # guard rejects a band as "not allowed" even though the admin
+    # explicitly enabled it and the radio physically has it. 23cm added
+    # with the same range as _BAND_23CM in civ_profiles.py (1240-1300 MHz).
+    # 13cm NOT added - no current radio profile offers it yet in "bands"
+    # (see _BAND_13CM in civ_profiles.py - defined, but unused), so adding
+    # it now would be guessing without any real hardware backing it.
     _BAND_RANGES = {
         '160m': (1810000,   2000000),
         '80m':  (3500000,   3800000),
@@ -4761,20 +4763,20 @@ class App:
     }
 
     def _get_band_for_freq(self, hz: int) -> str | None:
-        """Zwroc nazwe pasma dla czestotliwosci lub None gdy poza pasmami."""
+        """Return the band name for a frequency, or None if outside all bands."""
         for band, (lo, hi) in self._BAND_RANGES.items():
             if lo <= hz <= hi:
                 return band
         return None
 
     def _is_split_cross_band(self) -> tuple[bool, str, str]:
-        """Sprawdz czy split jest cross-band (VFO-A i VFO-B w roznych pasmach).
-        Zwraca (is_cross_band, band_a, band_b) — is_cross_band=True gdy split
-        aktywny i pasma sie roznia. band_a/b sa nazwami pasm lub 'poza pasmem'.
+        """Check whether split is cross-band (VFO-A and VFO-B in different bands).
+        Returns (is_cross_band, band_a, band_b) — is_cross_band=True when
+        split is active and the bands differ. band_a/b are band names or 'poza pasmem'.
 
-        Zabezpieczenie chroni przed uszkodzeniem radia/anteny — nadawanie
-        w innym pasmie niz strojenie ATU moze uszkodzic wzmacniacz koncowy
-        albo antene z niewlasciwa impedancja.
+        This guard protects against damaging the radio/antenna —
+        transmitting on a different band than the one the ATU tuned for
+        can damage the final amplifier or an antenna with the wrong impedance.
         """
         if not getattr(self.rig, 'split', False):
             return False, '', ''
@@ -4785,10 +4787,10 @@ class App:
         return (band_a != band_b), band_a, band_b
 
     def _can_control_radio(self, ws, role: str) -> tuple[bool, str]:
-        """Sprawdz czy uzytkownik moze wykonac akcje sterujaca radiem.
-        Zwraca (allowed, reason). Admin ma zawsze prawo. Zwykli userzy tylko
-        gdy trzymaja radio_lock. Bez locka moga tylko OGLADAC (widza
-        wszystko na zywo, ale nie mogą zmieniać).
+        """Check whether the user may perform a radio-control action.
+        Returns (allowed, reason). Admin always has the right. Regular
+        users only when holding radio_lock. Without the lock they can only
+        WATCH (they see everything live, but can't change anything).
         """
         if role == "admin":
             return True, ""
@@ -4804,19 +4806,19 @@ class App:
         return True, ""
 
     async def _start_tx_watchdog(self):
-        """Watchdog PTT - auto-off po skonfigurowanym czasie.
-        Chroni radio przed zawieszonym PTT (np. zamkniete okno w trakcie TX).
-        Konfiguracja: config['tx_watchdog_s'] (default 180s = 3 min).
-        Anulowany przez uzytkownika gdy PTT wylaczy normalnie (patrz handler PTT).
+        """PTT watchdog - auto-off after a configured time.
+        Protects the radio from a stuck PTT (e.g. a closed window mid-TX).
+        Configuration: config['tx_watchdog_s'] (default 180s = 3 min).
+        Cancelled by the user when PTT turns off normally (see the PTT handler).
         """
-        # Anuluj poprzedni watchdog jesli istnieje (np. szybkie ptt on/off/on)
+        # Cancel the previous watchdog if one exists (e.g. rapid ptt on/off/on)
         if hasattr(self, '_tx_watchdog_task') and self._tx_watchdog_task:
             self._tx_watchdog_task.cancel()
 
         async def _watchdog():
             timeout = int(self.cfg.get("tx_watchdog_s", 180))
             try:
-                # Ostrzezenia w ostatnich 30/20/10 sekundach
+                # Warnings in the last 30/20/10 seconds
                 warn_at = [30, 20, 10]
                 elapsed = 0
                 while elapsed < timeout and self.rig.ptt:
@@ -4829,7 +4831,7 @@ class App:
                             "msg": f"⚠ Watchdog TX: {remaining}s do auto-off",
                             "level": "warning"
                         })
-                # Timeout — wymus PTT OFF
+                # Timeout — force PTT OFF
                 if self.rig.ptt:
                     self.rig.ptt = False
                     if not self.rig.sim:
@@ -4841,22 +4843,22 @@ class App:
                         "msg": f"⛔ Watchdog TX: PTT wylaczony automatycznie po {timeout}s",
                         "level": "error"
                     })
-                    print(f"[watchdog] PTT auto-off po {timeout}s")
+                    print(f"[watchdog] PTT auto-off after {timeout}s")
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                print(f"[watchdog] blad: {e}")
+                print(f"[watchdog] error: {e}")
 
         self._tx_watchdog_task = asyncio.create_task(_watchdog())
 
     def _feature_allowed(self, feature_id: str, role: str) -> bool:
         """
-        Sprawdz czy dana akcja (feature_id) jest dozwolona dla uzytkownika
-        o danej roli. Admin ma zawsze dostep (do testow/konfiguracji).
-        Capabilities sprawdzamy z cache (self._caps_cache) jesli dostepny,
-        inaczej domyslnie pozwalamy (fail-open dla kompatybilnosci) i
-        logujemy ostrzezenie — webapp powinien wczesniej wywolac
-        _refresh_caps_cache() po polaczeniu z radiem.
+        Check whether the given action (feature_id) is allowed for a user
+        with the given role. Admin always has access (for testing/config).
+        Capabilities are checked from the cache (self._caps_cache) if
+        available, otherwise we default to allowing it (fail-open for
+        compatibility) and log a warning — webapp should have already
+        called _refresh_caps_cache() after connecting to the radio.
         """
         if role == "admin":
             return True
@@ -4866,24 +4868,24 @@ class App:
         return bool(eff.get(feature_id, False))
 
     async def _refresh_caps_cache(self):
-        """Wywolaj po polaczeniu/zmianie radia — odswieza cache capabilities
-        uzywany przez _feature_allowed() (synchroniczna funkcja w _ws_msg)."""
+        """Call after connecting/changing the radio — refreshes the
+        capabilities cache used by _feature_allowed() (a synchronous function in _ws_msg)."""
         try:
             caps = await self.rig.get_capabilities()
             if "raw_caps" not in caps and "actions" not in caps:
                 caps = {"actions": [], "sliders": [], "raw_caps": caps}
             self._caps_cache = caps
         except Exception as e:
-            print(f"[features] _refresh_caps_cache blad: {e}")
+            print(f"[features] _refresh_caps_cache error: {e}")
             self._caps_cache = {"actions": [], "sliders": [], "raw_caps": {}}
 
     def _rig_bcast(self, msg: dict):
         """
-        Callback przekazywany do CivRig jako broadcast_sync. Przechwytuje
-        wewnetrzny event 'rig_reconnected' (np. z _reconnect_loop po
-        wlaczeniu radia po starcie serwera) — odswieza _caps_cache i
-        rozsyla nowy /api/rig/features do klientow. Inne typy wiadomosci
-        przekazuje dalej do hub.broadcast_sync bez zmian.
+        Callback passed to CivRig as broadcast_sync. Intercepts the
+        internal 'rig_reconnected' event (e.g. from _reconnect_loop after
+        the radio is powered on after the server started) — refreshes
+        _caps_cache and sends a fresh /api/rig/features to clients. Other
+        message types are passed straight through to hub.broadcast_sync unchanged.
         """
         if msg.get("type") == "rig_reconnected":
             if self.hub._loop and self.hub._loop.is_running():
@@ -4893,10 +4895,11 @@ class App:
 
     async def _verify_radio_awake_and_start_scope(self):
         """
-        Po power ON radio potrzebuje chwili zanim CI-V zacznie odpowiadac.
-        Probujemy odczytac czestotliwosc (do 5 prob co 1s). Dopiero gdy radio
-        odpowie - startujemy scope/waterfall. Bez tego waterfall startowal
-        zanim radio ozylo i ladowal w stanie SIM (test).
+        After power ON the radio needs a moment before CI-V starts
+        responding. We try reading the frequency (up to 5 attempts, 1s
+        apart). Only once the radio responds do we start the
+        scope/waterfall. Without this the waterfall used to start before
+        the radio came alive and ended up in a SIM state.
         """
         radio_alive = False
         for attempt in range(5):
