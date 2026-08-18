@@ -1,9 +1,9 @@
 /**
- * cloudlog.js — integracja z CloudLog / WaveLog
+ * cloudlog.js — CloudLog / WaveLog integration
  *
- * Dwa osobne API keys:
- *   1. cl-api-key-qso   → POST /index.php/api/qso  (logowanie QSO)
- *   2. cl-api-key-radio → POST /index.php/api/radio (live freq+mode co 30s)
+ * Two separate API keys:
+ *   1. cl-api-key-qso   → POST /index.php/api/qso  (log a QSO)
+ *   2. cl-api-key-radio → POST /index.php/api/radio (live freq+mode every 30s)
  */
 (function () {
 'use strict';
@@ -12,10 +12,10 @@ const S = window.AppState;
 let _liveInterval = null;
 let _cfg = {};
 
-// ── Naglowki z tokenem JWT ────────────────────────────────────────────────────
-// WAZNE: wszystkie endpointy /api/cloudlog/* wymagaja autoryzacji w backendzie
-// (if not user: return 401). Bez tokenu KAZDE wywolanie konczylo sie 401/404 —
-// to byl powod dlaczego integracja z Cloudlogiem w ogole nie dzialala.
+// ── Headers with the JWT token ────────────────────────────────────────────────
+// IMPORTANT: all /api/cloudlog/* endpoints require auth on the backend
+// (if not user: return 401). Without a token EVERY call ended in 401/404 —
+// that was why the CloudLog integration didn't work at all.
 function _hdr(json = false) {
   const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
   const h = {};
@@ -24,7 +24,7 @@ function _hdr(json = false) {
   return h;
 }
 
-// ── Laduj zapisana konfiguracje ───────────────────────────────────────────────
+// ── Load saved config ──────────────────────────────────────────────────────
 async function load() {
   try {
     const r = await fetch('/api/cloudlog/config', { headers: _hdr() });
@@ -47,7 +47,7 @@ function _applyToUI(cfg) {
   if (cb) cb.checked = !!cfg.liveEnabled;
 }
 
-// ── Zapisz konfiguracje ───────────────────────────────────────────────────────
+// ── Save config ────────────────────────────────────────────────────────────
 async function save() {
   _cfg = {
     url:          document.getElementById('cl-url')?.value.trim(),
@@ -69,7 +69,7 @@ async function save() {
   }
 }
 
-// ── Test polaczenia ───────────────────────────────────────────────────────────
+// ── Test connection ────────────────────────────────────────────────────────
 async function test() {
   const url    = document.getElementById('cl-url')?.value.trim();
   const apiKey = document.getElementById('cl-api-key-qso')?.value.trim();
@@ -95,7 +95,7 @@ async function test() {
   }
 }
 
-// ── Status indicator (dwukolorowa kropka) ─────────────────────────────────────
+// ── Status indicator (two-color dot) ──────────────────────────────────────────
 function _setStatus(state, text) {
   const dot  = document.getElementById('cloudlog-status');
   const label = document.getElementById('cloudlog-status-text');
@@ -111,10 +111,10 @@ function _setStatus(state, text) {
   if (label) { label.removeAttribute('data-i18n'); label.textContent = text || ''; }
 }
 
-// ── Live freq/mode (co 30s podczas nadawania lub zawsze jesli wlaczone) ──────
+// ── Live freq/mode (every 30s while transmitting, or always if enabled) ──────
 function _startLive() {
   _stopLive();
-  _sendLive(); // natychmiast
+  _sendLive(); // immediately
   _liveInterval = setInterval(_sendLive, 5000);
 }
 
@@ -138,7 +138,7 @@ async function _sendLive() {
       }),
     });
   } catch(e) {
-    // cicho — nie przeszkadzaj uzytkownikowi bledem live update
+    // silent — don't bother the user with a live-update error
   }
 }
 
@@ -147,7 +147,7 @@ function setLive(enabled) {
   if (enabled) _startLive(); else _stopLive();
 }
 
-// ── Wyslij QSO do CloudLog ─────────────────────────────────────────────────────
+// ── Send a QSO to CloudLog ─────────────────────────────────────────────────
 async function logQso(qso) {
   if (!_cfg.url || !_cfg.apiKeyQso) return false;
   try {
