@@ -968,16 +968,16 @@ class App:
                         changed = True
         if changed:
             save_json(USR_F, self.users)
-            print("[secrets] zaszyfrowano dane logowania CloudLog/QRZ/HamQTH/DX-Cluster w users.json", flush=True)
+            print("[secrets] encrypted CloudLog/QRZ/HamQTH/DX-Cluster credentials in users.json", flush=True)
 
     def _has_perm(self, uid: str, role: str, key: str) -> bool:
-        """Admin ma zawsze dostep. Inaczej sprawdz granularne uprawnienie
-        (permissions[key] w users.json, ustawiane w formularzu edycji usera).
-        UWAGA: JWT niesie tylko id/role/username/pw_ver (patrz jwt_sign w
-        /api/auth/login) - NIE niesie permissions, wiec trzeba doczytac
-        pelny, aktualny rekord usera z self.users zamiast polegac na
-        dekodowanym tokenie (ktory moglby byc przestarzaly po zmianie
-        uprawnien przez admina bez ponownego logowania)."""
+        """Admin always has access. Otherwise check the granular permission
+        (permissions[key] in users.json, set from the user-edit form).
+        NOTE: the JWT only carries id/role/username/pw_ver (see jwt_sign in
+        /api/auth/login) - it does NOT carry permissions, so the full,
+        current user record must be re-read from self.users instead of
+        relying on the decoded token (which could be stale after an admin
+        changes permissions without the user logging in again)."""
         if role == "admin":
             return True
         u = self.find_user_by_id(uid)
@@ -989,7 +989,7 @@ class App:
 
     # ── Radio Lock helpers ────────────────────────────────────────────────────
     def _radio_lock_state(self) -> dict:
-        """Serializowalny stan blokady radia (do broadcastu WS i API)."""
+        """Serializable radio-lock state (for WS broadcast and the API)."""
         return {
             "type":          "radio_lock_state",
             "locked":        self.radio_lock["user_id"] is not None,
@@ -1008,7 +1008,7 @@ class App:
         }
 
     def _online_users_state(self) -> list:
-        """Lista aktualnie polaczonych uzytkownikow."""
+        """List of currently connected users."""
         return [
             {"user_id":  v["user_id"],
              "username": v["username"],
@@ -1022,7 +1022,7 @@ class App:
         return self.radio_lock["user_id"] == user_id
 
     def _lock_radio(self, user: dict):
-        """Przejmij radio dla uzytkownika."""
+        """Take over the radio for a user."""
         self.radio_lock.update({
             "user_id":       user["id"],
             "username":      user["username"],
@@ -1030,14 +1030,14 @@ class App:
             "locked_at":     time.time(),
             "last_activity": time.time(),
         })
-        # Usun prosbe tego usera z kolejki (jesli byla)
+        # Remove this user's request from the queue (if there was one)
         self.radio_requests.pop(user["id"], None)
 
     def _release_radio(self):
-        """Zwolnij radio."""
-        # Kto oddaje/traci radio - zatrzymaj tez WSJT-X jesli byl jego wlascicielem.
-        # Wywolane BEZ await bo _release_radio jest sync (uzywane tez z watchdog).
-        # Faktyczne zatrzymanie odbywa sie asynchronicznie.
+        """Release the radio."""
+        # Whoever is releasing/losing the radio - also stop WSJT-X if they
+        # owned it. Called WITHOUT await because _release_radio is sync
+        # (also used from the watchdog). The actual stop happens asynchronously.
         prev_owner = self.radio_lock.get("user_id")
         if prev_owner and prev_owner == self._ft8_rx_owner_uid and self._ft8_rx_enabled:
             asyncio.ensure_future(self._stop_wsjtx_auto("oddanie radia"))
@@ -1047,16 +1047,17 @@ class App:
         })
 
     async def _stop_wsjtx_auto(self, reason: str):
-        """Zatrzymaj WSJT-X automatycznie z podanego powodu.
+        """Automatically stop WSJT-X for the given reason.
 
-        Wywolywane gdy:
-        - Owner WSJT-X rozlaczyl sie (WS close)
-        - Owner oddal radio (recznie lub przez watchdog idle)
-        - Owner stracil radio przez WYMUS admina
-        - Owner wylogowal sie
+        Called when:
+        - The WSJT-X owner disconnected (WS close)
+        - The owner released the radio (manually or via the idle watchdog)
+        - The owner lost the radio via an admin FORCE
+        - The owner logged out
 
-        Zapewnia że dekodowanie nie leci "w tle" gdy nikt nie kontroluje
-        radia, i tez nie blokuje audio TX pipeline dla innych userów."""
+        Ensures decoding doesn't keep running "in the background" when no
+        one is controlling the radio, and doesn't block the audio TX
+        pipeline for other users."""
         if not self._ft8_rx_enabled:
             return
         print(f"[ft8rx] AUTO-STOP: {reason} (owner={self._ft8_rx_owner_uid})", flush=True)
@@ -1066,43 +1067,44 @@ class App:
             try:
                 await self.rust_audio.ft8_enable_rx(False, self._ft8_decode_mode)
             except Exception as e:
-                print(f"[ft8rx] auto-stop rust_audio blad: {e}")
-        # Broadcast żeby wszystkie UI wiedziały że WSJT-X jest zatrzymany
+                print(f"[ft8rx] auto-stop rust_audio error: {e}")
+        # Broadcast so every UI knows WSJT-X has been stopped
         await self.hub.broadcast({"type": "ft8_rx_status", "enabled": False})
         await self.hub.broadcast({"type": "wsjtx_status", "running": False,
                                    "decoding": False, "transmit": False})
-        # Toast informacyjny (idzie na kanał 'ft8' automatycznie? Nie - to
-        # jest control level info dla wszystkich)
+        # Informational toast (does it go on the 'ft8' channel
+        # automatically? No - this is control-level info for everyone)
         await self.hub.broadcast({"type": "toast",
                                    "msg": f"🛑 WSJT-X zatrzymany automatycznie ({reason})",
                                    "level": "warn"})
 
     def touch_activity(self, user_id: str):
-        """Zaktualizuj czas ostatniej aktywnosci aktywnego operatora."""
+        """Update the active operator's last-activity timestamp."""
         if self._user_has_lock(user_id):
             self.radio_lock["last_activity"] = time.time()
 
-    # UWAGA: _start_tx_watchdog byla tu ZDEFINIOWANA DWA RAZY w tej samej
-    # klasie (Python bierze druga - patrz definicja przy _feature_allowed
-    # nizej) - ta pierwsza, jedyna ktora broadcastowala
-    # tx_watchdog_start/countdown/cancel, byla wiec CALKOWICIE martwym,
-    # nieosiagalnym kodem. Front i tak nigdy nie nasluchiwal tych typow
-    # wiadomosci (element #wj-tx-watchdog w index.html byl rownie martwy),
-    # wiec usunieta bez utraty funkcjonalnosci - realny watchdog PTT to
-    # ta druga definicja, dziala niezaleznie i zostaje bez zmian.
+    # NOTE: _start_tx_watchdog used to be DEFINED TWICE in this same class
+    # (Python takes the second one - see the definition near
+    # _feature_allowed below) - the first one, the only one that
+    # broadcast tx_watchdog_start/countdown/cancel, was therefore
+    # COMPLETELY dead, unreachable code. The frontend never listened for
+    # these message types anyway (the #wj-tx-watchdog element in
+    # index.html was equally dead), so it was removed with no loss of
+    # functionality - the real PTT watchdog is the second definition,
+    # works independently, and is left unchanged.
 
     async def _start_tune(self, duration_s: float, tone_hz: float = 1500.0):
-        """Nadaj stały ton przez duration_s sekund dla strojenia ATU.
+        """Transmit a steady tone for duration_s seconds, for ATU tuning.
 
-        Generuje PCM sinusoide o czestotliwosci tone_hz (default 1500Hz - w
-        srodku pasma SSB), 16-bit, mono, 12000 Hz sample rate. Wysyla przez
-        istniejacy audio TX pipeline. PTT wlaczony bezposrednio przez CI-V,
-        wylaczony po zakonczeniu. Aktywnie sprawdza self._tune_stop.
+        Generates a PCM sine wave at tone_hz (default 1500Hz - the middle
+        of the SSB band), 16-bit, mono, 12000 Hz sample rate. Sent through
+        the existing audio TX pipeline. PTT is turned on directly via
+        CI-V, turned off when finished. Actively checks self._tune_stop.
         """
         import math
         try:
             self._tune_stop = False
-            print(f"[tune] START {tone_hz}Hz na {duration_s}s")
+            print(f"[tune] START {tone_hz}Hz for {duration_s}s")
             await self.hub.broadcast({"type": "tune_status", "active": True,
                                       "duration": duration_s, "tone": tone_hz})
 
@@ -1135,19 +1137,19 @@ class App:
                     samples_sent += 1
                 if hasattr(self.audio, 'feed_tx_pcm'):
                     try: self.audio.feed_tx_pcm(bytes(chunk))
-                    except Exception as e: print(f"[tune] feed blad: {e}")
+                    except Exception as e: print(f"[tune] feed error: {e}")
                 await asyncio.sleep(chunk_size / sample_rate * 0.9)
 
-            # Wylacz PTT
+            # Turn off PTT
             self.rig.ptt = False
             if not self.rig.sim:
                 try: await self.rig.set_ptt(False)
-                except Exception as e: print(f"[tune] set_ptt(False) blad: {e}")
+                except Exception as e: print(f"[tune] set_ptt(False) error: {e}")
             await self.hub.broadcast({"type": "ptt", "ptt": False})
             await self.hub.broadcast({"type": "tune_status", "active": False})
             print(f"[tune] STOP (stop_flag={self._tune_stop})")
         except Exception as e:
-            print(f"[tune] blad: {e}")
+            print(f"[tune] error: {e}")
             self.rig.ptt = False
             if not self.rig.sim:
                 try: await self.rig.set_ptt(False)
@@ -1156,12 +1158,12 @@ class App:
             await self.hub.broadcast({"type": "tune_status", "active": False})
 
     async def _relay_connect_task(self):
-        """Polacz z Arduino relay controller w tle."""
+        """Connect to the Arduino relay controller in the background."""
         if self.relay:
             await self.relay.connect()
 
     async def _relay_reconnect_task(self):
-        """Rozlacz i polacz ponownie z nowa konfiguracja."""
+        """Disconnect and reconnect with the new configuration."""
         if self.relay:
             await self.relay.disconnect()
             self.relay = None
@@ -1174,41 +1176,41 @@ class App:
                 )
                 await self.relay.connect()
             except Exception as e:
-                print(f"[relay] reconnect blad: {e}")
+                print(f"[relay] reconnect error: {e}")
 
     def _supervise(self, coro_factory, name: str, restart_delay: float = 5.0):
         """
-        Uruchom petle tla pod nadzorem: jesli mimo wewnetrznych try/except
-        zadanie padnie (nieoczekiwany wyjatek, bug), supervisor je RESTARTUJE
-        po restart_delay sekund.
+        Run a background loop under supervision: if, despite internal
+        try/except blocks, the task crashes (an unexpected exception, a
+        bug), the supervisor RESTARTS it after restart_delay seconds.
 
-        Bez tego pojedynczy nieprzewidziany blad zabija funkcje (np. watchdog
-        urzadzen albo dekodowanie FT8) az do recznego restartu serwera.
+        Without this, a single unexpected error kills the feature (e.g.
+        the device watchdog or FT8 decoding) until the server is manually restarted.
 
-        coro_factory: funkcja bezargumentowa zwracajaca korutyne (nie korutyna!)
-                      np. lambda: self._device_watchdog()
+        coro_factory: a zero-argument function that returns a coroutine
+                      (not a coroutine itself!), e.g. lambda: self._device_watchdog()
         """
         async def _runner():
             _fails = 0
             while True:
                 try:
                     await coro_factory()
-                    # Petla sie zakonczyla normalnie (nie powinna) - restart
-                    print(f"[supervisor] '{name}' zakonczyl sie sam - restart "
-                          f"za {restart_delay}s", flush=True)
+                    # The loop ended normally (it shouldn't) - restart it
+                    print(f"[supervisor] '{name}' ended on its own - restarting "
+                          f"in {restart_delay}s", flush=True)
                 except asyncio.CancelledError:
-                    print(f"[supervisor] '{name}' anulowany (zamykanie)", flush=True)
+                    print(f"[supervisor] '{name}' cancelled (shutting down)", flush=True)
                     raise
                 except Exception as e:
                     _fails += 1
-                    print(f"[supervisor] '{name}' PADL ({_fails}x): "
+                    print(f"[supervisor] '{name}' CRASHED ({_fails}x): "
                           f"{type(e).__name__}: {e}", flush=True)
                     import traceback as _tb
                     _tb.print_exc()
-                    # Rosnacy backoff przy powtarzajacych sie awariach
-                    # (5s, 10s, 20s, ... max 300s) zeby nie zapetlic sie
+                    # Growing backoff on repeated failures (5s, 10s, 20s,
+                    # ... max 300s) to avoid a crash loop
                     _delay = min(restart_delay * (2 ** min(_fails - 1, 6)), 300.0)
-                    print(f"[supervisor] '{name}' restart za {_delay:.0f}s",
+                    print(f"[supervisor] '{name}' restarting in {_delay:.0f}s",
                           flush=True)
                     await asyncio.sleep(_delay)
                     continue
@@ -1218,36 +1220,37 @@ class App:
 
     async def _device_watchdog(self):
         """
-        Co 1h sprawdza czy urzadzenia (radio, rotatory, przekazniki) odpowiadaja
-        na porcie COM. Jesli port zawieszony / urzadzenie nie odpowiada -
-        rozlacza i laczy ponownie (soft reset).
+        Every 1h checks whether devices (radio, rotators, relays) respond
+        on their COM port. If a port is stuck / a device doesn't respond -
+        disconnects and reconnects (soft reset).
 
-        BEZPIECZENSTWO: nie rusza niczego gdy:
-          - radio nadaje (PTT aktywne) - nie przerywamy transmisji
-          - ktos trzyma radio_lock - nie przerywamy cudzego QSO
-        W takiej sytuacji sprawdzenie jest odkladane do nastepnego cyklu.
+        SAFETY: doesn't touch anything when:
+          - the radio is transmitting (PTT active) - we don't interrupt a transmission
+          - someone holds radio_lock - we don't interrupt someone else's QSO
+        In that case the check is deferred to the next cycle.
 
-        Radio ma juz wlasny _reconnect_loop w civ.py (auto-wraca z SIM gdy port
-        sie zwolni), wiec dla radia tylko logujemy stan i probujemy wybudzic
-        gdy jest w SIM mimo dostepnego portu.
+        The radio already has its own _reconnect_loop in civ.py (auto-
+        recovers from SIM once the port frees up), so for the radio we
+        only log its state and try to wake it up if it's in SIM despite an
+        available port.
         """
         INTERVAL_S = 3600.0   # 1h
-        # Pierwsze sprawdzenie po 5 min od startu (dac czas na inicjalizacje)
+        # First check 5 min after startup (give time for initialization)
         await asyncio.sleep(300.0)
 
         while True:
             try:
-                # ── Warunki bezpieczenstwa ────────────────────────────────────
+                # ── Safety conditions ────────────────────────────────────
                 ptt_active = bool(getattr(self.rig, "ptt", False))
                 lock_held = self.radio_lock.get("user_id") is not None
                 if ptt_active or lock_held:
-                    reason = "PTT aktywne" if ptt_active else "operator trzyma radio"
-                    print(f"[watchdog] pomijam sprawdzenie urzadzen ({reason})",
+                    reason = "PTT active" if ptt_active else "operator holding the radio"
+                    print(f"[watchdog] skipping device check ({reason})",
                           flush=True)
                     await asyncio.sleep(INTERVAL_S)
                     continue
 
-                print("[watchdog] sprawdzam urzadzenia...", flush=True)
+                print("[watchdog] checking devices...", flush=True)
 
                 await self._watchdog_check_radio()
                 await self._watchdog_check_rotators()
@@ -1256,73 +1259,74 @@ class App:
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                print(f"[watchdog] blad ogolny: {e}", flush=True)
+                print(f"[watchdog] general error: {e}", flush=True)
 
             await asyncio.sleep(INTERVAL_S)
 
     async def _watchdog_check_radio(self):
         """
-        Radio: sprawdz czy CI-V odpowiada. Radio ma wlasny reconnect_loop w
-        civ.py wiec tutaj tylko diagnostyka + wymuszenie proby gdy w SIM.
+        Radio: check whether CI-V responds. The radio has its own
+        reconnect_loop in civ.py so here we only do diagnostics + force a
+        retry if it's in SIM.
         """
         try:
             is_sim = bool(getattr(self.rig, "sim", False))
             has_port = getattr(self.rig, "_ser", None) is not None
             if is_sim:
-                print("[watchdog] radio w SYMULACJI - civ reconnect_loop "
-                      "sprobuje odzyskac port automatycznie", flush=True)
+                print("[watchdog] radio in SIMULATION - civ reconnect_loop "
+                      "will try to recover the port automatically", flush=True)
                 return
             if not has_port:
-                print("[watchdog] radio: brak otwartego portu", flush=True)
+                print("[watchdog] radio: no open port", flush=True)
                 return
-            # Health-check: zapytaj o czestotliwosc (komenda 0x03).
-            # Jesli radio nie odpowiada, get_freq zwroci None/rzuci wyjatek.
+            # Health check: ask for the frequency (command 0x03).
+            # If the radio doesn't respond, get_freq returns None/raises.
             ok = False
             try:
                 if hasattr(self.rig, "get_freq"):
-                    # get_freq jest async (CivRig) - wolamy bezposrednio
+                    # get_freq is async (CivRig) - called directly
                     f = await asyncio.wait_for(self.rig.get_freq(), timeout=5.0)
                     ok = f is not None and f > 0
             except Exception:
                 ok = False
             if ok:
-                print("[watchdog] radio OK (odpowiada na CI-V)", flush=True)
+                print("[watchdog] radio OK (responds on CI-V)", flush=True)
             else:
-                print("[watchdog] radio NIE ODPOWIADA - probuje reconnect",
+                print("[watchdog] radio NOT RESPONDING - trying reconnect",
                       flush=True)
-                # Zamknij port - civ _reconnect_loop otworzy go ponownie
+                # Close the port - civ's _reconnect_loop will reopen it
                 try:
                     if hasattr(self.rig, "_ser") and self.rig._ser:
                         self.rig._ser.close()
                         self.rig._ser = None
                     if hasattr(self.rig, "_start_sim"):
-                        self.rig._start_sim()  # to odpali _reconnect_loop
-                    print("[watchdog] radio: port zamkniety, reconnect_loop "
-                          "sprobuje odzyskac", flush=True)
+                        self.rig._start_sim()  # this kicks off _reconnect_loop
+                    print("[watchdog] radio: port closed, reconnect_loop "
+                          "will try to recover", flush=True)
                 except Exception as e:
-                    print(f"[watchdog] radio reconnect blad: {e}", flush=True)
+                    print(f"[watchdog] radio reconnect error: {e}", flush=True)
         except Exception as e:
-            print(f"[watchdog] radio check blad: {e}", flush=True)
+            print(f"[watchdog] radio check error: {e}", flush=True)
 
     async def _watchdog_check_rotators(self):
-        """Rotatory: sprawdz czy odpowiadaja na STATUS, reconnect gdy nie."""
+        """Rotators: check whether they respond to STATUS, reconnect if not."""
         rotators = getattr(self, "rotators", None)
         if not rotators:
             return
         for rot in rotators:
             try:
                 if getattr(rot, "sim", False):
-                    # W symulacji - sprobuj polaczyc na nowo (moze port wrocil)
-                    print(f"[watchdog] rotator {rot.name}: w symulacji, "
-                          f"probuje polaczyc", flush=True)
+                    # In simulation - try connecting again (the port may have come back)
+                    print(f"[watchdog] rotator {rot.name}: in simulation, "
+                          f"trying to connect", flush=True)
                     await asyncio.to_thread(rot.connect)
                     continue
                 if not getattr(rot, "connected", False):
-                    print(f"[watchdog] rotator {rot.name}: rozlaczony, "
-                          f"probuje polaczyc", flush=True)
+                    print(f"[watchdog] rotator {rot.name}: disconnected, "
+                          f"trying to connect", flush=True)
                     await asyncio.to_thread(rot.connect)
                     continue
-                # Health-check: odczytaj pozycje (realne zapytanie do portu)
+                # Health check: read the position (a real query to the port)
                 pos = None
                 try:
                     pos = await asyncio.wait_for(
@@ -1333,8 +1337,8 @@ class App:
                     print(f"[watchdog] rotator {rot.name} OK (az={pos:.0f}°)",
                           flush=True)
                 else:
-                    print(f"[watchdog] rotator {rot.name} NIE ODPOWIADA - "
-                          f"reconnect", flush=True)
+                    print(f"[watchdog] rotator {rot.name} NOT RESPONDING - "
+                          f"reconnecting", flush=True)
                     try:
                         await asyncio.to_thread(rot.close)
                     except Exception:
@@ -1342,27 +1346,27 @@ class App:
                     await asyncio.sleep(1.0)
                     ok = await asyncio.to_thread(rot.connect)
                     print(f"[watchdog] rotator {rot.name} reconnect: "
-                          f"{'OK' if ok else 'NIEUDANY (symulacja)'}", flush=True)
+                          f"{'OK' if ok else 'FAILED (simulation)'}", flush=True)
             except Exception as e:
                 print(f"[watchdog] rotator {getattr(rot,'name','?')} blad: {e}",
                       flush=True)
 
     async def _watchdog_check_relay(self):
-        """Przekazniki: sprawdz czy Arduino odpowiada na RPK, reconnect gdy nie."""
+        """Relays: check whether the Arduino responds to RPK, reconnect if not."""
         rcfg = self.cfg.get("relay", {})
         if not rcfg.get("enabled") or not rcfg.get("port"):
             return
         relay = getattr(self, "relay", None)
         if not relay:
-            print("[watchdog] relay: brak instancji, probuje polaczyc", flush=True)
+            print("[watchdog] relay: no instance, trying to connect", flush=True)
             await self._relay_reconnect_task()
             return
         try:
             if not relay.is_connected():
-                print("[watchdog] relay: rozlaczony, reconnect", flush=True)
+                print("[watchdog] relay: disconnected, reconnecting", flush=True)
                 await self._relay_reconnect_task()
                 return
-            # Health-check: odczytaj stany (realne zapytanie RPK do Arduino)
+            # Health check: read the states (a real RPK query to the Arduino)
             ok = False
             try:
                 states = await asyncio.wait_for(
@@ -1371,23 +1375,23 @@ class App:
             except Exception:
                 ok = False
             if ok:
-                print("[watchdog] relay OK (Arduino odpowiada)", flush=True)
+                print("[watchdog] relay OK (Arduino responds)", flush=True)
             else:
-                print("[watchdog] relay NIE ODPOWIADA - reconnect", flush=True)
+                print("[watchdog] relay NOT RESPONDING - reconnecting", flush=True)
                 await self._relay_reconnect_task()
                 if self.relay and self.relay.is_connected():
                     print("[watchdog] relay reconnect OK", flush=True)
                 else:
-                    print("[watchdog] relay reconnect NIEUDANY", flush=True)
+                    print("[watchdog] relay reconnect FAILED", flush=True)
         except Exception as e:
-            print(f"[watchdog] relay check blad: {e}", flush=True)
+            print(f"[watchdog] relay check error: {e}", flush=True)
 
     async def _radio_lock_watchdog(self):
         """
-        Co 30s sprawdza czy aktywny operator nie przekroczyl timeout bezczynnosci.
-        Jesli tak — automatycznie zwalnia radio i broadcastuje stan.
+        Every 30s checks whether the active operator has exceeded the idle
+        timeout. If so — automatically releases the radio and broadcasts the state.
         """
-        await asyncio.sleep(5)   # daj chwile na inicjalizacje
+        await asyncio.sleep(5)   # give it a moment to initialize
         while True:
             await asyncio.sleep(30)
             try:
@@ -1407,11 +1411,11 @@ class App:
                         "type":    "toast",
                         "message": f"Radio zwolnione automatycznie ({uname} — przekroczono czas bezczynnosci {self.radio_lock['timeout_min']} min)",
                     })
-                    print(f"[radio_lock] Auto-release: {uname} przekroczyl timeout {self.radio_lock['timeout_min']} min")
+                    print(f"[radio_lock] Auto-release: {uname} exceeded the {self.radio_lock['timeout_min']} min timeout")
             except Exception as e:
-                print(f"[radio_lock] watchdog blad: {e}")
+                print(f"[radio_lock] watchdog error: {e}")
 
-    # ── SMTP — reset hasla ────────────────────────────────────────────────────
+    # ── SMTP — password reset ────────────────────────────────────────────────────
     async def _send_email(self, to_email: str, subject: str, body: str):
         """Generic SMTP send (subject + plain-text body) using the same SMTP
         config as password reset. Returns (True, None) or (False, error).
@@ -1438,15 +1442,15 @@ class App:
                     s.login(user, password); s.send_message(msg)
         try:
             await asyncio.to_thread(_send)
-            print(f"[smtp] Email wyslany do {to_email}: {subject}")
+            print(f"[smtp] Email sent to {to_email}: {subject}")
             return True, None
         except Exception as e:
-            print(f"[smtp] Blad wysylki do {to_email}: {e}")
+            print(f"[smtp] Send error to {to_email}: {e}")
             return False, str(e)
 
     async def _send_reset_email(self, to_email: str, username: str, token: str, base_url: str):
         """
-        Wyslij email przez SMTP. Zwraca (True, None) lub (False, str_bledu).
+        Send an email via SMTP. Returns (True, None) or (False, error_str).
         """
         import smtplib, email.message
         smtp_cfg = self.cfg.get("smtp", {})
@@ -1492,7 +1496,7 @@ class App:
 
         try:
             await asyncio.to_thread(_send)
-            print(f"[smtp] Email wyslany do {to_email}")
+            print(f"[smtp] Email sent to {to_email}")
             return True, None
         except smtplib.SMTPAuthenticationError as e:
             err = f"Blad autoryzacji SMTP ({e.smtp_code}): nieprawidlowy login lub haslo. Dla Gmail uzyj 'App Password'."
@@ -1528,17 +1532,19 @@ class App:
             rot.connect()
             self.rotators.append(rot)
         n = len(self.rotators)
-        print(f"[rotator] {n} aktywnych" if n else "[rotator] brak skonfigurowanych")
+        print(f"[rotator] {n} active" if n else "[rotator] none configured")
 
     def _check_pw_ver(self, payload: dict | None) -> dict | None:
         """
-        Sprawdz czy token ma aktualna wersje hasla (pw_ver). Zmiana hasla
-        inkrementuje pw_ver w users.json, wiec stare tokeny (z nizsza wersja)
-        przestaja dzialac - to uniewaznia sesje na wszystkich urzadzeniach.
+        Check whether the token has the current password version (pw_ver).
+        A password change increments pw_ver in users.json, so old tokens
+        (with a lower version) stop working - this invalidates sessions on
+        all devices.
 
-        Zwraca payload jesli OK, albo None jesli token przestarzaly/nieprawidlowy.
-        Tokeny wystawione przed wprowadzeniem pw_ver (brak pola) sa akceptowane
-        tylko gdy user tez nie ma pw_ver (czyli nigdy nie zmienil hasla).
+        Returns the payload if OK, or None if the token is stale/invalid.
+        Tokens issued before pw_ver was introduced (missing field) are
+        accepted only when the user also has no pw_ver (i.e. never changed
+        their password).
         """
         if not payload:
             return None
@@ -1547,29 +1553,29 @@ class App:
             return None
         u = next((x for x in self.users if x.get("id") == uid), None)
         if not u:
-            return None  # user usuniety
+            return None  # user deleted
         token_ver = int(payload.get("pw_ver", 0))
         user_ver = int(u.get("pw_ver", 0))
         if token_ver != user_ver:
-            print(f"[auth] token odrzucony: pw_ver={token_ver} != {user_ver} "
-                  f"(user {u.get('username')!r} zmienil haslo)", flush=True)
+            print(f"[auth] token rejected: pw_ver={token_ver} != {user_ver} "
+                  f"(user {u.get('username')!r} changed their password)", flush=True)
             return None
         return payload
 
-    # ── Rate limiting logowania (ochrona przed brute-force) ──────────────────
-    # Serwer jest w internecie (duckdns) - boty skanuja i probuja lamac hasla.
-    # Limitujemy proby logowania per IP oraz per nazwa uzytkownika.
+    # ── Login rate limiting (brute-force protection) ──────────────────
+    # The server is on the internet (duckdns) - bots scan and try to crack
+    # passwords. We limit login attempts per IP and per username.
     #
-    # Zasady:
-    #   - max 5 nieudanych prob z jednego IP w ciagu 5 minut -> blokada 15 min
-    #   - max 5 nieudanych prob na jedna nazwe usera w 5 min -> blokada 15 min
-    #     (chroni konkretne konto nawet gdy atak idzie z wielu IP)
-    #   - udane logowanie kasuje licznik dla tego IP i usera
-    # Dane trzymane w pamieci (reset przy restarcie) - dla klubowego serwera
-    # to wystarcza, nie potrzeba Redis.
-    _LOGIN_MAX_FAILS = 5           # ile nieudanych prob zanim blokada
-    _LOGIN_WINDOW_S = 300.0        # okno liczenia prob (5 min)
-    _LOGIN_BLOCK_S = 900.0         # jak dlugo blokada (15 min)
+    # Rules:
+    #   - max 5 failed attempts from one IP within 5 minutes -> 15 min block
+    #   - max 5 failed attempts for one username within 5 min -> 15 min block
+    #     (protects a specific account even when the attack comes from many IPs)
+    #   - a successful login clears the counter for that IP and user
+    # Data is kept in memory (reset on restart) - enough for a club server,
+    # no need for Redis.
+    _LOGIN_MAX_FAILS = 5           # how many failed attempts before a block
+    _LOGIN_WINDOW_S = 300.0        # attempt-counting window (5 min)
+    _LOGIN_BLOCK_S = 900.0         # how long the block lasts (15 min)
 
     def _rl_key_state(self, store: dict, key: str) -> dict:
         st = store.get(key)
@@ -1579,7 +1585,7 @@ class App:
         return st
 
     def _login_is_blocked(self, ip: str, username: str) -> tuple[bool, int]:
-        """Czy logowanie zablokowane? Zwraca (blocked, seconds_left)."""
+        """Is login blocked? Returns (blocked, seconds_left)."""
         now = time.time()
         for store, key in ((self._login_fails_ip, ip),
                            (self._login_fails_user, username)):
@@ -1591,40 +1597,41 @@ class App:
         return False, 0
 
     def _login_record_fail(self, ip: str, username: str):
-        """Zapisz nieudana probe. Jesli przekroczono limit - zablokuj."""
+        """Record a failed attempt. If the limit is exceeded - block."""
         now = time.time()
         for store, key, label in ((self._login_fails_ip, ip, "IP"),
                                   (self._login_fails_user, username, "user")):
             if not key:
                 continue
             st = self._rl_key_state(store, key)
-            # Usun stare proby spoza okna
+            # Remove old attempts outside the window
             st["fails"] = [t for t in st["fails"] if now - t < self._LOGIN_WINDOW_S]
             st["fails"].append(now)
             if len(st["fails"]) >= self._LOGIN_MAX_FAILS:
                 st["blocked_until"] = now + self._LOGIN_BLOCK_S
                 st["fails"] = []
-                print(f"[auth] BLOKADA {label}={key!r} na "
+                print(f"[auth] BLOCKING {label}={key!r} for "
                       f"{int(self._LOGIN_BLOCK_S/60)} min "
-                      f"(za duzo nieudanych prob logowania)", flush=True)
+                      f"(too many failed login attempts)", flush=True)
 
     def _login_record_success(self, ip: str, username: str):
-        """Udane logowanie - wyczysc liczniki."""
+        """Successful login - clear the counters."""
         self._login_fails_ip.pop(ip, None)
         self._login_fails_user.pop(username, None)
 
     def _login_cleanup(self):
         """
-        Usun stare wpisy zeby slowniki nie rosly w nieskonczonosc.
-        STABILNOSC: pod atakiem (miliony roznych nazw userow) samo usuwanie
-        'pustych' wpisow nie wystarcza - wszystkie maja swieze proby. Dlatego
-        dodatkowo usuwamy wpisy ktorych okno prob juz minelo, a jesli slownik
-        nadal jest za duzy - twardo przycinamy do najnowszych.
+        Remove old entries so the dicts don't grow without bound.
+        STABILITY: under attack (millions of different usernames), just
+        removing "empty" entries isn't enough - all of them have fresh
+        attempts. So we additionally remove entries whose attempt window
+        has already passed, and if the dict is still too big - hard-trim
+        it to the most recent ones.
         """
         now = time.time()
         HARD_CAP = 500
         for store in (self._login_fails_ip, self._login_fails_user):
-            # 1. Usun wpisy bez aktywnej blokady i bez prob w oknie
+            # 1. Remove entries with no active block and no attempts in the window
             dead = []
             for k, st in store.items():
                 st["fails"] = [t for t in st["fails"]
@@ -1633,23 +1640,23 @@ class App:
                     dead.append(k)
             for k in dead:
                 store.pop(k, None)
-            # 2. Twardy limit - gdy nadal za duzo (atak), zostaw tylko
-            #    aktywne blokady + najnowsze proby
+            # 2. Hard limit - if still too many (an attack), keep only
+            #    active blocks + the most recent attempts
             if len(store) > HARD_CAP:
                 blocked = {k: st for k, st in store.items()
                            if st["blocked_until"] > now}
                 rest = [(k, st) for k, st in store.items()
                         if st["blocked_until"] <= now]
-                # Najnowsze proby na koncu listy fails
+                # Most recent attempts at the end of the fails list
                 rest.sort(key=lambda kv: (kv[1]["fails"][-1]
                                            if kv[1]["fails"] else 0),
                           reverse=True)
                 keep = dict(rest[:max(0, HARD_CAP - len(blocked))])
-                keep.update(blocked)  # blokady zawsze zostaja
+                keep.update(blocked)  # blocks always stay
                 store.clear()
                 store.update(keep)
-                print(f"[auth] cleanup: przyciete do {len(store)} wpisow "
-                      f"(mozliwy atak brute-force)", flush=True)
+                print(f"[auth] cleanup: trimmed to {len(store)} entries "
+                      f"(possible brute-force attack)", flush=True)
 
     # ── API ───────────────────────────────────────────────────────────────────
     async def api(self, method: str, path: str, body: dict,
@@ -1660,11 +1667,11 @@ class App:
             un = body.get("username", "").lower()
             pw = body.get("password", "")
 
-            # Rate limiting - sprawdz czy IP/user nie jest zablokowany
+            # Rate limiting - check whether the IP/user is blocked
             blocked, secs_left = self._login_is_blocked(client_ip, un)
             if blocked:
                 mins = max(1, secs_left // 60)
-                print(f"[auth] odrzucono logowanie (blokada) ip={client_ip} user={un!r}",
+                print(f"[auth] login rejected (blocked) ip={client_ip} user={un!r}",
                       flush=True)
                 return 429, {"error": f"Za duzo nieudanych prob. "
                                        f"Sprobuj ponownie za {mins} min."}
@@ -1672,13 +1679,13 @@ class App:
             u  = self.find_user(un)
             if not u or not u.get("active") or not verify_pw(pw, u.get("password", "")):
                 self._login_record_fail(client_ip, un)
-                # Sporadyczne czyszczenie starych wpisow. Sprawdzamy OBA slowniki
-                # - napastnik moze wysylac miliony roznych nazw userow zeby
-                # zapchac pamiec (_login_fails_user rosloby bez limitu).
+                # Sporadic cleanup of old entries. We check BOTH dicts -
+                # an attacker could send millions of different usernames to
+                # exhaust memory (_login_fails_user would grow unbounded).
                 if (len(self._login_fails_ip) > 200
                         or len(self._login_fails_user) > 200):
                     self._login_cleanup()
-                print(f"[auth] nieudane logowanie ip={client_ip} user={un!r}", flush=True)
+                print(f"[auth] failed login ip={client_ip} user={un!r}", flush=True)
                 return 401, {"error": "Błędne dane logowania"}
 
             self._login_record_success(client_ip, un)
@@ -1691,14 +1698,15 @@ class App:
                     save_json(USR_F, self.users)
                 except Exception:
                     pass
-            # pw_ver = wersja hasla. Zmiana hasla inkrementuje ja w users.json,
-            # co uniewaznia wszystkie stare tokeny (nie pasuja do nowej wersji).
+            # pw_ver = password version. A password change increments it in
+            # users.json, invalidating all old tokens (they no longer match the new version).
             token = jwt_sign({"id": u["id"], "role": u["role"], "username": u["username"],
                               "pw_ver": int(u.get("pw_ver", 0))})
-            # Wymuszenie zmiany domyslnego hasla: gdy admin loguje sie wciaz
-            # dziala jacym haslem domyslnym (Admin1234!), frontend pokaze ekran
-            # zmiany hasla. KRYTYCZNE dla produktu - kazdy klub startuje z tym
-            # samym haslem domyslnym, wiec MUSI je zmienic przy pierwszym wejsciu.
+            # Force a change of the default password: when an admin logs in
+            # still using the working default password (Admin1234!), the
+            # frontend shows a password-change screen. CRITICAL for the
+            # product - every club starts with the same default password,
+            # so it MUST be changed on first login.
             must_change = (u.get("role") == "admin"
                            and verify_pw(ADMIN_PW, u.get("password", ""))
                            and not u.get("pw_changed"))
@@ -1708,13 +1716,13 @@ class App:
                          "must_change_password": must_change,
                          "first_run": FIRST_RUN}
 
-        # ── Reset hasla: krok 1 — wyslij email z tokenem ──────────────────────
+        # ── Password reset: step 1 — send an email with a token ──────────────────
         if p == "/api/auth/reset-request" and method == "POST":
             email_or_user = body.get("email", "").strip().lower()
-            # Szukaj po emailu lub nazwie uzytkownika
+            # Look up by email or username
             u = (self.find_user_by_email(email_or_user) or
                  self.find_user(email_or_user))
-            # Zawsze odpowiadaj "ok" — nie ujawniaj czy user istnieje
+            # Always respond "ok" — don't reveal whether the user exists
             if u and u.get("email"):
                 from auth import make_reset_token
                 token    = make_reset_token(u["id"], u["username"], u["email"])
