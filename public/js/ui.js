@@ -1,12 +1,12 @@
 /**
- * ui.js — renderowanie UI, obsługa zdarzeń
+ * ui.js — UI rendering, event handling
  */
 (function() {
 'use strict';
 
 const S = window.AppState;
 
-// ── Formatowanie ──────────────────────────────────────────────────────────────
+// ── Formatting ────────────────────────────────────────────────────────────────
 function fmtFreq(hz) {
   if (hz >= 1e6) {
     const s = (hz / 1e6).toFixed(5);
@@ -23,7 +23,7 @@ function fmtBand(freq) {
   return '?';
 }
 
-// ── Połączenie ────────────────────────────────────────────────────────────────
+// ── Connection ────────────────────────────────────────────────────────────────
 function updateConnectionStatus(on) {
   const dot   = document.getElementById('conn-dot');
   const label = document.getElementById('conn-label');
@@ -33,18 +33,18 @@ function updateConnectionStatus(on) {
   if (sim)   sim.style.display = S.sim ? 'inline' : 'none';
 }
 
-// ── Częstotliwość ─────────────────────────────────────────────────────────────
+// ── Frequency ─────────────────────────────────────────────────────────────────
 function updateFreqDisplay() {
   const el = document.getElementById('freq-display');
   if (el) el.textContent = fmtFreq(S.freq);
   const elB = document.getElementById('freq-b-display');
   if (elB) elB.textContent = fmtFreq(S.freqB);
   updateBandButtons();
-  // Odswież cyfrowy wyswietlacz VFO (renderowany przez vfo.js)
+  // Refresh the digital VFO display (rendered by vfo.js)
   window.VFO?.updateVFODisplay?.();
 }
 
-// Motyw kolorystyczny — zapisywany w localStorage per user.
+// Color theme — saved in localStorage per user.
 function setTheme(theme) {
   const valid = ['default', 'blue', 'mono', 'amber-classic'];
   if (!valid.includes(theme)) theme = 'default';
@@ -61,7 +61,7 @@ function setTheme(theme) {
   if (sel) sel.value = theme;
 }
 
-// Zaladuj zapisany motyw przy starcie
+// Load the saved theme on startup
 function loadTheme() {
   try {
     const uid = window.CurrentUser?.id || 'default';
@@ -79,21 +79,19 @@ function _canControlRadio() {
   return String(lock.user_id) === myUid;
 }
 
-// Wyszarza wszystkie kontrolki radia gdy user nie trzyma TRX. Uzytkownik
-// widzi wszystko (freq, waterfall, S-meter) ale nie moze klikac ani
-// wysylac komend. Adminowi UI pozostaje pelne.
+// Grays out all radio controls when the user doesn't hold the TRX. The
+// user sees everything (freq, waterfall, S-meter) but can't click or send
+// commands. The admin's UI stays fully enabled.
 function applyRadioLockUI() {
   const canControl = _canControlRadio();
   const page = document.getElementById('page-radio');
   if (!page) return;
-  // Blokada radio_lock idzie WYLACZNIE przez te klase (CSS pointer-events w
-  // style.css, .radio-readonly .ptt-btn i .radio-readonly button:not(...)) —
-  // to jedyne miejsce ktore decyduje kto moze klikac. updatePTT() ponizej NIE
-  // wie nic o radio_lock (patrz jej definicja) — odswieza tylko cross-band
-  // split guard, wiec musi byc wolana tutaj żeby zdazyc zanim zwroci UI.
-  // Wczesniej istnial tu blednie opisany drugi mechanizm (_setUILocked w
-  // index.html, usuniety w audycie zakladki RADIO 2026-08-15) ktory rowniez
-  // ustawial .disabled — ten komentarz sie do niego odnosil.
+  // The radio_lock block goes EXCLUSIVELY through this class (CSS
+  // pointer-events in style.css, .radio-readonly .ptt-btn and
+  // .radio-readonly button:not(...)) — this is the only place that
+  // decides who can click. updatePTT() below knows NOTHING about
+  // radio_lock (see its definition) — it only refreshes the cross-band
+  // split guard, so it must be called here in order to run before the UI returns.
   page.classList.toggle('radio-readonly', !canControl);
   updatePTT();
 }
@@ -110,9 +108,9 @@ function sendFreq(freq) {
   S.freq = freq;
   S._localFreqSetAt = Date.now();
   updateFreqDisplay();
-  updateVFOBadges();   // natychmiast zaktualizuj badge pasma (nie czekaj na serwer)
+  updateVFOBadges();   // update the band badge immediately (don't wait for the server)
   updatePTT();         // cross-band guard
-  scheduleBandMemorySave();  // zapisz do historii/pamieci pasma (debounced 2s)
+  scheduleBandMemorySave();  // save to band history/memory (debounced 2s)
   WS.sendFreqFast ? WS.sendFreqFast(freq) : WS.send({ type: 'freq', freq });
 }
 
@@ -127,7 +125,7 @@ function gotoFreq(freq, mode) {
   if (mode && mode !== S.mode) setMode(mode);
 }
 
-// ── Tryb ──────────────────────────────────────────────────────────────────────
+// ── Mode ──────────────────────────────────────────────────────────────────────
 function buildModeGrid() {
   const modes = (S.modes && S.modes.length) ? S.modes : ['USB','LSB','AM','FM','CW'];
   const modeHtml = modes.map(m =>
@@ -143,9 +141,9 @@ function setMode(mode, bw) {
   S.mode = mode;
   if (bw) S.bandwidth = bw;
   updateModeButtons();
-  updateVFOBadges();   // natychmiast zaktualizuj badge trybu
+  updateVFOBadges();   // update the mode badge immediately
 
-  // Filtr domyslny dla trybu — moze byc '1'/'2'/'3'
+  // Default filter for the mode — can be '1'/'2'/'3'
   const filterRaw = S.modeFilters?.[mode];
   let filterNum = null;
   if (filterRaw) {
@@ -153,7 +151,7 @@ function setMode(mode, bw) {
     if (n >= 1 && n <= 3) filterNum = n;
   }
 
-  // Zaktualizuj select filtra w UI
+  // Update the filter select in the UI
   if (filterNum) {
     const sel = document.getElementById('bw-select');
     if (sel) sel.value = String(filterNum);
@@ -168,21 +166,21 @@ function updateModeButtons() {
   document.querySelectorAll('.mode-btn').forEach(b => {
     b.classList.toggle('active', b.textContent === S.mode);
   });
-  // Podpowiedz RST w "LOG QSO" (CW->599, telefonia->59) — wolane stad bo
-  // updateModeButtons() i tak biegnie przy KAZDEJ zmianie trybu (klik,
-  // telemetria, WS 'mode'), wiec to jedyne miejsce ktore trzeba podpiac.
+  // Suggest RST in "LOG QSO" (CW->599, phone->59) — called from here
+  // because updateModeButtons() already runs on EVERY mode change (click,
+  // telemetry, WS 'mode'), so it's the only place that needs hooking up.
   window.QSOLog?.updateRstDefaults?.(S.mode);
 }
 
-// ── Pasma ─────────────────────────────────────────────────────────────────────
-// S.bands byl dotychczas ZAWSZE pusty po stronie klienta (nigdy nie
-// wypelniany) — stad przyciski pasm nigdy sie nie podswietlaly i fallback
-// w buildBandGrid() ('20m': {def:...} BEZ min/max) sprawial ze
-// updateBandButtons() porownywalo f>=undefined, co zawsze daje false.
-// Backend MA poprawne dane (min/max/def dla 14 pasm) pod /api/config/bands,
-// ale dotychczas nic ich stamtad nie pobieralo do S.bands. Wolane raz przy
-// starcie (app:ready) i przy kazdym 'config_update' z backendu (gdy admin
-// zmieni liste wlaczonych pasm w ustawieniach).
+// ── Bands ─────────────────────────────────────────────────────────────────────
+// S.bands used to ALWAYS be empty on the client (never populated) — hence
+// the band buttons never highlighted, and the fallback in buildBandGrid()
+// ('20m': {def:...} WITHOUT min/max) made updateBandButtons() compare
+// f>=undefined, which is always false. The backend HAS the correct data
+// (min/max/def for 14 bands) at /api/config/bands, but nothing used to
+// fetch it into S.bands. Called once on startup (app:ready) and on every
+// 'config_update' from the backend (when the admin changes the list of
+// enabled bands in settings).
 async function loadBandsConfig() {
   try {
     const [rb, rm] = await Promise.all([
@@ -200,7 +198,7 @@ async function loadBandsConfig() {
     }
     S.bands = bands;
 
-    // Tryby i filtry
+    // Modes and filters
     S.modes       = dm.enabledModes || dm.allModes || ['USB','LSB','AM','FM','CW'];
     S.modeFilters = dm.modeFilters  || {};
 
@@ -208,12 +206,12 @@ async function loadBandsConfig() {
     buildModeGrid();
     updateBandButtons();
   } catch (e) {
-    console.warn('[ui] loadBandsConfig blad:', e);
+    console.warn('[ui] loadBandsConfig error:', e);
   }
 }
 
-// LocalStorage per-user pamiec czestotliwosci per pasmo. Kluczem jest
-// nazwa pasma (np. '20m'), wartoscia obiekt { freq, mode, ts }.
+// Per-user localStorage frequency memory per band. The key is the band
+// name (e.g. '20m'), the value is an object { freq, mode, ts }.
 function _bandMemoryKey() {
   const uid = window.CurrentUser?.id || 'default';
   return `bandFreq_${uid}`;
@@ -224,12 +222,12 @@ function _loadBandMemory() {
 }
 function _saveBandMemory(mem) {
   try { localStorage.setItem(_bandMemoryKey(), JSON.stringify(mem)); }
-  catch(e) { console.warn('[band-mem] save blad:', e); }
+  catch(e) { console.warn('[band-mem] save error:', e); }
 }
-// Zapisz aktualna freq+mode do pamieci pasma (wywolywane po kazdej zmianie freq)
+// Save the current freq+mode to the band memory (called after every freq change)
 function saveBandMemory() {
   const band = getBandName(S.freq);
-  if (!band || band.includes('MHz') || band.includes('Hz')) return; // nie zapisuj gdy poza pasmem
+  if (!band || band.includes('MHz') || band.includes('Hz')) return; // don't save when out of band
   const mem = _loadBandMemory();
   mem[band] = { freq: S.freq, mode: S.mode, ts: Date.now() };
   _saveBandMemory(mem);
@@ -240,7 +238,7 @@ function buildBandGrid() {
   const mem = _loadBandMemory();
   const bandHtml = Object.entries(bands)
     .map(([b, r]) => {
-      // Uzyj zapamietanej freq jesli istnieje, inaczej domyslnej z konfiguracji
+      // Use the remembered freq if present, otherwise the default from the config
       const remembered = mem[b];
       const freq = remembered?.freq || r.def;
       const mode = remembered?.mode || S.mode;
@@ -253,14 +251,14 @@ function buildBandGrid() {
   });
   const el = document.getElementById('band-grid') || document.getElementById('band-grid-left');
   if (!el) return;
-  updateBandButtons();  // od razu podswietl wlasciwy przycisk wg aktualnej S.freq
+  updateBandButtons();  // highlight the correct button right away based on current S.freq
 }
 
 function updateBandButtons() {
-  // Podswietl pasmo wg AKTYWNEGO VFO — freqB gdy aktywny jest VFO B,
-  // freq gdy aktywny jest VFO A (domyslnie). Poprzednio zawsze uzywal S.freq,
-  // co powodowalo ze po przelaczeniu na VFO B przyciski pasm pokazywaly
-  // pasmo VFO A zamiast aktualnego pasma VFO B.
+  // Highlight the band by the ACTIVE VFO — freqB when VFO B is active,
+  // freq when VFO A is active (default). It used to always use S.freq,
+  // which meant that after switching to VFO B the band buttons showed
+  // VFO A's band instead of VFO B's current band.
   const f = (S.vfo === 'VFOB') ? (S.freqB || S.freq) : S.freq;
   document.querySelectorAll('.band-btn').forEach(btn => {
     const band = S.bands[btn.textContent];
@@ -268,9 +266,8 @@ function updateBandButtons() {
   });
 }
 
-// Pobierz pasma raz po starcie aplikacji (auth.js emituje 'app:ready' po
-// zalogowaniu — ten sam wzorzec uzywany przez settings.js do pobierania
-// modeli rigow).
+// Fetch the bands once on app startup (auth.js emits 'app:ready' after
+// login — the same pattern settings.js uses to fetch rig models).
 window.addEventListener('app:ready', () => { loadBandsConfig(); loadTheme(); });
 
 
@@ -289,14 +286,14 @@ function updatePTT() {
   if (dot) dot.className = 'dot ' + (S.ptt ? 'red' : 'green');
   if (lbl) lbl.textContent = S.ptt ? 'TX' : 'RX';
 
-  // Wycisz RX na czas KAZDEGO nadawania (fonia i cyfra). Radio z MONI podaje
-  // na USB-out monitor wlasnego TX -> przy fonii slychac wlasne ECHO, przy
-  // FT8 piszczace tony. Podczas TX pasma i tak nie ma na RX, wiec duck nic
-  // nie odbiera. Idempotentne z duckiem FT8 (ft8_tx_status).
+  // Mute RX during EVERY transmission (phone and digital). With MONI on,
+  // the radio puts a monitor of its own TX on the USB-out -> on phone you
+  // hear your own ECHO, on FT8 squealing tones. During TX there's nothing
+  // on RX anyway, so the duck doesn't drop anything. Idempotent with the FT8 duck (ft8_tx_status).
   window.setTxAudioDuck?.(!!S.ptt);
 
-  // Cross-band split guard: wylacz PTT gdy VFO-A i VFO-B w roznych pasmach
-  // (chroni radio/antene przed nadawaniem na niewlasciwym pasmie)
+  // Cross-band split guard: disable PTT when VFO-A and VFO-B are on
+  // different bands (protects the radio/antenna from transmitting on the wrong band)
   const cross = isCrossBandSplit();
   if (btn) {
     if (cross && !S.ptt) {
@@ -311,8 +308,8 @@ function updatePTT() {
   }
 }
 
-// Sprawdza czy split jest aktywny i VFO-A/B sa w roznych pasmach.
-// Wywolywane przy updatePTT i po kazdej zmianie freq/freqB/split.
+// Checks whether split is active and VFO-A/B are on different bands.
+// Called from updatePTT and after every freq/freqB/split change.
 function isCrossBandSplit() {
   if (!S.split) return false;
   const bandA = getBandName(S.freq);
@@ -323,16 +320,16 @@ function isCrossBandSplit() {
 // ── S-meter ───────────────────────────────────────────────────────────────────
 function updateSMeter(val) {
   S.sMeter = val;
-  // Bargraf odwzorowuje REALNA skale S-metra IC-7300, dopasowana do podzialki
-  // w HTML (8 etykiet: 1,3,5,7,9,+20,+40,+60 rozlozone rowno przez
-  // space-between, wiec "9" jest na 4/7 = ~57% szerokosci):
-  //   S0..S9      -> 0..57% (S9 pod etykieta "9")
+  // The bargraph maps the REAL IC-7300 S-meter scale, matched to the tick
+  // marks in the HTML (8 labels: 1,3,5,7,9,+20,+40,+60 spread evenly via
+  // space-between, so "9" sits at 4/7 = ~57% of the width):
+  //   S0..S9      -> 0..57% (S9 under the "9" label)
   //   S9..S9+60dB -> 57..100% (+20@71%, +40@86%, +60@100%)
-  // Poprzednio pasek stawal na 100% juz przy S9 i nie pokazywal S9+ wcale.
-  // val: 0..9 = S0..S9, 9..15 = S9+0..+60dB (kazda jednostka val>9 to +10dB).
+  // It used to hit 100% already at S9 and never showed S9+ at all.
+  // val: 0..9 = S0..S9, 9..15 = S9+0..+60dB (each unit of val>9 is +10dB).
   let pct;
   if (val <= 9) {
-    pct = (val / 9) * 57;              // S0..S9 -> 0..57% (pod etykieta "9")
+    pct = (val / 9) * 57;              // S0..S9 -> 0..57% (under the "9" label)
   } else {
     pct = 57 + ((val - 9) / 6) * 43;   // S9..S9+60dB (val 9..15) -> 57..100%
   }
@@ -346,29 +343,29 @@ function updateSMeter(val) {
   if (lbl)  lbl.textContent  = txt;
 }
 
-// ── TRX meter (ALC/PWR/SWR/VOLT) ────────────────────────────────────────────
-// Przechowuje ostatnia znana wartosc KAZDEGO z 4 miernikow (backend wysyla je
-// wszystkie cyklicznie, niezaleznie od tego ktory user akurat oglada) — dzieki
-// temu przelaczenie selecta pokazuje dane natychmiast, bez czekania na
-// nastepny cykl odpytywania CI-V (do 2s przy PTT off, patrz civ.py n%8==0).
+// ── TRX meter (ALC/PWR/SWR/VOLT) ─────────────────────────────────────────────
+// Stores the last known value of EACH of the 4 meters (the backend sends
+// them all cyclically, regardless of which one a given user is currently
+// watching) — this way switching the select shows the data immediately,
+// without waiting for the next CI-V polling cycle (up to 2s with PTT off, see civ.py n%8==0).
 const _txMeterValues = { ALC: null, PWR: null, SWR: null, VOLT: null };
 let _txMeterSelected = 'ALC';
 
 const _TXMETER_UNITS = { ALC: '%', PWR: '%', SWR: '', VOLT: 'V' };
 
-// Podzialka pod paskiem — dopasowana do REALNEGO zakresu odczytu z radia
-// (civ.py), nie do prostej skali 0-100. Kazdy punkt: {at: pozycja w % szer.
-// paska (0-100), label: tekst}. Dla ALC/PWR pct jest liniowe wzgledem
-// wartosci, wiec podzialka tez liniowa. Dla SWR pct = min(1.0, raw/120)
-// podczas gdy value = 1.0 + (raw/241)*49 — te dwie skale NIE sa liniowo
-// zalezne od siebie, wiec pozycje 1.5/2.0/3.0 musza byc przeliczone z
-// powrotem na pct (patrz civ.py komentarz: 0=1.0, 48=1.5, 80=2.0, 120=3.0,
-// gdzie pct=raw/120 — czyli np. 1.5 jest przy pct=48/120=40%).
+// Tick marks below the bar — matched to the REAL reading range from the
+// radio (civ.py), not a plain 0-100 scale. Each point: {at: position in %
+// of the bar's width (0-100), label: text}. For ALC/PWR, pct is linear
+// relative to the value, so the ticks are linear too. For SWR, pct =
+// min(1.0, raw/120) while value = 1.0 + (raw/241)*49 — these two scales
+// are NOT linearly related, so the 1.5/2.0/3.0 positions have to be
+// converted back to pct (see the civ.py comment: 0=1.0, 48=1.5, 80=2.0,
+// 120=3.0, where pct=raw/120 — e.g. 1.5 is at pct=48/120=40%).
 const _TXMETER_SCALES = {
   ALC:  [{at:0,label:'0'}, {at:25,label:'25'}, {at:50,label:'50'}, {at:75,label:'75'}, {at:100,label:'100%'}],
   PWR:  [{at:0,label:'0'}, {at:25,label:'25'}, {at:50,label:'50'}, {at:75,label:'75'}, {at:100,label:'100%'}],
   SWR:  [{at:0,label:'1.0'}, {at:40,label:'1.5'}, {at:66.7,label:'2.0'}, {at:100,label:'3.0'}],
-  VOLT: [],  // brak podzialki — VOLT to stabilna liczba, nie ruchoma skala (patrz nizej)
+  VOLT: [],  // no ticks — VOLT is a stable number, not a moving scale (see below)
 };
 
 function updateTxMeter(msg) {
@@ -380,9 +377,9 @@ function updateTxMeter(msg) {
 function setTxMeter(meter) {
   if (!(meter in _txMeterValues)) return;
   _txMeterSelected = meter;
-  // Jedyny select sterujacy bargrafem jest teraz w lewej kolumnie
-  // (sekcja TRX FUNKCJE pod PASMO) — synchronizujemy go na wypadek
-  // wywolania setTxMeter() z innego miejsca niz sam dropdown.
+  // The only select driving the bargraph now lives in the left column
+  // (TRX FUNCTIONS section below BAND) — we sync it in case setTxMeter()
+  // is called from somewhere other than the dropdown itself.
   const sel = document.getElementById('trx-funkcje-select');
   if (sel) sel.value = meter;
   _renderTxMeter();
@@ -400,11 +397,11 @@ function _renderTxMeter() {
   if (fill) {
     fill.className = 'txmeter-fill ' + m.toLowerCase();
     let pct = data ? Math.min(100, Math.max(0, data.pct * 100)) : 0;
-    // VOLT: napiecie zasilania zmienia sie powoli i nieznacznie (szum
-    // odczytu CI-V rzedu ±0.1-0.2V) — bez tego pasek "drgalby" przy kazdym
-    // cyklu odpytywania mimo ze realnie nic sie nie zmienia. Kwantyzujemy
-    // do krokow 5%, wiec pasek przesuwa sie TYLKO przy faktycznej, widocznej
-    // zmianie napiecia, nie przy szumie pomiarowym.
+    // VOLT: the supply voltage changes slowly and slightly (CI-V read
+    // noise of around ±0.1-0.2V) — without this the bar would "jitter" on
+    // every polling cycle even though nothing is really changing. We
+    // quantize to 5% steps, so the bar only moves on an actual, visible
+    // voltage change, not measurement noise.
     if (m === 'VOLT' && data) pct = Math.round(pct / 5) * 5;
     fill.style.width = pct + '%';
   }
@@ -417,7 +414,7 @@ function _renderTxMeter() {
   }
 }
 
-// ── Suwaki ────────────────────────────────────────────────────────────────────
+// ── Sliders ───────────────────────────────────────────────────────────────────
 function setLevel(param, value) {
   value = parseInt(value);
   if (param === 'RFPOWER') { S.rfPower = value; const el = document.getElementById('rf-power-val');  if(el) el.textContent = value; }
@@ -442,13 +439,13 @@ function toggleSplit() {
   WS.send({ type: 'split', split: S.split, freqB: S.freqB });
 }
 
-// ── Wlasny modal zamiast prompt() ───────────────────────────────────────────────
-// prompt()/confirm()/alert() sa SYNCHRONICZNE - blokuja caly glowny watek JS
-// dopoki user ich nie zamknie, co na zywo zawieszalo streaming audio
-// (WebAudio/WebRTC) do czasu zamkniecia okienka (zglaszone na zywo, ta sama
-// przyczyna co poprawka rotora - patrz WSJTX.rotorGoManual w wsjtx.js).
-// #text-prompt-modal w index.html jest wspolny dla kazdego miejsca ktore
-// wczesniej uzywalo prompt() z pojedynczym polem tekstowym.
+// ── Custom modal instead of prompt() ──────────────────────────────────────────
+// prompt()/confirm()/alert() are SYNCHRONOUS - they block the entire main
+// JS thread until the user dismisses them, which live froze audio
+// streaming (WebAudio/WebRTC) until the dialog was closed (the same root
+// cause as the rotator fix - see WSJTX.rotorGoManual in wsjtx.js).
+// #text-prompt-modal in index.html is shared by every place that used to
+// use prompt() with a single text field.
 let _textPromptResolve = null;
 
 function textPrompt(title, defaultValue) {
@@ -487,10 +484,10 @@ function _textPromptClose() {
 
 let _confirmModalResolve = null;
 
-// confirm() zastepstwo — non-blocking, ale nadal wymaga jawnego kliku OK/
-// ANULUJ zanim wywolujacy dostanie odpowiedz (w odroznieniu od alertow
-// zamienionych na showToast() nizej, gdzie nie ma decyzji do podjecia).
-// danger=true koloruje OK na czerwono dla akcji niszczacych dane.
+// A confirm() replacement — non-blocking, but still requires an explicit
+// OK/CANCEL click before the caller gets an answer (unlike alerts turned
+// into showToast() below, where there's no decision to make).
+// danger=true colors OK red for destructive actions.
 function confirmModal(message, { title = I18n.t('common_confirm_title'), okLabel = 'OK', danger = false } = {}) {
   return new Promise((resolve) => {
     const modal   = document.getElementById('confirm-modal');
@@ -528,7 +525,7 @@ function _confirmModalClose() {
   if (modal) modal.style.display = 'none';
 }
 
-// ── Pamięci ───────────────────────────────────────────────────────────────────
+// ── Memories ──────────────────────────────────────────────────────────────────
 async function saveMemory() {
   const name = (await textPrompt('NAZWA CZĘSTOTLIWOŚCI (opcjonalnie)', '')) ?? '';
   S.memories.push({ freq: S.freq, mode: S.mode, name });
@@ -558,47 +555,47 @@ function renderMemories() {
     </li>`).join('');
 }
 
-// ── Strony ────────────────────────────────────────────────────────────────────
+// ── Pages ─────────────────────────────────────────────────────────────────────
 function setPage(name) {
-  // Podswietl aktywna zakladke
+  // Highlight the active tab
   document.querySelectorAll('.tab-btn').forEach(b => {
     const onclick = b.getAttribute('onclick') || '';
     b.classList.toggle('active',
       onclick.includes("'" + name + "'") || onclick.includes('"' + name + '"'));
   });
 
-  // Przelacz strone (inline pages)
+  // Switch the page (inline pages)
   document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
   const pg = document.getElementById('page-' + name);
   if (pg) pg.classList.add('active');
-  // Blokuj przewijanie body na stronie FT8
+  // Block body scrolling on the FT8 page
   document.body.classList.toggle('page-wsjtx-active', name === 'wsjtx');
 
-  // Reset scroll do gory - kazda zakladka zaczyna od poczatku.
-  // Bez tego przewiniecie strony w Radio powoduje "przesuniete" widoki w
-  // innych zakladkach (window.scrollY jest wspolne dla wszystkich page-content).
-  // Uzywamy 'instant' zeby nie animowac zmiany (irytujace przy klikaniu tab-ow).
+  // Reset scroll to the top - every tab starts from the beginning.
+  // Without this, scrolling the Radio page causes "shifted" views in
+  // other tabs (window.scrollY is shared across all page-content elements).
+  // We use 'instant' so the change isn't animated (annoying when clicking through tabs).
   try {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
   } catch(e) {
-    // Fallback dla starszych przegladarek ktore nie wspieraja opcji obiektu
+    // Fallback for older browsers that don't support the options object
     window.scrollTo(0, 0);
   }
 
-  // Subskrypcja kanalow WebSocket wg zakladki. Serwer wysyla wiadomosci
-  // tylko klientom ktorzy sa zasubskrybowani na dany kanal - dzieki temu
-  // klient w Log QSO nie dostaje scope_frame ani ft8_waterfall (~50KB/s
-  // zbednych danych + narzut na parsowanie JSON w JS).
+  // WebSocket channel subscription per tab. The server only sends
+  // messages to clients subscribed to a given channel - this way a
+  // client on Log QSO doesn't get scope_frame or ft8_waterfall (~50KB/s
+  // of unnecessary data + JSON-parsing overhead in JS).
   //
-  // 'control' zawsze zostaje (freq, mode, ptt, radio_lock, chat, presence).
-  // Dodatkowe kanały wg potrzeb zakladki:
-  //   Radio    -> scope     (waterfall CI-V)
+  // 'control' always stays subscribed (freq, mode, ptt, radio_lock, chat, presence).
+  // Extra channels depending on the tab's needs:
+  //   Radio    -> scope     (CI-V waterfall)
   //   WSJT-X   -> scope+ft8 (waterfall + decodes + auto QSO + tune status)
   //   DXCluster -> dxcluster
-  //   inne     -> tylko control
+  //   other    -> control only
   const channelsForPage = {
     radio:     ['control', 'scope'],
-    wsjtx:     ['control', 'scope', 'ft8'],  // scope tez bo VFO badge/freq
+    wsjtx:     ['control', 'scope', 'ft8'],  // scope too, for the VFO badge/freq
     dxcluster: ['control', 'dxcluster'],
     log:       ['control'],
     profile:   ['control'],
@@ -612,14 +609,14 @@ function setPage(name) {
     window.WS.send({ type: 'subscribe', channels });
   }
 
-  // Akcje per strona
+  // Per-page actions
   if (name === 'log')      { window.QSOLog?.load?.(); window.QSOLog?.loadAdminUsers?.(); }
   if (name === 'internet') { window.Tunnel?.load?.(); window.Tunnel?.checkCF?.(); window.Tunnel?.startAutoRefresh?.(); }
   else { window.Tunnel?.stopAutoRefresh?.(); }
   if (name === 'wsjtx')    {
     window.FT8Timer?.init?.();
-    // setTimeout pozwala przegladarce wyrenderowac page-content.active
-    // zanim init() sprawdzi wymiary canvas (display:none = width:0)
+    // setTimeout lets the browser render page-content.active before
+    // init() checks the canvas dimensions (display:none = width:0)
     setTimeout(() => { window.WSJTX?.init?.(); window.WSJTX?.loadWorkedCalls?.(); }, 50);
   }
   if (name === 'admin')    { window.Admin?.loadUsers?.(); window.Admin?.loadFt8Timers?.(); window.AdminSmtp?.load?.(); window.AdminStatus?.refresh?.(); }
@@ -662,7 +659,7 @@ function showToast(msg, type = 'info') {
 }
 
 
-// ── Pełny refresh ─────────────────────────────────────────────────────────────
+// ── Full refresh ──────────────────────────────────────────────────────────────
 function fullRefresh() {
   updateConnectionStatus(S.connected);
   updateFreqDisplay();
@@ -674,27 +671,27 @@ function fullRefresh() {
   updateVFOBadges();
   updateFreqB();
   renderMemories();
-  // Callsign w headerze
+  // Callsign in the header
   const cs = document.getElementById('callsign-display');
   if (cs) cs.textContent = S.callsign || '--';
   // SIM badge
   const sim = document.getElementById('sim-badge');
   if (sim) sim.style.display = S.sim ? 'inline' : 'none';
-  // Nazwy rig w selecie
+  // Rig names in the select
   const rigSel = document.getElementById('active-rig-select');
   if (rigSel) {
     if (S.rigs.length > 1) {
       rigSel.innerHTML = S.rigs.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
       rigSel.style.display = '';
     } else {
-      // Tylko 1 radio — ukryj selektor, nie ma sensu wybierać
+      // Only 1 radio — hide the selector, no point choosing
       rigSel.style.display = 'none';
     }
   }
 }
 
-// Historia freq — automatyczna, ostatnie 20 wartosci gdzie user byl
-// (pomija drobne strojenie, tylko wieksze skoki >5kHz).
+// Freq history — automatic, the last 20 values the user visited (skips
+// minor tuning, only bigger jumps >5kHz).
 function _freqHistoryKey() {
   const uid = window.CurrentUser?.id || 'default';
   return `freqHistory_${uid}`;
@@ -705,16 +702,16 @@ function _loadFreqHistory() {
 }
 function _saveFreqHistory(list) {
   try { localStorage.setItem(_freqHistoryKey(), JSON.stringify(list)); }
-  catch(e) { console.warn('[freq-hist] save blad:', e); }
+  catch(e) { console.warn('[freq-hist] save error:', e); }
 }
 let _lastHistoryFreq = 0;
 function addFreqHistory(hz, mode) {
   if (!hz || hz < 100000) return;
-  // Pomijaj drobne strojenie (< 5kHz roznica od ostatniego zapisanego)
+  // Skip minor tuning (< 5kHz difference from the last saved value)
   if (Math.abs(hz - _lastHistoryFreq) < 5000) return;
   _lastHistoryFreq = hz;
   const hist = _loadFreqHistory();
-  // Deduplikacja — jesli te same freq juz jest, usun stara pozycje
+  // Deduplication — if the same freq is already there, remove the old entry
   const idx = hist.findIndex(h => Math.abs(h.freq - hz) < 100);
   if (idx >= 0) hist.splice(idx, 1);
   hist.unshift({ freq: hz, mode: mode || S.mode, ts: Date.now() });
@@ -763,7 +760,7 @@ function scheduleBandMemorySave() {
   _bandMemTimer = setTimeout(() => {
     saveBandMemory();
     addFreqHistory(S.freq, S.mode);
-    // Odswiez tooltipy na buttonach (zeby pokazywaly nowa zapamietana freq)
+    // Refresh the tooltips on the buttons (to show the newly remembered freq)
     buildBandGrid();
   }, 2000);
 }
@@ -784,8 +781,8 @@ function updateVFOBadges() {
   const isSplit = !!S.split;
   const isPTT  = !!S.ptt;
 
-  // VFO A/B — przyciski sa w radiofunctions.js (dynamiczne), podswietlane
-  // przez wewnetrzna logike vfoGroup. Badge-vfoa/b sa ukryte — nic do zrobienia.
+  // VFO A/B — the buttons live in radiofunctions.js (dynamic), highlighted
+  // by vfoGroup's internal logic. badge-vfoa/b are hidden — nothing to do here.
 
   // SPLIT badge
   const bs = document.getElementById('badge-split');
@@ -809,7 +806,7 @@ function updateVFOBadges() {
     btx.style.borderColor= 'rgba(224,82,82,0.4)';
   }
 
-  // Split label na VFO B
+  // Split label on VFO B
   const bspl = document.getElementById('vfo-b-split-label');
   if (bspl) bspl.style.display = isSplit ? 'inline' : 'none';
 
@@ -822,7 +819,7 @@ function updateVFOBadges() {
   const bbd = document.getElementById('vfo-band-badge');
   if (bbd) bbd.textContent = band;
 
-  // Kolor VFO A - zmień gdy PTT
+  // VFO A color - changes on PTT
   const vfoDigits = document.getElementById('vfo-digits');
   if (vfoDigits) {
     vfoDigits.style.color = isPTT
@@ -840,25 +837,25 @@ function updateFreqB() {
   const hz  = S.freqB || S.freq;
   const s   = String(hz).padStart(9,'0');
   el.textContent = `${s.slice(0,3)}.${s.slice(3,6)}.${s.slice(6)}`;
-  // Kolor VFO B - jaśniejszy gdy split (TX na B)
+  // VFO B color - brighter when split (TX on B)
   const isActive = S.vfo === 'VFOB';
   const isSplit  = !!S.split;
   el.style.color = isActive ? 'var(--green)'
     : (isSplit ? 'var(--amber)' : 'var(--dim)');
 }
 
-// Wpisz recznie czestotliwosc VFO-B (modal otwierany przez prawy klik)
+// Manually type in the VFO-B frequency (modal opened by right-click)
 async function editVfoB() {
   const currentMHz = (S.freqB || S.freq) / 1e6;
   const input = await textPrompt('CZĘSTOTLIWOŚĆ VFO-B (MHz)', currentMHz.toFixed(6));
   if (input === null) return;
-  // Zaakceptuj format: 14.074000 / 14074000 / 14074 kHz
+  // Accept the format: 14.074000 / 14074000 / 14074 kHz
   let hz;
   const val = input.trim().replace(',', '.');
   if (val.includes('.')) {
     hz = Math.round(parseFloat(val) * 1e6);
   } else {
-    // Zgadnij: <1000 = MHz*1000 (np. 14 = 14000000), inaczej Hz
+    // Guess: <1000 = MHz*1000 (e.g. 14 = 14000000), otherwise Hz
     const n = parseInt(val, 10);
     if (isNaN(n)) return;
     hz = n < 1000 ? n * 1e6 : (n < 100000 ? n * 1000 : n);
@@ -873,8 +870,8 @@ async function editVfoB() {
   WS.send({ type: 'freqB', freqB: hz });
 }
 
-// Scroll na VFO-B - zmiana czestotliwosci z krokiem zaleznym od tego czy
-// jest wcisniety klawisz Shift (1kHz vs 100Hz).
+// Scroll on VFO-B - changes the frequency with a step depending on
+// whether the Shift key is held (1kHz vs 100Hz).
 function wheelVfoB(e) {
   e.preventDefault();
   const step = e.shiftKey ? 100 : 1000;
@@ -884,7 +881,7 @@ function wheelVfoB(e) {
   S.freqB = newHz;
   updateFreqB();
   updatePTT();  // cross-band guard
-  // Debounce zeby nie zapchac CIV - wysylaj max co 100ms
+  // Debounce so as not to flood CI-V - send at most every 100ms
   if (window._vfoBTimer) clearTimeout(window._vfoBTimer);
   window._vfoBTimer = setTimeout(() => {
     WS.send({ type: 'freqB', freqB: S.freqB });
@@ -892,9 +889,9 @@ function wheelVfoB(e) {
 }
 
 function getBandName(hz) {
-  // 160m/60m/6m: te same (wezsze, realna alokacja PL/EU) granice co
-  // webapp.py::_BAND_RANGES i dxcluster.py::_BAND_RANGES - byla to osobna,
-  // rozjechana kopia (ten sam blad, inny plik).
+  // 160m/60m/6m: the same (narrower, real PL/EU allocation) bounds as
+  // webapp.py::_BAND_RANGES and dxcluster.py::_BAND_RANGES - this used to
+  // be a separate, drifted copy (the same bug, a different file).
   const bands = {
     '160m':[1810000,2000000],'80m':[3500000,3800000],'60m':[5351500,5366500],
     '40m':[7000000,7200000],'30m':[10100000,10150000],'20m':[14000000,14350000],
@@ -912,7 +909,7 @@ function vfoSelect(vfo) {
   const newVfo = vfo === 'B' ? 'VFOB' : 'VFOA';
   if (S.vfo === newVfo) return;
   S.vfo = newVfo;
-  // Wyślij komendę zmiany VFO przez Hamlib
+  // Send the VFO-change command via Hamlib
   window.WS?.send({ type:'vfo', vfo: newVfo });
   updateVFOBadges();
 }
@@ -926,11 +923,11 @@ function toggleTuner() {
 }
 
 function startAutotune() {
-  // Autotune wymaga PTT — radio samo generuje sygnal TX podczas strojenia
-  // Wysylamy komende tuner_autotune, backend (civ.py) wykona sekwencje:
+  // Autotune requires PTT — the radio generates its own TX signal while tuning
+  // We send the tuner_autotune command, the backend (civ.py) runs the sequence:
   // 1C 01 01 (tuner ON) + 1C 01 02 (START autotune)
   WS.send({ type: 'tuner_autotune' });
-  // Podswietl przycisk tymczasowo zeby oznaczyc ze komenda zostala wyslana
+  // Temporarily highlight the button to indicate the command was sent
   const btn = document.querySelector('.rf-btn[onclick="UI.startAutotune()"]');
   if (btn) {
     btn.classList.add('active');
@@ -938,27 +935,27 @@ function startAutotune() {
   }
 }
 
-// ── Klawiatura ────────────────────────────────────────────────────────────────
-// Skroty klawiszowe w zakladce Radio:
-//   Spacja      — PTT (hold to transmit)
-//   Escape      — PTT OFF (przerwanie TX)
-//   ArrowUp/Dn  — stroj +/- (step z dropdown STEP)
-//   ArrowLeft/R — jak Up/Down (przydatne przy klawiaturach bez kolumny arrow)
-//   PageUp/Dn   — +/- 1 kHz (grube stroje)
-//   Home/End    — +/- 10 kHz (bardzo grube stroje)
-//   +/- (num)   — zmiana pasma na kolejne wyzej/nizej (jesli S.bands zdefiniowane)
-//   F1-F6       — makra CW (obsluga w CW.sendMacroKey)
-//   Ctrl+Space  — toggle PTT lock (klik zamiast hold)
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+// Keyboard shortcuts in the Radio tab:
+//   Space       — PTT (hold to transmit)
+//   Escape      — PTT OFF (abort TX)
+//   ArrowUp/Dn  — tune +/- (step from the STEP dropdown)
+//   ArrowLeft/R — same as Up/Down (handy on keyboards without an arrow cluster)
+//   PageUp/Dn   — +/- 1 kHz (coarse tuning)
+//   Home/End    — +/- 10 kHz (very coarse tuning)
+//   +/- (num)   — switch to the next band up/down (if S.bands is defined)
+//   F1-F6       — CW macros (handled in CW.sendMacroKey)
+//   Ctrl+Space  — toggle PTT lock (click instead of hold)
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-  // Skroty aktywne tylko w zakladce Radio (na innych stronach nie przeszkadzaj)
+  // Shortcuts are only active in the Radio tab (don't interfere on other pages)
   const radioActive = document.getElementById('page-radio')?.classList.contains('active');
   if (!radioActive) return;
 
-  // Sprawdz czy user moze sterowac (readonly mode)
+  // Check whether the user can control it (readonly mode)
   const canCtrl = _canControlRadio();
 
-  // PTT z modyfikatorem (Ctrl+Space) — toggle
+  // PTT with a modifier (Ctrl+Space) — toggle
   if (e.ctrlKey && e.code === 'Space' && !e.repeat) {
     e.preventDefault();
     if (canCtrl) setPTT(!S.ptt);
@@ -973,7 +970,7 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'End')       { e.preventDefault(); if (canCtrl) sendFreq(S.freq - 10000); }
   else if (e.key === ' ') { e.preventDefault(); if (!e.repeat && canCtrl) setPTT(true); }
   else if (e.key === 'Escape')    { if (S.ptt && canCtrl) setPTT(false); }
-  // F1-F6 - makra CW (jesli CW.sendMacro istnieje)
+  // F1-F6 - CW macros (if CW.sendMacro exists)
   else if (e.key === 'F1') { e.preventDefault(); if (canCtrl) window.CW?.sendMacro?.(1); }
   else if (e.key === 'F2') { e.preventDefault(); if (canCtrl) window.CW?.sendMacro?.(2); }
   else if (e.key === 'F3') { e.preventDefault(); if (canCtrl) window.CW?.sendMacro?.(3); }
@@ -982,35 +979,37 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'F6') { e.preventDefault(); if (canCtrl) window.CW?.sendMacro?.(6); }
 });
 
-// Spacja puszczona = PTT OFF (hold-to-transmit)
+// Space released = PTT OFF (hold-to-transmit)
 document.addEventListener('keyup', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === ' ') { e.preventDefault(); setPTT(false); }
 });
 
-// Scroll po VFO — UWAGA: poszczegolne cyfry czestotliwosci (.vfo-digit) maja
-// WLASNA obsluge scroll per-cyfra (inline onwheel="VFO.wheelDigit(...)" w
-// vfo.js, z poprawnym krokiem dla kazdej pozycji). Ten listener (starszy,
-// uzywajacy globalnego kroku z #step-select) NIE powinien tez reagowac na
-// scroll nad cyframi — dwa rownolegle handlery na tym samym zdarzeniu
-// powodowaly konflikt: tune() czytal krok z #step-select, ktorego JUZ NIE MA
-// w obecnym HTML (zastapiony przez system przyciskow VFO.updateStep()), wiec
-// zawsze cicho uzywal domyslnego kroku 1000Hz zamiast wlasciwego kroku danej
-// cyfry — a oba wywolania probowaly jednoczesnie wyslac zmiane czestotliwosci
-// do serwera, gubiac/nadpisujac wlasciwa komende. Wykluczamy .vfo-digit z
-// tego listenera; VFO.init() ma wlasny listener na #vfo-box ktory poprawnie
-// pomija cyfry (patrz vfo.js, ten sam wzorzec e.target.closest('.vfo-digit')).
-// Scroll VFO jest obsługiwany w całości przez vfo.js
-// Ten listener jest zachowany tylko jako fallback ale NIE wywołuje tune()
-// żeby uniknąć konfliktu z handlerem w vfo.js
+// Scroll over the VFO — NOTE: individual frequency digits (.vfo-digit)
+// have THEIR OWN per-digit scroll handling (inline
+// onwheel="VFO.wheelDigit(...)" in vfo.js, with the correct step for each
+// position). This listener (older, using the global step from
+// #step-select) should NOT also react to scrolling over the digits — two
+// parallel handlers on the same event caused a conflict: tune() read the
+// step from #step-select, which NO LONGER EXISTS in the current HTML
+// (replaced by the VFO.updateStep() button system), so it always silently
+// fell back to the default 1000Hz step instead of the digit's actual
+// step — and both calls tried to send a frequency change to the server at
+// the same time, losing/overwriting the correct command. We exclude
+// .vfo-digit from this listener; VFO.init() has its own listener on
+// #vfo-box that correctly skips the digits (see vfo.js, the same
+// e.target.closest('.vfo-digit') pattern).
+// VFO scrolling is handled entirely by vfo.js.
+// This listener is kept only as a fallback but does NOT call tune(), to
+// avoid conflicting with the handler in vfo.js.
 document.addEventListener('wheel', (e) => {
   if (e.target.closest('#vfo-box')) {
     e.preventDefault();
-    // Nie wywołuj tune() — vfo.js obsługuje cały scroll w #vfo-box
+    // Don't call tune() — vfo.js handles all scrolling in #vfo-box
   }
 }, { passive: false });
 
-// ── Eksport ───────────────────────────────────────────────────────────────────
+// ── Export ────────────────────────────────────────────────────────────────────
 window.UI = {
   updateConnectionStatus, updateFreqDisplay, updateModeButtons, updatePTT,
   updateSMeter, updateTelemetry, fullRefresh, updateFreqB, updateVFOBadges,
@@ -1028,7 +1027,7 @@ window.UI = {
   getBandName,
 };
 
-// Alias globalny
+// Global alias
 window.fmtFreq = fmtFreq;
 
 })();
