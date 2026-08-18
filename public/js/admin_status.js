@@ -1,5 +1,5 @@
 /*
- * admin_status.js — Panel statusu serwera + backup/restore (zakladka Admin).
+ * admin_status.js — Server status panel + backup/restore (Admin tab).
  */
 window.AdminStatus = (function() {
 
@@ -36,7 +36,7 @@ window.AdminStatus = (function() {
       const audio = d.audio || {};
       const sys = d.system || {};
 
-      // Zbuduj grid statusu
+      // Build the status grid
       const rows = [
         [I18n.t('adm_stat_version'), `${d.version} (Python ${d.python}, ${d.platform})`],
         [I18n.t('adm_stat_uptime'), _fmtUptime(d.uptime_s)],
@@ -54,7 +54,7 @@ window.AdminStatus = (function() {
           : `<span style="color:var(--dim);">${I18n.t('adm_stat_no_module')}</span>`],
       ];
 
-      // CPU/RAM jesli dostepne
+      // CPU/RAM if available
       if (sys.cpu_pct !== null && sys.cpu_pct !== undefined) {
         const cpuColor = sys.cpu_pct > 80 ? 'var(--red)' : sys.cpu_pct > 50 ? 'var(--amber)' : 'var(--green)';
         rows.push(['CPU', `<span style="color:${cpuColor};">${sys.cpu_pct.toFixed(0)}%</span>`]);
@@ -104,7 +104,7 @@ window.AdminStatus = (function() {
       const r = await fetch('/api/backup', { credentials: 'include' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
-      // Pobierz jako plik
+      // Download as a file
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
