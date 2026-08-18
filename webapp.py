@@ -5825,11 +5825,11 @@ class App:
             await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": self._ft8_rx_freq_hz})
 
         elif t == "ft8_tx_eq_rx":
-            # Przycisk "TX=RX": odwrotnosc powyzszego - przesuwa znacznik TX
-            # na biezaca pozycje RX. Respektuje zamrozenie (Hold Tx Freq) i
-            # tryb split (min. czestotliwosc) tak samo jak reczne
-            # przeciagniecie znacznika TX (ft8_set_tx_freq powyzej). Marker TX
-            # -> wymaga trzymania radia, tak jak ft8_set_tx_freq.
+            # "TX=RX" button: the reverse of the above - moves the TX
+            # marker to the current RX position. Respects freeze (Hold Tx
+            # Freq) and split mode (min frequency) the same way as manually
+            # dragging the TX marker (ft8_set_tx_freq above). TX marker ->
+            # requires holding the radio, same as ft8_set_tx_freq.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5853,16 +5853,16 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             self._ft8_tx_frozen = bool(msg.get("frozen", not self._ft8_tx_frozen))
-            print(f"[ft8] TX {'ZAMROZONE' if self._ft8_tx_frozen else 'odmrozone'} @ {self._ft8_tx_freq_hz:.0f}Hz"
-                  + (" — RX bedzie automatycznie podazac za wywolaniami do nas" if self._ft8_tx_frozen else ""))
+            print(f"[ft8] TX {'FROZEN' if self._ft8_tx_frozen else 'unfrozen'} @ {self._ft8_tx_freq_hz:.0f}Hz"
+                  + (" — RX will automatically follow calls addressed to us" if self._ft8_tx_frozen else ""))
             await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                        "frozen": self._ft8_tx_frozen})
 
         elif t == "ft8_toggle_split":
-            # Rezerwowy mechanizm (patrz komentarz przy self._ft8_split_enabled
-            # w __init__) - obecnie brak wywolujacego we froncie, ale skoro
-            # steruje progiem czestotliwosci TX, dostaje ten sam gate co
-            # reszta parametrow TX w tym bloku dla spojnosci.
+            # Reserved mechanism (see the comment at self._ft8_split_enabled
+            # in __init__) - currently no caller in the frontend, but since
+            # it controls the TX frequency threshold, it gets the same gate
+            # as the rest of the TX parameters in this block for consistency.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5874,21 +5874,21 @@ class App:
                     self._ft8_split_min_hz = max(200.0, min(2900.0, float(min_hz)))
                 except (TypeError, ValueError):
                     pass
-            # Jesli split wlaczony i obecna czestotliwosc TX jest ponizej progu, podnies ja
+            # If split is enabled and the current TX freq is below the threshold, raise it
             if self._ft8_split_enabled and self._ft8_tx_freq_hz < self._ft8_split_min_hz:
                 self._ft8_tx_freq_hz = self._ft8_split_min_hz
-            print(f"[ft8] SPLIT {'wlaczony' if self._ft8_split_enabled else 'wylaczony'} (min={self._ft8_split_min_hz:.0f}Hz)")
+            print(f"[ft8] SPLIT {'enabled' if self._ft8_split_enabled else 'disabled'} (min={self._ft8_split_min_hz:.0f}Hz)")
             await self.hub.broadcast({"type": "ft8_split_status",
                                        "enabled": self._ft8_split_enabled,
                                        "minHz": self._ft8_split_min_hz})
             await self.hub.broadcast({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                        "frozen": self._ft8_tx_frozen})
 
-        # ── Automatyka QSO (pelna automatyka FT8) ──────────────────────────────
+        # ── QSO automation (full FT8 automation) ──────────────────────────────
         elif t == "ft8_toggle_auto_seq":
-            # UWAGA: automatyka jest ZAWSZE aktywna od kiedy usunelismy toggle
-            # z UI. Ta wiadomosc dostajemy tylko dla kompatybilnosci JS/WS
-            # handshake — ignorujemy zawartosc 'enabled' i zawsze zwracamy true.
+            # NOTE: the automation is ALWAYS active since we removed the
+            # toggle from the UI. We only get this message for JS/WS
+            # handshake compatibility — we ignore the 'enabled' content and always return true.
             self._auto_seq_enabled = True
             await self.hub.broadcast({"type": "auto_seq_status",
                                        "enabled": True,
@@ -5898,25 +5898,26 @@ class App:
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_toggle_call_1st":
-            # Gate: Call 1st ON pozwala automatowi samodzielnie ODPOWIADAC na
-            # kazde uslyszane CQ i NADAWAC bez kolejnej akcji operatora (patrz
-            # _process_auto_qso -> 'enqueue' -> start_qso -> _send_auto_tx).
-            # _ft8_tx_sequence_inner sprawdza radio_lock tylko jesli byl JUZ
-            # ustawiony _autoqso_uid (siatka bezpieczenstwa dla przejecia
-            # radia W TRAKCIE automatyki) - bez tego checku tutaj, dowolny
-            # zalogowany viewer (ktory z definicji ma tylko OGLADAC, patrz
-            # _can_control_radio) mogl wlaczyc Call 1st bez trzymania locka
-            # i wywolac realne PTT/TX na pierwszym pasujacym dekodzie, nawet
-            # gdy NIKT nie trzyma radia.
+            # Gate: Call 1st ON lets the automation independently ANSWER
+            # every heard CQ and TRANSMIT without a further operator
+            # action (see _process_auto_qso -> 'enqueue' -> start_qso ->
+            # _send_auto_tx). _ft8_tx_sequence_inner only checks radio_lock
+            # if _autoqso_uid was ALREADY set (a safety net for the radio
+            # being taken over WHILE the automation runs) - without this
+            # check here, any logged-in viewer (who by definition can only
+            # WATCH, see _can_control_radio) could enable Call 1st without
+            # holding the lock and trigger a real PTT/TX on the first
+            # matching decode, even when NO ONE holds the radio.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             self._auto_call_1st = bool(msg.get("enabled", not self._auto_call_1st))
-            print(f"[autoqso] Call 1st {'WLACZONE' if self._auto_call_1st else 'wylaczone'}")
-            # Klikniecie tego checkboxa to akcja operatora - liczy sie jako
-            # dowod obecnosci samo w sobie (podobnie jak reczny klik
-            # dekodu/TX makro na froncie), niezaleznie w ktora strone.
+            print(f"[autoqso] Call 1st {'ENABLED' if self._auto_call_1st else 'disabled'}")
+            # Clicking this checkbox is an operator action - it counts as
+            # proof of presence on its own (similar to a manual decode
+            # click/TX macro in the frontend), regardless of which
+            # direction it toggles.
             self._ft8_operator_present = True
             await self.hub.broadcast({"type": "auto_seq_status",
                                        "enabled": self._auto_seq_enabled,
@@ -5926,21 +5927,21 @@ class App:
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_timer_expired":
-            # Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") wygasl na
-            # froncie (FT8Timer._stopTX() w wsjtx.js) - front juz wywolal
-            # WSJTX.haltTx() (przerywa BIEZACA transmisje), ale bez TEJ
-            # flagi automat zlapalby kolejnego wolajacego juz za chwile
-            # mimo wlaczonego Call 1st, co czynilo caly timer bezuzytecznym
-            # (zgloszone na zywo: mial pilnowac max czasu nadawania, a
-            # przerywal co najwyzej jedna wysylke). _process_auto_qso
-            # sprawdza te flage na samym poczatku i ignoruje wszystko
-            # dopoki nie przyjdzie ft8_timer_confirm.
+            # The FT8 safety timer (WSJT-X's "Tx Watchdog") expired on the
+            # frontend (FT8Timer._stopTX() in wsjtx.js) - the frontend
+            # already called WSJTX.haltTx() (aborts the CURRENT
+            # transmission), but without THIS flag the automation would
+            # catch the next caller again in a moment despite Call 1st
+            # being on, which made the whole timer useless (it was
+            # supposed to guard the max transmit time, but only aborted at
+            # most one send). _process_auto_qso checks this flag right at
+            # the start and ignores everything until ft8_timer_confirm arrives.
             self._ft8_operator_present = False
-            print("[autoqso] Timer bezpieczenstwa wygasl — automat zablokowany do potwierdzenia")
+            print("[autoqso] Safety timer expired — automation locked until confirmed")
 
         elif t == "ft8_timer_confirm":
             self._ft8_operator_present = True
-            print("[autoqso] Operator potwierdzil obecnosc — automat odblokowany")
+            print("[autoqso] Operator confirmed presence — automation unlocked")
 
         elif t == "ft8_start_auto_qso":
             call_de = (msg.get("callDe") or "").strip().upper()
@@ -5950,19 +5951,19 @@ class App:
                 await ws.send_json({"type": "auto_qso_error",
                                      "error": "Wlacz najpierw Auto-Sequencing"})
                 return
-            # Aktualizuj callsign/grid silnika QSO na aktualnie zalogowanego usera
+            # Update the QSO engine's callsign/grid to the currently logged-in user
             user_info = self.online_users.get(ws, {})
             user_call = user_info.get("callsign", "").strip().upper()
             user_uid  = user_info.get("user_id")
-            # Radio lock: tylko operator trzymajacy radio (lub admin) moze
-            # startowac automatyczne QSO - patrz identyczny warunek w
-            # "ft8_tx" powyzej.
+            # Radio lock: only the operator holding the radio (or admin)
+            # may start an automatic QSO - see the identical condition in
+            # "ft8_tx" above.
             if self.radio_lock["user_id"] and not self._user_has_lock(user_uid) and role != "admin":
                 _holder = self.radio_lock["callsign"] or self.radio_lock["username"] or "?"
                 await self.hub.broadcast({"type": "toast", "msg": f"⛔ FT8 TX zablokowany — radio ma {_holder}", "level": "error"})
                 return
-            # Zapamietaj uid operatora - potrzebny do AUTO-ZAPISU QSO do jego
-            # dziennika przy zakonczeniu (qso_complete).
+            # Remember the operator's uid - needed to AUTO-SAVE the QSO to
+            # their log when it completes (qso_complete).
             self._autoqso_uid = user_uid
             if user_call:
                 u_obj = self.find_user_by_id(user_uid) or {}
@@ -5970,45 +5971,45 @@ class App:
                 if self._qso_engine.my_call != user_call or self._qso_engine.my_grid != user_grid:
                     self._qso_engine.my_call = user_call
                     self._qso_engine.my_grid = user_grid
-                    print(f"[autoqso] Uzytkownik: {user_call} / {user_grid}")
-            print(f"[autoqso] Reczny start automatycznego QSO z {call_de}")
-            # Ignoruj jezeli TX juz jest zaplanowany/trwa dla tego partnera
+                    print(f"[autoqso] User: {user_call} / {user_grid}")
+            print(f"[autoqso] Manual start of an automatic QSO with {call_de}")
+            # Ignore if TX is already scheduled/running for this partner
             if (self._ft8_tx_lock.locked() and
                     self._qso_engine.partner_call == call_de):
-                print(f"[autoqso] TX juz trwa dla {call_de} — ignoruje duplikat")
+                print(f"[autoqso] TX already running for {call_de} — ignoring the duplicate")
                 return
-            # Przerwij poprzedni TX jesli to inna stacja
+            # Abort the previous TX if it's a different station
             if self._ft8_tx_lock.locked():
                 self._ft8_tx_abort = True
-            # Odblokuj period — inaczej _send_auto_tx dziedziczy okres
-            # zamrozony przez POPRZEDNIA stacje (patrz komentarz przy
-            # _qso_period_locked=False w _advance_auto_qso_queue) i nigdy
-            # nie przelaczy sie na wlasciwy dla TEJ, swiezo wybranej stacji.
-            # Wszystkie INNE sciezki konczace QSO (auto-complete, give-up,
-            # reczny abort, advance kolejki) juz to robily — tego recznego
-            # startu brakowalo, mimo ze to najczestsza sciezka operatora.
+            # Unlock the period — otherwise _send_auto_tx inherits the
+            # period frozen by the PREVIOUS station (see the comment at
+            # _qso_period_locked=False in _advance_auto_qso_queue) and
+            # never switches to the right one for THIS freshly picked
+            # station. Every OTHER path that ends a QSO (auto-complete,
+            # give-up, manual abort, queue advance) already did this — this
+            # manual start was missing it, despite being the most common operator path.
             self._qso_period_locked = False
-            # Jesli front przekazal TRESC dekodowania (stacja odpowiada nam),
-            # sparsuj ja i przekaz jako initial_decode - wtedy engine przeskoczy
-            # do wlasciwego kroku (raport) zamiast wysylac Tx1/grid od nowa.
-            # To naprawia: "wolam stacje, odpowiada pozniej, klikam RX, ale
-            # nadaje sie grid zamiast raportu".
+            # If the frontend passed the decoded TEXT (the station is
+            # answering us), parse it and pass it as initial_decode - then
+            # the engine skips ahead to the right step (report) instead of
+            # sending Tx1/grid from scratch. This fixes: "I call a station,
+            # it answers later, I click RX, but a grid gets sent instead of a report".
             _msg = (msg.get("message") or "").strip()
             _initial = None
             if _msg:
                 try:
                     _initial = qso_engine.parse_message(_msg)
                 except Exception as _e:
-                    print(f"[autoqso] nie moge sparsowac '{_msg}': {_e}")
+                    print(f"[autoqso] can't parse '{_msg}': {_e}")
                     _initial = None
-            # partner_decode do zablokowania okresu (period) na podstawie
-            # DOKLADNEGO znacznika czasu ODBIORU klikanego dekodu (recvEpoch,
-            # patrz _period_from_epoch) - front go dostal razem z tym
-            # dekodem przy pierwotnym broadcascie i odsyla NIEZMIENIONY,
-            # wiec liczy sie tu z chwili odbioru, a NIE zegara "teraz" w
-            # momencie przetworzenia kliku. Dzieki temu cala dalsza czesc
-            # QSO trafia w prawidlowe okna niezaleznie od tego jak dlugo
-            # operator zwlekal z klikinieciem stacji na liscie.
+            # partner_decode is used to lock the period based on the EXACT
+            # RECEIVE timestamp of the clicked decode (recvEpoch, see
+            # _period_from_epoch) - the frontend got it together with this
+            # decode in the original broadcast and sends it back
+            # UNCHANGED, so it's computed from the receive moment, NOT the
+            # "now" clock at the time the click is processed. This way the
+            # rest of the QSO lands in the correct windows regardless of
+            # how long the operator waited before clicking the station in the list.
             _recv_epoch = msg.get("recvEpoch")
             _partner_decode = ({"recvEpoch": _recv_epoch, "snr": msg.get("snr", 0)}
                                 if _recv_epoch is not None else None)
@@ -6017,8 +6018,8 @@ class App:
                                        "state": self._qso_engine.state,
                                        "partner": self._qso_engine.partner_call})
             if start_result and start_result.get("action") == "reply":
-                # Klikniety dekod byl juz odpowiedzia partnera (nie CQ) -
-                # engine przeskoczyl Tx1, wysylamy od razu wlasciwy krok.
+                # The clicked decode was already the partner's reply (not a
+                # CQ) - the engine skipped Tx1, send the right step right away.
                 await self._dispatch_auto_reply(start_result, _partner_decode or {},
                                                  tx_seq=self._reserve_tx_seq())
             else:
@@ -6027,29 +6028,29 @@ class App:
                     tx_seq=self._reserve_tx_seq()))
 
         elif t == "ft8_queue_remove":
-            # Usun stacje z kolejki "Call 1st" (przycisk ✕ na chipie w UI).
+            # Remove a station from the "Call 1st" queue (the ✕ button on the chip in the UI).
             _qcall = (msg.get("call") or "").strip().upper()
             if _qcall and self._qso_engine.remove_from_queue(_qcall):
-                print(f"[autoqso] Usunieto {_qcall} z kolejki (reczne ✕)")
+                print(f"[autoqso] Removed {_qcall} from the queue (manual ✕)")
                 await self.hub.broadcast({"type": "auto_qso_queue",
                                            "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_queue_clear":
-            # Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w UI).
+            # Empty the whole "Call 1st" queue (the "clear" button in the UI).
             _n = len(self._qso_engine.queue)
             self._qso_engine.clear_queue()
-            print(f"[autoqso] Wyczyszczono kolejke ({_n} stacji)")
+            print(f"[autoqso] Cleared the queue ({_n} stations)")
             await self.hub.broadcast({"type": "auto_qso_queue",
                                        "queue": list(self._qso_engine.queue)})
 
         elif t == "ft8_abort_auto_qso":
-            # Reczny "skip" — operator nie chce czekac na automatyczne
-            # wyczerpanie limitu retransmisji (should_give_up w
-            # qso_engine.py), tylko od razu porzuca biezaca stacje i
-            # przechodzi do nastepnej z kolejki Call 1st.
-            print(f"[autoqso] Reczne przerwanie QSO z {self._qso_engine.partner_call}")
+            # Manual "skip" — the operator doesn't want to wait for the
+            # automatic retransmit-limit exhaustion (should_give_up in
+            # qso_engine.py), just drops the current station immediately
+            # and moves on to the next one in the Call 1st queue.
+            print(f"[autoqso] Manual abort of the QSO with {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
-            self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
+            self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
             self._ft8_tx_abort = True
             # _qso_period_locked=False NIE ustawia zlego okresu na sztywno —
             # okres dla nastepnej stacji i tak zostanie na nowo wykryty z jej
