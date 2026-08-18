@@ -3301,11 +3301,12 @@ class App:
                 print(f"[autoqso] HALT: aborting QSO with {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
-                # Invalidate ANY already-scheduled (in-flight, waiting for its window)
-                # automatyczna transmisje do tego partnera - bez tego stale-TX-
-                # guard w _ft8_tx_sequence_inner nie mial jak wiedziec ze to
-                # PRAWDZIWY abort, nie tylko "zlecono nowsza akcje" (patrz
-                # komentarz przy _autoqso_tx_seq w _send_auto_tx).
+                # Invalidate ANY already-scheduled (in-flight, waiting for
+                # its window) automatic transmission to this partner -
+                # without this the stale-TX-guard in _ft8_tx_sequence_inner
+                # had no way to know this was a REAL abort, not just "a
+                # newer action was scheduled" (see the comment at
+                # _autoqso_tx_seq in _send_auto_tx).
                 self._autoqso_tx_seq += 1
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
@@ -3344,23 +3345,25 @@ class App:
 
         if p == "/api/audio/status" and method == "GET":
             rust = getattr(self, 'rust_audio', None)
-            # txVolume TRZYMA Python (config.json), NIE Rust. Rust status nie zna
-            # tej wartosci -> UI czytajac status z Rusta pokazywalo stara/domyslna
-            # ("backend pokazuje co innego"). Dlatego ZAWSZE wstrzykujemy txVolume
-            # (i karty) z configu Pythona do zwracanego statusu.
+            # txVolume is held by Python (config.json), NOT Rust. The Rust
+            # status doesn't know this value -> the UI reading status from
+            # Rust showed a stale/default one ("the backend shows something
+            # else"). So we ALWAYS inject txVolume (and the devices) from
+            # the Python config into the returned status.
             _py_audio = self.cfg.get("audio", {})
             _py_txvol = float(_py_audio.get("txVolume", 1.0))
             _py_txvol_ssb = float(_py_audio.get("txVolumeSsb", 1.0))
-            # Karty ZAWSZE z configu Pythona (nie z Rusta/nie z self.audio) —
-            # to Python jest zrodlem prawdy dla zapisanych ustawien, w OBU
-            # galeziach ponizej. POPRAWKA: galaz fallback (Rust niedostepny/
-            # blad, np. tuz po zapisie karty gdy Rust wlasnie restartuje
-            # strumien RX) w ogole nie mial "tx_device", a "rx_device" brala
-            # z self.audio.rx_device — atrybutu WLASNEGO, NIEZWIAZANEGO
-            # przechwytywania Pythona (dekoder CW), nie z zapisanej
-            # konfiguracji. UI po odswiezeniu w tym momencie dostawalo
-            # puste/zle karty i wizualnie "zapominalo" wybor mimo poprawnie
-            # zapisanej wartosci w config.json.
+            # Devices ALWAYS come from the Python config (not from Rust/not
+            # from self.audio) — Python is the source of truth for saved
+            # settings, in BOTH branches below. FIX: the fallback branch
+            # (Rust unavailable/error, e.g. right after saving a device
+            # while Rust is restarting the RX stream) had no "tx_device"
+            # at all, and took "rx_device" from self.audio.rx_device — an
+            # attribute of Python's OWN, UNRELATED capture (the CW
+            # decoder), not from the saved configuration. On refresh at
+            # that moment the UI got empty/wrong devices and visually
+            # "forgot" the selection despite the correct value being saved
+            # in config.json.
             _rxd = _py_audio.get("rxDevice", "")
             _txd = _py_audio.get("txDevice", "")
             if rust and rust._connected:
@@ -3369,8 +3372,8 @@ class App:
                     if isinstance(status, dict) and "error" not in status:
                         if _rxd: status["rx_device"] = _rxd
                         if _txd: status["tx_device"] = _txd
-                        status["txVolume"] = _py_txvol       # nadpisz wartoscia z config.json (FT8/FT4)
-                        status["txVolumeSsb"] = _py_txvol_ssb  # osobny mnoznik dla mikrofonu SSB
+                        status["txVolume"] = _py_txvol       # overwrite with the value from config.json (FT8/FT4)
+                        status["txVolumeSsb"] = _py_txvol_ssb  # separate multiplier for the SSB microphone
                         return 200, status
                 except Exception as e:
                     print(f"[audio] Rust status error: {e}", flush=True)
@@ -3383,8 +3386,8 @@ class App:
             return 200, _st
 
         if p == "/api/audio/detect" and method == "GET":
-            # Zwroc status auto-detekcji karty radia.
-            # Nie triggeruje ponownej detekcji - to jest cache z init.
+            # Return the radio-card auto-detect status.
+            # Doesn't trigger a new detection - this is the cache from init.
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, {
                 "ok": True,
@@ -3394,7 +3397,7 @@ class App:
             }
 
         if p == "/api/audio/detect" and method == "POST":
-            # Wymus ponowna detekcje (np. po podpięciu radia po starcie serwera)
+            # Force a fresh detection (e.g. after plugging in the radio after the server started)
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             try:
                 detection = auto_detect_radio_audio()
@@ -3410,7 +3413,7 @@ class App:
                 return 500, {"error": str(e)}
 
         if p == "/api/audio/detect/toggle" and method == "POST":
-            # Wlacz/wylacz auto-detekcje (admin moze przelaczyc na recznie)
+            # Enable/disable auto-detect (admin can switch to manual)
             if role != "admin": return 403, {"error": "Tylko admin"}
             enabled = bool(body.get("enabled", True))
             self._audio_auto = enabled
@@ -3418,10 +3421,10 @@ class App:
             save_json(CFG_F, self.cfg)
             return 200, {"ok": True, "auto_enabled": enabled}
 
-        # ── CI-V TCP Bridge (dla starego softu przez com0com) ─────────────────
-        # ── COM Bridge WS - konfiguracja portow COM per user ────────────────
+        # ── CI-V TCP Bridge (for legacy software via com0com) ─────────────────
+        # ── COM Bridge WS - per-user COM port configuration ────────────────
         if p == "/api/com/services" and method == "GET":
-            # Lista dostepnych serwisow (dla admin GUI - dropdown)
+            # List of available services (for the admin GUI - dropdown)
             svc_list = []
             for key, meta in self.com_bridge_ws.SERVICES.items():
                 svc_list.append({
@@ -3438,11 +3441,11 @@ class App:
             return 200, {'ok': True, 'services': svc_list}
 
         if p == "/api/com/config" and method == "GET":
-            # Zwroc konfiguracje portow biezacego usera
-            # JWT payload uzywa 'id' (nie 'user_id') - konsystentnie z reszta kodu
+            # Return the current user's port configuration
+            # The JWT payload uses 'id' (not 'user_id') - consistent with the rest of the code
             if not user:
                 return 401, {'error': 'not authenticated'}
-            uid = user.get('id') or user.get('user_id')  # fallback dla starych tokenow
+            uid = user.get('id') or user.get('user_id')  # fallback for old tokens
             u = next((x for x in self.users if x.get('id') == uid), None)
             if not u:
                 return 404, {'error': 'user not found'}
@@ -3450,7 +3453,7 @@ class App:
             return 200, {'ok': True, 'ports': ports}
 
         if p == "/api/com/config" and method == "POST":
-            # Zapisz konfiguracje portow biezacego usera
+            # Save the current user's port configuration
             if not user:
                 return 401, {'error': 'not authenticated'}
             uid = user.get('id') or user.get('user_id')
@@ -3462,7 +3465,7 @@ class App:
                 return 400, {'error': 'ports musi byc lista'}
             if len(ports) > 16:
                 return 400, {'error': 'max 16 portow'}
-            # Walidacja kazdego portu
+            # Validate each port
             clean = []
             for entry in ports:
                 if not isinstance(entry, dict):
@@ -3484,12 +3487,12 @@ class App:
             return 200, {'ok': True, 'ports': clean}
 
         if p == "/api/com/stats" and method == "GET":
-            # Statystyki polaczonych klientow (dla admin)
+            # Stats of connected clients (for the admin)
             if role != "admin":
                 return 403, {'error': 'tylko admin'}
             return 200, self.com_bridge_ws.get_stats()
 
-        # ── Debug endpoint dla diagnozy subscription (dostepny dla wszystkich)
+        # ── Debug endpoint for diagnosing subscriptions (available to everyone)
         if p == "/api/debug/subscriptions" and method == "GET":
             clients_info = []
             for cli_ws, channels in self.hub._subs.items():
@@ -3512,9 +3515,9 @@ class App:
                 "clients": clients_info,
             }
 
-        # ── CloudLog / WaveLog API — ustawienia PER UZYTKOWNIK ──────────────
-        # Kazdy uzytkownik ma swoje API keys, URL i stacje — zapisywane
-        # w profilu uzytkownika (users.json), nie w globalnym cfg.
+        # ── CloudLog / WaveLog API — PER-USER settings ──────────────
+        # Every user has their own API keys, URL, and station — saved in
+        # the user's profile (users.json), not in the global cfg.
         if p == "/api/cloudlog/config" and method == "GET":
             if not user:
                 return 401, {"error": "Brak autoryzacji"}
@@ -3549,12 +3552,12 @@ class App:
             api_key = body.get("apiKeyQso", "")
             if not url or not api_key:
                 return 400, {"ok": False, "error": "Podaj adres i API Key"}
-            # Jesli user wpisal adres z /index.php - nie dubluj go
+            # If the user typed an address with /index.php - don't duplicate it
             base = url[:-10].rstrip("/") if url.endswith("/index.php") else url
             try:
-                # Cloudlog: klucz API w URL, endpoint station_info.
-                # (user_info z naglowkiem X-Auth-Key NIE ISTNIEJE -> 404)
-                # Zwraca liste profili stacji uzytkownika.
+                # Cloudlog: API key in the URL, station_info endpoint.
+                # (user_info with an X-Auth-Key header DOESN'T EXIST -> 404)
+                # Returns the user's list of station profiles.
                 async with _aiohttp.ClientSession() as sess:
                     async with sess.get(
                         f"{base}/index.php/api/station_info/{api_key}",
@@ -3568,7 +3571,7 @@ class App:
                                 return 200, {"ok": False,
                                              "error": "Odpowiedz nie jest JSON — "
                                                       "sprawdz adres Cloudloga"}
-                            # Oczekujemy listy profili stacji
+                            # We expect a list of station profiles
                             if isinstance(data, list) and data:
                                 stations = [
                                     {"id": s.get("station_id"),
@@ -3602,11 +3605,12 @@ class App:
                 return 200, {"ok": False, "error": str(e)[:80]}
 
         if p == "/api/cloudlog/radio" and method == "POST":
-            # Wyslij aktualna czestotliwosc i tryb do CloudLog/WaveLog
-            # UWAGA: bez tego endpoint bral 'url' wprost z body i robil z niego
-            # POST na zewnatrz BEZ zadnej autoryzacji — serwer jako otwarte
-            # proxy (SSRF) dla kazdego kto trafi na adres serwera, nawet bez
-            # konta w HAMCTRL. /config i /test juz mialy ten check, tu brakowalo.
+            # Send the current frequency and mode to CloudLog/WaveLog
+            # NOTE: without this, the endpoint took 'url' directly from the
+            # body and POSTed it externally with NO authorization at all —
+            # the server acting as an open proxy (SSRF) for anyone who hits
+            # the server's address, even without a HAMCTRL account.
+            # /config and /test already had this check, it was missing here.
             if not user:
                 return 401, {"error": "Brak autoryzacji"}
             import aiohttp as _aiohttp
@@ -3619,9 +3623,9 @@ class App:
                 return 400, {"ok": False, "error": "Brak konfiguracji"}
             base = url[:-10].rstrip("/") if url.endswith("/index.php") else url
             try:
-                # Format wg dokumentacji Cloudlog API/Radio:
+                # Format per the Cloudlog API/Radio documentation:
                 # {key, radio, frequency (Hz), mode, timestamp "YYYY/MM/DD HH:MM"}
-                # station_id NIE jest polem tego endpointu (usuniete).
+                # station_id is NOT a field of this endpoint (removed).
                 payload = {
                     "key":        api_key,
                     "radio":      "Ham Radio CTRL",
@@ -3641,8 +3645,8 @@ class App:
                 return 200, {"ok": False, "error": str(e)[:80]}
 
         if p == "/api/cloudlog/qso" and method == "POST":
-            # Wyslij QSO do CloudLog/WaveLog (ADIF - patrz qso_to_adif)
-            # Ten sam brak autoryzacji co /api/cloudlog/radio wyzej — dopisany.
+            # Send a QSO to CloudLog/WaveLog (ADIF - see qso_to_adif)
+            # Same missing-authorization issue as /api/cloudlog/radio above — added.
             if not user:
                 return 401, {"error": "Brak autoryzacji"}
             import aiohttp as _aiohttp
@@ -3683,9 +3687,9 @@ class App:
             except Exception as e:
                 return 200, {"ok": False, "error": str(e)[:80]}
 
-        # ── Callbook (QRZ.com / HamQTH.com) — lookup znaku wywolawczego ──────────
-        # Kazdy user ma wlasne dane logowania (patrz callbook.py). Zrobione
-        # serwerowo: obie uslugi nie maja CORS, i nie chcemy hasel w JS.
+        # ── Callbook (QRZ.com / HamQTH.com) — callsign lookup ──────────
+        # Each user has their own login credentials (see callbook.py). Done
+        # server-side: neither service has CORS, and we don't want passwords in JS.
         if p == "/api/callbook/config" and method == "GET":
             if not user: return 401, {"error": "Brak autoryzacji"}
             u = self.find_user_by_id(user["id"])
@@ -3752,7 +3756,7 @@ class App:
             return 200, {"ok": True, "duration_min": dur}
 
         if p == "/api/ft8timer/config" and method == "GET":
-            # Zwroc ustawienia timera dla aktualnego usera
+            # Return timer settings for the current user
             u = self.find_user_by_id(uid) or {}
             timer = u.get("ft8_timer", {"duration_min": 6, "user_can_edit": False})
             return 200, timer
