@@ -7439,24 +7439,25 @@ class App:
                     # users' buttons didn't update.
                     await self.hub.broadcast({"type": "power_state", "value": value})
                     if not value:
-                        # Radio wyłączone — zresetuj waterfall u wszystkich
+                        # Radio turned off — reset the waterfall for everyone
                         await self.hub.broadcast({"type": "scope_reset"})
                     await self.hub.broadcast({"type": "rig_action_ack", "id": action_id,
                                                "value": value, "ok": True})
                     if value:
-                        # Radio potrzebuje czasu po wybudzeniu zanim CI-V zacznie
-                        # odpowiadac. Czekamy i WERYFIKUJEMY ze faktycznie zyje
-                        # (odczyt freq) - bez tego waterfall startowal na oslep
-                        # i ladowal w stanie SIM gdy radio jeszcze spalo.
+                        # The radio needs time after waking up before CI-V
+                        # starts responding. We wait and VERIFY it's
+                        # actually alive (read freq) - without this the
+                        # waterfall started blindly and loaded in SIM state
+                        # while the radio was still asleep.
                         await self._verify_radio_awake_and_start_scope()
                 except Exception as e:
-                    print(f"[rig] set_power blad: {e}", flush=True)
-                    # Broadcast realnego stanu (nie zmienil sie) zeby przyciski
-                    # userow wrocily do poprawnej pozycji
+                    print(f"[rig] set_power error: {e}", flush=True)
+                    # Broadcast the real state (unchanged) so users'
+                    # buttons return to the correct position
                     await self.hub.broadcast({"type": "power_state",
                                                "value": self._rig_power_on})
                 except Exception as e:
-                    print(f"[rig] set_power blad: {e}", flush=True)
+                    print(f"[rig] set_power error: {e}", flush=True)
 
         elif action_id.startswith("func_"):
             func_name = action_id[len("func_"):].upper()
@@ -7467,7 +7468,7 @@ class App:
                     await self.hub.broadcast({"type": "rig_action_ack", "id": action_id,
                                                "value": value, "ok": True})
                 except Exception as e:
-                    print(f"[rig] set_func blad: {e}")
+                    print(f"[rig] set_func error: {e}")
 
     async def _handle_rig_slider(self, msg: dict, ws, role: str):
         """
@@ -7477,13 +7478,13 @@ class App:
         slider_id = msg.get("id", "")
         if not slider_id.startswith("level_"):
             return
-        # Radio lock: tylko trzymajacy TRX (lub admin) moze sterowac
+        # Radio lock: only the TRX holder (or admin) may control it
         can, why = self._can_control_radio(ws, role)
         if not can:
             await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
             return
         if not await self._dynamic_allowed(slider_id, role, "slider"):
-            print(f"[features] odmowa rig_slider '{slider_id}' dla roli {role}")
+            print(f"[features] rig_slider '{slider_id}' denied for role {role}")
             return
 
         param = slider_id[len("level_"):].upper()
@@ -7496,7 +7497,7 @@ class App:
             try:
                 await self.rig.set_level(param, value)
             except Exception as e:
-                print(f"[rig] set_level({param}) blad: {e}")
+                print(f"[rig] set_level({param}) error: {e}")
 
         await self.hub.broadcast({"type": "rig_slider_ack", "id": slider_id,
                                    "value": value}, skip=ws)
@@ -7528,22 +7529,22 @@ class App:
             token_str = auth[7:].strip()
             user = self._check_pw_ver(jwt_verify(token_str))
             if not user:
-                print(f"[auth] jwt_verify FAIL dla tokenu: {token_str[:20]}...", flush=True)
+                print(f"[auth] jwt_verify FAIL for token: {token_str[:20]}...", flush=True)
         if not user:
             qt = query.get("token", "")
             if qt: user = self._check_pw_ver(jwt_verify(qt))
         if not user and path.startswith("/api/") and path not in (
             "/api/auth/login", "/api/auth/reset", "/api/auth/reset-request",
-            # Popularne endpointy skanowane przez boty (nie loguj spamu):
+            # Common endpoints scanned by bots (don't log the spam):
             "/api/login", "/api/register", "/api/admin", "/api/v1/login",
             "/api/user", "/api/users", "/api/config",
-            # Odpytywane cyklicznie przez UI — po wygasnieciu sesji leca co
-            # sekunde i zalewaja log
+            # Polled periodically by the UI — after session expiry these
+            # fire every second and flood the log
             "/api/status/perf",
         ):
-            # Tlumienie powtorzen: ten sam endpoint + IP logujemy raz na minute.
-            # Przegladarka odpytuje cyklicznie, wiec po wygasnieciu tokena bez
-            # tego log rosnie o setki identycznych linii.
+            # Repeat suppression: log the same endpoint + IP once a minute.
+            # The browser polls periodically, so after a token expires
+            # without this the log grows by hundreds of identical lines.
             _k = f"{path}|{request.remote}"
             _now = time.time()
             _seen = getattr(self, "_auth_warn_seen", None)
@@ -7551,15 +7552,15 @@ class App:
                 _seen = self._auth_warn_seen = {}
             if _now - _seen.get(_k, 0) > 60:
                 _seen[_k] = _now
-                if len(_seen) > 200:      # nie pozwol rosnac w nieskonczonosc
+                if len(_seen) > 200:      # don't let this grow unbounded
                     _seen.clear()
-                print(f"[auth] BRAK usera dla {path} | ip={request.remote} "
+                print(f"[auth] NO user for {path} | ip={request.remote} "
                       f"| auth={auth[:30]!r}", flush=True)
 
-        # Strony publiczne — bez autoryzacji (przed blokiem API)
+        # Public pages — no auth required (before the API block)
         if path == "/perf":
-            # Strona diagnostyki wydajnosci. Sama strona jest publiczna (to tylko
-            # HTML+JS), ale dane pobiera z /api/status/perf ktory wymaga admina.
+            # Performance diagnostics page. The page itself is public (it's
+            # just HTML+JS), but it fetches data from /api/status/perf which requires admin.
             html = """<!doctype html><html lang=pl><head><meta charset=utf-8>
 <title>HAM RADIO CTRL — Wydajnosc</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
