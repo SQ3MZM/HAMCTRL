@@ -551,11 +551,11 @@ function _initSplitResizer() {
   });
 }
 
-// Proxy do WSJTXScope (przyciski w HTML wywoluja WSJTX.*, logika jest w scope module)
+// Proxy to WSJTXScope (buttons in the HTML call WSJTX.*, the logic lives in the scope module)
 function toggleTxFreeze() { window.WSJTXScope?.toggleTxFreeze(); }
 
-// Przywroc suwaki Palette Adjust (REF/ZERO/GAIN) do wartosci domyslnych —
-// zarowno w DOM (input + wyswietlana liczba), jak i w samym wodospadzie.
+// Reset the Palette Adjust sliders (REF/ZERO/GAIN) to their default
+// values — both in the DOM (input + displayed number) and in the waterfall itself.
 function resetPaletteAdjust() {
   const defaults = [
     ['wj-palette-ref',  15,  '15',  v => window.WSJTXScope?.setPaletteReference(v / 100)],
@@ -571,9 +571,10 @@ function resetPaletteAdjust() {
   }
 }
 
-// FAKE SPLIT (Rig Split): wlacz/wylacz przesuwanie VFO by audio bylo ~1500Hz
-// (pelna moc, brak splatterow przy krawedziach filtra). Steruje radiem podczas
-// TX — wlaczaj swiadomie. Stan zapamietany w configu (przetrwa restart).
+// FAKE SPLIT (Rig Split): enable/disable shifting the VFO so the audio
+// tone is ~1500Hz (full power, no splatter at the filter edges). Controls
+// the radio during TX — enable it knowingly. State is saved in the config
+// (survives a restart).
 let _fakeSplitEnabled = false;
 function toggleFakeSplit() {
   _fakeSplitEnabled = !_fakeSplitEnabled;
@@ -604,13 +605,13 @@ function toggleCall1st() {
 
 function _onAutoSeqStatus(msg) {
   if (msg.call1st !== undefined) {
-    // Timer bezpieczenstwa FT8 (WSJT-X "Tx Watchdog") ARM/DISARM na
-    // faktycznej zmianie stanu Call 1st (potwierdzonej przez backend, nie
-    // optymistycznie w toggleCall1st()) - Call 1st ON to jedyny tryb w tej
-    // aplikacji gdzie automat realnie odpowiada nieznanym wolajacym bez
-    // udzialu operatora, wiec to on powinien uzbrajac zegar. Wczesniej
-    // FT8Timer.start()/stop() byly wolane WYLACZNIE z toggleHound() -
-    // dla zwyklej automatyki (Call 1st) zegar nigdy sie nie uzbrajal.
+    // The FT8 safety timer (WSJT-X "Tx Watchdog") ARM/DISARM on the
+    // actual Call 1st state change (confirmed by the backend, not
+    // optimistically in toggleCall1st()) - Call 1st ON is the only mode
+    // in this app where the automation actually replies to unknown
+    // callers without operator involvement, so it should be the one
+    // arming the timer. FT8Timer.start()/stop() used to be called ONLY
+    // from toggleHound() - for regular automation (Call 1st) the timer never armed.
     if (msg.call1st && !_autoCall1st) window.FT8Timer?.start();
     else if (!msg.call1st && _autoCall1st) window.FT8Timer?.stop();
     _autoCall1st = msg.call1st;
@@ -625,10 +626,11 @@ function _onAutoSeqStatus(msg) {
 function _onAutoQsoStatus(msg) {
   if (msg.state !== undefined) _autoQsoState = msg.state;
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
-  // ZAMROZONY raport z backendu (partner_report_sent/recv). To JEST wartosc
-  // ktora backend nadaje i loguje. UI MUSI pokazywac dokladnie ja — nie
-  // przeliczac z _lastDxSnr (surowy SNR z dekodow, zmienia sie co okno =
-  // "bzdury" w makrach). Spojnosc: makro == eter == log == to co widzi user.
+  // FROZEN report from the backend (partner_report_sent/recv). This IS
+  // the value the backend transmits and logs. The UI MUST show exactly
+  // this — not recompute from _lastDxSnr (a raw SNR from decodes, which
+  // changes every window = "nonsense" in the macros). Consistency: macro
+  // == on-air == log == what the user sees.
   if (msg.rstSent !== undefined && msg.rstSent !== "") {
     _frozenRstSent = msg.rstSent;
     const el = document.getElementById('wj-log-rst-sent');
@@ -640,25 +642,26 @@ function _onAutoQsoStatus(msg) {
     if (el) el.value = msg.rstRcvd;
   }
   _renderAutoQsoPanel();
-  // Odswiez podglad tekstu pod przyciskami makr (makro 3 uzywa
-  // _frozenRstSent) — bez tego przycisk pokazywal STARA wartosc az do
-  // recznego kliknieca wiersza dekodu, mimo ze backend juz zamrozil raport.
+  // Refresh the text preview under the macro buttons (macro 3 uses
+  // _frozenRstSent) — without this the button showed the OLD value until
+  // manually clicking a decode row, even though the backend had already
+  // frozen the report.
   _updateMacroTexts();
 }
 
-// Po zakonczeniu automatycznego QSO (otrzymanie/wyslanie 73), wypelnia
-// ISTNIEJACY formularz logowania (te same pola co reczne klikniecie wiersza
-// w _selectRow) i zwraca na niego uwage uzytkownika. CELOWO NIE wywoluje
-// addLog() — zapis do dziennika wymaga jawnego zatwierdzenia przyciskiem
-// "+ LOG QSO", zgodnie z zyczeniem: "logowanie po zakonczeniu qso poprzez
-// zatwierdzenie usera".
+// After an automatic QSO ends (73 received/sent), fills in the EXISTING
+// logging form (the same fields as manually clicking a row in
+// _selectRow) and draws the user's attention to it. DELIBERATELY does
+// NOT call addLog() — writing to the journal requires explicit
+// confirmation via the "+ LOG QSO" button, per the request: "log after
+// QSO completion via user confirmation".
 function _onAutoQsoComplete(msg) {
-  // UWAGA: uzywamy bezposredniego przypisania .value zamiast _setField(),
-  // bo _setField celowo NIE nadpisuje pola pustym/falsy val (przydatne przy
-  // recznym wypelnianiu z listy dekodowan, gdzie brak danych = zostaw bez
-  // zmian) — tutaj odwrotnie, chcemy ZAWSZE nadpisac, nawet pustym stringiem,
-  // zeby nie zostawic "wyciekajacych" danych z poprzedniego QSO w lancuchu
-  // wielu automatycznych QSO pod rzad (Call 1st).
+  // NOTE: we use direct .value assignment instead of _setField(), because
+  // _setField deliberately does NOT overwrite a field with an empty/falsy
+  // val (useful when manually filling in from the decode list, where no
+  // data = leave unchanged) — here it's the opposite, we want to ALWAYS
+  // overwrite, even with an empty string, so as not to leave "leaking"
+  // data from the previous QSO in a chain of multiple automatic QSOs in a row (Call 1st).
   const callEl = document.getElementById('wj-log-call');
   if (callEl) callEl.value = msg.dxCall || '';
   const gridEl = document.getElementById('wj-log-grid');
@@ -668,21 +671,21 @@ function _onAutoQsoComplete(msg) {
   const rstRcvdEl = document.getElementById('wj-log-rst-rcvd');
   if (rstRcvdEl) rstRcvdEl.value = msg.rstRcvd || '+00';
   const modeEl = document.getElementById('wj-log-mode');
-  // Reset zamrozonych raportow po zakonczeniu QSO — inaczej wycieklyby
-  // do nastepnego QSO w lancuchu Call 1st.
-  _frozenRstSent = null; // reset po QSO
+  // Reset the frozen reports after the QSO ends — otherwise they'd leak
+  // into the next QSO in a Call 1st chain.
+  _frozenRstSent = null; // reset after the QSO
   _frozenRstRcvd = null;
-  _updateMacroTexts(); // podglad makra 3 wraca do biezacego _lastDxSnr
+  _updateMacroTexts(); // the macro-3 preview reverts to the current _lastDxSnr
   if (modeEl) modeEl.value = msg.mode || 'FT8';
   const commentEl = document.getElementById('wj-log-comment');
   if (commentEl) commentEl.value = '';
 
   window.UI?.showToast(I18n.t('wj_toast_qso_complete').replace('{call}', msg.dxCall));
 
-  // Dopisz OD RAZU do _workedCalls (zamiast czekac do 60s pollingu
-  // _loadWorkedCalls) — inaczej ta sama stacja, gdyby zawolala CQ ponownie
-  // za chwile, jeszcze przez do minuty wygladalaby jak NIEzrobiona w oknie
-  // Band Activity (patrz _classify: CQ od juz-zrobionej stacji -> szary).
+  // Add IMMEDIATELY to _workedCalls (instead of waiting for the 60s
+  // _loadWorkedCalls poll) — otherwise if the same station called CQ
+  // again shortly after, it would look UNworked for up to a minute in the
+  // Band Activity window (see _classify: CQ from an already-worked station -> gray).
   if (msg.dxCall) {
     const band = window.UI?.getBandName ? window.UI.getBandName(S.freq) : '';
     _workedCalls.add(_workedKey(msg.dxCall, band, msg.mode || _decodeMode));
@@ -690,12 +693,12 @@ function _onAutoQsoComplete(msg) {
   }
 
   if (callEl) {
-    // BEZ scrollIntoView: panel "MOJ LOG QSO" jest i tak zawsze widoczny w
-    // tym layoucie (bez przewijania strony) - scrollIntoView({block:'center'})
-    // na stronie ze skalowaniem transform (#app-scale) liczyl "wysrodkowanie"
-    // zle i wywalal cale okno FT8/WSJTX wysoko w gore po kazdym zakonczonym
-    // auto-QSO, zaslaniajac gorny pasek az do band-select. Samo podswietlenie
-    // wystarcza do zwrocenia uwagi.
+    // NO scrollIntoView: the "MY QSO LOG" panel is always visible in this
+    // layout anyway (no page scrolling) - scrollIntoView({block:'center'})
+    // on a page with a transform scale (#app-scale) computed
+    // "centering" wrong and threw the whole FT8/WSJTX window way up after
+    // every completed auto-QSO, covering the top bar down to band-select.
+    // Just the highlight is enough to draw attention.
     callEl.classList.add('wj-pending-log-highlight');
     setTimeout(() => callEl.classList.remove('wj-pending-log-highlight'), 3000);
   }
@@ -707,23 +710,23 @@ function _onAutoQsoQueue(msg) {
   _renderAutoQsoPanel();
 }
 
-// Usuwa pojedyncza stacje z kolejki "Call 1st" (✕ na chipie).
+// Removes a single station from the "Call 1st" queue (✕ on the chip).
 function removeFromQueue(call) {
   window.WS?.send({ type: 'ft8_queue_remove', call });
 }
 
-// Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w naglowku panelu) —
-// bez tego stare zgloszenia (stacje ktore odpowiedzialy na CQ dawno temu i
-// moga juz nie sluchac) nie mialy zadnego sposobu opuszczenia kolejki poza
-// usuwaniem pojedynczo, wiec po dluzszej sesji rosla i Call 1st w koncu
-// wywolywal stary, nieaktualny znak.
+// Empties the entire "Call 1st" queue (the "clear" button in the panel
+// header) — without this, stale entries (stations that replied to a CQ
+// long ago and may no longer be listening) had no way to leave the queue
+// other than removing them one by one, so over a longer session it grew
+// and Call 1st eventually called an old, stale callsign.
 function clearAutoQsoQueue() {
   window.WS?.send({ type: 'ft8_queue_clear' });
 }
 
-// Reczny "skip" biezacej stacji — porzuca aktywne QSO i od razu (bez
-// czekania na 60s stall-timeout w backendzie) przechodzi do nastepnej
-// stacji z kolejki Call 1st, jesli jakas czeka.
+// Manual "skip" of the current station — abandons the active QSO and
+// immediately (without waiting for the backend's 60s stall-timeout)
+// moves to the next station in the Call 1st queue, if one is waiting.
 function skipAutoQso() {
   window.WS?.send({ type: 'ft8_abort_auto_qso' });
 }
@@ -742,7 +745,7 @@ function _renderAutoQsoPanel() {
 
   const statusEl = document.getElementById('wj-autoqso-status');
   if (statusEl) {
-    statusEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+    statusEl.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
     statusEl.classList.remove('active', 'done', 'error');
     if (!_autoSeqEnabled) {
       statusEl.textContent = I18n.t('wj_status_no_decoding');
@@ -787,20 +790,20 @@ function txEqRx() { window.WSJTXScope?.txEqRx(); }
 function handleWS(msg) {
   switch(msg.type) {
     case 'wsjtx_status':  _updateStatus(msg); break;
-    // UWAGA: NIE resetujemy tu FT8Timer.reset() na kazdy dekod - band
-    // activity nie jest dowodem obecnosci OPERATORA (WSJT-X liczy brak
-    // ruchu myszka/klawiatura, nie ruch na pasmie). Na zywym, zajetym
-    // pasmie dekody przychodza co ~15s bez przerwy, wiec timer resetowany
-    // TU nigdy realnie by nie doszedl do zera. reset() jest teraz wolane
-    // z faktycznych akcji operatora - patrz _selectRow/sendTx.
+    // NOTE: we do NOT call FT8Timer.reset() here on every decode - band
+    // activity is not proof the OPERATOR is present (WSJT-X counts a lack
+    // of mouse/keyboard activity, not band activity). On a live, busy
+    // band decodes arrive every ~15s nonstop, so a timer reset HERE would
+    // never actually reach zero. reset() is now called from actual
+    // operator actions - see _selectRow/sendTx.
     case 'wsjtx_decode':  _addDecode(msg); break;
     case 'wsjtx_clear':   _decodes = []; _renderDecodes(); break;
     case 'wsjtx_qso_logged': _onWsjtxQsoLogged(msg); break;
     case 'ft8_tx_status': _onFt8TxStatus(msg); break;
     case 'ft8_tx_error':
-      // Wysylane gdy reczne TX FT8 (np. klik odpowiedzi na dekod) mialo
-      // brakujace pola (callTo/callDe/report) - bez tego przycisk po prostu
-      // nic nie robil, bez zadnego komunikatu bledu.
+      // Sent when a manual FT8 TX (e.g. clicking a reply to a decode) had
+      // missing fields (callTo/callDe/report) - without this the button
+      // simply did nothing, with no error message at all.
       window.UI?.showToast(`✗ FT8 TX: ${msg.error || 'blad'}`, 'error');
       break;
     case 'ft8_waterfall': window.WSJTXScope?.onWaterfallData(msg); break;
@@ -815,20 +818,20 @@ function handleWS(msg) {
     case 'auto_qso_queue':   _onAutoQsoQueue(msg); break;
     case 'auto_qso_error':   window.UI?.showToast(`⚠ ${msg.error}`); break;
     case 'qso_logged':
-      // Nowe QSO w prawdziwym logu (qso_db) — zarowno z automatyki jak i
-      // recznego "+ LOG QSO" (patrz broadcast w /api/qsolog POST i w
-      // _process_auto_qso, oba wysylaja ten sam typ). Broadcast idzie do
-      // WSZYSTKICH klientow (nie tylko wlasciciela QSO) - filtrujemy tu,
-      // bo user_id nie jest w tym konkretnym payloadzie z auto_qso, tylko
-      // porownujemy przez to ze i tak liczy sie WYLACZNIE dla wlasnego
-      // widoku (kazdy klient ma wlasny mini-log niezaleznie).
+      // A new QSO in the real log (qso_db) — from both the automation and
+      // a manual "+ LOG QSO" (see the broadcast in /api/qsolog POST and
+      // in _process_auto_qso, both send the same type). The broadcast
+      // goes to ALL clients (not just the QSO's owner) - we filter here,
+      // since user_id isn't in this specific auto_qso payload, we just
+      // compare knowing it only ever matters for our OWN view anyway
+      // (each client has its own independent mini-log).
       _onQsoLogged(msg);
       break;
     case 'rotator_update':
-      // Ten sam broadcast co duzy kompas w RADIO (rotormini.js) — zasila
-      // tylko zywy odczyt ROTOR ---° i stan przyciskow SP/LP tutaj, nie
-      // duplikuje calego widgetu. Wiele rotorow: bierzemy ten sam co
-      // rotormini.js (pierwszy z listy / juz wybrany _rotorId).
+      // The same broadcast as the big compass in RADIO (rotormini.js) —
+      // only feeds the live ROTOR ---° reading and the SP/LP button state
+      // here, doesn't duplicate the whole widget. Multiple rotators: we
+      // use the same one as rotormini.js (first in the list / the already-selected _rotorId).
       if (msg.rotator && (!_rotorId || msg.rotator.id === _rotorId)) _onRotatorUpdate(msg.rotator);
       break;
   }
@@ -850,22 +853,24 @@ function _updateStatus(d) {
   document.getElementById('wj-tx-indicator').style.display = _status.transmit ? '' : 'none';
 
   if (d.freq) {
-    // UWAGA: wj-freq ma DWA niezalezne zrodla aktualizacji — to (z pakietow
-    // zewnetrznego WSJT-X przez UDP, jesli jest uruchomiony) i _syncFreqFromRadio
-    // (z AppState.freq, glownego radia, w tle co 500ms). Nie koliduja realnie,
-    // bo oba ostatecznie odzwierciedlaja te sama fizyczna czestotliwosc radia —
-    // ten kod tylko pokrywa przypadek gdy zewnetrzny WSJT-X faktycznie dziala
-    // i moze byc nieznacznie szybszy/dokladniejszy zrodlem niz nasz polling.
+    // NOTE: wj-freq has TWO independent update sources — this (from an
+    // external WSJT-X's UDP packets, if it's running) and
+    // _syncFreqFromRadio (from AppState.freq, the main radio, in the
+    // background every 500ms). They don't really collide, since both
+    // ultimately reflect the same physical radio frequency — this code
+    // just covers the case where an external WSJT-X is actually running
+    // and may be a slightly faster/more accurate source than our polling.
     const mhz = (d.freq/1e6).toFixed(6).replace(/(\d+)\.(\d{3})(\d{3})/, '$1.$2.$3');
     const el = document.getElementById('wj-freq');
     if (el) el.textContent = mhz;
   }
-  // UWAGA: 'wj-mode' (stary statyczny div) zastapiony przez przelacznik
-  // FT8/FT4 (wj-mode-switch) sterowany przez setDecodeMode() — NIE
-  // nadpisujemy go raportem trybu z zewnetrznego WSJT-X, bo to dwa rozne
-  // zrodla prawdy (nasz wybor dekodowania vs to co zewnetrzny WSJT-X robi).
-  // Pokazuj callsign/grid z WSJT-X w UI informacyjnie, ale NIE nadpisuj
-  // _myCall/_myGrid jezeli user jest zalogowany z wlasnym profilem.
+  // NOTE: 'wj-mode' (the old static div) was replaced by the FT8/FT4
+  // toggle (wj-mode-switch) controlled by setDecodeMode() — we do NOT
+  // overwrite it with the mode reported by an external WSJT-X, since
+  // these are two different sources of truth (our decode-mode choice vs
+  // what an external WSJT-X is doing).
+  // Show the callsign/grid from WSJT-X in the UI informationally, but do
+  // NOT overwrite _myCall/_myGrid if the user is logged in with their own profile.
   if (d.deCall) {
     if (!window.CurrentUser?.callsign) _myCall = d.deCall;
     const el = document.getElementById('wj-de-call'); if(el) el.textContent='DE: '+(window.CurrentUser?.callsign||d.deCall);
@@ -879,20 +884,20 @@ function _updateStatus(d) {
   if (d.version) { const el=document.getElementById('wj-version'); if(el) el.textContent='WSJT-X '+d.version; }
 }
 
-// ── Dekodowania ───────────────────────────────────────────────────────────────
+// ── Decodes ───────────────────────────────────────────────────────────────────
 function _classify(message) {
   const m  = message.toUpperCase();
   const mc = (_myCall||'').toUpperCase();
   if (mc && m.includes(mc)) return 'wj-mycall';
   if (m.startsWith('CQ ')) {
-    // "juz zrobiona" ma sens pokazac TYLKO przy CQ — to jedyny moment gdy
-    // operator faktycznie decyduje "klikac czy pomijac". Ta sama stacja
-    // widziana w trakcie QSO Z KIMS INNYM (raport/73/RR73) nie niesie tej
-    // informacji (nie ma czego klikac), wiec tam kolor CQ/73/DX zostaje
-    // bez zmian - poprzednia wersja sprawdzala "worked" na samym koncu, PO
-    // klasyfikacji CQ, wiec w praktyce PRAWIE NIGDY sie nie uruchamiala
-    // (niemal kazdy dekod trafial w CQ/73/DX pierwszy) - stacja juz w logu
-    // wygladala identycznie jak swieza.
+    // "already worked" only makes sense to show for a CQ — it's the only
+    // moment when the operator actually decides "click or skip". The same
+    // station seen mid-QSO WITH SOMEONE ELSE (report/73/RR73) doesn't
+    // carry that information (nothing to click), so the CQ/73/DX color
+    // stays unchanged there - the previous version checked "worked" at
+    // the very end, AFTER CQ classification, so in practice it almost
+    // NEVER fired (almost every decode hit CQ/73/DX first) - a station
+    // already in the log looked identical to a fresh one.
     const call = _extractCall(m);
     if (_isWorkedHere(call)) return 'wj-worked';
     return 'wj-cq';
@@ -916,12 +921,12 @@ function _extractGrid(msg) {
   return '';
 }
 
-// CQ MODIFIERS — musi byc w zgodzie z _CQ_MODIFIERS w qso_engine.py (backend
-// tam ma pelniejsza/autorytatywna liste, to jest jej podzbior dla najczestszych
-// przypadkow). Bez tego "CQ SOTA W1XYZ FN42"/"CQ POTA ..." byly parsowane jako
-// call="SOTA"/"POTA" (dlugosc 4 > starego progu <=3 dla modifierow typu DX/NA),
-// wiec klikniecie takiego CQ startowalo automatyczne QSO z fikcyjnym partnerem
-// "SOTA" zamiast prawdziwym callsignem aktywatora.
+// CQ MODIFIERS — must stay in sync with _CQ_MODIFIERS in qso_engine.py
+// (the backend has the fuller/authoritative list there, this is a subset
+// for the most common cases). Without this, "CQ SOTA W1XYZ FN42"/"CQ POTA
+// ..." got parsed as call="SOTA"/"POTA" (length 4 > the old <=3 threshold
+// for modifiers like DX/NA), so clicking such a CQ started an automatic
+// QSO with a fictitious partner "SOTA" instead of the activator's real callsign.
 const _CQ_MODIFIERS = new Set([
   'DX','NA','SA','EU','AS','AF','OC','WW','WWDX',
   'USA','JA','DL','PA','OE','OK','OM','SP','SM','OZ','LA','OH','OY',
@@ -936,13 +941,13 @@ const _CQ_MODIFIERS = new Set([
   'FF','SKCC','SOWP','PODXS',
 ]);
 
-// Czy `s` wyglada jak modifier CQ (POTA/DX/USA itp.), nie jak callsign.
-// Ta sama heurystyka co is_cq_modifier() w qso_engine.py: whitelist LUB
-// string do 6 znakow zlozony WYLACZNIE z liter (bez cyfr). Celowo ogolne,
-// nie whitelist-only: prawdziwy znak amatorski zawsze ma cyfre, wiec kazdy
-// czysto literowy modifier do 6 znakow (BOTA/GOTA/HOTA/... - caly rodzaj
-// "*OTA" programow aktywacyjnych, nie tylko POTA/SOTA) jest bezpiecznie
-// rozpoznawany bez wymieniania kazdego z osobna.
+// Whether `s` looks like a CQ modifier (POTA/DX/USA etc.), not a callsign.
+// The same heuristic as is_cq_modifier() in qso_engine.py: whitelist OR a
+// string up to 6 chars made ENTIRELY of letters (no digits). Deliberately
+// general, not whitelist-only: a real amateur callsign always has a
+// digit, so any purely alphabetic modifier up to 6 chars (BOTA/GOTA/
+// HOTA/... - the whole "*OTA" family of activation programs, not just
+// POTA/SOTA) is safely recognized without listing each one individually.
 function _isCqModifier(s) {
   if (!s) return false;
   if (_CQ_MODIFIERS.has(s)) return true;
@@ -950,43 +955,44 @@ function _isCqModifier(s) {
 }
 
 function _extractCall(msg) {
-  // Format FT8: "CQ SP3GSK JO82" — wywolanie CQ — chcemy SP3GSK
-  // Format FT8: "CQ SOTA SP3GSK/P JO82" — CQ z modifierem — chcemy SP3GSK/P (parts[2])
-  // Format FT8: "SP3GSK SQ3MZM -05" — SQ3MZM wywoluje SP3GSK — chcemy SQ3MZM (parts[1])
-  // Format FT8: "SQ3MZM SP3GSK R-12" — chcemy SQ3MZM (parts[0])
+  // FT8 format: "CQ SP3GSK JO82" — a CQ call — we want SP3GSK
+  // FT8 format: "CQ SOTA SP3GSK/P JO82" — CQ with a modifier — we want SP3GSK/P (parts[2])
+  // FT8 format: "SP3GSK SQ3MZM -05" — SQ3MZM calling SP3GSK — we want SQ3MZM (parts[1])
+  // FT8 format: "SQ3MZM SP3GSK R-12" — we want SQ3MZM (parts[0])
   const parts = msg.trim().toUpperCase().replace(/[<>]/g, '').split(/\s+/);
   if (!parts.length) return '';
   // CQ [MOD] CALL GRID
   if (parts[0] === 'CQ') {
     return parts.length >= 3 && _isCqModifier(parts[1]) ? parts[2] : parts[1];
   }
-  // CALL_TO CALL_DE ... — zwroc CALL_DE (ten kto nadaje = nasz korespondent)
+  // CALL_TO CALL_DE ... — return CALL_DE (whoever is transmitting = our correspondent)
   if (parts.length >= 2) return parts[1];
   return parts[0];
 }
 
 function _addDecode(d) {
-  // WLASNA TRANSMISJA (is_tx): dodaj do listy (zeby byla widoczna w oknie RX
-  // obok odebranych), ale NIE przekazuj do Hound ani nie licz jako odebrany
-  // dekod DX — to nasze TX, nie sygnal z pasma.
+  // OUR OWN TRANSMISSION (is_tx): add it to the list (so it's visible in
+  // the RX window alongside received ones), but DON'T pass it to Hound or
+  // count it as a received DX decode — it's our TX, not a signal from the band.
   if (!d.is_tx && _hound.active) _houndOnDecode(d);
   if (!d.is_tx) _decodeCount++;
-  // Dodaj zawsze — isNew=false to replaye z poprzednich cykli (też warto pokazać)
-  // Przy MSG_CLEAR WSJT-X czyści tabelę; my robimy to samo w handleWS('wsjtx_clear')
+  // Always add — isNew=false is replays from previous cycles (worth
+  // showing too). On MSG_CLEAR, WSJT-X clears the table; we do the same in handleWS('wsjtx_clear')
   _decodes.push(d);
   if (_decodes.length > MAX_DECODES) _decodes.shift();
-  // Nowa aktywnosc odblokowuje panel RX FREQUENCY po recznym "wyczysc" (🗑) —
-  // to mialo byc tymczasowe odgracenie widoku, nie trwale wylaczenie panelu
-  // az do przeladowania strony.
+  // New activity unlocks the RX FREQUENCY panel after a manual "clear"
+  // (🗑) — that was meant to be a temporary decluttering of the view, not
+  // permanently disabling the panel until the page reloads.
   _rxFreqPanelCleared = false;
   _renderDecodes();
   _updateCount();
   _renderRxFreqPanel();
 }
 
-// Wylicza numer okna dekodowania (slot index) z timeStr (format HHMMSS, UTC)
-// i trybu (FT8: okna 15s, FT4: okna 7.5s) — uzywane do wykrywania granicy
-// miedzy kolejnymi okresami nadawania w Band Activity (linia przerywana).
+// Computes the decode-window number (slot index) from timeStr (format
+// HHMMSS, UTC) and the mode (FT8: 15s windows, FT4: 7.5s windows) — used
+// to detect the boundary between consecutive transmit periods in Band
+// Activity (the dashed line).
 function _windowSlot(timeStr, mode) {
   if (!timeStr || timeStr.length < 6) return null;
   const hh = parseInt(timeStr.slice(0, 2), 10);
@@ -999,16 +1005,17 @@ function _windowSlot(timeStr, mode) {
 
 function _decodeRowHtml(d, idx) {
   if (_isHidden(d.message)) return '';
-  // WLASNA TRANSMISJA (is_tx): wyroznij wizualnie klasa wj-own-tx (inny kolor),
-  // zeby user odroznil co NADAL od tego co ODEBRAL. Prefix ">>" oznacza nasze TX.
+  // OUR OWN TRANSMISSION (is_tx): visually highlight with the wj-own-tx
+  // class (a different color), so the user can tell what we TRANSMITTED
+  // from what we RECEIVED. The ">>" prefix marks our own TX.
   const cls = d.is_tx ? 'wj-own-tx' : _classify(d.message);
   const snr = d.snr>=0 ? '+'+d.snr : String(d.snr);
   const dt  = d.deltaTime>=0 ? '+'+(d.deltaTime||0).toFixed(1) : (d.deltaTime||0).toFixed(1);
   const grid= _extractGrid(d.message);
   const txMark = d.is_tx ? '<span class="wj-tx-mark" style="color:#ff6; font-weight:bold;">▶ TX</span> ' : '';
   const txStyle = d.is_tx ? ' style="background:rgba(255,200,0,0.12); border-left:3px solid #fc0;"' : '';
-  // Kraj TYLKO przy CQ — to jedyny moment gdy ma to praktyczne znaczenie
-  // (kogo szukamy/wolamy), patrz komentarz przy _PREFIX_COUNTRY wyzej.
+  // Country ONLY for a CQ — the only moment it has practical relevance
+  // (who we're looking for/calling), see the comment at _PREFIX_COUNTRY above.
   let country = '';
   if (!d.is_tx && (d.message||'').toUpperCase().startsWith('CQ ')) {
     const info = _countryForCall(_extractCall(d.message));
