@@ -1,11 +1,11 @@
 /**
- * hamlib_ui.js — panel WIRTUALNE RADIO (emulacja Hamlib NET rigctl, USTAWIENIA)
+ * hamlib_ui.js — VIRTUAL RADIO panel (Hamlib NET rigctl emulation, SETTINGS)
  *
- * Widoczny dla wszystkich (zeby user wiedzial na jakich portach polaczyc
- * swoj program), ale wlaczanie/wylaczanie portow TCP i zapis konfiguracji —
- * TYLKO ADMIN. Przelaczanie tych serwerow wplywa na wszystkich userow naraz
- * (wspolny port), wiec nie moze tego robic kazdy kto ma dostep do panelu —
- * dla pozostalych rol to czysty podglad statusu.
+ * Visible to everyone (so the user knows which ports to connect their
+ * program to), but enabling/disabling TCP ports and saving the config —
+ * ADMIN ONLY. Toggling these servers affects all users at once (shared
+ * port), so not everyone with access to the panel can do it — for other
+ * roles it's a plain status view.
  */
 (function () {
 'use strict';
@@ -67,9 +67,9 @@ function _esc(s) {
 }
 
 async function save() {
-  // Panel ukrywa ten przycisk dla nie-admina, ale backend i tak pilnuje
-  // (role != admin -> 403) — to tylko lokalne zabezpieczenie przed
-  // przypadkowym wywolaniem gdy DOM nie zdazyl sie jeszcze przerenderowac.
+  // The panel hides this button for non-admins, but the backend enforces
+  // it anyway (role != admin -> 403) — this is just a local guard against
+  // an accidental call before the DOM has re-rendered.
   if (window.AppState?.role !== 'admin') return;
   const msg = document.getElementById('hamlib-msg');
   const rows = document.querySelectorAll('#hamlib-slots [data-slot]');
