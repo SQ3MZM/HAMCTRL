@@ -1,29 +1,29 @@
 /*
- * dxcc.js — Mapowanie prefixow callsign na DXCC entity (kraj).
+ * dxcc.js — Maps callsign prefixes to DXCC entities (countries).
  *
- * Uproszczona wersja pelnej tabeli CTY.dat — pokrywa ~150 najczestszych
- * krajow ktore pojawiaja sie w FT8/FT4. Dla pelnej precyzji mozna
- * pobrac cty.dat z AA6YQ i przeparsowac; ta lista wystarczy dla
- * wiekszosci zastosowan operacyjnych.
+ * Simplified version of the full CTY.dat table — covers ~150 of the most
+ * common countries seen on FT8/FT4. For full precision you could
+ * download cty.dat from AA6YQ and parse it; this list is enough for most
+ * operational purposes.
  *
- * Reguly matchowania (od najdluzszych do najkrotszych - waznosc):
- *   1. Sprawdzamy wpierw 3-znakowe prefixy (VP2, VP6, VK9 - te sa specjalne)
- *   2. Potem 2-znakowe (SP, DL, F...)
- *   3. Na koncu 1-znakowe (K, N, W - USA, G - Anglia, itd.)
+ * Matching rules (longest to shortest - priority):
+ *   1. Check 3-char prefixes first (VP2, VP6, VK9 - these are special)
+ *   2. Then 2-char (SP, DL, F...)
+ *   3. Finally 1-char (K, N, W - USA, G - England, etc.)
  *
- * Zwracamy obiekt: { name: "Poland", prefix: "SP", flag: "🇵🇱", continent: "EU" }
- * Puste jesli nie znaleziono.
+ * We return an object: { name: "Poland", prefix: "SP", flag: "🇵🇱", continent: "EU" }
+ * Empty if not found.
  */
 
 (function() {
 'use strict';
 
-// Uproszczona tabela DXCC — najczestsze kraje na FT8/FT4.
-// Klucz = najdluzszy pasujacy prefix, wartosc = {name, flag, continent}
-// UWAGA: kolejnosc w Map ma znaczenie — najpierw specjalne (VP2, VK9),
-// potem 2-znakowe. Uzywamy Object.entries + sortowanie po dlugosci klucza.
+// Simplified DXCC table — the most common countries on FT8/FT4.
+// Key = the longest matching prefix, value = {name, flag, continent}
+// NOTE: order in the Map matters — special ones first (VP2, VK9), then
+// 2-char ones. We use Object.entries + sort by key length.
 const DXCC_TABLE = {
-  // Polska
+  // Poland
   'SP': {n:'Poland', f:'🇵🇱', c:'EU'},
   'SN': {n:'Poland', f:'🇵🇱', c:'EU'},
   'SO': {n:'Poland', f:'🇵🇱', c:'EU'},
@@ -31,7 +31,7 @@ const DXCC_TABLE = {
   '3Z': {n:'Poland', f:'🇵🇱', c:'EU'},
   'HF': {n:'Poland', f:'🇵🇱', c:'EU'},
 
-  // Niemcy
+  // Germany
   'DL': {n:'Germany', f:'🇩🇪', c:'EU'},
   'DA': {n:'Germany', f:'🇩🇪', c:'EU'},
   'DB': {n:'Germany', f:'🇩🇪', c:'EU'},
@@ -50,7 +50,7 @@ const DXCC_TABLE = {
   'DQ': {n:'Germany', f:'🇩🇪', c:'EU'},
   'DR': {n:'Germany', f:'🇩🇪', c:'EU'},
 
-  // Wielka Brytania
+  // United Kingdom
   'G':  {n:'England', f:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', c:'EU'},
   '2E': {n:'England', f:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', c:'EU'},
   'M':  {n:'England', f:'🏴󠁧󠁢󠁥󠁮󠁧󠁿', c:'EU'},
@@ -67,7 +67,7 @@ const DXCC_TABLE = {
   'GU': {n:'Guernsey', f:'🇬🇬', c:'EU'},
   'MU': {n:'Guernsey', f:'🇬🇬', c:'EU'},
 
-  // Francja
+  // France
   'F':  {n:'France', f:'🇫🇷', c:'EU'},
   'TM': {n:'France', f:'🇫🇷', c:'EU'},
   'FG': {n:'Guadeloupe', f:'🇬🇵', c:'NA'},
@@ -75,7 +75,7 @@ const DXCC_TABLE = {
   'FY': {n:'French Guiana', f:'🇬🇫', c:'SA'},
   'FR': {n:'Reunion', f:'🇷🇪', c:'AF'},
 
-  // Włochy
+  // Italy
   'I':  {n:'Italy', f:'🇮🇹', c:'EU'},
   'IK': {n:'Italy', f:'🇮🇹', c:'EU'},
   'IZ': {n:'Italy', f:'🇮🇹', c:'EU'},
@@ -85,7 +85,7 @@ const DXCC_TABLE = {
   'IH9': {n:'Pantelleria', f:'🇮🇹', c:'AF'},
   'IG9': {n:'Lampedusa', f:'🇮🇹', c:'AF'},
 
-  // Hiszpania
+  // Spain
   'EA': {n:'Spain', f:'🇪🇸', c:'EU'},
   'EB': {n:'Spain', f:'🇪🇸', c:'EU'},
   'EC': {n:'Spain', f:'🇪🇸', c:'EU'},
@@ -96,7 +96,7 @@ const DXCC_TABLE = {
   'EA8': {n:'Canary Is.', f:'🇮🇨', c:'AF'},
   'EA9': {n:'Ceuta & Melilla', f:'🇪🇸', c:'AF'},
 
-  // Rosja i CIS
+  // Russia and CIS
   'R':  {n:'Russia', f:'🇷🇺', c:'EU'},
   'RA': {n:'Russia', f:'🇷🇺', c:'EU'},
   'RK': {n:'Russia', f:'🇷🇺', c:'EU'},
@@ -119,7 +119,7 @@ const DXCC_TABLE = {
   'UA0': {n:'Russia (As)', f:'🇷🇺', c:'AS'},
   'UA9': {n:'Russia (As)', f:'🇷🇺', c:'AS'},
 
-  // Ukraina
+  // Ukraine
   'UR': {n:'Ukraine', f:'🇺🇦', c:'EU'},
   'US': {n:'Ukraine', f:'🇺🇦', c:'EU'},
   'UT': {n:'Ukraine', f:'🇺🇦', c:'EU'},
@@ -132,28 +132,28 @@ const DXCC_TABLE = {
   'EN': {n:'Ukraine', f:'🇺🇦', c:'EU'},
   'EO': {n:'Ukraine', f:'🇺🇦', c:'EU'},
 
-  // Białoruś
+  // Belarus
   'EU': {n:'Belarus', f:'🇧🇾', c:'EU'},
   'EV': {n:'Belarus', f:'🇧🇾', c:'EU'},
   'EW': {n:'Belarus', f:'🇧🇾', c:'EU'},
 
-  // Czechy, Słowacja
+  // Czechia, Slovakia
   'OK': {n:'Czech Rep.', f:'🇨🇿', c:'EU'},
   'OL': {n:'Czech Rep.', f:'🇨🇿', c:'EU'},
   'OM': {n:'Slovakia', f:'🇸🇰', c:'EU'},
 
-  // Węgry
+  // Hungary
   'HA': {n:'Hungary', f:'🇭🇺', c:'EU'},
   'HG': {n:'Hungary', f:'🇭🇺', c:'EU'},
 
-  // Rumunia, Bułgaria
+  // Romania, Bulgaria
   'YO': {n:'Romania', f:'🇷🇴', c:'EU'},
   'YP': {n:'Romania', f:'🇷🇴', c:'EU'},
   'YQ': {n:'Romania', f:'🇷🇴', c:'EU'},
   'YR': {n:'Romania', f:'🇷🇴', c:'EU'},
   'LZ': {n:'Bulgaria', f:'🇧🇬', c:'EU'},
 
-  // Bałkany
+  // Balkans
   'S5': {n:'Slovenia', f:'🇸🇮', c:'EU'},
   '9A': {n:'Croatia', f:'🇭🇷', c:'EU'},
   'E7': {n:'Bosnia', f:'🇧🇦', c:'EU'},
@@ -164,7 +164,7 @@ const DXCC_TABLE = {
   '4O': {n:'Montenegro', f:'🇲🇪', c:'EU'},
   'ZA': {n:'Albania', f:'🇦🇱', c:'EU'},
 
-  // Grecja, Turcja, Cypr
+  // Greece, Turkey, Cyprus
   'SV': {n:'Greece', f:'🇬🇷', c:'EU'},
   'J4': {n:'Greece', f:'🇬🇷', c:'EU'},
   'SW': {n:'Greece', f:'🇬🇷', c:'EU'},
@@ -177,7 +177,7 @@ const DXCC_TABLE = {
   'H2': {n:'Cyprus', f:'🇨🇾', c:'AS'},
   'P3': {n:'Cyprus', f:'🇨🇾', c:'AS'},
 
-  // Skandynawia
+  // Scandinavia
   'SM': {n:'Sweden', f:'🇸🇪', c:'EU'},
   'SA': {n:'Sweden', f:'🇸🇪', c:'EU'},
   'SB': {n:'Sweden', f:'🇸🇪', c:'EU'},
@@ -205,7 +205,7 @@ const DXCC_TABLE = {
   'OY': {n:'Faroe Is.', f:'🇫🇴', c:'EU'},
   'TF': {n:'Iceland', f:'🇮🇸', c:'EU'},
 
-  // Beneluks
+  // Benelux
   'ON': {n:'Belgium', f:'🇧🇪', c:'EU'},
   'OO': {n:'Belgium', f:'🇧🇪', c:'EU'},
   'OP': {n:'Belgium', f:'🇧🇪', c:'EU'},
@@ -224,18 +224,18 @@ const DXCC_TABLE = {
   'PI': {n:'Netherlands', f:'🇳🇱', c:'EU'},
   'LX': {n:'Luxembourg', f:'🇱🇺', c:'EU'},
 
-  // Alpy
+  // Alps
   'HB': {n:'Switzerland', f:'🇨🇭', c:'EU'},
   'HB0': {n:'Liechtenstein', f:'🇱🇮', c:'EU'},
   'HB9': {n:'Switzerland', f:'🇨🇭', c:'EU'},
   'OE': {n:'Austria', f:'🇦🇹', c:'EU'},
 
-  // Bałtyckie
+  // Baltics
   'ES': {n:'Estonia', f:'🇪🇪', c:'EU'},
   'YL': {n:'Latvia', f:'🇱🇻', c:'EU'},
   'LY': {n:'Lithuania', f:'🇱🇹', c:'EU'},
 
-  // Portugalia, Irlandia
+  // Portugal, Ireland
   'CT': {n:'Portugal', f:'🇵🇹', c:'EU'},
   'CQ': {n:'Portugal', f:'🇵🇹', c:'EU'},
   'CR': {n:'Portugal', f:'🇵🇹', c:'EU'},
@@ -245,12 +245,12 @@ const DXCC_TABLE = {
   'EI': {n:'Ireland', f:'🇮🇪', c:'EU'},
   'EJ': {n:'Ireland', f:'🇮🇪', c:'EU'},
 
-  // Malta, San Marino, Monako
+  // Malta, San Marino, Monaco
   '9H': {n:'Malta', f:'🇲🇹', c:'EU'},
   'T7': {n:'San Marino', f:'🇸🇲', c:'EU'},
   '3A': {n:'Monaco', f:'🇲🇨', c:'EU'},
 
-  // Ameryka Północna
+  // North America
   'K':  {n:'USA', f:'🇺🇸', c:'NA'},
   'W':  {n:'USA', f:'🇺🇸', c:'NA'},
   'N':  {n:'USA', f:'🇺🇸', c:'NA'},
@@ -277,7 +277,7 @@ const DXCC_TABLE = {
   'XE': {n:'Mexico', f:'🇲🇽', c:'NA'},
   '6D': {n:'Mexico', f:'🇲🇽', c:'NA'},
 
-  // Karaiby
+  // Caribbean
   'CO': {n:'Cuba', f:'🇨🇺', c:'NA'},
   'CL': {n:'Cuba', f:'🇨🇺', c:'NA'},
   'CM': {n:'Cuba', f:'🇨🇺', c:'NA'},
@@ -285,7 +285,7 @@ const DXCC_TABLE = {
   'HH': {n:'Haiti', f:'🇭🇹', c:'NA'},
   '4L': {n:'Georgia', f:'🇬🇪', c:'AS'},
 
-  // Ameryka Południowa
+  // South America
   'PY': {n:'Brazil', f:'🇧🇷', c:'SA'},
   'PP': {n:'Brazil', f:'🇧🇷', c:'SA'},
   'PQ': {n:'Brazil', f:'🇧🇷', c:'SA'},
@@ -319,7 +319,7 @@ const DXCC_TABLE = {
   'YY': {n:'Venezuela', f:'🇻🇪', c:'SA'},
   'HC': {n:'Ecuador', f:'🇪🇨', c:'SA'},
 
-  // Azja
+  // Asia
   'JA': {n:'Japan', f:'🇯🇵', c:'AS'},
   'JE': {n:'Japan', f:'🇯🇵', c:'AS'},
   'JF': {n:'Japan', f:'🇯🇵', c:'AS'},
@@ -387,7 +387,7 @@ const DXCC_TABLE = {
   'DW': {n:'Philippines', f:'🇵🇭', c:'AS'},
   '4F': {n:'Philippines', f:'🇵🇭', c:'AS'},
 
-  // Bliski Wschód
+  // Middle East
   '4X': {n:'Israel', f:'🇮🇱', c:'AS'},
   '4Z': {n:'Israel', f:'🇮🇱', c:'AS'},
   '9K': {n:'Kuwait', f:'🇰🇼', c:'AS'},
@@ -404,7 +404,7 @@ const DXCC_TABLE = {
   'JY': {n:'Jordan', f:'🇯🇴', c:'AS'},
   'OD': {n:'Lebanon', f:'🇱🇧', c:'AS'},
 
-  // Afryka
+  // Africa
   'ZS': {n:'S. Africa', f:'🇿🇦', c:'AF'},
   'ZR': {n:'S. Africa', f:'🇿🇦', c:'AF'},
   'ZT': {n:'S. Africa', f:'🇿🇦', c:'AF'},
@@ -438,7 +438,7 @@ const DXCC_TABLE = {
   '3D2': {n:'Fiji', f:'🇫🇯', c:'OC'},
   'A3': {n:'Tonga', f:'🇹🇴', c:'OC'},
 
-  // Rzadkie DXCC — czasem sie pojawiają
+  // Rare DXCC — occasionally show up
   'JT': {n:'Mongolia', f:'🇲🇳', c:'AS'},
   'KP2': {n:'US Virgin Is.', f:'🇻🇮', c:'NA'},
   'ZB': {n:'Gibraltar', f:'🇬🇮', c:'EU'},
@@ -450,27 +450,28 @@ const DXCC_TABLE = {
   'ZF': {n:'Cayman Is.', f:'🇰🇾', c:'NA'},
 };
 
-// Precompute posortowana lista kluczy (od najdluzszych - waznosc match)
+// Precompute a sorted list of keys (longest first - match priority)
 const _SORTED_KEYS = Object.keys(DXCC_TABLE).sort((a, b) => b.length - a.length);
 
-// Sufiksy OPERACYJNE (tryb pracy, NIE inny kraj) - "SP3MZM/P" to dalej
-// Polska, nie osobny DXCC. Odfiltrowywane PRZED probą rozpoznania
-// prawdziwego znaku zlozonego (dwa rozne kraje) ponizej.
+// OPERATING suffixes (mode of operation, NOT a different country) -
+// "SP3MZM/P" is still Poland, not a separate DXCC. Filtered out BEFORE
+// trying to resolve a genuinely compound callsign (two different
+// countries) below.
 const _OP_SUFFIXES = new Set(['P', 'M', 'MM', 'QRP', 'A', 'AM', 'MAR', 'LH', 'R']);
 
 function _matchesTable(seg) {
   return _SORTED_KEYS.some(key => seg.startsWith(key));
 }
 
-// Znak zlozony ("A/B") NIE ma ustalonej kolejnosci prefiks/znak-domowy —
-// w praktyce widuje sie oba szyki ("W1/DL3ABC" i "SP3MZM/W1"). Poprzednia
-// wersja zawsze brala PIERWSZY segment (split('/')[0]), wiec dla "SP3MZM/W1"
-// pokazywala Polske zamiast USA. Teraz: jesli tylko JEDEN segment pasuje do
-// tabeli DXCC, to on jest prefiksem lokalizacji; jesli OBA pasuja (typowe -
-// oba wygladaja jak realne znaki), krotszy zwykle jest prefiksem (znak
-// domowy jest z reguly dluzszy niz sam prefiks lokalizacji).
+// A compound callsign ("A/B") has NO fixed prefix/home-call ordering — in
+// practice both orderings show up ("W1/DL3ABC" and "SP3MZM/W1"). The
+// previous version always took the FIRST segment (split('/')[0]), so for
+// "SP3MZM/W1" it showed Poland instead of the USA. Now: if only ONE
+// segment matches the DXCC table, it's the location prefix; if BOTH match
+// (typical - both look like real callsigns), the shorter one is usually
+// the prefix (a home callsign is generally longer than a bare location prefix).
 function _resolveBase(parts) {
-  if (parts.length === 0) return ''; // np. call byl pusty/samo "/" - brak segmentow
+  if (parts.length === 0) return ''; // e.g. the call was empty/just "/" - no segments
   if (parts.length === 1) return parts[0];
   const candidates = parts.filter(p => !_OP_SUFFIXES.has(p));
   if (candidates.length === 0) return parts[0];
@@ -483,12 +484,12 @@ function _resolveBase(parts) {
   return candidates[0];
 }
 
-// Lookup: sprobuj kolejno kazdy prefix od najdluzszych
+// Lookup: try each prefix in turn, longest first
 function lookup(call) {
   if (!call) return { name: '', prefix: '', flag: '', continent: '' };
   const up = call.toUpperCase().replace(/[<>]/g, '');
   const base = _resolveBase(up.split('/').filter(Boolean));
-  // Sprobuj matchow od najdluzszych
+  // Try matches from longest to shortest
   for (const key of _SORTED_KEYS) {
     if (base.startsWith(key)) {
       const info = DXCC_TABLE[key];
