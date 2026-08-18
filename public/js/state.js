@@ -1,5 +1,5 @@
 /**
- * state.js — współdzielony stan frontendu
+ * state.js — shared frontend state
  */
 window.AppState = {
   freq:      14200000,
@@ -20,9 +20,9 @@ window.AppState = {
   modes:     [],
   rigs:      [],
   callsign:  '',
-  stationLocator: 'KO02',  // Maidenhead locator STACJI (gdzie stoi antena) —
-                           // do przeliczania azymutu rotora
-  operatorLocator: '',     // lokator ZALOGOWANEGO OPERATORA — do logu QSO/FT8
+  stationLocator: 'KO02',  // Maidenhead locator of the STATION (where the
+                           // antenna is) — for rotator azimuth calculation
+  operatorLocator: '',     // locator of the LOGGED-IN OPERATOR — for the QSO/FT8 log
   memories:  JSON.parse(localStorage.getItem('ham_memories') || '[]'),
 
   saveMemories() {
