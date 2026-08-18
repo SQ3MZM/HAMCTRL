@@ -1,32 +1,32 @@
-/* rigfeatures.js — Panel funkcji radia (pod PTT, nad waterfallem)
+/* rigfeatures.js — Radio features panel (below PTT, above the waterfall)
  *
- * Dla zwyklego usera: pokazuje przyciski tylko dla funkcji ktore admin
- * wlaczyl ORAZ radio technicznie wspiera (effective_features z backendu).
+ * For a regular user: shows buttons only for features the admin enabled
+ * AND that the radio technically supports (effective_features from the backend).
  *
- * Aktualizuje sie:
- *  - po polaczeniu WS (init)
- *  - po zmianie radia (/api/rig/connect)
- *  - po zapisaniu whitelisty przez admina (broadcast 'rig_features')
+ * Updates:
+ *  - after the WS connects (init)
+ *  - after the radio changes (/api/rig/connect)
+ *  - after the admin saves the whitelist (broadcast 'rig_features')
  *
- * Kazdy przycisk:
- *  - "freq_set"/"mode_set"/"split"/"rit" — nie generuje wlasnego przycisku
- *    (te funkcje sa juz osobnymi kontrolkami w UI VFO) — panel pokazuje je
- *    tylko jako informacje/toggle widocznosci powiazanych kontrolek
- *  - "ptt" — juz ma wlasny przycisk PTT (panel nie duplikuje)
- *  - "tx_power", "memory", "dstar", "scope", "smeter" — generuja
- *    dedykowany przycisk/link w panelu
+ * Each button:
+ *  - "freq_set"/"mode_set"/"split"/"rit" — doesn't generate its own button
+ *    (these features already have separate controls in the VFO UI) — the
+ *    panel only shows them as info/toggling the visibility of the related controls
+ *  - "ptt" — already has its own PTT button (the panel doesn't duplicate it)
+ *  - "tx_power", "memory", "dstar", "scope", "smeter" — generate a
+ *    dedicated button/link in the panel
  *
- * Mapowanie feature_id -> akcja przycisku jest w FEATURE_ACTIONS nizej.
- * Funkcje bez wpisu w FEATURE_ACTIONS sa pokazywane jako pasywny znacznik
- * (badge) informujacy ze funkcja jest dostepna, ale steruje sie nia
- * przez istniejace kontrolki gdzie indziej w UI.
+ * The feature_id -> button-action mapping is in FEATURE_ACTIONS below.
+ * Features without an entry in FEATURE_ACTIONS are shown as a passive
+ * badge indicating the feature is available, but controlled via existing
+ * controls elsewhere in the UI.
  */
 
 const RigFeatures = (() => {
 
-  // Akcje dla przyciskow w panelu — feature_id -> {onClick, toggles}
-  // 'toggles' = lista selektorow CSS elementow ktore pokazac/skryc
-  //             w zaleznosci od effective (np. slider mocy TX)
+  // Actions for the panel's buttons — feature_id -> {onClick, toggles}
+  // 'toggles' = list of CSS selectors for elements to show/hide
+  //             depending on effective (e.g. the TX power slider)
   const FEATURE_ACTIONS = {
     tx_power: {
       toggles: ['#tx-power-row', '.tx-power-control'],
@@ -55,8 +55,8 @@ const RigFeatures = (() => {
 
     wrap.innerHTML = '';
 
-    // Funkcje ktore maja wlasne kontrolki gdzie indziej — nie generuj przycisku,
-    // tylko pokaz/skryj powiazane elementy
+    // Features that have their own controls elsewhere — don't generate a
+    // button, just show/hide the related elements
     const activeIds = new Set(_active.map(f => f.id));
 
     for (const [fid, action] of Object.entries(FEATURE_ACTIONS)) {
@@ -70,7 +70,7 @@ const RigFeatures = (() => {
       }
     }
 
-    // Generuj przyciski tylko dla funkcji z onClick (nawigacyjne/akcyjne)
+    // Generate buttons only for features with onClick (navigation/action)
     let anyButton = false;
     for (const f of _active) {
       const action = FEATURE_ACTIONS[f.id];
@@ -84,7 +84,7 @@ const RigFeatures = (() => {
       wrap.appendChild(btn);
     }
 
-    // Pokaz panel tylko jesli sa jakies przyciski do wyswietlenia
+    // Show the panel only if there are buttons to display
     panel.style.display = anyButton ? '' : 'none';
   }
 
@@ -96,8 +96,9 @@ const RigFeatures = (() => {
       });
       const data = await res.json();
       if (data.ok) {
-        // Admin endpoint zwraca {features:[...]} z supported/enabled/effective;
-        // user endpoint zwraca {active:[...]}. Obsluz oba.
+        // The admin endpoint returns {features:[...]} with
+        // supported/enabled/effective; the user endpoint returns
+        // {active:[...]}. Handle both.
         if (data.active) {
           render(data.active);
         } else if (data.features) {
@@ -107,7 +108,7 @@ const RigFeatures = (() => {
         }
       }
     } catch (e) {
-      console.warn('[rigfeatures] refresh blad:', e);
+      console.warn('[rigfeatures] refresh error:', e);
     }
   }
 
@@ -124,8 +125,8 @@ const RigFeatures = (() => {
   return { refresh, render, handleWsMessage, isActive };
 })();
 
-// Odswiez po zaladowaniu strony (po autoryzacji)
+// Refresh after the page loads (after auth)
 document.addEventListener('DOMContentLoaded', () => {
-  // Malle opoznienie zeby AUTH/token byl juz dostepny
+  // Small delay so AUTH/token is already available
   setTimeout(() => RigFeatures.refresh(), 500);
 });
