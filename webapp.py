@@ -7921,14 +7921,14 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             mime_clean = mime.split(";")[0].strip()
             key = str(fpath)
 
-            # Sprawdz cache — jesli plik nie zmienil sie na dysku, uzyj z RAM
+            # Check the cache — if the file hasn't changed on disk, use the in-RAM copy
             entry = _STATIC_CACHE.get(key)
             if entry:
                 cached_mtime, raw, gz, cached_mime, etag = entry
                 try:
                     cur_mtime = fpath.stat().st_mtime
                     if cur_mtime != cached_mtime:
-                        # Plik sie zmienil — invaliduj i zaladuj ponownie
+                        # File changed — invalidate and reload
                         entry = None
                 except OSError:
                     entry = None
@@ -7937,17 +7937,17 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                 _STATIC_CACHE[key] = entry
                 _, raw, gz, _, etag = entry
 
-            # HTML (index.html/login.html) NIE MOZE dostac dlugiego max-age —
-            # to WLASNIE ten dokument decyduje, ktora wersja JS/CSS sie
-            # zaladuje (przez ?v=... w <script src>). Z max-age=3600 dla .html
-            # przegladarka mogla przez cala godzine serwowac STARY index.html
-            # (wskazujacy na STARE ?v= plikow JS) z wlasnego cache, NAWET po
-            # "twardym" odswiezeniu jesli akurat nie zresetowalo cache HTTP —
-            # zywy przypadek: user mial poprawiony kod na serwerze/w EXE
-            # (zweryfikowane wprost z archiwum), a mimo to widzial stare
-            # zachowanie w przegladarce. Krotkie assety (.js/.css) z ?v=
-            # bezpiecznie zostaja dlugo cache'owane (nowa wersja = nowy URL),
-            # ale sam .html musi byc zawsze rewalidowany.
+            # HTML (index.html/login.html) MUST NOT get a long max-age —
+            # this document is EXACTLY what decides which version of JS/CSS
+            # loads (via ?v=... in <script src>). With max-age=3600 for
+            # .html, the browser could serve the OLD index.html (pointing
+            # at OLD ?v= of the JS files) from its own cache for a whole
+            # hour, EVEN after a "hard" refresh if the HTTP cache didn't
+            # happen to get reset — a live case: the user had fixed code on
+            # the server/in the EXE (verified directly from the archive),
+            # yet still saw the old behavior in the browser. Short-lived
+            # assets (.js/.css) with ?v= are safely cached long-term (a new
+            # version = a new URL), but the .html itself must always be revalidated.
             _cc = "no-cache" if ext in (".html", ".htm") else "public, max-age=3600, must-revalidate"
 
             # If-None-Match — HTTP 304 (client cache hit)
@@ -7958,7 +7958,7 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                     "Cache-Control": _cc,
                 })
 
-            # Wybierz body: gzip jesli klient akceptuje i mamy pre-compressed
+            # Choose the body: gzip if the client accepts it and we have a pre-compressed one
             accept_enc = request.headers.get("Accept-Encoding", "")
             body = raw
             headers = {
