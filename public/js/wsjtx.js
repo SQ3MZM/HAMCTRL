@@ -1311,12 +1311,12 @@ function rotorGoBeam(which) {
   _rotorSetAz(az, which.toUpperCase());
 }
 
-// Reczne przesuniecie rotora na DOWOLNY azymut lub lokator — SP/LP daja
-// tylko policzony kierunek na aktualnie wybrana stacje, brakowalo sposobu
-// na wpisanie wlasnego celu (zglaszone na zywo). Wlasny modal (#rotor-manual-
-// modal w index.html) zamiast prompt() — prompt() jest SYNCHRONICZNY i
-// blokuje caly glowny watek JS dopoki user go nie zamknie, co na zywo
-// zawieszalo streaming audio (WebAudio/WebRTC) do czasu zamkniecia okienka.
+// Manually move the rotator to ANY azimuth or locator — SP/LP only give
+// the computed heading to the currently selected station, there was no
+// way to type in a custom target. A custom modal (#rotor-manual-modal in
+// index.html) instead of prompt() — prompt() is SYNCHRONOUS and blocks
+// the entire main JS thread until the user closes it, which live froze
+// audio streaming (WebAudio/WebRTC) until the dialog was closed.
 function rotorGoManual() {
   if (!_rotorId) { window.UI?.showToast?.(I18n.t('wj_toast_no_rotor'), 'error'); return; }
   const modal = document.getElementById('rotor-manual-modal');
@@ -1349,24 +1349,26 @@ function rotorManualSubmit() {
   _rotorSetAz(az, raw.toUpperCase());
 }
 
-// ── TX makra ──────────────────────────────────────────────────────────────────
-// Raport dla makra 3 (R+raport): potwierdzam odbior + moj ZMIERZONY raport
-// sygnalu partnera (nie nasz grid!). JEDNO miejsce dla tej logiki, uzywane
-// zarowno przez _txMacroParts (co faktycznie leci w eter) jak i
-// _updateMacroTexts (podglad tekstu pod przyciskiem) — wczesniej to byly
-// DWIE osobne kopie i tylko jedna z nich zamrazala raport, wiec podglad pod
-// przyciskiem migotal/zmienial sie co dekod mimo ze faktyczna transmisja
-// poprawnie trzymala jedna, zamrozona wartosc przez cale QSO.
-// ZAMROZONY raport: gdy QSO aktywne, pokazuj WYLACZNIE potwierdzona przez
-// backend zamrozona wartosc (albo neutralny placeholder do czasu az sie
-// pojawi) - NIGDY _lastDxSnr w tej fazie. _lastDxSnr to SNR z OSTATNIO
-// KLIKNIETEGO wiersza dekodu, ktory podczas pelnej automatyki (Call 1st,
-// nikt nie klika recznie) jest zupelnie niepowiazany z biezacym partnerem
-// - dawalo to wiarygodnie wygladajaca, ale przypadkowa liczbe zanim
-// backend zdazyl zamrozic prawdziwy raport (np. w fazie wysylania
-// wlasnego Tx1/grida, przed otrzymaniem raportu od partnera). Poza
-// aktywnym QSO (reczne makro przed startem automatyki) — biezacy
-// _lastDxSnr nadal ma sens, bo to jedyne dostepne zrodlo.
+// ── TX macros ─────────────────────────────────────────────────────────────────
+// Report for macro 3 (R+report): acknowledging receipt + my MEASURED
+// report of the partner's signal (not our grid!). ONE place for this
+// logic, used both by _txMacroParts (what actually goes on air) and
+// _updateMacroTexts (the text preview under the button) — these used to
+// be TWO separate copies and only one of them froze the report, so the
+// preview under the button flickered/changed with every decode even
+// though the actual transmission correctly held one, frozen value for
+// the whole QSO.
+// FROZEN report: while a QSO is active, show EXCLUSIVELY the
+// backend-confirmed frozen value (or a neutral placeholder until it
+// appears) - NEVER _lastDxSnr during this phase. _lastDxSnr is the SNR of
+// the LAST CLICKED decode row, which during full automation (Call 1st,
+// nobody clicking manually) is completely unrelated to the current
+// partner - it gave a plausible-looking but random number before the
+// backend got around to freezing the real report (e.g. during the phase
+// of sending our own Tx1/grid, before receiving a report from the
+// partner). Outside an active QSO (a manual macro before automation
+// starts) — the current _lastDxSnr still makes sense, since it's the only
+// source available.
 function _macro3Report() {
   if (_autoQsoState && _autoQsoState !== 'IDLE') {
     return _frozenRstSent || '+00';
@@ -1376,8 +1378,8 @@ function _macro3Report() {
   return sign + String(Math.abs(snr)).padStart(2, '0');
 }
 
-// Strukturalna definicja makr F1-F7: [callTo, callDe, report].
-// callTo/callDe='CQ' oznacza specjalne slowo CQ (nie callsign).
+// Structured definition of macros F1-F7: [callTo, callDe, report].
+// callTo/callDe='CQ' means the special word CQ (not a callsign).
 function _txMacroParts(n) {
   const myCall = _myCall || '';
   const myGrid = _myGrid || window.CurrentUser?.locator || '';
@@ -1413,7 +1415,7 @@ function _updateMacroTexts() {
 }
 
 function sendTx(n) {
-  window.FT8Timer?.reset();  // reczne TX = dowod obecnosci, patrz _selectRow
+  window.FT8Timer?.reset();  // manual TX = proof of presence, see _selectRow
   const textEl = document.getElementById(`wj-tx${n}-text`);
   if (!textEl) return;
   const parts = _txMacroParts(n);
@@ -1444,13 +1446,14 @@ function sendTx(n) {
   });
 }
 
-// Reaguj na statusy nadawania z backendu (PTT/audio sequence)
-// Rozpoznaje ktory numer makra (1-5) odpowiada faktycznie wysylanej tresci
-// `text` (np. "SP3GSK DL1ABC RRR"), na podstawie ostatniego "slowa"
-// (raport/grid/RRR/73/RR73) — niezalezne od tego czy transmisja wystartowala
-// z recznego klikniecia (sendTx) czy z automatyki QSO (backend generuje
-// tresc bezposrednio, bez przechodzenia przez sendTx), wiec to JEDYNY
-// niezawodny sposob podswietlenia "co realnie poleci w eter" w obu trybach.
+// React to TX status updates from the backend (PTT/audio sequence)
+// Determines which macro number (1-5) corresponds to the `text` actually
+// being sent (e.g. "SP3GSK DL1ABC RRR"), based on the last "word"
+// (report/grid/RRR/73/RR73) — regardless of whether the transmission
+// started from a manual click (sendTx) or from QSO automation (the
+// backend generates the text directly, without going through sendTx), so
+// this is the ONLY reliable way to highlight "what's actually going on
+// air" in both modes.
 function _macroNumberForText(text) {
   if (!text) return null;
   const upper = text.toUpperCase().trim();
@@ -1459,23 +1462,24 @@ function _macroNumberForText(text) {
   if (lastWord === 'RR73') return 6;
   if (lastWord === '73')   return 5;
   if (lastWord === 'RRR')  return 4;
-  // Raport z prefixem "R" (np. "R-18") to potwierdzenie + zmierzony raport —
-  // odrebne makro od pierwszego raportu/grida (ktory NIE ma prefixu R).
+  // A report with an "R" prefix (e.g. "R-18") is an acknowledgment +
+  // measured report — a different macro from the first report/grid
+  // (which has NO R prefix).
   if (/^R[+-]\d+$/.test(lastWord)) return 3;
-  // Pozostale przypadki to pierwszy raport liczbowy (np. "-12") lub grid
-  // (np. "JO72") wymiany — oba odpowiadaja makru 2.
+  // The remaining cases are the first numeric report (e.g. "-12") or a
+  // grid (e.g. "JO72") exchange — both correspond to macro 2.
   return 2;
 }
 
-// Licznik oczekiwania na okno TX. Wczesniej jedynym sygnalem byl znikajacy
-// toast (parka sekund) — po jego zniknieciu przez reszte kilkunastu sekund
-// oczekiwania UI nie dawalo ZADNEGO widocznego znaku ze cos sie dzieje, wiec
-// wygladalo na zawieszone i operator recznie przerywal ("abort") zanim TX
-// w ogole ruszyl. Trwaly, odliczajacy wskaznik (wj-tx-wait-status) zamiast
-// tego, zeby bylo jasno widac ze to normalne odliczanie do granicy okna
-// 15s/7.5s UTC, nie blad.
+// TX-window wait countdown. It used to be that the only signal was a
+// disappearing toast (a couple of seconds) — after it disappeared, for
+// the rest of the up-to-a-dozen-odd seconds of waiting the UI gave NO
+// visible sign anything was happening, so it looked stuck and the
+// operator would manually abort before TX even started. A persistent,
+// counting-down indicator (wj-tx-wait-status) instead, so it's clearly
+// visible this is a normal countdown to the 15s/7.5s UTC window boundary, not a bug.
 let _txWaitTimer = null;
-let _txWaitTarget = 0; // Date.now() (ms) w ktorym TX ma faktycznie wystartowac
+let _txWaitTarget = 0; // Date.now() (ms) at which TX should actually start
 
 function _stopTxWaitCountdown() {
   if (_txWaitTimer) { clearInterval(_txWaitTimer); _txWaitTimer = null; }
@@ -1503,10 +1507,10 @@ function _onFt8TxStatus(d) {
   if (d.status === 'waiting') {
     window.UI?.showToast(I18n.t('wj_toast_waiting_window').replace('{s}', (d.waitSeconds||0).toFixed(1)).replace('{text}', d.text));
     _startTxWaitCountdown(d.waitSeconds||0, d.text);
-    // Podswietl JUZ na etapie oczekiwania (nie dopiero przy starcie nadawania),
-    // zeby bylo widac co poleci w eter zanim faktycznie zacznie sie PTT —
-    // to wlasnie najbardziej przydaje sie w automatyce, gdzie oczekiwanie na
-    // okno moze trwac kilka-kilkanascie sekund.
+    // Highlight ALREADY at the waiting stage (not only once transmitting
+    // starts), so it's visible what will go on air before PTT actually
+    // fires — this is most useful in automation, where waiting for the
+    // window can take several-odd seconds.
     const n = _macroNumberForText(d.text);
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
@@ -1529,19 +1533,20 @@ function _onFt8TxStatus(d) {
 }
 
 // ── QSO Log ───────────────────────────────────────────────────────────────────
-// Prawdziwy log to /api/qsolog (baza qso_db) - TA SAMA co pelna strona LOG QSO
-// (qsolog.js), automatyczne zapisywanie QSO z FT8 i sprawdzanie "juz zrobione"
-// (patrz _isWorkedHere/_loadWorkedCalls wyzej). Panel "SZYBKI ZAPIS QSO" tutaj
-// dawniej pisal/czytal z ZUPELNIE INNEGO, osobnego magazynu (/api/log,
-// self.log w webapp.py) - QSO dodane tym formularzem nigdy nie trafialy do
-// prawdziwego logu, nie liczyly sie jako "juz zrobione", nie szly do
-// CloudLog. Naprawione 2026-08-15 - patrz identyczna poprawka w webapp.py
-// (usuniete /api/log*, self.log; dodany broadcast "qso_logged" do
-// /api/qsolog POST tak samo jak juz mial auto-zapis z automatyki).
+// The real log is /api/qsolog (the qso_db database) - the SAME one as the
+// full LOG QSO page (qsolog.js), automatic QSO saving from FT8, and the
+// "already worked" check (see _isWorkedHere/_loadWorkedCalls above). The
+// "QUICK QSO LOG" panel here used to write/read from a COMPLETELY
+// DIFFERENT, separate store (/api/log, self.log in webapp.py) - QSOs
+// added through this form never made it into the real log, weren't
+// counted as "already worked", and didn't go to CloudLog. Fixed - see the
+// identical fix in webapp.py (removed /api/log*, self.log; added a
+// "qso_logged" broadcast to /api/qsolog POST, the same as the automation's
+// auto-save already had).
 
-// Pobiera ostatnie MINI_LOG_MAX QSO do wstepnego wypelnienia mini-logu przy
-// starcie strony - potem trzyma sie na biezaco przez broadcast "qso_logged"
-// (_onQsoLogged), bez ponownego odpytywania.
+// Fetches the last MINI_LOG_MAX QSOs to pre-fill the mini-log on page
+// load - kept up to date afterward via the "qso_logged" broadcast
+// (_onQsoLogged), with no re-fetching.
 async function _loadMiniLog() {
   try {
     const token = localStorage.getItem('token') || '';
