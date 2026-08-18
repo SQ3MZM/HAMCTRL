@@ -1,11 +1,11 @@
 /**
- * callbook.js — ustawienia lookupu QRZ.com / HamQTH (USTAWIENIA) + lookup
- * wywolywany z formularza QSO (qsolog.js woła Callbook.lookup(call)).
+ * callbook.js — QRZ.com / HamQTH lookup settings (SETTINGS) + lookup
+ * called from the QSO form (qsolog.js calls Callbook.lookup(call)).
  */
 (function () {
 'use strict';
 
-// ── Ustawienia (USTAWIENIA) ───────────────────────────────────────────────────
+// ── Settings (SETTINGS) ────────────────────────────────────────────────────
 async function load() {
   try {
     const r = await fetch('/api/callbook/config');
@@ -68,7 +68,7 @@ async function test(service) {
   }
 }
 
-// ── Lookup (wolane z formularza QSO) ──────────────────────────────────────────
+// ── Lookup (called from the QSO form) ──────────────────────────────────────
 async function lookup(call) {
   if (!call) return null;
   try {
