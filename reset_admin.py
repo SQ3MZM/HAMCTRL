@@ -2,7 +2,7 @@
 reset_admin.py — Emergency admin password reset (run from the console).
 
 Usage:
-    cd C:\\Users\\sp3gsk\\ham
+    cd D:\\HAMCTRL          (or wherever this script lives)
     py reset_admin.py
 
 Interactively asks for a new password and updates users.json.
@@ -11,7 +11,9 @@ script on the server (NOT remotely) to restore access.
 
 Requires:
 - Python 3.9+
-- users.json in the same path as the script (or in `ham/` next to it)
+- users.json reachable via config.py's data directory (dev: next to this
+  script; installed EXE: %APPDATA%\\HAMCTRL - see config._writable_data_dir),
+  or next to this script / in the current directory as a fallback.
 """
 
 import hashlib
@@ -31,15 +33,26 @@ def hash_pw(pw: str) -> str:
         return hashlib.sha256(pw.encode()).hexdigest()
 
 
+def _candidate_paths() -> list[Path]:
+    """users.json locations to try, in priority order. The first one uses
+    config.py's own logic for finding the app's writable data directory
+    (handles dev / portable-next-to-EXE / %APPDATA%\\HAMCTRL correctly) -
+    that's the authoritative location the running app actually reads/writes.
+    The rest are plain fallbacks in case config.py can't be imported."""
+    candidates = []
+    try:
+        from config import USR_F
+        candidates.append(USR_F)
+    except Exception:
+        pass
+    candidates.append(Path(__file__).parent / "users.json")
+    candidates.append(Path.cwd() / "users.json")
+    return candidates
+
+
 def find_users_json() -> Path:
-    """Find users.json - in BASE (ham/) or in the current working directory."""
-    candidates = [
-        Path(__file__).parent / "ham" / "users.json",  # C:\Users\sp3gsk\ham\ham\users.json
-        Path(__file__).parent / "users.json",          # C:\Users\sp3gsk\ham\users.json
-        Path.cwd() / "ham" / "users.json",
-        Path.cwd() / "users.json",
-    ]
-    for c in candidates:
+    """Find users.json - see _candidate_paths() for the search order."""
+    for c in _candidate_paths():
         if c.exists():
             return c
     return None
@@ -54,12 +67,7 @@ def main():
     if not usr_f:
         print("ERROR: could not find users.json")
         print("Checked locations:")
-        for c in [
-            Path(__file__).parent / "ham" / "users.json",
-            Path(__file__).parent / "users.json",
-            Path.cwd() / "ham" / "users.json",
-            Path.cwd() / "users.json",
-        ]:
+        for c in _candidate_paths():
             print(f"  {c}")
         sys.exit(1)
 
