@@ -1,29 +1,29 @@
 """
-qso_engine.py — silnik automatycznego prowadzenia QSO wg standardowej
-sekwencji protokolu FT8.
+qso_engine.py — automatic QSO engine following the standard FT8 protocol
+sequence.
 
-Czysta logika (bez asyncio/sieci), latwa do testowania w izolacji.
-Odpowiada za:
-  1. Parsowanie odebranych wiadomosci FT8 (kto/do kogo/co).
-  2. Maszyne stanow pojedynczego QSO (Tx1..Tx5, klasyczna sekwencja RRR->73).
-  3. Kolejke stacji odpowiadajacych na nasze CQ ("Call 1st" / FIFO).
+Pure logic (no asyncio/networking), easy to test in isolation.
+Responsible for:
+  1. Parsing received FT8 messages (who/to whom/what).
+  2. The state machine of a single QSO (Tx1..Tx5, classic RRR->73 sequence).
+  3. The queue of stations answering our CQ ("Call 1st" / FIFO).
 
-Standardowa sekwencja wiadomosci auto-QSO (gdy MY zaczynamy, odpowiadajac
-na cudze CQ — czyli Tx1 jako pierwszy krok):
-  Tx1: <ICH_CALL> <NASZ_CALL> <NASZ_GRID>
-  Tx2: <ICH_CALL> <NASZ_CALL> <RAPORT_SNR>           (gdy oni nam wysyla raport)
-  Tx3: <ICH_CALL> <NASZ_CALL> R<RAPORT_SNR>          (potwierdzenie + nasz raport)
-  Tx4: <ICH_CALL> <NASZ_CALL> RRR                    (potwierdzenie odbioru raportu)
-  Tx5: <ICH_CALL> <NASZ_CALL> 73                     (pozegnanie, koniec QSO)
+Standard auto-QSO message sequence (when WE start, answering someone else's
+CQ — i.e. Tx1 as the first step):
+  Tx1: <THEIR_CALL> <OUR_CALL> <OUR_GRID>
+  Tx2: <THEIR_CALL> <OUR_CALL> <SNR_REPORT>          (when they send us a report)
+  Tx3: <THEIR_CALL> <OUR_CALL> R<SNR_REPORT>         (ack + our report)
+  Tx4: <THEIR_CALL> <OUR_CALL> RRR                   (ack of received report)
+  Tx5: <THEIR_CALL> <OUR_CALL> 73                    (sign-off, QSO end)
 
-Gdy MY wolamy CQ i KTOS nam odpowiada, sekwencja startuje od Tx2 (bo Tx1
-to ich pierwsza wiadomosc do nas, na ktora odpowiadamy raportem).
+When WE call CQ and SOMEONE answers us, the sequence starts at Tx2 (Tx1 is
+their first message to us, which we answer with a report).
 
-Ta implementacja uzywa klasycznej (nie skroconej RR73) koncowki: osobne
-Tx4=RRR i Tx5=73, zgodnie z wyborem uzytkownika — RRR wysylane natychmiast
-po otrzymaniu raportu, 73 wysylane dopiero gdy partner potwierdzi (wysle
-RRR lub 73 ze swojej strony). To wierniej odwzorowuje tradycyjna sekwencje
-auto-sequencing niz nowszy skrot RR73.
+This implementation uses the classic (not the shortened RR73) ending:
+separate Tx4=RRR and Tx5=73, per the user's choice — RRR is sent immediately
+upon receiving a report, 73 is sent only once the partner confirms (sends
+RRR or 73 on their side). This mirrors the traditional auto-sequencing
+sequence more closely than the newer RR73 shortcut.
 """
 
 import re
@@ -31,19 +31,18 @@ import time
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Parsowanie wiadomosci FT8
+# FT8 message parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
-# CQ MODIFIERS - lista wszystkich znanych modyfikatorow uzywanych na FT8.
-# Format: "CQ <MODIFIER> <CALL> <GRID>" np. "CQ POTA W1XYZ FN42".
-# Modifiery to slowa 2-6 znakow ktore nie sa callsignami. Wiekszosc to skroty
-# programow zawodowych/aktywacji (POTA, SOTA), regionow (EU, NA, AS) lub
-# kraje (USA, JA, DL). Pelen zestaw z powszechnie przyjetej praktyki na
-# pasmie amatorskim.
+# CQ MODIFIERS - list of all known modifiers used on FT8.
+# Format: "CQ <MODIFIER> <CALL> <GRID>" e.g. "CQ POTA W1XYZ FN42".
+# Modifiers are 2-6 character words that aren't callsigns. Most are
+# abbreviations of activation programs (POTA, SOTA), regions (EU, NA, AS)
+# or countries (USA, JA, DL). Full set from common ham band practice.
 _CQ_MODIFIERS = frozenset({
-    # Kierunkowe / regionalne (kontynenty i regiony)
+    # Directional / regional (continents and regions)
     "DX", "NA", "SA", "EU", "AS", "AF", "OC", "WW", "WWDX",
-    # Kraje (prefixy 1-4 znaki) - najczestsze
+    # Countries (1-4 char prefixes) - most common
     "USA", "JA", "DL", "F", "G", "GM", "GI", "GW", "GD", "GJ",
     "PA", "OE", "OK", "OM", "SP", "SM", "OZ", "LA", "OH", "OY",
     "EA", "CT", "I", "IT", "IS", "S5", "9A", "T7", "T9", "E7",
@@ -51,41 +50,41 @@ _CQ_MODIFIERS = frozenset({
     "VE", "VK", "ZL", "ZS", "ZL7", "KH6", "KL7", "PY", "LU", "CE",
     "HK", "HC", "HI", "HP", "TI", "TG", "XE", "CO", "9Y", "8P",
     "VP", "VP2", "VP6", "VP8", "VP9",
-    # Contesty i eventy
+    # Contests and events
     "TEST", "CONTEST", "SPRINT", "FD", "FIELD",
-    # Programy aktywacji
+    # Activation programs
     "POTA", "SOTA", "IOTA", "WWFF", "COTA", "BUNKER", "REF",
     "USI", "USIS", "ILLW", "WCA", "WFF", "TQP",
-    # Kluby i organizacje
+    # Clubs and organizations
     "ARRL", "RSGB", "DARC", "IARU", "SP",
-    # Moc
+    # Power
     "QRP", "QRO", "QRPP",
-    # Specjalne
+    # Special
     "FF", "SKCC", "SOWP", "PODXS",
 })
 
-# Znane suffixy w callsignie (po "/")
-# Uwaga: portable district /0..9 obslugujemy osobno jako regex.
+# Known callsign suffixes (after "/")
+# Note: portable district /0..9 is handled separately as a regex.
 _CALL_SUFFIXES = frozenset({
-    "M",     # mobile (samochod)
-    "MM",    # maritime mobile (statek)
-    "AM",    # aeronautical mobile (samolot)
-    "P",     # portable (przenosny)
+    "M",     # mobile
+    "MM",    # maritime mobile
+    "AM",    # aeronautical mobile
+    "P",     # portable
     "QRP",   # low power
     "QRPP",  # very low power
     "LH",    # lighthouse
 })
 
-# Regex portable district: /0 do /9
+# Regex for portable district: /0 to /9
 _PORTABLE_DISTRICT_RE = re.compile(r'^\d$')
 
-# Format callsigna amatorskiego: 1-2 litery, 0-1 cyfra, 1-2 litery, cyfra, 1-4 litery
-# Uproszczone: 3-8 znakow, ma co najmniej 1 cyfre i co najmniej 1 litere
+# Amateur callsign format: 1-2 letters, 0-1 digit, 1-2 letters, digit, 1-4 letters
+# Simplified: 3-8 chars, at least 1 digit and at least 1 letter
 _CALLSIGN_RE = re.compile(r'^[A-Z0-9]{3,8}$')
 
 
 def is_valid_callsign(s: str) -> bool:
-    """Czy string wyglada jak callsign amatorski (bez suffixow/prefixow)."""
+    """Whether a string looks like an amateur callsign (without suffix/prefix)."""
     if not s or not _CALLSIGN_RE.fullmatch(s):
         return False
     has_digit  = any(c.isdigit() for c in s)
@@ -94,83 +93,83 @@ def is_valid_callsign(s: str) -> bool:
 
 
 def is_cq_modifier(s: str) -> bool:
-    """Czy string wyglada jak modifier CQ (POTA, DX, USA itp.).
+    """Whether a string looks like a CQ modifier (POTA, DX, USA, etc.).
 
-    Klasyfikacja: (1) whitelist znanych modifierow, LUB
-    (2) 2-6 znakow, bez cyfr (jesli ma cyfry - to raczej callsign albo prefix).
-    Uwaga: to jest heurystyka - w rzadkich przypadkach cos w stylu 'K7RA'
-    zostanie zle sklasyfikowane, ale dla 99% praktyki na pasmie dziala.
+    Classification: (1) whitelist of known modifiers, OR
+    (2) 2-6 characters, no digits (if it has digits it's more likely a
+    callsign or prefix).
+    Note: this is a heuristic — in rare cases something like 'K7RA' will be
+    misclassified, but it works for 99% of on-air practice.
 
-    (2) jest CELOWO ogolna, nie kolejnym wpisem do whitelisty: prawdziwy
-    znak amatorski ZAWSZE zawiera cyfre (patrz is_valid_callsign wyzej),
-    wiec kazdy czysto literowy string do 6 znakow jest bezpiecznie
-    klasyfikowany jako modifier bez wymieniania z nazwy kazdego programu
-    aktywacyjnego osobno. Znaleziono 2026-08-15: whitelist mial explicite
-    POTA/SOTA ale NIE BOTA (Bunkers on the Air) - kod faktycznie
-    sprawdzal `len(s) <= 3`, mimo ze ten docstring od zawsze mowil "2-6" -
-    niezgodnosc kodu z opisem, nie tylko brakujacy wpis. Naprawiono przez
-    poprawienie granicy do faktycznych 6 zamiast dopisywania kolejnych
-    4-6-literowych skrotow (COTA/GOTA/HOTA/LOTA/MOTA/VOTA/WOTA/ZOTA/...) na
-    sztywno - ta sama poprawka jest zwierciedlona w _isCqModifier (JS,
-    wsjtx.js) po stronie frontu, ktory ma wlasny, mniejszy podzbior
-    whitelisty."""
+    (2) is DELIBERATELY generic rather than another whitelist entry: a real
+    amateur callsign ALWAYS contains a digit (see is_valid_callsign above),
+    so any purely alphabetic string up to 6 characters is safely classified
+    as a modifier without having to enumerate every activation program by
+    name. The whitelist previously had POTA/SOTA explicitly but not BOTA
+    (Bunkers on the Air) — the code actually checked `len(s) <= 3`, even
+    though this docstring always said "2-6": a code/description mismatch,
+    not just a missing entry. Fixed by correcting the boundary to the
+    actual 6 instead of hardcoding more 4-6-letter abbreviations
+    (COTA/GOTA/HOTA/LOTA/MOTA/VOTA/WOTA/ZOTA/...) one by one — the same fix
+    is mirrored in _isCqModifier (JS, wsjtx.js) on the frontend side, which
+    has its own, smaller whitelist subset."""
     if not s:
         return False
     if s in _CQ_MODIFIERS:
         return True
-    # Fallback: krotki string bez cyfr moze byc modifierem (np. rzadki kraj
-    # lub nieujety w whiteliscie program aktywacyjny) - MUSI byc bez cyfr,
-    # bo prawdziwy znak amatorski zawsze ma przynajmniej jedna.
+    # Fallback: a short string with no digits may be a modifier (e.g. a
+    # rare country or an activation program not in the whitelist) - MUST
+    # have no digits, since a real amateur callsign always has at least one.
     if len(s) <= 6 and s.isalpha():
         return True
     return False
 
 
 def strip_suffix(call: str) -> tuple:
-    """Rozdziel callsign na (base_call, suffix, prefix).
+    """Split a callsign into (base_call, suffix, prefix).
 
-    Obsluguje:
+    Handles:
       - XX0XXX/M       -> base=XX0XXX, suffix=M,   prefix=None
       - XX0XXX/MM      -> base=XX0XXX, suffix=MM,  prefix=None
       - XX0XXX/P       -> base=XX0XXX, suffix=P,   prefix=None
       - XX0XXX/QRP     -> base=XX0XXX, suffix=QRP, prefix=None
       - W1AB/2         -> base=W1AB,   suffix='2', prefix=None (portable district)
-      - W1/DL3ABC      -> base=DL3ABC, suffix=None, prefix=W1 (op w innym kraju)
-      - W1/DL3ABC/P    -> base=DL3ABC, suffix=P,   prefix=W1 (op portable w innym kraju)
+      - W1/DL3ABC      -> base=DL3ABC, suffix=None, prefix=W1 (operating from another country)
+      - W1/DL3ABC/P    -> base=DL3ABC, suffix=P,   prefix=W1 (portable, operating from another country)
       - XX0XXX         -> base=XX0XXX, suffix=None, prefix=None
-      - Puste/brak     -> (call, None, None)
+      - Empty/missing  -> (call, None, None)
 
-    Uwaga: base_call to callsign uzywany do DXCC lookup i porownania QSO
-    (te same stacje bez wzgledu na /M vs stacjonarny). suffix i prefix
-    pozostaja do wyswietlania i uzycia w wiadomosciach TX (musimy je
-    zachowac zeby stacja rozpoznala ze do niej mowimy)."""
+    Note: base_call is the callsign used for DXCC lookup and QSO comparison
+    (same station regardless of /M vs fixed). suffix and prefix are kept
+    for display and for use in TX messages (must be preserved so the
+    station recognizes we're addressing it)."""
     if not call:
         return (call, None, None)
     parts = call.split('/')
     if len(parts) == 1:
         return (call, None, None)
     if len(parts) == 2:
-        # Moze byc: BASE/SUFFIX lub PREFIX/BASE
+        # Could be: BASE/SUFFIX or PREFIX/BASE
         a, b = parts
-        # Jesli b to znany suffix albo cyfra portable district
+        # If b is a known suffix or a portable-district digit
         if b in _CALL_SUFFIXES or _PORTABLE_DISTRICT_RE.fullmatch(b):
             return (a, b, None)
-        # Jesli a jest bardzo krotkie (1-3 znaki) i b wyglada jak callsign
-        # -> a to prefix (kraj/region), b to base
+        # If a is very short (1-3 chars) and b looks like a callsign
+        # -> a is the prefix (country/region), b is the base
         if len(a) <= 3 and is_valid_callsign(b):
             return (b, None, a)
-        # Fallback: traktuj jako BASE/SUFFIX (nawet nieznany)
+        # Fallback: treat as BASE/SUFFIX (even if unknown)
         return (a, b, None)
     if len(parts) >= 3:
-        # PREFIX/BASE/SUFFIX np. W1/DL3ABC/P
+        # PREFIX/BASE/SUFFIX e.g. W1/DL3ABC/P
         prefix, base, suffix = parts[0], parts[1], parts[2]
         return (base, suffix, prefix)
     return (call, None, None)
 
 
 def base_call(call: str) -> str:
-    """Wyciagnij base callsign (bez suffix/prefix). Uzywane do DXCC lookup
-    i porownania czy to ta sama stacja."""
+    """Extract the base callsign (without suffix/prefix). Used for DXCC
+    lookup and to compare whether it's the same station."""
     b, _, _ = strip_suffix(call)
     return b
 
@@ -178,25 +177,26 @@ def base_call(call: str) -> str:
 def parse_dxpedition_message(call_to: str, call_de: str, sender_call: str,
                               report: str, my_call: str):
     """
-    Buduje dict w TYM SAMYM ksztalcie co parse_message(), ale z pol
-    wiadomosci typu 0.1 (i3=0, n3=1 - "FT8 DXpedition"/Fox, patrz
-    unpack_type0_1 w ham_audio/src/decode/unpack.rs). Ta wiadomosc NIE ma
-    zwyklej semantyki TO/DE: call_to/call_de to dwaj ROZNI Houndowie (jeden
-    dostaje RR73, drugi dostaje nowy raport) w JEDNEJ transmisji Foxa,
-    prawdziwy nadawca jest osobno jako sender_call (rozwiazany 10-bitowy
-    hash jego znaku, moze byc "..." jesli jeszcze nierozpoznany).
+    Builds a dict in the SAME shape as parse_message(), but from the fields
+    of a type 0.1 message (i3=0, n3=1 - "FT8 DXpedition"/Fox, see
+    unpack_type0_1 in ham_audio/src/decode/unpack.rs). This message does
+    NOT have normal TO/DE semantics: call_to/call_de are two DIFFERENT
+    Hounds (one gets RR73, the other gets a new report) in a SINGLE Fox
+    transmission; the actual sender is given separately as sender_call
+    (the resolved 10-bit hash of its callsign, may be "..." if not yet
+    resolved).
 
-    Uzywane NIE TYLKO przez tryb Hound (ktory czyta te pola bezposrednio w
-    _houndOnDecode w wsjtx.js) - stacje na MSHV w trybie "Multi Answering"
-    uzywaja TEGO SAMEGO formatu wiadomosci nawet w zwyklych, codziennych
-    QSO (nie tylko prawdziwe DXpedycje - potwierdzone: nowsze wersje MSHV
-    Multistream sa nie do odroznienia od Fox/Hound na poziomie samej
-    transmisji), wiec GLOWNY automat (Call 1st / zwykle QSO) tez musi to
-    rozumiec - inaczej QSO z taka stacja nigdy nie domknie sie w logu (ich
-    koncowe RR73 albo zaproszenie z raportem po prostu by zniknelo).
+    Used NOT ONLY by Hound mode (which reads these fields directly in
+    _houndOnDecode in wsjtx.js) - stations running MSHV in "Multi Answering"
+    mode use THIS SAME message format even in ordinary, everyday QSOs (not
+    just real DXpeditions - confirmed: newer MSHV Multistream versions are
+    indistinguishable from Fox/Hound at the transmission level), so the
+    MAIN engine (Call 1st / normal QSO) also has to understand this -
+    otherwise a QSO with such a station would never close out in the log
+    (their final RR73 or report invitation would simply be dropped).
 
-    Zwraca None jesli wiadomosc nie dotyczy nas w ogole (ani call_to, ani
-    call_de nie jest naszym znakiem).
+    Returns None if the message doesn't concern us at all (neither call_to
+    nor call_de is our own callsign).
     """
     my = (my_call or "").upper()
     call_to = (call_to or "").strip().upper()
@@ -207,9 +207,9 @@ def parse_dxpedition_message(call_to: str, call_de: str, sender_call: str,
     report = (report or "").strip()
 
     if call_to == my:
-        # Do nas: nadawca (Fox albo stacja MSHV Multistream) mowi RR73 -
-        # QSO zakonczone. call_de to INNY Hound (nie my) - uzywamy go tylko
-        # jako fallback gdy sender_call jeszcze nie rozpoznany.
+        # Addressed to us: the sender (Fox or an MSHV Multistream station)
+        # is saying RR73 - QSO complete. call_de is the OTHER Hound (not
+        # us) - used only as a fallback when sender_call isn't resolved yet.
         de = sender or call_de
         de_base, de_suffix, de_prefix = strip_suffix(de) if de else (None, None, None)
         return {'call_to': my, 'call_de': de, 'extra': None,
@@ -219,9 +219,10 @@ def parse_dxpedition_message(call_to: str, call_de: str, sender_call: str,
                 'to_base': base_call(my)}
 
     if call_de == my:
-        # Do nas: nadawca zaprasza nas z NOWYM raportem (surowy, bez R-
-        # prefix - jak Tx1/Tx2 w normalnej sekwencji). call_to to INNY
-        # Hound (ten co dostal RR73 w TEJ SAMEJ transmisji), nie my.
+        # Addressed to us: the sender invites us with a NEW report (raw, no
+        # R- prefix - like Tx1/Tx2 in a normal sequence). call_to is the
+        # OTHER Hound (the one that got RR73 in this SAME transmission),
+        # not us.
         de = sender or call_to
         de_base, de_suffix, de_prefix = strip_suffix(de) if de else (None, None, None)
         return {'call_to': my, 'call_de': de, 'extra': None,
@@ -230,35 +231,35 @@ def parse_dxpedition_message(call_to: str, call_de: str, sender_call: str,
                 'de_base': de_base, 'de_suffix': de_suffix, 'de_prefix': de_prefix,
                 'to_base': base_call(my)}
 
-    return None  # dotyczy dwoch innych Houndow - nas nie obchodzi
+    return None  # concerns two other Hounds - not our business
 
 
 def parse_message(message: str):
     """
-    Rozbija zdekodowana wiadomosc FT8 na skladowe.
-    Zwraca dict: {call_to, call_de, extra, is_cq, is_rrr, is_73, is_rr73, report,
+    Splits a decoded FT8 message into its components.
+    Returns a dict: {call_to, call_de, extra, is_cq, is_rrr, is_73, is_rr73, report,
                   cq_modifier, de_base, de_suffix, de_prefix, to_base}
-    lub None jesli wiadomosc nie pasuje do zadnego rozpoznawanego wzorca.
+    or None if the message doesn't match any recognized pattern.
 
-    Nowe pola:
-      cq_modifier - modifier CQ (POTA/SOTA/DX/USA itd.) albo None
-      de_base     - base callsign nadawcy (bez suffix /M /P) do DXCC lookup
-      de_suffix   - suffix (M/MM/P/QRP/0-9) albo None
-      de_prefix   - prefix (W1/, EA5/) albo None (dla stacji operujacych w innym kraju)
-      to_base     - base callsign odbiorcy (bez suffix)
+    New fields:
+      cq_modifier - CQ modifier (POTA/SOTA/DX/USA etc.) or None
+      de_base     - sender's base callsign (without suffix /M /P) for DXCC lookup
+      de_suffix   - suffix (M/MM/P/QRP/0-9) or None
+      de_prefix   - prefix (W1/, EA5/) or None (for stations operating from another country)
+      to_base     - recipient's base callsign (without suffix)
 
-    Obslugiwane formaty:
-      "CQ CALL GRID"                    -> zwykle CQ
-      "CQ MOD CALL GRID"                -> CQ z modifierem (POTA/DX/USA/JA/EU/...)
-      "CQ CALL/M GRID"                  -> CQ mobile
-      "CQ MOD CALL/P GRID"              -> CQ portable z modifierem
-      "CQ W1/DL3ABC GRID"               -> CQ z prefiksem (op w innym kraju)
-      "CQ MOD"                          -> broadcast bez konkretnego adresata
+    Supported formats:
+      "CQ CALL GRID"                    -> plain CQ
+      "CQ MOD CALL GRID"                -> CQ with a modifier (POTA/DX/USA/JA/EU/...)
+      "CQ CALL/M GRID"                  -> mobile CQ
+      "CQ MOD CALL/P GRID"              -> portable CQ with a modifier
+      "CQ W1/DL3ABC GRID"               -> CQ with a prefix (operating from another country)
+      "CQ MOD"                          -> broadcast with no specific addressee
       "TO DE GRID"                      -> Tx1
-      "TO DE +NN"/"TO DE -NN"           -> Tx1/Tx2 raport SNR
-      "TO DE R+NN"/"TO DE R-NN"         -> Tx3 potwierdzenie + raport
+      "TO DE +NN"/"TO DE -NN"           -> Tx1/Tx2 SNR report
+      "TO DE R+NN"/"TO DE R-NN"         -> Tx3 ack + report
       "TO DE RRR"                       -> Tx4
-      "TO DE RR73"                      -> Tx4 skroc
+      "TO DE RR73"                      -> Tx4 shortened
       "TO DE 73"                        -> Tx5
     """
     if not message:
@@ -268,8 +269,8 @@ def parse_message(message: str):
         return None
 
     if parts[0] == 'CQ':
-        # Bez call - "CQ MOD" (2 slowa) - broadcast bez konkretnej stacji
-        # np. "CQ FF" (Fox call w Fox/Hound), "CQ DX" bez podpisu
+        # No call - "CQ MOD" (2 words) - broadcast with no specific station,
+        # e.g. "CQ FF" (Fox call in Fox/Hound), "CQ DX" with no callsign
         if len(parts) == 2 and is_cq_modifier(parts[1]):
             return {'call_to': None, 'call_de': None, 'extra': None,
                     'is_cq': True, 'is_rrr': False, 'is_73': False,
@@ -277,7 +278,7 @@ def parse_message(message: str):
                     'de_base': None, 'de_suffix': None, 'de_prefix': None,
                     'to_base': None}
 
-        # 3 slowa: "CQ CALL GRID" (bez modifiera)
+        # 3 words: "CQ CALL GRID" (no modifier)
         if len(parts) == 3:
             call_de = parts[1]
             de_base, de_suffix, de_prefix = strip_suffix(call_de)
@@ -287,11 +288,11 @@ def parse_message(message: str):
                     'de_base': de_base, 'de_suffix': de_suffix,
                     'de_prefix': de_prefix, 'to_base': None}
 
-        # 4 slowa: "CQ MOD CALL GRID" (POTA/DX/USA/EU/...)
-        # Decyzja czy parts[1] to modifier czy callsign:
-        #   - jesli jest w whitelist -> na pewno modifier
-        #   - jesli wyglada jak callsign (ma cyfre) -> raczej callsign
-        #     (wtedy struktura to nietypowa 4-slowo bez modifiera, rzadkie)
+        # 4 words: "CQ MOD CALL GRID" (POTA/DX/USA/EU/...)
+        # Decide whether parts[1] is a modifier or a callsign:
+        #   - if it's in the whitelist -> definitely a modifier
+        #   - if it looks like a callsign (has a digit) -> more likely a callsign
+        #     (then this is an unusual 4-word structure with no modifier, rare)
         if len(parts) == 4:
             if is_cq_modifier(parts[1]):
                 call_de = parts[2]
@@ -301,8 +302,8 @@ def parse_message(message: str):
                         'is_rr73': False, 'report': None, 'cq_modifier': parts[1],
                         'de_base': de_base, 'de_suffix': de_suffix,
                         'de_prefix': de_prefix, 'to_base': None}
-            # Nietypowo: 4 slowa ale parts[1] nie wyglada jak modifier
-            # Traktuj jak "CQ CALL GRID EXTRA" (ignoruj EXTRA)
+            # Unusual: 4 words but parts[1] doesn't look like a modifier
+            # Treat as "CQ CALL GRID EXTRA" (ignore EXTRA)
             call_de = parts[1]
             de_base, de_suffix, de_prefix = strip_suffix(call_de)
             return {'call_to': None, 'call_de': call_de, 'extra': parts[2],
@@ -313,8 +314,8 @@ def parse_message(message: str):
         return None
 
     if len(parts) < 3:
-        # "<TO> <DE> 73" to minimum 3 slowa; cokolwiek krotszego nie pasuje
-        # do standardowego wzorca (moze to byc free-text — ignorujemy).
+        # "<TO> <DE> 73" is 3 words minimum; anything shorter doesn't match
+        # the standard pattern (could be free text — we ignore it).
         return None
 
     call_to, call_de = parts[0], parts[1]
@@ -327,11 +328,11 @@ def parse_message(message: str):
     is_rr73 = (tail == 'RR73')
     report = None
     if not (is_rrr or is_73 or is_rr73):
-        # Raport SNR: "+NN", "-NN", "R+NN", "R-NN" (R prefix = potwierdzenie + raport)
+        # SNR report: "+NN", "-NN", "R+NN", "R-NN" (R prefix = ack + report)
         if re.fullmatch(r'R?[+-]\d{1,2}', tail):
             report = tail
-        # W przeciwnym razie tail to prawdopodobnie grid square (Tx1) — zostaw
-        # w 'extra', nie traktuj jako blad parsowania.
+        # Otherwise tail is probably a grid square (Tx1) — leave it in
+        # 'extra', don't treat it as a parse error.
 
     return {
         'call_to': call_to, 'call_de': call_de,
@@ -344,25 +345,25 @@ def parse_message(message: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stany QSO
+# QSO states
 # ─────────────────────────────────────────────────────────────────────────────
 
-ST_IDLE = 'IDLE'                  # brak aktywnego QSO
-ST_CALLING = 'CALLING'            # wyslalismy Tx1/Tx2, czekamy na odpowiedz
-ST_REPORT_SENT = 'REPORT_SENT'    # wyslalismy nasz raport (Tx2/Tx3), czekamy na R+raport lub RRR
-ST_RRR_SENT = 'RRR_SENT'          # wyslalismy RRR (Tx4), czekamy na 73 lub powtorke
-ST_DONE = 'DONE'                  # QSO zakonczone (otrzymalismy/wyslalismy 73), do zalogowania
+ST_IDLE = 'IDLE'                  # no active QSO
+ST_CALLING = 'CALLING'            # we sent Tx1/Tx2, waiting for a reply
+ST_REPORT_SENT = 'REPORT_SENT'    # we sent our report (Tx2/Tx3), waiting for R+report or RRR
+ST_RRR_SENT = 'RRR_SENT'          # we sent RRR (Tx4), waiting for 73 or a repeat
+ST_DONE = 'DONE'                  # QSO finished (received/sent 73), ready to log
 
 
 class QsoEngine:
     """
-    Maszyna stanow pojedynczego, aktywnego QSO + kolejka stacji oczekujacych
-    (odpowiedzialy na nasze CQ, ale nie sa jeszcze obslugiwane).
+    State machine for a single active QSO + the queue of waiting stations
+    (answered our CQ but aren't being handled yet).
 
-    Uzycie (przez webapp.py):
+    Usage (from webapp.py):
       engine = QsoEngine(my_call='XX0XXX', my_grid='KO02')
-      engine.start_qso('DL1ABC')                 # recznie LUB automatycznie po CQ
-      action = engine.on_decode(parsed_message)  # wywolywane dla KAZDEGO dekodowania
+      engine.start_qso('DL1ABC')                 # manually OR automatically after a CQ
+      action = engine.on_decode(parsed_message)  # called for EVERY decode
       if action: send_tx(action.call_to, action.call_de, action.report_or_grid, action.r_flag)
     """
 
@@ -371,52 +372,55 @@ class QsoEngine:
         self.my_grid = my_grid.upper()
         self.state = ST_IDLE
         self.partner_call = None
-        self.partner_grid = None          # grid partnera, jesli go znamy (z ich Tx1)
-        self.partner_report_sent = None   # raport KTORY MY wyslalismy partnerowi
-        self.partner_report_recv = None   # raport KTORY MY otrzymalismy od partnera
+        self.partner_grid = None          # partner's grid, if known (from their Tx1)
+        self.partner_report_sent = None   # report WE sent to the partner
+        self.partner_report_recv = None   # report WE received from the partner
         self.started_at = None
         self.last_activity_at = None
-        self.last_tx_at = None    # kiedy OSTATNI RAZ wyslalismy cokolwiek w tym QSO
-        self.retry_count = 0      # ile razy powtorzylismy ostatnia wiadomosc bez odpowiedzi
-        self.queue = []   # lista callsignow oczekujacych w kolejce (FIFO), wypelniana CQ-odpowiedziami
-        self._queue_seen = set()  # zapobiega duplikatom w kolejce
-        # call -> recvEpoch (czas ODBIORU dekodu, ktory dodal te stacje do
-        # kolejki). Potrzebne zeby po pop_next_from_queue() webapp.py mogl
-        # poprawnie wyliczyc period TX (patrz _period_from_epoch w webapp.py) -
-        # bez tego auto-advance z kolejki nadawal z DOWOLNYM/starym periodem
-        # zostawionym po poprzednim QSO, co losowo kolidowalo z partnerem.
+        self.last_tx_at = None    # when we LAST sent anything in this QSO
+        self.retry_count = 0      # how many times we repeated the last message with no reply
+        self.queue = []   # list of callsigns waiting in the queue (FIFO), filled by CQ answers
+        self._queue_seen = set()  # prevents duplicates in the queue
+        # call -> recvEpoch (the RECEIVE time of the decode that added this
+        # station to the queue). Needed so that after pop_next_from_queue()
+        # webapp.py can correctly compute the TX period (see
+        # _period_from_epoch in webapp.py) - without this, auto-advance from
+        # the queue would transmit with a RANDOM/stale period left over from
+        # the previous QSO, randomly colliding with the partner.
         self._queue_recv_epoch = {}
 
-    # ── Zarzadzanie QSO ──────────────────────────────────────────────────────
+    # ── QSO management ──────────────────────────────────────────────────────
 
     def record_sent_report(self, report: str):
         """
-        Zapisuje raport, ktory FAKTYCZNIE wyslalismy partnerowi — wywolywane
-        przez webapp.py PO podstawieniu realnego, zmierzonego SNR (silnik sam
-        nie zna tej wartosci w momencie generowania akcji 'reply' z
-        needs_measured_report=True, bo pomiar SNR pochodzi z dekodera audio,
-        poza silnikiem). Potrzebne m.in. do wypelnienia pola RST Sent w
-        formularzu logowania QSO po zakonczeniu.
+        Records the report we ACTUALLY sent to the partner — called by
+        webapp.py AFTER substituting the real, measured SNR (the engine
+        itself doesn't know this value at the moment it generates the
+        'reply' action with needs_measured_report=True, since the SNR
+        measurement comes from the audio decoder, outside the engine).
+        Needed among other things to fill in the RST Sent field on the QSO
+        logging form once the QSO ends.
         """
         self.partner_report_sent = report
 
     def start_qso(self, partner_call: str, initial_decode: dict = None):
         """
-        Rozpoczyna QSO z partner_call. Dwa scenariusze:
+        Starts a QSO with partner_call. Two scenarios:
 
-        1. MY inicjujemy (np. klikamy "odpowiedz" na cudze CQ) — initial_decode
-           NIE jest podawany. Stan -> CALLING, pierwsza wiadomosc do wyslania
-           to Tx1 (nasz grid), pobierana przez next_tx_action().
+        1. WE initiate (e.g. clicking "reply" on someone else's CQ) —
+           initial_decode is NOT given. State -> CALLING, the first message
+           to send is Tx1 (our grid), fetched via next_tx_action().
 
-        2. Partner JUZ odpowiedzial na NASZE CQ wiadomoscia zawierajaca
-           przydatna informacje (ich grid lub raport) — initial_decode to
-           sparsowana wiadomosc (z parse_message). W tym przypadku NIE
-           wysylamy wlasnego Tx1 (partner juz zna nasz grid, bo to MY
-           wolalismy CQ z grid w tresci) — od razu przetwarzamy ich
-           wiadomosc przez on_decode, co odpowiednio przeskakuje do
-           wyslania raportu (Tx2/Tx3-styl). Odpowiada to standardowemu
-           zachowaniu "skip Tx1" gdy auto-sequencing jest uzbrojone po
-           stronie odpowiadania na wlasne CQ.
+        2. The partner has ALREADY replied to OUR CQ with a message
+           containing useful information (their grid or a report) —
+           initial_decode is the parsed message (from parse_message). In
+           this case we do NOT send our own Tx1 (the partner already knows
+           our grid, since WE were the one calling CQ with the grid in the
+           message) — we immediately process their message through
+           on_decode, which correctly jumps to sending a report
+           (Tx2/Tx3-style). This matches the standard "skip Tx1" behavior
+           when auto-sequencing is armed on the side that's answering its
+           own CQ.
         """
         self.state = ST_CALLING
         self.partner_call = partner_call.upper()
@@ -435,8 +439,8 @@ class QsoEngine:
         return None
 
     def abort_qso(self):
-        """Przerywa biezace QSO bez logowania (np. recznie przez uzytkownika,
-        lub gdy partner nie odpowiada zbyt dlugo)."""
+        """Aborts the current QSO without logging it (e.g. manually by the
+        user, or when the partner doesn't respond for too long)."""
         self.state = ST_IDLE
         self.partner_call = None
         self.partner_grid = None
@@ -446,14 +450,14 @@ class QsoEngine:
         self.retry_count = 0
 
     def enqueue_caller(self, callsign: str, recv_epoch: float = None):
-        """Dodaje stacje do kolejki "Call 1st" (odpowiedziala na nasze CQ,
-        ale aktualnie prowadzimy inne QSO lub jeszcze nie zaczelismy).
-        FIFO, bez duplikatow. recv_epoch (czas odbioru dekodu ktory ja
-        dodal) jest zapamietywany do pozniejszego wyliczenia periodu TX
-        przy pop_next_from_queue()."""
+        """Adds a station to the "Call 1st" queue (answered our CQ, but
+        we're currently in another QSO or haven't started one yet).
+        FIFO, no duplicates. recv_epoch (the receive time of the decode
+        that added it) is remembered for later TX period computation in
+        pop_next_from_queue()."""
         callsign = callsign.upper()
-        # Porownanie po BASE call zeby XX0XXX/M nie zostal zdupikowany
-        # gdy XX0XXX jest juz partnerem (albo odwrotnie).
+        # Compare by BASE call so that XX0XXX/M doesn't get duplicated when
+        # XX0XXX is already the partner (or vice versa).
         if base_call(callsign) == base_call(self.partner_call or ''):
             return
         if callsign in self._queue_seen:
@@ -464,10 +468,10 @@ class QsoEngine:
             self._queue_recv_epoch[callsign] = recv_epoch
 
     def pop_next_from_queue(self):
-        """Zwraca (callsign, recv_epoch) pierwszej stacji z kolejki (FIFO) i
-        usuwa ja, lub (None, None) jesli pusta. recv_epoch to None gdy stacja
-        trafila do kolejki bez znacznika czasu (nie powinno sie zdarzac w
-        normalnym uzyciu, ale wywolujacy musi to obsluzyc)."""
+        """Returns (callsign, recv_epoch) of the first station in the queue
+        (FIFO) and removes it, or (None, None) if empty. recv_epoch is None
+        when the station was queued without a timestamp (shouldn't happen
+        in normal use, but the caller must handle it)."""
         if not self.queue:
             return None, None
         callsign = self.queue.pop(0)
@@ -476,9 +480,10 @@ class QsoEngine:
         return callsign, recv_epoch
 
     def remove_from_queue(self, callsign: str) -> bool:
-        """Usuwa wskazana stacje z kolejki (przycisk ✕ w UI). Zwraca True
-        jesli stacja byla w kolejce. Czysci tez _queue_seen zeby stacja mogla
-        wrocic do kolejki jesli znow odpowie na CQ."""
+        """Removes the given station from the queue (the ✕ button in the
+        UI). Returns True if the station was in the queue. Also clears
+        _queue_seen so the station can rejoin the queue if it answers a
+        CQ again."""
         callsign = (callsign or "").upper()
         if callsign not in self.queue:
             return False
@@ -488,101 +493,111 @@ class QsoEngine:
         return True
 
     def clear_queue(self):
-        """Oproznia cala kolejke "Call 1st" (przycisk "wyczysc" w UI).
-        Bez tego stare, dawno nieaktualne zgloszenia (stacje ktore odpowiedzialy
-        na CQ minuty/godziny wczesniej i moga juz nie sluchac) nie mialy zadnego
-        sposobu opuszczenia kolejki poza reczym ✕ na kazdej z osobna — po dluzszej
-        sesji kolejka rosla i Call 1st w koncu "wyplowal" stary, nieaktualny znak."""
+        """Empties the whole "Call 1st" queue (the "clear" button in the
+        UI). Without this, old, long-stale entries (stations that answered
+        a CQ minutes/hours earlier and may no longer be listening) had no
+        way to leave the queue except manually clicking ✕ on each one
+        individually — over a long session the queue would grow and
+        Call 1st would eventually "call" a stale, no-longer-relevant
+        callsign."""
         self.queue = []
         self._queue_seen = set()
         self._queue_recv_epoch = {}
 
-    # ── Przetwarzanie odebranych wiadomosci ──────────────────────────────────
+    # ── Processing received messages ──────────────────────────────────
 
     def on_decode(self, parsed: dict, recv_epoch: float = None):
         """
-        Wywolywane dla KAZDEGO sparsowanego dekodowania (patrz parse_message).
-        Zwraca dict {'action': 'reply'|'enqueue'|None, 'call_to', 'call_de',
-        'report_or_grid', 'r_flag'} opisujacy co zrobic, lub None jesli ta
-        wiadomosc nie wymaga zadnej reakcji.
+        Called for EVERY parsed decode (see parse_message).
+        Returns a dict {'action': 'reply'|'enqueue'|None, 'call_to', 'call_de',
+        'report_or_grid', 'r_flag'} describing what to do, or None if this
+        message requires no reaction.
 
-        recv_epoch: czas ODBIORU tego dekodu (webapp.py's recvEpoch) — jesli
-        stacja trafia do kolejki Call 1st, jest zapamietywany razem z nia
-        (patrz enqueue_caller), zeby po pop_next_from_queue() webapp.py mogl
-        poprawnie wyliczyc period TX dla tej stacji zamiast dziedziczyc
-        przypadkowy period po poprzednim QSO.
+        recv_epoch: the RECEIVE time of this decode (webapp.py's recvEpoch)
+        — if the station is queued to Call 1st, it's remembered alongside
+        it (see enqueue_caller) so that after pop_next_from_queue()
+        webapp.py can correctly compute the TX period for that station
+        instead of inheriting a random period left over from the previous
+        QSO.
 
-        Logika rozpoznawania:
-        - Jesli to CQ od kogos: jesli IDLE -> nic (UI moze pokazac liste CQ,
-          ale automatyczne wolanie wymaga jawnego start_qso, zgodnie z modelem
-          "klikam raz, reszta automatyczna" — sam fakt CQ nie wystarczy, bo
-          moglyby sie odzywac dziesiatki stacji jednoczesnie).
-        - Jesli wiadomosc jest ADRESOWANA DO NAS (call_to == my_call):
-            - jesli call_de == partner_call AKTYWNEGO QSO -> przetworz wg stanu
-            - jesli call_de != partner_call ale jestesmy IDLE lub CALLING do
-              kogos innego -> ktos inny odpowiada nam (np. na nasze CQ) ->
-              enqueue (chyba ze jestesmy IDLE i to pierwsza taka stacja —
-              wtedy UI/webapp moze zdecydowac o natychmiastowym start_qso;
-              silnik tylko sygnalizuje 'enqueue', decyzje o auto-start
-              podejmuje wywolujacy kod na podstawie ustawien Call 1st)
+        Recognition logic:
+        - If it's a CQ from someone: if IDLE -> nothing (the UI can show a
+          list of CQs, but automatic calling requires an explicit
+          start_qso, per the "click once, the rest is automatic" model —
+          the mere fact of a CQ isn't enough, since dozens of stations
+          could be calling CQ at once).
+        - If the message is ADDRESSED TO US (call_to == my_call):
+            - if call_de == the partner_call of the ACTIVE QSO -> process
+              per the state machine
+            - if call_de != partner_call but we're IDLE or CALLING someone
+              else -> someone else is answering us (e.g. our CQ) ->
+              enqueue (unless we're IDLE and this is the first such station
+              — then the UI/webapp may decide to start_qso immediately; the
+              engine only signals 'enqueue', the calling code decides on
+              auto-start based on the Call 1st settings)
         """
         if parsed is None:
             return None
 
         if parsed['is_cq']:
-            return None  # UI/webapp decyduje czy/kiedy zainicjowac QSO z CQ-callera
+            return None  # UI/webapp decides whether/when to start a QSO with the CQ caller
 
         if parsed['call_to'] != self.my_call:
-            # Wiadomosc nie do nas — ale jesli to NASZ AKTUALNY PARTNER
-            # nadajacy do KOGOS INNEGO, to dowod ze juz zaczal QSO z tamta
-            # stacja i dalsze wolanie go nie ma sensu - bez tego retry
-            # (should_retransmit) slepo probowal dalej mimo ewidentnego
-            # dowodu ze stacja jest zajeta. Zglaszane na zywo: "jesli
-            # odpowiadamy stacji na CQ a on juz nadaje do kogos innego, nie
-            # mozemy nadawac". Tylko gdy mamy aktywnego partnera (nie IDLE/
-            # DONE) — inaczej kazda przypadkowa wymiana miedzy dwiema
-            # OBCYMI stacjami wywolywalaby to bez potrzeby.
+            # Message not addressed to us — but if this is our CURRENT
+            # PARTNER transmitting to SOMEONE ELSE, that's proof it has
+            # already started a QSO with that station and calling it
+            # further is pointless - without this, retry
+            # (should_retransmit) would blindly keep trying despite clear
+            # evidence the station is busy. This mirrors the real-world
+            # requirement: if we're answering a station's CQ and it's
+            # already transmitting to someone else, we must not keep
+            # calling it. Only applies when we have an active partner (not
+            # IDLE/DONE) — otherwise any random exchange between two
+            # UNRELATED stations would trigger this needlessly.
             if self.is_active() and self.partner_call and parsed.get('call_de'):
                 de_base = parsed.get('de_base') or base_call(parsed['call_de'])
                 if de_base == base_call(self.partner_call):
                     return {'action': 'partner_busy', 'call_de': self.partner_call}
-            return None  # wiadomosc nie do nas — ignoruj (Band Activity i tak ja pokaze)
+            return None  # message not addressed to us — ignore (Band Activity shows it anyway)
 
         call_de = parsed['call_de']
 
-        # Wiadomosc od kogos INNEGO niz nasz aktualny partner QSO.
-        # Porownanie po BASE call (bez suffixu /M /P) zeby stacja mobile
-        # traktowana byla jako ta sama w calym QSO, nawet gdyby raz wyslala
-        # z suffixem a raz bez.
+        # Message from someone OTHER than our current QSO partner.
+        # Compared by BASE call (without suffix /M /P) so a mobile station
+        # is treated as the same station throughout the QSO, even if it
+        # sends with a suffix one time and without it another time.
         de_base = parsed.get('de_base') or base_call(call_de) if call_de else None
         partner_base = base_call(self.partner_call) if self.partner_call else None
         if de_base != partner_base:
-            # Zawsze faktycznie dodajemy do kolejki (nie tylko sygnalizujemy) —
-            # tak ze nawet jesli webapp.py zignoruje zwrocony 'enqueue' i nie
-            # odpali natychmiast start_qso, stacja i tak nie zostanie zgubiona.
+            # Always actually add to the queue (not just signal it) — so
+            # that even if webapp.py ignores the returned 'enqueue' and
+            # doesn't immediately fire start_qso, the station still isn't
+            # lost.
             self.enqueue_caller(call_de, recv_epoch)
             if self.state == ST_IDLE:
-                # Nikt nie jest aktualnie obslugiwany — sygnalizujemy 'enqueue'
-                # zeby webapp.py mogl (wg ustawien Call 1st) NATYCHMIAST wywolac
-                # start_qso(call_de, initial_decode=parsed) zamiast czekac w kolejce.
+                # No one is currently being handled — signal 'enqueue' so
+                # webapp.py can (per the Call 1st settings) IMMEDIATELY
+                # call start_qso(call_de, initial_decode=parsed) instead of
+                # waiting in the queue.
                 return {'action': 'enqueue', 'call_de': call_de}
-            return None  # w trakcie innego QSO — czeka w kolejce na pozniej
+            return None  # busy with another QSO — waits in the queue for later
 
-        # Wiadomosc OD AKTUALNEGO PARTNERA QSO — przetworz wg maszyny stanow.
-        # Partner faktycznie odpowiada, wiec zerujemy licznik powtorzen (patrz
-        # note_retry/should_give_up) — nastepna cisza z jego strony dostaje
-        # znowu pelna pule prob.
+        # Message FROM THE CURRENT QSO PARTNER — process per the state
+        # machine. The partner is actually responding, so reset the retry
+        # counter (see note_retry/should_give_up) — the next silence from
+        # them gets a fresh full set of attempts.
         self.last_activity_at = time.time()
         self.retry_count = 0
 
         if parsed['is_73']:
-            # Partner konczy QSO — wysylamy nasze 73 (jesli jeszcze nie bylo)
-            # i logujemy. Dziala z dowolnego stanu (partner moze przeskoczyc
-            # RRR i wyslac 73 bezposrednio, lub powtorzyc 73 jesli nasze RRR
-            # zgubilo sie w propagacji).
-            # NAPRAWA "niepotrzebne przedluzanie": jesli QSO JUZ DONE (wyslalismy
-            # 73), NIE odpowiadamy ponownie na echo 73 partnera. Automat
-            # odpowiadal 73 na 73 w kolko. 73 wysylamy RAZ; kolejne echa = cisza.
+            # Partner is ending the QSO — we send our 73 (if not sent yet)
+            # and log it. Works from any state (the partner may skip RRR
+            # and send 73 directly, or repeat 73 if our RRR got lost in
+            # propagation).
+            # FIX for "unnecessary QSO extension": if the QSO is ALREADY
+            # DONE (we sent 73), don't answer the partner's echoed 73
+            # again. The engine used to answer 73 with 73 in a loop. 73 is
+            # sent ONCE; further echoes = silence.
             if self.state == ST_DONE:
                 return None
             self.state = ST_DONE
@@ -591,9 +606,9 @@ class QsoEngine:
                     'r_flag': False, 'qso_complete': True}
 
         if parsed['is_rr73']:
-            # Skrocona forma od partnera: potwierdzenie + pozegnanie naraz.
-            # Odpowiadamy naszym 73 i konczymy.
-            # NAPRAWA: tak samo jak 73 — po DONE nie odpowiadaj na echo RR73.
+            # Shortened form from the partner: ack + sign-off combined.
+            # We reply with our 73 and finish.
+            # FIX: same as 73 above — don't answer an echoed RR73 after DONE.
             if self.state == ST_DONE:
                 return None
             self.state = ST_DONE
@@ -602,16 +617,16 @@ class QsoEngine:
                     'r_flag': False, 'qso_complete': True}
 
         if parsed['is_rrr']:
-            # Partner potwierdzil odbior naszego raportu (RRR = "Roger Roger
-            # Roger"). Odpowiadamy OD RAZU naszym 73 - RRR od partnera juz
-            # JEST potwierdzeniem, nie trzeba na nie echo-odpowiadac WLASNYM
-            # RRR i czekac na kolejny cykl. Dziala z dowolnego nie-DONE stanu,
-            # tak samo jak is_73/is_rr73 ponizej.
-            # NAPRAWA 2026-08-15: poprzednia wersja w tym miejscu wysylala
-            # WLASNE RRR z powrotem (stan RRR_SENT) i dopiero echo TEGO RRR
-            # od partnera konczylo QSO wyslaniem 73 - zbedny dodatkowy cykl
-            # (zgloszone na zywo: "automat niepotrzebnie przedluza QSO, jesli
-            # dostalem RRR to wysylam 73"). Po DONE nie reagujemy na echo RRR.
+            # Partner confirmed receipt of our report (RRR = "Roger Roger
+            # Roger"). We reply IMMEDIATELY with our 73 - the partner's
+            # RRR already IS an acknowledgment, no need to echo-answer it
+            # with OUR OWN RRR and wait another cycle. Works from any
+            # non-DONE state, same as is_73/is_rr73 above.
+            # FIX: the previous version here sent OUR OWN RRR back (state
+            # RRR_SENT), and only the partner's echo of THAT RRR would
+            # finish the QSO by sending 73 - an unnecessary extra cycle
+            # (the invariant: if we get RRR, we send 73). No reaction to
+            # an echoed RRR after DONE.
             if self.state == ST_DONE:
                 return None
             self.state = ST_DONE
@@ -622,22 +637,23 @@ class QsoEngine:
         if parsed['report'] is not None:
             report = parsed['report']
             if report.startswith('R'):
-                # "R-12" — partner POTWIERDZA odbior naszego raportu I wysyla
-                # swoj wlasny (ktorego juz nie potrzebujemy ponownie wysylac).
-                # Odpowiadamy RRR.
+                # "R-12" — the partner CONFIRMS receipt of our report AND
+                # sends its own (which we no longer need to send again).
+                # We reply with RRR.
                 self.partner_report_recv = report
                 self.state = ST_RRR_SENT
                 return {'action': 'reply', 'call_to': self.partner_call,
                         'call_de': self.my_call, 'report_or_grid': 'RRR',
                         'r_flag': False, 'qso_complete': False}
             else:
-                # "-12" — pierwszy (surowy) raport od partnera, bez R-prefix.
-                # MUSIMY odpowiedziec WLASNYM, ZMIERZONYM raportem (R+nasz_SNR),
-                # NIE odbitym raportem partnera — to bylby blad protokolu
-                # (partner dostalby swoj wlasny raport z powrotem zamiast
-                # informacji jak MY go slyszymy). report_or_grid=None tutaj
-                # jest celowe: webapp.py MUSI podstawic realny pomiar SNR
-                # przed wyslaniem (patrz needs_measured_report).
+                # "-12" — the partner's first (raw) report, no R-prefix.
+                # We MUST reply with OUR OWN, MEASURED report (R+our_SNR),
+                # NOT the partner's report reflected back — that would be a
+                # protocol error (the partner would get its own report
+                # back instead of information on how WE hear it).
+                # report_or_grid=None here is deliberate: webapp.py MUST
+                # substitute the real SNR measurement before sending (see
+                # needs_measured_report).
                 self.partner_report_recv = report
                 self.state = ST_REPORT_SENT
                 return {'action': 'reply', 'call_to': self.partner_call,
@@ -645,23 +661,25 @@ class QsoEngine:
                         'report_or_grid': None, 'r_flag': True,
                         'qso_complete': False, 'needs_measured_report': True}
 
-        # Wiadomosc z gridem (Tx1) — partner inicjuje, odpowiadamy raportem.
-        # report_or_grid=None: webapp.py MUSI podstawic realny pomiar SNR
-        # przed wyslaniem (patrz needs_measured_report), tak samo jak wyzej.
+        # Message with a grid (Tx1) — the partner is initiating, we reply
+        # with a report. report_or_grid=None: webapp.py MUST substitute a
+        # real SNR measurement before sending (see needs_measured_report),
+        # same as above.
         #
-        # OBSLUGA POWTORKI (naprawa "automat milczy gdy partner dalej wola"):
-        # akceptujemy grid nie tylko w CALLING, ale tez w REPORT_SENT. W FT8
-        # partner POWTARZA swoj grid gdy nie uslyszal naszej odpowiedzi — my
-        # MUSIMY wtedy POWTORZYC raport (nie milczec). Bez tego automat wysylal
-        # raport RAZ i milkl, partner wolal w kolko i w koncu szedl na CQ do
-        # kogos innego (dokladnie blad z logu Toma: EA3AT wolal JN00 x3, potem
-        # "CQ EA3AT"). Raport jest juz zamrozony (partner_report_sent), wiec
-        # webapp poda te sama wartosc — spojnie.
+        # HANDLING A REPEAT (fix for "the engine goes silent while the
+        # partner keeps calling"): we accept a grid not only in CALLING but
+        # also in REPORT_SENT. In FT8 the partner REPEATS its grid when it
+        # hasn't heard our answer — we MUST then REPEAT the report (not
+        # stay silent). Without this the engine sent its report ONCE and
+        # went quiet, the partner kept calling and eventually went back to
+        # CQ for someone else. The report is already frozen
+        # (partner_report_sent), so webapp will supply the same value —
+        # consistently.
         if parsed['extra'] and self.state in (ST_CALLING, ST_REPORT_SENT):
-            # Walidacja formatu grid square (np. KO02, JO80aa) — extra moze
-            # teoretycznie zawierac dowolny tekst (parser nie wymusza formatu
-            # gridu), wiec nie zapisujemy oczywistych smieci do partner_grid
-            # (uzywanego pozniej do wstepnego wypelnienia formularza logowania).
+            # Validate the grid square format (e.g. KO02, JO80aa) — extra
+            # may in theory contain arbitrary text (the parser doesn't
+            # enforce a grid format), so we don't store obvious garbage in
+            # partner_grid (used later to pre-fill the QSO logging form).
             if re.fullmatch(r'[A-R]{2}\d{2}([A-X]{2})?', parsed['extra']):
                 self.partner_grid = parsed['extra']
             self.state = ST_REPORT_SENT
@@ -670,9 +688,9 @@ class QsoEngine:
                     'r_flag': False, 'qso_complete': False,
                     'needs_measured_report': True}
 
-        # Partner wyslal raport bezposrednio (bez gridu) w stanie CALLING —
-        # np. gdy MY wywolalismy stacje i ona odpowiedziala raportem.
-        # Odpowiadamy R+raport (potwierdzamy + podajemy nasz SNR).
+        # Partner sent a report directly (no grid) while in state CALLING —
+        # e.g. when WE called the station and it answered with a report.
+        # We reply with R+report (confirming + giving our SNR).
         if parsed['report'] is not None and self.state == ST_CALLING:
             report = parsed['report']
             if not report.startswith('R'):
@@ -687,9 +705,9 @@ class QsoEngine:
 
     def next_tx_action(self):
         """
-        Zwraca wiadomosc do wyslania PRZY STARCIE nowego QSO (stan CALLING,
-        zanim partner cokolwiek odpowiedzial) — czyli nasz Tx1: ich call,
-        nasz call, nasz grid.
+        Returns the message to send WHEN STARTING a new QSO (state
+        CALLING, before the partner has answered anything) — i.e. our
+        Tx1: their call, our call, our grid.
         """
         if self.state != ST_CALLING or not self.partner_call:
             return None
@@ -700,40 +718,41 @@ class QsoEngine:
         return self.state not in (ST_IDLE, ST_DONE)
 
     def record_tx_sent(self):
-        """Wywolywane przez webapp.py zaraz po faktycznym zaplanowaniu
-        transmisji (pierwsze wyslanie LUB powtorka) - ustawia punkt
-        odniesienia dla should_retransmit()."""
+        """Called by webapp.py right after a transmission has actually been
+        scheduled (first send OR a repeat) - sets the reference point for
+        should_retransmit()."""
         self.last_tx_at = time.time()
 
     def should_retransmit(self, period_s: float) -> bool:
-        """Czy minelo juz co najmniej jedno pelne okno TX (period_s) od
-        naszej ostatniej transmisji bez zadnej nowej odpowiedzi partnera w
-        miedzyczasie - czyli czy pora powtorzyc ostatnia wiadomosc.
+        """Whether at least one full TX window (period_s) has passed since
+        our last transmission with no new reply from the partner in the
+        meantime - i.e. whether it's time to repeat the last message.
 
-        Konwencjonalne implementacje auto-QSO nie maja osobnego mechanizmu
-        "powtorki" - po prostu wysylaja wiadomosc pasujaca do aktualnego
-        stanu na KAZDYM oknie TX, wiec jesli stan sie nie zmienil (partner
-        nie odpowiedzial), ta sama wiadomosc wychodzi ponownie automatycznie.
-        Nasz silnik jest zdarzeniowy (reaguje tylko na nowy dekod), wiec
-        potrzebuje tego jawnego sprawdzenia zamiast bezwarunkowego
-        okresowego nadawania - bez niego jedna zgubiona transmisja (normalne
-        przy QSB) konczyla sie cisza zamiast oczekiwanej automatycznej
-        powtorki."""
+        Conventional auto-QSO implementations don't have a separate
+        "repeat" mechanism - they simply send the message matching the
+        current state on EVERY TX window, so if the state hasn't changed
+        (the partner didn't reply), the same message goes out again
+        automatically. Our engine is event-driven (reacts only to a new
+        decode), so it needs this explicit check instead of unconditional
+        periodic transmission - without it, one lost transmission (normal
+        under QSB) would result in silence instead of the expected
+        automatic repeat."""
         if not self.is_active() or self.last_tx_at is None:
             return False
         return (time.time() - self.last_tx_at) >= period_s
 
     def note_retry(self):
-        """Wywolywane TUZ PRZED faktyczna retransmisja (nie przy pierwszym
-        wyslaniu) - zwieksza licznik prob dla should_give_up()."""
+        """Called RIGHT BEFORE an actual retransmission (not on the first
+        send) - increments the attempt counter for should_give_up()."""
         self.retry_count += 1
 
     def should_give_up(self, max_retries: int) -> bool:
-        """Czy wyczerpalismy limit powtorzen bez odpowiedzi partnera.
+        """Whether we've exhausted the retry limit with no reply from the
+        partner.
 
-        Inne implementacje auto-QSO zazwyczaj maja taki licznik domyslnie
-        wylaczony (probuja w nieskonczonosc, bo operator patrzy na ekran
-        i moze sam zdecydowac kiedy przerwac). Nasz automat dziala bez
-        nadzoru (Call 1st ma przejsc do kolejnej stacji w kolejce), wiec
-        limit jest u nas WLACZONY na stale."""
+        Other auto-QSO implementations usually have this counter disabled
+        by default (they retry indefinitely, since the operator is
+        watching the screen and can decide when to give up). Our engine
+        runs unsupervised (Call 1st needs to move on to the next station
+        in the queue), so the limit is ALWAYS ENABLED here."""
         return self.retry_count >= max_retries
