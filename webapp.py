@@ -944,9 +944,17 @@ class App:
                         if enc != val:
                             cb[key] = enc
                             changed = True
+            dx = u.get("dxcluster")
+            if dx:
+                val = dx.get("password", "")
+                if val:
+                    enc = encrypt_secret(val)
+                    if enc != val:
+                        dx["password"] = enc
+                        changed = True
         if changed:
             save_json(USR_F, self.users)
-            print("[secrets] zaszyfrowano dane logowania CloudLog/QRZ/HamQTH w users.json", flush=True)
+            print("[secrets] zaszyfrowano dane logowania CloudLog/QRZ/HamQTH/DX-Cluster w users.json", flush=True)
 
     def _has_perm(self, uid: str, role: str, key: str) -> bool:
         """Admin ma zawsze dostep. Inaczej sprawdz granularne uprawnienie
@@ -1970,9 +1978,12 @@ class App:
             password = body.get("password", None)
             auto_connect = bool(body.get("auto_connect", False))
             existing = u_obj.get("dxcluster", {})
-            # Zachowaj stare haslo jesli nowe nie zostalo podane (null = brak zmiany)
+            # Zachowaj stare (juz zaszyfrowane) haslo jesli nowe nie zostalo
+            # podane (null = brak zmiany); nowe haslo szyfrujemy przed zapisem.
             if password is None:
                 password = existing.get("password", "")
+            else:
+                password = encrypt_secret(password)
             u_obj["dxcluster"] = {
                 "host": host,
                 "port": port,
@@ -1993,7 +2004,7 @@ class App:
                 return 400, {"error": "Skonfiguruj adres serwera i login"}
             asyncio.ensure_future(self.dxcluster.connect_user(
                 uid, cfg["host"], int(cfg.get("port", 7300)),
-                cfg["login"], cfg.get("password", "")
+                cfg["login"], decrypt_secret(cfg.get("password", ""))
             ))
             return 200, {"ok": True}
 
@@ -4137,7 +4148,7 @@ class App:
                     if not existing or not existing.is_connected():
                         asyncio.ensure_future(self.dxcluster.connect_user(
                             uid, dx_cfg["host"], int(dx_cfg.get("port", 7300)),
-                            dx_cfg["login"], dx_cfg.get("password", "")
+                            dx_cfg["login"], decrypt_secret(dx_cfg.get("password", ""))
                         ))
 
         try:
