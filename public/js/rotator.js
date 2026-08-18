@@ -1,15 +1,15 @@
 /**
- * rotator.js (frontend) — panel sterowania rotatorami
- * - Kompas SVG z klikaniem
- * - Wpisanie locatora 4/6 znakowego lub stopni → oblicz azymut → idź
- * - Preset kierunki N/NE/E...
+ * rotator.js (frontend) — rotator control panel
+ * - Clickable SVG compass
+ * - Type a 4/6-char locator or degrees → compute azimuth → go
+ * - Preset directions N/NE/E...
  */
 (function() {
 'use strict';
 
 let rotators = [];
 
-// ── Maydenhead locator → współrzędne ─────────────────────────────────────────
+// ── Maidenhead locator → coordinates ─────────────────────────────────────────
 function locatorToLatLon(loc) {
   loc = loc.toUpperCase().trim();
   if (loc.length < 4) return null;
@@ -31,7 +31,7 @@ function locatorToLatLon(loc) {
   return { lat, lon };
 }
 
-// ── Oblicz azymut między dwoma punktami ──────────────────────────────────────
+// ── Compute the bearing between two points ────────────────────────────────────
 function bearingTo(fromLat, fromLon, toLat, toLon) {
   const φ1 = fromLat * Math.PI / 180;
   const φ2 = toLat   * Math.PI / 180;
@@ -42,24 +42,24 @@ function bearingTo(fromLat, fromLon, toLat, toLon) {
   return ((θ * 180 / Math.PI) + 360) % 360;
 }
 
-// ── Pobierz lokalizację stacji z konfiguracji ─────────────────────────────────
+// ── Get the station's location from the config ────────────────────────────────
 function getMyLocator() {
   const cfgLoc = window.AppState?.stationLocator || '';
-  return cfgLoc || 'KO02'; // fallback Polska centralna
+  return cfgLoc || 'KO02'; // fallback: central Poland
 }
 
-// ── Oblicz azymut z locatora lub stopni ──────────────────────────────────────
+// ── Compute azimuth from a locator or degrees ─────────────────────────────────
 function resolveTarget(input) {
   input = (input || '').trim();
   if (!input) return null;
 
-  // Próbuj jako liczba (stopnie)
+  // Try as a number (degrees)
   const deg = parseFloat(input);
   if (!isNaN(deg) && /^-?\d/.test(input)) {
     return { az: ((deg % 360) + 360) % 360, label: `${deg}°` };
   }
 
-  // Próbuj jako locator Maidenhead
+  // Try as a Maidenhead locator
   if (/^[A-Ra-r]{2}\d{2}/.test(input)) {
     const myLoc = getMyLocator();
     const myPos = locatorToLatLon(myLoc);
@@ -72,7 +72,7 @@ function resolveTarget(input) {
   return null;
 }
 
-// Odległość km (haversine)
+// Distance in km (haversine)
 function calcDist(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
@@ -81,7 +81,7 @@ function calcDist(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// ── Ładowanie stanu ───────────────────────────────────────────────────────────
+// ── Load state ───────────────────────────────────────────────────────────────
 async function load() {
   try {
     const r = await fetch('/api/rotator');
@@ -133,7 +133,7 @@ function buildCard(rot) {
 
     <div class="rot-body">
 
-      <!-- KOMPAS -->
+      <!-- COMPASS -->
       <div class="compass-wrap">
         <canvas id="compass-${rot.id}" width="180" height="180"
           onclick="Rotator.compassClick(event,${rot.id})"
@@ -148,10 +148,10 @@ function buildCard(rot) {
         </div>
       </div>
 
-      <!-- PANEL KONTROLNY -->
+      <!-- CONTROL PANEL -->
       <div class="rot-controls">
 
-        <!-- Wpisz locator lub stopnie -->
+        <!-- Type a locator or degrees -->
         <div style="margin-bottom:10px;">
           <div class="form-label" style="margin-bottom:5px;">LOCATOR (np. KO02) LUB STOPNIE</div>
           <div style="display:flex;gap:5px;">
@@ -170,7 +170,7 @@ function buildCard(rot) {
             style="font-family:var(--mono);font-size:10px;color:var(--amber);margin-top:4px;min-height:14px;"></div>
         </div>
 
-        <!-- Manualne Az / El -->
+        <!-- Manual Az / El -->
         <div style="display:grid;grid-template-columns:1fr${isAzEl?' 1fr':''};gap:6px;margin-bottom:8px;">
           <div>
             <div class="form-label">AZYMUT °</div>
@@ -189,7 +189,7 @@ function buildCard(rot) {
           </div>` : ''}
         </div>
 
-        <!-- Przyciski akcji -->
+        <!-- Action buttons -->
         <div style="display:flex;gap:5px;margin-bottom:10px;">
           <button class="rot-btn" data-perm-disable="rotator_control"
             onclick="Rotator.setPos(${rot.id})"
@@ -202,7 +202,7 @@ function buildCard(rot) {
             title="Park (0°/0°)">⊙ PARK</button>
         </div>
 
-        <!-- Preset kierunki -->
+        <!-- Preset directions -->
         <div>
           <div class="form-label" style="margin-bottom:5px;">PRESET KIERUNKI</div>
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px;">
@@ -218,7 +218,7 @@ function buildCard(rot) {
   </div>`;
 }
 
-// ── Podgląd targetu przy wpisywaniu ──────────────────────────────────────────
+// ── Preview the target while typing ───────────────────────────────────────────
 function previewTarget(id) {
   const inp = document.getElementById(`rot-target-${id}`);
   const prv = document.getElementById(`rot-target-preview-${id}`);
@@ -227,31 +227,32 @@ function previewTarget(id) {
   prv.textContent = result ? `→ Azymut: ${result.az}° ${result.label || ''}` : (inp.value ? '⚠ Nieprawidłowy locator / kąt' : '');
 }
 
-// ── Idź do locatora/stopni ───────────────────────────────────────────────────
+// ── Go to a locator/degrees ────────────────────────────────────────────────────
 function goTarget(id) {
   const inp = document.getElementById(`rot-target-${id}`);
   if (!inp || !inp.value.trim()) return;
   const result = resolveTarget(inp.value);
   if (!result) { window.UI?.showToast('⚠ Nieprawidłowy locator lub kąt', 'error'); return; }
 
-  // Wpisz do pola az i idź
+  // Fill in the az field and go
   const azInp = document.getElementById(`rot-az-input-${id}`);
   if (azInp) azInp.value = Math.round(result.az);
   setPos(id);
   window.UI?.showToast(`▶ Rotator #${id} → ${result.az}° ${result.label||''}`);
 }
 
-// ── Aktualizacja karty ────────────────────────────────────────────────────────
-// Interpolacja azymutu: serwer wysyla pozycje co ~0.5s, my plynnie animujemy
-// igle miedzy odczytami (60fps) zeby ruch wygladal ciagle. Przechowujemy
-// aktualny wyswietlany azymut (_displayAz) i cel (_targetDisplayAz) per rotor.
-const _displayAz = {};       // aktualnie wyswietlany kat (animowany)
-const _serverAz  = {};       // ostatni kat z serwera (cel animacji)
-const _rotMeta   = {};       // {target_az, moving} per rotor
+// ── Update the card ─────────────────────────────────────────────────────────
+// Azimuth interpolation: the server sends the position every ~0.5s, we
+// smoothly animate the needle between readings (60fps) so the motion
+// looks continuous. We keep the currently displayed azimuth (_displayAz)
+// and the target (_targetDisplayAz) per rotator.
+const _displayAz = {};       // currently displayed angle (animated)
+const _serverAz  = {};       // last angle from the server (animation target)
+const _rotMeta   = {};       // {target_az, moving} per rotator
 let _animRaf = null;
 
 function _shortestAngleDiff(from, to) {
-  // Najkrotsza roznica katowa (-180..180), zeby igla nie robila petli 350°->10°
+  // Shortest angular difference (-180..180), so the needle doesn't loop 350°->10°
   let diff = (to - from) % 360;
   if (diff > 180) diff -= 360;
   if (diff < -180) diff += 360;
@@ -265,7 +266,7 @@ function _animateNeedles() {
     const tgt = _serverAz[id];
     const diff = _shortestAngleDiff(cur, tgt);
     if (Math.abs(diff) > 0.15) {
-      // Ease: przesun 25% dystansu na klatke (plynne dochodzenie)
+      // Ease: move 25% of the distance per frame (smooth approach)
       _displayAz[id] = (cur + diff * 0.25 + 360) % 360;
       anyMoving = true;
     } else {
@@ -273,7 +274,7 @@ function _animateNeedles() {
     }
     const meta = _rotMeta[id] || {};
     drawCompass(id, _displayAz[id], meta.target_az ?? tgt, meta.moving);
-    // Aktualizuj tez tekst azymutu plynnie
+    // Also update the azimuth text smoothly
     const azD = document.getElementById(`rot-az-disp-${id}`);
     if (azD) azD.textContent = `${_displayAz[id].toFixed(1)}°`;
   }
@@ -296,11 +297,11 @@ function updateCard(rot) {
     ? `<span style="color:var(--amber)">● OBRACA → ${rot.target_az}°</span>`
     : `<span style="color:var(--dim)">● W POZYCJI</span>`;
 
-  // Zapisz cel z serwera i uruchom plynna animacje igly do tej pozycji
+  // Save the target from the server and start a smooth needle animation to that position
   _serverAz[rot.id] = rot.azimuth;
   _rotMeta[rot.id]  = { target_az: rot.target_az, moving: rot.moving };
   if (_displayAz[rot.id] === undefined) {
-    // Pierwszy odczyt — ustaw natychmiast bez animacji
+    // First reading — set immediately, no animation
     _displayAz[rot.id] = rot.azimuth;
     drawCompass(rot.id, rot.azimuth, rot.target_az, rot.moving);
     const azD = document.getElementById(`rot-az-disp-${rot.id}`);
@@ -310,7 +311,7 @@ function updateCard(rot) {
   }
 }
 
-// ── Kompas canvas ─────────────────────────────────────────────────────────────
+// ── Compass canvas ───────────────────────────────────────────────────────────
 function drawCompass(id, azimuth, target, moving) {
   const canvas = document.getElementById(`compass-${id}`);
   if (!canvas) return;
@@ -320,18 +321,18 @@ function drawCompass(id, azimuth, target, moving) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Tło koła
+  // Circle background
   ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
   ctx.fillStyle = '#090c09'; ctx.fill();
   ctx.strokeStyle = 'rgba(76,219,106,0.18)'; ctx.lineWidth = 1; ctx.stroke();
 
-  // Kręgi wewnętrzne
+  // Inner rings
   [0.35,0.65,0.88].forEach(f => {
     ctx.beginPath(); ctx.arc(cx,cy,R*f,0,Math.PI*2);
     ctx.strokeStyle = 'rgba(76,219,106,0.07)'; ctx.lineWidth = 0.5; ctx.stroke();
   });
 
-  // Linie co 10° — dłuższe co 30°, kardynalne co 90°
+  // Lines every 10° — longer every 30°, cardinal every 90°
   for (let d = 0; d < 360; d += 10) {
     const rad = (d-90)*Math.PI/180;
     const inner = d % 90 === 0 ? 0.78 : (d % 30 === 0 ? 0.83 : 0.89);
@@ -343,7 +344,7 @@ function drawCompass(id, azimuth, target, moving) {
     ctx.stroke();
   }
 
-  // Etykiety co 30°
+  // Labels every 30°
   const lbls = {0:'N',30:'30',60:'60',90:'E',120:'120',150:'150',180:'S',210:'210',240:'240',270:'W',300:'300',330:'330'};
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   Object.entries(lbls).forEach(([d,l]) => {
@@ -354,7 +355,7 @@ function drawCompass(id, azimuth, target, moving) {
     ctx.fillText(l, cx + R*dist*Math.cos(rad), cy + R*dist*Math.sin(rad));
   });
 
-  // Linia docelowa (żółta przerywana)
+  // Target line (dashed yellow)
   if (Math.abs(target - azimuth) > 1) {
     const tRad = (target-90)*Math.PI/180;
     ctx.beginPath();
@@ -363,16 +364,16 @@ function drawCompass(id, azimuth, target, moving) {
     ctx.strokeStyle = moving ? 'rgba(240,180,41,0.7)' : 'rgba(240,180,41,0.35)';
     ctx.lineWidth = 1.5; ctx.setLineDash([5,4]); ctx.stroke(); ctx.setLineDash([]);
 
-    // Strzałka celu
+    // Target dot
     const tx = cx + R*0.82*Math.cos(tRad), ty = cy + R*0.82*Math.sin(tRad);
     ctx.beginPath();
     ctx.arc(tx, ty, 4, 0, Math.PI*2);
     ctx.fillStyle = 'rgba(240,180,41,0.7)'; ctx.fill();
   }
 
-  // Strzałka azymutu (zielona)
+  // Azimuth needle (green)
   const aRad = (azimuth-90)*Math.PI/180;
-  // Cień strzałki
+  // Needle shadow
   ctx.shadowBlur = 8; ctx.shadowColor = 'rgba(76,219,106,0.5)';
   ctx.beginPath();
   ctx.moveTo(cx - R*0.28*Math.cos(aRad), cy - R*0.28*Math.sin(aRad));
@@ -380,7 +381,7 @@ function drawCompass(id, azimuth, target, moving) {
   ctx.strokeStyle = '#4cdb6a'; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // Grot
+  // Arrowhead
   const ax = cx+R*0.80*Math.cos(aRad), ay = cy+R*0.80*Math.sin(aRad);
   ctx.beginPath();
   ctx.moveTo(ax, ay);
@@ -389,25 +390,25 @@ function drawCompass(id, azimuth, target, moving) {
   ctx.closePath();
   ctx.fillStyle = '#4cdb6a'; ctx.fill();
 
-  // Ogon
+  // Tail
   ctx.beginPath();
   ctx.moveTo(cx - R*0.28*Math.cos(aRad), cy - R*0.28*Math.sin(aRad));
   ctx.lineTo(cx - R*0.28*Math.cos(aRad) + 6*Math.sin(aRad),  cy - R*0.28*Math.sin(aRad) - 6*Math.cos(aRad));
   ctx.lineTo(cx - R*0.28*Math.cos(aRad) - 6*Math.sin(aRad),  cy - R*0.28*Math.sin(aRad) + 6*Math.cos(aRad));
   ctx.closePath(); ctx.fillStyle = '#2a8a3a'; ctx.fill();
 
-  // Środek
+  // Center
   ctx.beginPath(); ctx.arc(cx,cy,5,0,Math.PI*2);
   ctx.fillStyle = '#4cdb6a'; ctx.fill();
 
-  // Wartość w centrum
+  // Value in the center
   ctx.font = 'bold 14px Orbitron,sans-serif';
   ctx.fillStyle = 'rgba(76,219,106,0.85)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(`${Math.round(azimuth)}°`, cx, cy + R*0.47);
 }
 
-// ── Kliknięcie kompasu ────────────────────────────────────────────────────────
+// ── Compass click ────────────────────────────────────────────────────────────
 function compassClick(event, id) {
   const canvas = event.target;
   const rect   = canvas.getBoundingClientRect();
@@ -417,13 +418,13 @@ function compassClick(event, id) {
   const az = Math.round(((Math.atan2(y,x)*180/Math.PI) + 90 + 360) % 360);
   const azInp = document.getElementById(`rot-az-input-${id}`);
   if (azInp) azInp.value = az;
-  // Pokaż podgląd
+  // Show the preview
   const targetInp = document.getElementById(`rot-target-${id}`);
   if (targetInp) { targetInp.value = String(az); previewTarget(id); }
   setPos(id);
 }
 
-// ── Akcje ─────────────────────────────────────────────────────────────────────
+// ── Actions ───────────────────────────────────────────────────────────────────
 async function setPos(id) {
   const az  = parseFloat(document.getElementById(`rot-az-input-${id}`)?.value) || 0;
   const elI = document.getElementById(`rot-el-input-${id}`);
@@ -446,10 +447,9 @@ async function apiPost(url, body) {
   try {
     const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined });
     const res = await r.json();
-    // Backend teraz odrzuca /position i /stop dla viewera lub osoby bez
-    // zajetego radia (403 {error}) — bez tego sprawdzenia klik po prostu nic
-    // by nie robil, bez zadnego komunikatu (patrz audyt zakladki RADIO
-    // 2026-08-15, ten sam endpoint co rotormini.js).
+    // The backend now rejects /position and /stop for a viewer or someone
+    // without the radio claimed (403 {error}) — without this check a click
+    // simply did nothing, with no feedback at all (same endpoint as rotormini.js).
     if (res && res.error) window.UI?.showToast?.('✗ ' + res.error, 'error');
     return res;
   } catch(e) {
