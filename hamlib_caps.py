@@ -1,36 +1,37 @@
 #!/usr/bin/env python3
 """
-hamlib_caps.py — parser odpowiedzi rigctld na komende dump_caps ('1\\n'),
-wyciagajacy SZCZEGOLOWA liste komend wspieranych przez radio (levels,
-funkcje, VFO, mode), nie tylko proste bool capabilities.
+hamlib_caps.py — parser for rigctld's response to the dump_caps command
+('1\\n'), extracting a DETAILED list of commands the radio supports
+(levels, functions, VFO, mode), not just simple bool capabilities.
 
-Zwracana struktura (discover_capabilities):
+Returned structure (discover_capabilities):
 {
-  "actions": [                      # przyciski (VFO select, funkcje on/off)
+  "actions": [                      # buttons (VFO select, function on/off)
     {"id": "vfo_a", "label": "VFO A", "group": "vfo", ...},
     {"id": "func_nb", "label": "NB (Noise Blanker)", "group": "func", ...},
     ...
   ],
-  "sliders": [                      # Set level z zakresem -> slider
+  "sliders": [                      # Set level with a range -> slider
     {"id": "level_rfpower", "label": "RFPOWER", "min":0.05, "max":1.0,
      "step":0.0039, "group": "level", ...},
     ...
   ],
-  "raw_caps": {feature_id: bool}    # stare proste bool (kompatybilnosc)
+  "raw_caps": {feature_id: bool}    # legacy simple bool (compatibility)
 }
 
-Filozofia: parser wyciaga WSZYSTKO co rigctld zglasza jako "Set X: Y" lub
-liste z zakresem. webapp.py/admin decyduje co z tego pokazac (whitelist
-per id). Brak rozpoznanego wzorca -> pomijamy linie (bezpieczny fallback).
+Philosophy: the parser extracts EVERYTHING rigctld reports as "Set X: Y"
+or a list with a range. webapp.py/admin decides what to show (a per-id
+whitelist). No recognized pattern -> the line is skipped (safe fallback).
 """
 import asyncio
 import re
 
 
-# ── Etykiety dla znanych poziomow Hamlib (uniwersalne skroty PL/EN) ─────────
-# Bez opisow po polsku — te trafiaja prosto na slider w UI (obcinane do 14
-# znakow, patrz radiofunctions.js renderSliders/makeTile), wiec musza byc
-# krotkie i dzialac identycznie w obu jezykach frontendu (jak ALC/PWR/SWR).
+# ── Labels for known Hamlib levels (universal PL/EN abbreviations) ─────────
+# NOTE: label VALUES below are UI text sent straight to the frontend
+# (radiofunctions.js renderSliders/makeTile, truncated to 14 chars) - kept
+# short and language-neutral like ALC/PWR/SWR, deliberately NOT translated
+# as part of the backend English pass (see backend_english_translation memory).
 LEVEL_LABELS = {
     "PREAMP":      "PREAMP",
     "ATT":         "ATT",
@@ -59,14 +60,16 @@ LEVEL_LABELS = {
     "ANTIVOX":     "ANTI-VOX",
 }
 
-# Poziomy ktore sa "tylko odczyt" / telemetria — nie generujemy slidera
-# nawet jesli sa w "Set level" (rigctld czasem zglasza je tam blednie)
+# Levels that are "read-only" / telemetry — we don't generate a slider for
+# them even if they show up in "Set level" (rigctld sometimes misreports them there)
 LEVEL_READONLY = {"RAWSTR", "SWR", "ALC", "RFPOWER_METER", "RFPOWER_METER_WATTS"}
 
-# Etykiety dla funkcji (Get/Set functions). Format "SKROT (opis)" — frontend
-# tnie po '(' na przycisku, wiec widac tylko uniwersalny skrot; pelny opis
-# (polski) zostaje w title (tooltip). Patrz ta sama uwaga przy
-# rigs/civ_profiles.py::_FUNC_LABELS (druga sciezka: CI-V bezposredni).
+# Labels for functions (Get/Set functions). Format "ABBREV (description)" —
+# the frontend truncates at '(' on the button itself, so only the universal
+# abbreviation shows; the full (Polish) description stays in the title
+# (tooltip). NOTE: label values below are UI text, deliberately NOT
+# translated — see the note above LEVEL_LABELS. Same convention applies to
+# rigs/civ_profiles.py::_FUNC_LABELS (the other path: direct CI-V).
 FUNC_LABELS = {
     "NB":     "NB (Noise Blanker)",
     "COMP":   "COMP (Kompresor)",
@@ -87,7 +90,7 @@ FUNC_LABELS = {
     "FAGC":   "FAGC (Fast AGC)",
 }
 
-# VFO -> etykiety przyciskow
+# VFO -> button labels (UI text, not translated - see note above LEVEL_LABELS)
 VFO_LABELS = {
     "VFOA": "VFO A",
     "VFOB": "VFO B",
@@ -97,7 +100,7 @@ VFO_LABELS = {
 }
 
 
-# ── Stare proste bool capabilities (kompatybilnosc z rigs/features.py) ──────
+# ── Legacy simple bool capabilities (compatibility with rigs/features.py) ───
 _CAPS_PATTERNS = {
     "freq_set": [r"Can set Frequency:\s*Y"],
     "mode_set": [r"Can set Mode:\s*Y"],
@@ -115,9 +118,9 @@ _CAPS_PATTERNS = {
 
 def _parse_level_list(line: str) -> list[dict]:
     """
-    Sparsuj linie typu:
+    Parse a line like:
     'RFPOWER(0.050000..1.000000/0.003922) AF(0.000000..1.000000/0.003922) AGC(0..0/0)'
-    -> lista dict {name, min, max, step}
+    -> a list of dicts {name, min, max, step}
     """
     out = []
     for m in re.finditer(r"(\w+)\(([-\d.]+)\.\.([-\d.]+)/([-\d.]+)\)", line):
@@ -131,7 +134,7 @@ def _parse_level_list(line: str) -> list[dict]:
 
 
 def _parse_word_list(line: str) -> list[str]:
-    """Sparsuj liste slow po dwukropku, np. 'VFO list: VFOA VFOB MEM' -> ['VFOA','VFOB','MEM']"""
+    """Parse a list of words after a colon, e.g. 'VFO list: VFOA VFOB MEM' -> ['VFOA','VFOB','MEM']"""
     if ":" not in line:
         return []
     rhs = line.split(":", 1)[1].strip()
@@ -140,7 +143,7 @@ def _parse_word_list(line: str) -> list[str]:
 
 def parse_dump_caps(text: str) -> dict:
     """
-    Pelny parser dump_caps -> {"actions": [...], "sliders": [...], "raw_caps": {...}}
+    Full dump_caps parser -> {"actions": [...], "sliders": [...], "raw_caps": {...}}
     """
     if not text:
         return {"actions": [], "sliders": [], "raw_caps": {}}
@@ -148,7 +151,7 @@ def parse_dump_caps(text: str) -> dict:
     actions = []
     sliders = []
 
-    # ── proste bool capabilities (jak dawniej) ──
+    # ── simple bool capabilities (as before) ──
     raw_caps = {}
     for feature_id, patterns in _CAPS_PATTERNS.items():
         if not patterns:
@@ -165,11 +168,11 @@ def parse_dump_caps(text: str) -> dict:
     for raw_line in text.splitlines():
         line = raw_line.strip()
 
-        # ── VFO list -> przyciski VFOA/VFOB/... ──
+        # ── VFO list -> VFOA/VFOB/... buttons ──
         if line.startswith("VFO list:") and can_set_vfo:
             for vfo in _parse_word_list(line):
                 if vfo == "MEM":
-                    continue  # pamiec obslugiwana osobno (feature 'memory')
+                    continue  # memory is handled separately (the 'memory' feature)
                 label = VFO_LABELS.get(vfo, vfo)
                 aid = f"vfo_{vfo.lower().replace('vfo','')}"
                 if not any(a["id"] == aid for a in actions):
@@ -178,7 +181,7 @@ def parse_dump_caps(text: str) -> dict:
                         "kind": "vfo_select", "value": vfo,
                     })
 
-        # ── Set functions -> przyciski toggle (NB/COMP/VOX/...) ──
+        # ── Set functions -> toggle buttons (NB/COMP/VOX/...) ──
         if line.startswith("Set functions:") and can_set_func:
             for func in _parse_word_list(line):
                 label = FUNC_LABELS.get(func, func)
@@ -188,14 +191,14 @@ def parse_dump_caps(text: str) -> dict:
                     "kind": "func_toggle", "value": func,
                 })
 
-        # ── Set level -> slidery ──
+        # ── Set level -> sliders ──
         if line.startswith("Set level:") and can_set_level:
             for lvl in _parse_level_list(line):
                 name = lvl["name"]
                 if name in LEVEL_READONLY:
                     continue
                 if lvl["min"] == 0 and lvl["max"] == 0:
-                    continue  # zero-range = no-op w tym backendzie Hamlib
+                    continue  # zero-range = no-op for this Hamlib backend
                 label = LEVEL_LABELS.get(name, name)
                 sliders.append({
                     "id": f"level_{name.lower()}", "label": label, "group": "level",
@@ -208,15 +211,15 @@ def parse_dump_caps(text: str) -> dict:
 
 async def fetch_dump_caps(hamlib_port: int, timeout: float = 3.0) -> str:
     """
-    Polacz sie z dzialajacym rigctld i wyslij komende dump_caps ('1').
-    Zwraca surowy tekst odpowiedzi (moze byc wieloliniowy, kilka KB).
-    Pusty string przy bledzie/braku polaczenia.
+    Connect to a running rigctld and send the dump_caps command ('1').
+    Returns the raw response text (can be multi-line, several KB).
+    Empty string on error/no connection.
     """
     try:
         r, w = await asyncio.wait_for(
             asyncio.open_connection("127.0.0.1", hamlib_port), timeout=timeout)
     except Exception as e:
-        print(f"[hamlib_caps] polaczenie nieudane: {e}")
+        print(f"[hamlib_caps] connection failed: {e}")
         return ""
 
     try:
@@ -231,11 +234,11 @@ async def fetch_dump_caps(hamlib_port: int, timeout: float = 3.0) -> str:
             if not chunk:
                 break
             chunks.append(chunk)
-            if len(chunks) > 50:  # bezpiecznik ~200KB
+            if len(chunks) > 50:  # safety cap, ~200KB
                 break
         return b"".join(chunks).decode(errors="replace")
     except Exception as e:
-        print(f"[hamlib_caps] read blad: {e}")
+        print(f"[hamlib_caps] read error: {e}")
         return ""
     finally:
         try:
@@ -246,26 +249,26 @@ async def fetch_dump_caps(hamlib_port: int, timeout: float = 3.0) -> str:
 
 async def discover_capabilities(hamlib_port: int) -> dict:
     """
-    Polacz z rigctld, pobierz dump_caps, sparsuj -> pelna struktura
+    Connect to rigctld, fetch dump_caps, parse it -> the full structure
     {"actions": [...], "sliders": [...], "raw_caps": {...}}.
-    Pusta struktura przy bledzie/braku odpowiedzi.
+    An empty structure on error/no response.
     """
     text = await fetch_dump_caps(hamlib_port)
     if not text:
-        print("[hamlib_caps] brak odpowiedzi dump_caps — capabilities puste (fallback)")
+        print("[hamlib_caps] no dump_caps response — capabilities empty (fallback)")
         return {"actions": [], "sliders": [], "raw_caps": {}}
 
     result = parse_dump_caps(text)
-    print(f"[hamlib_caps] wykryto {len(result['actions'])} akcji, "
-          f"{len(result['sliders'])} sliderow, "
-          f"raw_caps={', '.join(k for k,v in result['raw_caps'].items() if v) or '(brak)'}")
+    print(f"[hamlib_caps] detected {len(result['actions'])} actions, "
+          f"{len(result['sliders'])} sliders, "
+          f"raw_caps={', '.join(k for k,v in result['raw_caps'].items() if v) or '(none)'}")
     return result
 
 
 async def get_rigctld_capabilities(hamlib_port: int) -> dict:
     """
-    Kompatybilnosc wstecz — zwraca tylko raw_caps (proste bool dict)
-    dla istniejacego kodu w rigs/features.py / webapp.py.
+    Backward compatibility — returns only raw_caps (the simple bool dict)
+    for existing code in rigs/features.py / webapp.py.
     """
     full = await discover_capabilities(hamlib_port)
     return full["raw_caps"]

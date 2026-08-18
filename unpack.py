@@ -1,29 +1,30 @@
 """
-Etap 4: unpack77 - odwrotnosc pack77 z ft8_encoder.py.
-Uzywa DOKLADNIE tych samych tabel (zweryfikowanych dzis bit-dokladnie
-przeciwko prawdziwemu ft8code.exe), tylko w odwrotna strone.
+Stage 4: unpack77 - the inverse of pack77 from ft8_encoder.py.
+Uses EXACTLY the same tables (verified bit-exact against the real
+ft8code.exe), just in the reverse direction.
 """
 import ft8_encoder as fe
 
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
-# Alfabet uzywany do hashowania niestandardowych callsigns (39 znakow:
-# spacja + 0-9 + A-Z + '/'). Zweryfikowany bit-dokladnie przeciwko dwoch
-# autorytatywnym przykladom z listy mailingowej wsjt-devel (YW18FIFA -> 771524,
+# Alphabet used for hashing non-standard callsigns (39 characters:
+# space + 0-9 + A-Z + '/'). Verified bit-exact against two authoritative
+# examples from the wsjt-devel mailing list (YW18FIFA -> 771524,
 # VK0MUCHTOOLONGCALLSIGN -> 1137640).
 _HASH_ALPHABET = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/"
 
-# Alfabet 38-znakowy do pakowania niestandardowego znaku w polu c58 (Type 4).
-# Ten sam zestaw co _HASH_ALPHABET (spacja + 0-9 + A-Z + '/').
+# 38-character alphabet for packing a non-standard callsign into the c58
+# field (Type 4). The same set as _HASH_ALPHABET (space + 0-9 + A-Z + '/').
 _C58_ALPHABET = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/"
 
 
 def _unpack58(n58):
     """
-    Rozpakowuje 58-bitowe pole c58 (Type 4) na niestandardowy znak.
-    Odwrotnosc pakowania WSJT-X: 11-znakowy string budowany przez kolejne
-    reszty z dzielenia przez 38, od konca. Zweryfikowane bit-dokladnie na
-    prawdziwym sygnale HB10GBT z pasma 15m (n58=55151927106 -> 'HB10GBT').
+    Unpacks the 58-bit c58 field (Type 4) into a non-standard callsign.
+    The inverse of WSJT-X's packing: an 11-character string built from
+    successive remainders of division by 38, from the end. Verified
+    bit-exact on a real HB10GBT signal from the 15m band (n58=55151927106
+    -> 'HB10GBT').
     """
     chars = []
     for _ in range(11):
@@ -34,13 +35,12 @@ def _unpack58(n58):
 
 def ihashcall(callsign, m=22):
     """
-    Oblicza m-bitowy hash callsign wedlug oficjalnej specyfikacji protokolu
-    FT8/FT4 (zgodnosc bitowa wymagana do poprawnej wspolpracy z innymi
-    stacjami w eterze).
-    Uzywane do budowania tablicy hash->callsign: gdy widzimy PELNY
-    callsign w jednej ramce, zapamietujemy jego hash, zeby podstawic
-    prawdziwy tekst gdy ten sam hash pojawi sie w innej (niestandardowej)
-    ramce.
+    Computes an m-bit callsign hash per the official FT8/FT4 protocol spec
+    (bit-exact compatibility is required to interoperate correctly with
+    other stations on the air).
+    Used to build the hash->callsign table: when we see a FULL callsign in
+    one frame, we remember its hash, so we can substitute the real text
+    when the same hash shows up in another (non-standard) frame.
     """
     c0 = callsign.upper().strip().ljust(11)[:11]
     n8 = 0
@@ -55,9 +55,9 @@ def ihashcall(callsign, m=22):
 
 class HashCallCache:
     """
-    Prosta tablica hash22 -> callsign, budowana w czasie (analogicznie do
-    prawdziwego WSJT-X). Nie jest trwala miedzy restartami serwera — to
-    samo zachowanie co WSJT-X (tablica zeruje sie przy starcie programu).
+    A simple hash22 -> callsign table, built up over time (analogous to
+    real WSJT-X). Not persisted across server restarts — the same
+    behavior as WSJT-X (the table resets when the program starts).
     """
     def __init__(self, max_size=2000):
         self._map = {}
@@ -75,8 +75,8 @@ class HashCallCache:
         return self._map.get(hash_val)
 
 
-# Cache globalny modulu (jeden proces serwera = jedna sesja nasluchu, zgodnie
-# z zachowaniem WSJT-X)
+# Module-global cache (one server process = one listening session, matching
+# WSJT-X's behavior)
 _hash_cache = HashCallCache()
 
 
@@ -88,7 +88,7 @@ def _bits_to_int(bits):
 
 
 def _unpack_c28(c28):
-    """Odwrotnosc _encode_c28/_packcall. Zwraca string callsign (lub specjalny token)."""
+    """The inverse of _encode_c28/_packcall. Returns the callsign string (or a special token)."""
     if c28 == 0:
         return "DE"
     if c28 == 1:
@@ -96,7 +96,7 @@ def _unpack_c28(c28):
     if c28 == fe._NBASE_CQ:
         return "CQ"
     if 3 <= c28 < 3 + 1000000:
-        # CQ + numeric/alfanumeric suffix - rzadko uzywane, pomijamy szczegoly
+        # CQ + numeric/alphanumeric suffix - rarely used, details skipped
         return f"CQ_{c28}"
     NTOKENS = 2063592
     if NTOKENS <= c28 < NTOKENS + 4194304:
@@ -143,7 +143,7 @@ def _unpack_c28(c28):
 
 
 def _ng_to_grid(ng):
-    """Odwrotnosc _grid_to_ng: ng (0..32399) -> 4-znakowy grid (system pozycyjny)."""
+    """The inverse of _grid_to_ng: ng (0..32399) -> a 4-character grid (positional numeral system)."""
     c3 = ng % 10
     ng //= 10
     c2 = ng % 10
@@ -156,13 +156,14 @@ def _ng_to_grid(ng):
 
 def _unpack_g15(g15):
     """
-    Odwrotnosc _encode_g15. Enkoder koduje (zweryfikowane wzgledem WSJT-X):
-      grid 4-znak -> 0..32399
+    The inverse of _encode_g15. The encoder encodes (verified against WSJT-X):
+      4-character grid -> 0..32399
       "" -> 32401, "RRR" -> 32402, "RR73" -> 32403, "73" -> 32404
-      raport +/-NN (-30..+49) -> g15 = 32400 + (raport + 35)  [r_flag=False]
-      R+/-NN                  -> g15 = 32400 + (raport + 35)  [r_flag=True]
-    Bit R (R1) rozroznia raport z prefiksem R od goleg — obslugiwany przez
-    wolajacego (format_message dokleja R gdy R1=1), tu zwracamy sam raport.
+      +/-NN report (-30..+49) -> g15 = 32400 + (report + 35)  [r_flag=False]
+      R+/-NN                  -> g15 = 32400 + (report + 35)  [r_flag=True]
+    The R bit (R1) distinguishes an R-prefixed report from a bare one — it
+    is handled by the caller (format_message adds R when R1=1); here we
+    return just the report.
     """
     if g15 == 0:
         return ""
@@ -176,7 +177,7 @@ def _unpack_g15(g15):
         return "RR73"
     if g15 == 32404:
         return "73"
-    # raporty numeryczne: g15 = 32400 + (raport + 35) => raport = g15 - 32435
+    # numeric reports: g15 = 32400 + (report + 35) => report = g15 - 32435
     if 32405 <= g15 <= 32484:
         rpt = g15 - 32435
         return f"{rpt:+03d}"
@@ -185,21 +186,21 @@ def _unpack_g15(g15):
 
 def unpack77(bits77):
     """
-    bits77: lista/array 77 bitow (0/1).
-    Zwraca dict: {i3, call_to, call_de, r1, report_or_grid, R1}
+    bits77: a list/array of 77 bits (0/1).
+    Returns a dict: {i3, call_to, call_de, r1, report_or_grid, R1}
     """
     bits = list(bits77)
     assert len(bits) == 77
     data74 = bits[0:74]
     i3 = _bits_to_int(bits[74:77])
 
-    # --- Type 4: wiadomosc z niestandardowym (dlugim/zlozonym) znakiem ---
-    # Struktura (zweryfikowana na prawdziwym HB10GBT, 15m):
-    #   bits[0:12]  = h12  - 12-bitowy hash DRUGIEGO znaku (odbiorcy/partnera)
-    #   bits[12:70] = c58  - 58-bitowy niestandardowy znak (nadawca)
-    #   bits[70]    = iflip- 0: nadawca=c58; 1: role zamienione
-    #   bits[71:73] = nrpt - kod tresci (0:brak,1:RRR,2:RR73,3:73)
-    #   bits[73]    = icq  - 1: wiadomosc CQ
+    # --- Type 4: a message with a non-standard (long/compound) callsign ---
+    # Structure (verified on a real HB10GBT signal, 15m):
+    #   bits[0:12]  = h12  - 12-bit hash of the SECOND callsign (recipient/partner)
+    #   bits[12:70] = c58  - 58-bit non-standard callsign (sender)
+    #   bits[70]    = iflip- 0: sender=c58; 1: roles swapped
+    #   bits[71:73] = nrpt - content code (0:none,1:RRR,2:RR73,3:73)
+    #   bits[73]    = icq  - 1: a CQ message
     #   bits[74:77] = i3=4
     if i3 == 4:
         h12 = _bits_to_int(bits[0:12])
@@ -209,11 +210,11 @@ def unpack77(bits77):
         icq = bits[73]
 
         nonstd_call = _unpack58(n58)
-        # zapamietaj pelny niestandardowy znak pod jego 12-bit hashem,
-        # zeby podstawic go gdy pojawi sie tylko jako hash w innej ramce
+        # remember the full non-standard callsign under its 12-bit hash,
+        # so we can substitute it when it shows up as just a hash in another frame
         if nonstd_call and not nonstd_call.startswith('<'):
             _hash_cache.remember(nonstd_call)
-        # h12 odnosi sie do PARTNERA; sprobuj znalezc pelny znak po 12-bit hashu
+        # h12 refers to the PARTNER; try to find the full callsign from its 12-bit hash
         partner = None
         for known in list(_hash_cache._map.values()):
             if ihashcall(known, 12) == h12:
@@ -250,9 +251,9 @@ def unpack77(bits77):
     call_de = _unpack_c28(c28_2)
     grid_or_report = _unpack_g15(g15)
 
-    # Ucz cache: kazdy PELNY (nie-hash, nie-specjalny) callsign widziany w tej
-    # ramce zapamietujemy, zeby podstawic go pod ten sam hash w przyszlych,
-    # niestandardowych ramkach.
+    # Train the cache: remember every FULL (non-hash, non-special) callsign
+    # seen in this frame, so it can be substituted for the same hash in
+    # future non-standard frames.
     for call in (call_to, call_de):
         if call and call not in ("CQ", "DE", "QRZ") and not call.startswith("<") and not call.startswith("CQ_"):
             _hash_cache.remember(call)
