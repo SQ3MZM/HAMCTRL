@@ -1,25 +1,25 @@
 /**
- * rotormini.js — Widget rotora obok VFO
- * Płynna animacja: interpolacja lokalna między aktualizacjami z serwera
+ * rotormini.js — Rotator widget next to the VFO
+ * Smooth animation: local interpolation between updates from the server
  */
 'use strict';
 (function () {
 
-// ── Stan ──────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 let _rotId   = null;
-let _az      = 0;      // ostatnia pozycja z serwera
-let _taz     = 0;      // cel
+let _az      = 0;      // last position from the server
+let _taz     = 0;      // target
 let _moving  = false;
 let _myLoc   = 'KO02';
 
-// Interpolacja lokalna
-let _azDisp  = 0;      // aktualnie wyświetlany kąt
-let _azPrev  = 0;      // poprzednia pozycja z serwera
-let _tPrev   = 0;      // czas poprzedniej aktualizacji z serwera
-let _tNext   = 0;      // czas następnej oczekiwanej aktualizacji
-let _speed   = 0;      // prędkość °/s obliczona z poprzednich aktualizacji
+// Local interpolation
+let _azDisp  = 0;      // currently displayed angle
+let _azPrev  = 0;      // previous position from the server
+let _tPrev   = 0;      // time of the previous update from the server
+let _tNext   = 0;      // time of the next expected update
+let _speed   = 0;      // °/s speed computed from previous updates
 
-// ── Kompas ────────────────────────────────────────────────────────────────────
+// ── Compass ───────────────────────────────────────────────────────────────────
 function drawCompass(az, taz, moving) {
   const cv = document.getElementById('rot-compass');
   if (!cv) return;
@@ -29,7 +29,7 @@ function drawCompass(az, taz, moving) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Tło
+  // Background
   const g = ctx.createRadialGradient(cx,cy,0,cx,cy,R);
   g.addColorStop(0, '#111811'); g.addColorStop(1, '#0a0c0a');
   ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
@@ -37,7 +37,7 @@ function drawCompass(az, taz, moving) {
   ctx.strokeStyle = moving ? 'rgba(240,180,41,0.4)' : 'rgba(76,219,106,0.25)';
   ctx.lineWidth = moving ? 2 : 1; ctx.stroke();
 
-  // Podziałka
+  // Tick marks
   for (let d=0; d<360; d+=5) {
     const r  = (d-90)*Math.PI/180;
     const big = d%30===0, med = d%10===0;
@@ -57,7 +57,7 @@ function drawCompass(az, taz, moving) {
     ctx.fillText(l, cx+Math.cos(r)*rr, cy+Math.sin(r)*rr);
   }
 
-  // Linia celu (przerywana)
+  // Target line (dashed)
   if (moving && taz!=null) {
     const tr=(taz-90)*Math.PI/180;
     ctx.save(); ctx.setLineDash([3,4]);
@@ -67,7 +67,7 @@ function drawCompass(az, taz, moving) {
     ctx.restore();
   }
 
-  // Wskaźnik
+  // Pointer
   const col = moving ? '#f0b429' : '#4cdb6a';
   const aLen = R-14;
   ctx.save();
@@ -80,20 +80,20 @@ function drawCompass(az, taz, moving) {
   ctx.closePath(); ctx.fillStyle=col; ctx.fill();
   ctx.restore();
 
-  // Środek
+  // Center
   ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2);
   ctx.fillStyle=col; ctx.shadowBlur=6; ctx.shadowColor=col; ctx.fill();
   ctx.shadowBlur=0;
 }
 
-// ── Pętla animacji (60fps) ────────────────────────────────────────────────────
+// ── Animation loop (60fps) ─────────────────────────────────────────────────────
 (function loop(now) {
   if (_moving && _speed > 0.05) {
-    // Oblicz ile czasu minęło od ostatniej aktualizacji z serwera
-    const dt = Math.min((now - _tPrev) / 1000, 2.0);  // max 2s ekstrapolacji
-    // Ekstrapoluj pozycję liniowo na podstawie prędkości
+    // Compute how much time has passed since the last server update
+    const dt = Math.min((now - _tPrev) / 1000, 2.0);  // max 2s of extrapolation
+    // Extrapolate the position linearly based on speed
     const extrapolated = _azPrev + _speed * dt;
-    // Ale nie przekraczaj celu
+    // But don't overshoot the target
     const toTarget = _taz - _azPrev;
     if (Math.abs(toTarget) > 1) {
       const limited = _azPrev + Math.sign(toTarget) * Math.min(Math.abs(extrapolated - _azPrev), Math.abs(toTarget));
@@ -102,7 +102,7 @@ function drawCompass(az, taz, moving) {
       _azDisp = _az;
     }
   } else {
-    // Stoi — płynna interpolacja do rzeczywistej pozycji
+    // Stopped — smooth interpolation to the actual position
     const diff = _az - _azDisp;
     _azDisp += diff * 0.15;
     if (Math.abs(diff) < 0.05) _azDisp = _az;
@@ -110,7 +110,7 @@ function drawCompass(az, taz, moving) {
 
   drawCompass(_azDisp, _taz, _moving);
 
-  // Cyfry
+  // Digits
   const azEl = document.getElementById('rot-az-display');
   if (azEl) azEl.textContent = Math.round(_azDisp).toString().padStart(3,'0');
 
@@ -154,14 +154,14 @@ function updateUI(rot) {
 
   _rotId = rot.id;
 
-  // Oblicz prędkość na podstawie różnicy między aktualizacjami
+  // Compute speed from the difference between updates
   const now   = performance.now();
   const newAz = parseFloat(rot.azimuth ?? rot.az ?? 0);
   if (_moving && now > _tPrev) {
     const dt = (now - _tPrev) / 1000;
     if (dt > 0.05 && dt < 3.0) {
       const rawSpeed = Math.abs(newAz - _az) / dt;
-      // Wygładź prędkość (nie skacz przy błędach odczytu)
+      // Smooth the speed (don't jump on read glitches)
       if (rawSpeed < 20) _speed = _speed * 0.6 + rawSpeed * 0.4;
     }
   }
@@ -173,22 +173,23 @@ function updateUI(rot) {
   const wasMoving = _moving;
   _moving  = !!rot.moving;
 
-  // Gdy rotor staje — zresetuj prędkość i skocz do dokładnej pozycji
+  // When the rotator stops — reset the speed and jump to the exact position
   if (wasMoving && !_moving) {
     _speed  = 0;
     _azDisp = _az;
   }
 
-  // Kolor cyfr
+  // Digit color
   const azEl = document.getElementById('rot-az-display');
   if (azEl) azEl.style.color = _moving ? 'var(--amber,#f0b429)' : (rot.connected ? 'var(--green)' : 'var(--dim)');
 
   // Badge
   const badge = document.getElementById('rot-status-badge');
   if (badge) {
-    // Usun data-i18n statycznego HTML - inaczej kolejny I18n.setLang()
-    // nadpisze ten badge z powrotem na "brak" niezaleznie od realnego stanu
-    // (SIM/OK/moving), bo apply() dziala po calym dokumencie po atrybucie.
+    // Remove the static HTML's data-i18n - otherwise the next
+    // I18n.setLang() would overwrite this badge back to "none" regardless
+    // of the actual state (SIM/OK/moving), since apply() runs over the
+    // whole document by attribute.
     badge.removeAttribute('data-i18n');
     if (!rot.connected&&!rot.sim) { badge.textContent=I18n.t('rotator_none'); badge.style.color='var(--red)'; }
     else if (rot.sim)             { badge.textContent='● SIM';  badge.style.color='var(--amber,#f0b429)'; }
@@ -200,7 +201,7 @@ function updateUI(rot) {
   if (nm) nm.textContent=rot.name||'';
 }
 
-// ── Akcje ─────────────────────────────────────────────────────────────────────
+// ── Actions ───────────────────────────────────────────────────────────────────
 function onInput() {
   const inp=document.getElementById('rot-target-inp');
   const prv=document.getElementById('rot-target-preview');
