@@ -6052,12 +6052,12 @@ class App:
             self._qso_engine.abort_qso()
             self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
             self._ft8_tx_abort = True
-            # _qso_period_locked=False NIE ustawia zlego okresu na sztywno —
-            # okres dla nastepnej stacji i tak zostanie na nowo wykryty z jej
-            # PIERWSZEJ realnej odpowiedzi (_dispatch_auto_reply przekazuje
-            # swiezy partner_decode do _send_auto_tx), wiec cala kolejna
-            # lacznosc trafi w prawidlowe okna, a nie w przypadkowo
-            # "zamrozony" okres po poprzedniej stacji.
+            # _qso_period_locked=False does NOT hard-set a wrong period —
+            # the period for the next station will be freshly detected
+            # from its FIRST real reply anyway (_dispatch_auto_reply passes
+            # a fresh partner_decode to _send_auto_tx), so the entire next
+            # contact lands in the correct windows, instead of a "frozen"
+            # period left over from the previous station.
             self._qso_period_locked = False
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
@@ -6073,12 +6073,12 @@ class App:
             if period not in (1, 2):
                 return
             self._ft8_tx_period = period
-            print(f"[ft8] Okres nadawania ustawiony na: {period}")
+            print(f"[ft8] Transmit period set to: {period}")
             await self.hub.broadcast({"type": "ft8_tx_period", "period": period})
 
         elif t == "ft8_toggle_fake_split":
-            # Wlacz/wylacz Fake Split (patrz _apply_fake_split_before_tx).
-            # Stan zapamietany w configu — przetrwa restart serwera.
+            # Enable/disable Fake Split (see _apply_fake_split_before_tx).
+            # State remembered in the config — survives a server restart.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -6086,7 +6086,7 @@ class App:
             self._fake_split_enabled = bool(msg.get("enabled", not self._fake_split_enabled))
             self.cfg.setdefault("ft8", {})["fakeSplit"] = self._fake_split_enabled
             save_json(CFG_F, self.cfg)
-            print(f"[ft8] Fake Split {'WLACZONY' if self._fake_split_enabled else 'wylaczony'}")
+            print(f"[ft8] Fake Split {'ENABLED' if self._fake_split_enabled else 'disabled'}")
             await self.hub.broadcast({"type": "ft8_fake_split_status",
                                        "enabled": self._fake_split_enabled,
                                        "targetHz": 1500})
@@ -6100,18 +6100,18 @@ class App:
             if mode not in ("FT8", "FT4"):
                 return
             self._ft8_decode_mode = mode
-            print(f"[ft8] Tryb dekodowania ustawiony na: {mode}")
-            # Przekaz do Rust — zmien tryb dekodowania
+            print(f"[ft8] Decode mode set to: {mode}")
+            # Forward to Rust — change the decode mode
             if self.rust_audio:
                 await self.rust_audio.ft8_enable_rx(self._ft8_rx_enabled, mode)
             await self.hub.broadcast({"type": "ft8_decode_mode", "mode": mode})
 
-        # ── WebRTC sygnalizacja (offer/answer/ICE) ────────────────────────────
+        # ── WebRTC signaling (offer/answer/ICE) ────────────────────────────
         elif t == "webrtc_offer":
             if not self.webrtc:
                 await ws.send_json({"type": "webrtc_error", "error": "WebRTC niedostepne na serwerze"})
                 return
-            # Uruchom TX playback (jak audio_tx_start) zanim podlaczymy track
+            # Start TX playback (like audio_tx_start) before attaching the track
             if not self.audio.tx_active:
                 dev = self.cfg.get("audio", {}).get("txDevice")
                 self.audio.start_tx(device=dev)
@@ -6129,7 +6129,7 @@ class App:
             if self.audio.tx_active:
                 self.audio.stop_tx()
 
-        # ── Dynamiczne akcje/slidery (z dump_caps: VFO A/B, funkcje, levels) ──
+        # ── Dynamic actions/sliders (from dump_caps: VFO A/B, functions, levels) ──
         elif t == "rig_action":
             await self._handle_rig_action(msg, ws, role)
 
@@ -6137,73 +6137,76 @@ class App:
             await self._handle_rig_slider(msg, ws, role)
 
     async def _dynamic_allowed(self, dynamic_id: str, role: str, kind: str) -> bool:
-        """Sprawdz whitelist dla dynamicznego elementu (action/slider) po id.
-        Admin zawsze dozwolony. Domyslnie wlaczone (enabled_dynamic.get(id, True))."""
+        """Check the whitelist for a dynamic element (action/slider) by id.
+        Admin is always allowed. Enabled by default (enabled_dynamic.get(id, True))."""
         if role == "admin":
             return True
-        # KEYSPD (WPM) dozwolone dla wszystkich uzytkownikow
+        # KEYSPD (WPM) is allowed for all users
         if dynamic_id == "level_keyspd":
             return True
         rig_id = self._current_rig_id()
         enabled_dyn = self._get_enabled_dynamic(rig_id)
         if not enabled_dyn.get(dynamic_id, True):
             return False
-        # Sprawdz ze element rzeczywiscie istnieje w aktualnych capabilities
+        # Check that the element actually exists in the current capabilities
         caps = getattr(self, "_caps_cache", None) or {"actions": [], "sliders": []}
         items = caps.get("actions" if kind == "action" else "sliders", [])
         return any(i["id"] == dynamic_id for i in items)
 
     async def _cq_calling_loop(self):
         """
-        Petla cyklicznego wolania CQ. Nadaje CQ, czeka do konca pelnego okresu
-        (2 okna 15s = 30s dla FT8), sprawdza czy wciaz wolamy, ponawia.
+        Periodic CQ-calling loop. Transmits CQ, waits until the end of the
+        full period (2 windows of 15s = 30s for FT8), checks whether we're
+        still calling, repeats.
 
-        Zatrzymuje sie gdy:
-          - self._cq_calling = False (user stop / timer / ktos odpowiedzial)
-          - engine wszedl w aktywne QSO (ktos odpowiedzial na nasz CQ)
-          - PTT zajete przez cos innego / abort
+        Stops when:
+          - self._cq_calling = False (user stop / timer / someone answered)
+          - the engine entered an active QSO (someone answered our CQ)
+          - PTT taken by something else / abort
 
-        Odpowiedz na nasz CQ jest wykrywana w _process_auto_qso (on_decode) —
-        gdy stacja odpowie, wywolujemy _stop_cq_calling i engine przejmuje QSO.
+        A reply to our CQ is detected in _process_auto_qso (on_decode) —
+        when a station answers, we call _stop_cq_calling and the engine takes over the QSO.
         """
-        # STABILNOSC: try jest WEWNATRZ while - pojedynczy blad (np. radio
-        # chwilowo nie odpowiada) nie zabija petli. Licznik bledow pod rzad
-        # chroni przed kreceniem sie w kolko przy trwalej awarii.
+        # STABILITY: the try is INSIDE the while - a single error (e.g. the
+        # radio momentarily not responding) doesn't kill the loop. A
+        # consecutive-error counter guards against spinning forever during
+        # a persistent failure.
         _consecutive_errors = 0
         _MAX_ERRORS = 5
         try:
             while self._cq_calling:
                 try:
-                    # Jesli engine ma aktywne QSO - ktos odpowiedzial, przestan wolac
+                    # If the engine has an active QSO - someone answered, stop calling
                     if self._qso_engine.is_active():
-                        print("[cq] QSO aktywne - zatrzymuje wolanie CQ")
+                        print("[cq] QSO active - stopping CQ calling")
                         break
                     call_de = self._cq_call_de
                     report = self._cq_report
                     if not call_de:
                         break
-                    # Zapamietaj tresc CQ (do rozpoznania odpowiedzi w on_decode)
+                    # Remember the CQ text (to recognize a reply in on_decode)
                     self._auto_cq_text = f"CQ {call_de} {report}".strip()
-                    # Nadaj jeden CQ (przez wspolna sciezke - respektuje okno/PTT/lock)
+                    # Transmit one CQ (via the shared path - respects window/PTT/lock)
                     await self._ft8_tx_sequence("CQ", call_de, report, False)
-                    _consecutive_errors = 0  # sukces - zeruj licznik
-                    # _ft8_tx_sequence konczy sie pod koniec okresu. Sprawdz czy
-                    # wciaz wolamy (mogl przyjsc stop/odpowiedz w trakcie).
+                    _consecutive_errors = 0  # success - reset the counter
+                    # _ft8_tx_sequence ends near the end of the period.
+                    # Check whether we're still calling (a stop/reply may
+                    # have arrived in the meantime).
                     if not self._cq_calling:
                         break
                     if self._qso_engine.is_active():
-                        print("[cq] QSO aktywne po CQ - koniec wolania")
+                        print("[cq] QSO active after CQ - stopping calling")
                         break
-                    # Krotka pauza zeby nie wejsc od razu w to samo okno.
+                    # Short pause so we don't immediately re-enter the same window.
                     await asyncio.sleep(0.5)
                 except asyncio.CancelledError:
-                    raise  # anulowanie przepuszczamy wyzej
+                    raise  # let the cancellation propagate upward
                 except Exception as e:
                     _consecutive_errors += 1
-                    print(f"[cq] blad cyklu CQ ({_consecutive_errors}/{_MAX_ERRORS}): {e}",
+                    print(f"[cq] CQ cycle error ({_consecutive_errors}/{_MAX_ERRORS}): {e}",
                           flush=True)
                     if _consecutive_errors >= _MAX_ERRORS:
-                        print("[cq] za duzo bledow pod rzad - zatrzymuje wolanie CQ",
+                        print("[cq] too many consecutive errors - stopping CQ calling",
                               flush=True)
                         try:
                             await self.hub.broadcast({
@@ -6213,26 +6216,26 @@ class App:
                         except Exception:
                             pass
                         break
-                    # Backoff przed kolejna proba
+                    # Backoff before the next attempt
                     await asyncio.sleep(2.0)
         except asyncio.CancelledError:
-            print("[cq] petla CQ anulowana")
+            print("[cq] CQ loop cancelled")
         except Exception as e:
-            print(f"[cq] blad petli CQ: {e}")
+            print(f"[cq] CQ loop error: {e}")
         finally:
             self._cq_calling = False
             self._auto_cq_text = None
 
     def _stop_cq_calling(self):
-        """Zatrzymaj cykliczne wolanie CQ (user stop / odpowiedz / timer).
-        Ustawia tez _ft8_tx_abort zeby przerwac BIEZACE nadawanie audio, i
-        anuluje task petli. Bez _ft8_tx_abort biezacy _ft8_tx_sequence
-        doksztalcilby sie do konca mimo zatrzymania CQ."""
+        """Stop periodic CQ calling (user stop / reply / timer).
+        Also sets _ft8_tx_abort to abort the CURRENT audio transmission,
+        and cancels the loop task. Without _ft8_tx_abort, the current
+        _ft8_tx_sequence would finish transmitting to the end despite CQ being stopped."""
         if self._cq_calling:
-            print("[cq] Zatrzymuje cykliczne wolanie CQ")
+            print("[cq] Stopping periodic CQ calling")
         self._cq_calling = False
         self._auto_cq_text = None
-        # Przerwij biezace nadawanie (jesli wlasnie leci CQ)
+        # Abort the current transmission (if a CQ is currently going out)
         self._ft8_tx_abort = True
         if self._cq_task and not self._cq_task.done():
             self._cq_task.cancel()
@@ -6240,21 +6243,22 @@ class App:
 
     @staticmethod
     def _compute_fake_split(dial_hz: float, desired_audio_hz: float) -> dict:
-        """Oblicza Fake Split: o ile przesunac VFO (dial) zeby audio TX bylo
-        blisko srodka filtra SSB (~1500Hz) przy zachowanym niezmienniku
-        freq_eteru = dial + audio (musi byc identyczna przed i po). Logika
-        1:1 z fake_split_prototype.py (tam przetestowana osobno na sucho,
-        bez dotykania radia, zanim wpieta zostala tutaj w tor TX).
+        """Computes Fake Split: how much to shift the VFO (dial) so the TX
+        audio lands near the center of the SSB filter (~1500Hz) while
+        preserving the invariant on-air-freq = dial + audio (must be
+        identical before and after). Logic is 1:1 with
+        fake_split_prototype.py (tested there separately, dry, without
+        touching the radio, before being wired into the TX path here).
 
-        Zwraca dict: on_air_hz, split_needed, new_dial_hz, new_audio_hz,
-        restore_dial_hz (= dial_hz, na co wrocic po nadaniu)."""
+        Returns a dict: on_air_hz, split_needed, new_dial_hz, new_audio_hz,
+        restore_dial_hz (= dial_hz, what to restore to after transmitting)."""
         TARGET_AUDIO_HZ = 1500.0
         AUDIO_MIN_HZ, AUDIO_MAX_HZ = 300.0, 2700.0
-        VFO_STEP_HZ = 500.0  # blokowe przesuniecia — radio nie nadaza na ciagle strojenie
+        VFO_STEP_HZ = 500.0  # block shifts — the radio can't keep up with continuous tuning
 
         on_air_hz = dial_hz + desired_audio_hz
         if AUDIO_MIN_HZ <= desired_audio_hz <= AUDIO_MAX_HZ and 600.0 <= desired_audio_hz <= 2400.0:
-            # Audio juz wystarczajaco daleko od krawedzi filtra — split zbedny.
+            # Audio is already far enough from the filter edge — split is unnecessary.
             return {"on_air_hz": on_air_hz, "split_needed": False,
                     "new_dial_hz": dial_hz, "new_audio_hz": desired_audio_hz,
                     "restore_dial_hz": dial_hz}
@@ -6262,22 +6266,23 @@ class App:
         raw_shift = desired_audio_hz - TARGET_AUDIO_HZ
         vfo_shift = round(raw_shift / VFO_STEP_HZ) * VFO_STEP_HZ
         new_dial_hz = dial_hz + vfo_shift
-        new_audio_hz = on_air_hz - new_dial_hz  # dopelnienie do niezmiennika
+        new_audio_hz = on_air_hz - new_dial_hz  # complement to preserve the invariant
         return {"on_air_hz": on_air_hz, "split_needed": True,
                 "new_dial_hz": new_dial_hz, "new_audio_hz": new_audio_hz,
                 "restore_dial_hz": dial_hz}
 
     async def _apply_fake_split_before_tx(self):
-        """Jesli Fake Split jest wlaczony, przesuwa VFO PRZED nadawaniem i
-        podmienia self._ft8_tx_freq_hz na bezpieczny offset (~1500Hz) na czas
-        TEJ transmisji — wolane raz, na samym poczatku _ft8_tx_sequence_inner,
-        PRZED sprawdzeniem cache PCM (self._pre_pcm_cache), ktory kasujemy gdy
-        split jest potrzebny: pre-gen PCM (patrz _send_auto_tx) zostal policzony
-        dla STAREGO audio offsetu sprzed przesuniecia VFO — uzycie go teraz
-        wyslaloby dzwiek niezgodny z nowa pozycja VFO i zlamalo niezmiennik
-        czestotliwosci w eterze. Stan do przywrocenia trzymany w
-        self._fake_split_state (None jesli nic nie trzeba przywracac —
-        _restore_fake_split_after_tx() jest wtedy bezpiecznym no-opem)."""
+        """If Fake Split is enabled, shifts the VFO BEFORE transmitting and
+        swaps self._ft8_tx_freq_hz for a safe offset (~1500Hz) for the
+        duration of THIS transmission — called once, right at the start of
+        _ft8_tx_sequence_inner, BEFORE checking the PCM cache
+        (self._pre_pcm_cache), which is cleared when a split is needed: the
+        pre-generated PCM (see _send_auto_tx) was computed for the OLD
+        audio offset before the VFO shift — using it now would send audio
+        inconsistent with the new VFO position and break the on-air
+        frequency invariant. The state to restore is kept in
+        self._fake_split_state (None if there's nothing to restore —
+        _restore_fake_split_after_tx() is then a safe no-op)."""
         self._fake_split_state = None
         if not self._fake_split_enabled:
             return False
