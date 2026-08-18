@@ -1559,11 +1559,11 @@ async function _loadMiniLog() {
   } catch(e) { console.warn('[wsjtx] mini-log load error', e); }
 }
 
-// Nowe QSO w prawdziwym logu (auto-zapis z automatyki LUB reczne "+ LOG QSO"
-// ponizej - oba wysylaja ten sam broadcast, patrz komentarz przy handleWS).
-// Broadcast idzie do WSZYSTKICH polaczonych klientow (hub.broadcast nie jest
-// per-user), wiec filtrujemy po user_id - inaczej QSO innego zalogowanego
-// operatora wskoczyloby do naszego mini-logu.
+// A new QSO in the real log (auto-save from the automation OR a manual
+// "+ LOG QSO" below - both send the same broadcast, see the comment at
+// handleWS). The broadcast goes to ALL connected clients (hub.broadcast
+// isn't per-user), so we filter by user_id - otherwise another logged-in
+// operator's QSO would jump into our mini-log.
 function _onQsoLogged(msg) {
   const qso = msg.qso;
   if (!qso || qso.user_id !== window.CurrentUser?.id) return;
@@ -1572,9 +1572,10 @@ function _onQsoLogged(msg) {
   _renderMiniLog();
 }
 
-// Mini-log pod "SZYBKI ZAPIS QSO" (panel automatyki) — czysto informacyjny
-// podglad ostatnich QSO z prawdziwego logu. Zero edycji/usuwania tutaj
-// CELOWO - do tego jest osobna strona LOG QSO (pelna edycja i zapis).
+// Mini-log below "QUICK QSO LOG" (the automation panel) — a purely
+// informational preview of recent QSOs from the real log. No editing/
+// deleting here, DELIBERATELY - there's a separate LOG QSO page for that
+// (full editing and saving).
 function _renderMiniLog() {
   const el = document.getElementById('wj-minilog-body');
   if (!el) return;
@@ -1603,9 +1604,9 @@ async function addLog() {
   const rstR   = document.getElementById('wj-log-rst-rcvd')?.value || '+00';
   const comment= document.getElementById('wj-log-comment')?.value.trim() || '';
 
-  // Format qso_db (qso_date=YYYYMMDD, time_on=HHMMSS, bez separatorow) -
-  // patrz add_qso() w qso_db.py i identyczny sposob budowania w
-  // _process_auto_qso (webapp.py, auto-zapis QSO).
+  // qso_db format (qso_date=YYYYMMDD, time_on=HHMMSS, no separators) -
+  // see add_qso() in qso_db.py and the identical construction in
+  // _process_auto_qso (webapp.py, QSO auto-save).
   const pad = n => String(n).padStart(2,'0');
   const qso_date = `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}`;
   const time_on  = `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
@@ -1628,14 +1629,14 @@ async function addLog() {
     const d = await r.json();
     if (d.ok) {
       window.UI?.showToast(I18n.t('wj_toast_qso_logged').replace('{call}', call));
-      // Dopisz OD RAZU do _workedCalls (zamiast czekac na 60s polling)
-      // — inaczej ta sama stacja wygladalaby jak niezrobiona w Band
-      // Activity jeszcze przez chwile (patrz identyczny komentarz w
-      // _onAutoQsoComplete). Mini-log sam sie odswieży przez broadcast
-      // "qso_logged" (_onQsoLogged) - nie trzeba go tu recznie dopisywac.
+      // Add IMMEDIATELY to _workedCalls (instead of waiting for the 60s
+      // poll) — otherwise the same station would look unworked in Band
+      // Activity for a while longer (see the identical comment in
+      // _onAutoQsoComplete). The mini-log refreshes itself via the
+      // "qso_logged" broadcast (_onQsoLogged) - no need to add it here manually.
       _workedCalls.add(_workedKey(call, band, mode));
       _renderDecodes();
-      // Wyczyść formularz
+      // Clear the form
       ['wj-log-call','wj-log-grid','wj-log-rst-rcvd','wj-log-comment'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.value='';
       });
@@ -1663,9 +1664,9 @@ async function exportAdif() {
   } catch(e) { window.UI?.showToast(I18n.t('wj_toast_export_error'), 'error'); }
 }
 
-// QSO zalogowane przez WSJT-X automatycznie (z pakietu UDP)
+// A QSO logged automatically by WSJT-X (from a UDP packet)
 function _onWsjtxQsoLogged(d) {
-  // WSJT-X zalogowalo QSO → zapisz w /api/qsolog (per-user przez JWT)
+  // WSJT-X logged a QSO → save it to /api/qsolog (per-user via JWT)
   const now  = new Date();
   const pad  = n => String(n).padStart(2,'0');
   const qso  = {
@@ -1684,7 +1685,7 @@ function _onWsjtxQsoLogged(d) {
     comment:       'Auto-logged by WSJT-X',
     source:        d.mode === 'FT4' ? 'ft4' : 'ft8',
   };
-  if (!qso.call) return;  // brak znaku — nie loguj
+  if (!qso.call) return;  // no callsign — don't log
   const token = localStorage.getItem('token') || '';
   fetch('/api/qsolog', {
     method: 'POST',
@@ -1694,7 +1695,7 @@ function _onWsjtxQsoLogged(d) {
   }).then(r => r.json()).then(res => {
     if (res.ok) {
       window.UI?.showToast(I18n.t('wj_toast_qso_logged_full').replace('{call}', qso.call).replace('{band}', qso.band).replace('{mode}', qso.mode));
-      // Odswiez tabele jezeli jestesmy na stronie LOG
+      // Refresh the table if we're on the LOG page
       if (document.getElementById('page-log')?.classList.contains('active')) {
         window.QSOLog?.load?.();
       }
@@ -1702,18 +1703,18 @@ function _onWsjtxQsoLogged(d) {
   }).catch(() => {});
 }
 
-// ── FT8 Timer bezpieczeństwa ─────────────────────────────────────────────────
+// ── FT8 safety timer ──────────────────────────────────────────────────────────
 window.FT8Timer = (() => {
-  let _durationMs  = 6 * 60 * 1000;  // domyslnie 6 min
+  let _durationMs  = 6 * 60 * 1000;  // 6 min by default
   let _remaining   = 0;
   let _interval    = null;
   let _active      = false;
   let _userCanEdit = false;
   let _warnShown   = false;
-  let _expired     = false;  // wygasl, czeka na potwierdzenie (patrz confirm()/reset())
+  let _expired     = false;  // expired, waiting for confirmation (see confirm()/reset())
 
   async function init() {
-    // Pobierz ustawienia timera dla aktualnego usera
+    // Fetch the timer settings for the current user
     const token = localStorage.getItem('token') || '';
     try {
       const r = await fetch('/api/ft8timer/global', {
@@ -1727,8 +1728,8 @@ window.FT8Timer = (() => {
   }
 
   function start() {
-    // Startuj licznik - Call 1st wlaczony (glowna automatyka) lub Hound
-    // wlaczony, patrz _onAutoSeqStatus/toggleHound.
+    // Start the countdown - Call 1st enabled (the main automation) or
+    // Hound enabled, see _onAutoSeqStatus/toggleHound.
     _remaining  = _durationMs;
     _active     = true;
     _warnShown  = false;
@@ -1740,11 +1741,11 @@ window.FT8Timer = (() => {
   }
 
   function stop() {
-    // Zatrzymaj licznik (Call 1st/Hound wylaczony, albo wewnetrzne uzycie
-    // przy wygasnieciu - patrz _tick). Explicit disarm (Call 1st off) NIE
-    // zeruje _expired samo z siebie - o to dba wylacznie confirm()/start(),
-    // zeby stan "czeka na potwierdzenie" nie zniknal po cichu bez realnego
-    // potwierdzenia operatora.
+    // Stop the countdown (Call 1st/Hound disabled, or internal use on
+    // expiry - see _tick). Explicit disarm (Call 1st off) does NOT clear
+    // _expired on its own - only confirm()/start() do that, so the
+    // "waiting for confirmation" state doesn't silently vanish without an
+    // actual operator confirmation.
     _active = false;
     clearInterval(_interval);
     _interval = null;
@@ -1754,11 +1755,12 @@ window.FT8Timer = (() => {
     _updateDisplay();
   }
 
-  // Jedyne zrodlo prawdy dla "operator potwierdzil obecnosc" - wolane
-  // zarowno z przycisku POTWIERDZ jak i z reset() gdy operator dziala mimo
-  // wygasnietego timera (patrz reset() nizej). Powiadamia TEZ backend
-  // (ft8_timer_confirm) - bez tego automat zostalby zablokowany na
-  // zawsze, bo backend NIE widzi lokalnych klikniec w przegladarce.
+  // The single source of truth for "the operator confirmed presence" -
+  // called both from the CONFIRM button and from reset() when the
+  // operator takes an action despite an expired timer (see reset()
+  // below). ALSO notifies the backend (ft8_timer_confirm) - without this
+  // the automation would stay blocked forever, since the backend does
+  // NOT see local clicks in the browser.
   function confirm() {
     _expired    = false;
     _remaining  = _durationMs;
@@ -1774,14 +1776,13 @@ window.FT8Timer = (() => {
   }
 
   function reset() {
-    // Jesli timer wygasl i czeka na potwierdzenie - JAKAKOLWIEK akcja
-    // operatora (klik wiersza, TX makro) JEST tym potwierdzeniem, taka
-    // sama jak klikniecie POTWIERDZ. Bez tego operator musialby zawsze
-    // trafic dokladnie w mala plaszczke przycisku, zamiast po prostu
-    // wrocic do normalnej pracy.
+    // If the timer expired and is waiting for confirmation - ANY operator
+    // action (clicking a row, a TX macro) IS that confirmation, the same
+    // as clicking CONFIRM. Without this the operator would always have
+    // to land exactly on the small button, instead of simply returning to normal work.
     if (_expired) { confirm(); return; }
-    // Reset bez zatrzymania — po kazdej akcji uzytkownika, TYLKO gdy timer
-    // faktycznie aktywny (Call 1st wlaczony) - patrz _onAutoSeqStatus.
+    // Reset without stopping — after every user action, ONLY when the
+    // timer is actually active (Call 1st enabled) - see _onAutoSeqStatus.
     if (_active) {
       _remaining = _durationMs;
       _warnShown = false;
@@ -1794,17 +1795,17 @@ window.FT8Timer = (() => {
     if (!_active) return;
     _remaining -= 1000;
 
-    // Ostrzezenie przy 1 min pozostalej
+    // Warning at 1 min remaining
     if (_remaining <= 60000 && !_warnShown) {
       _warnShown = true;
       window.UI?.showToast(I18n.t('wj_toast_timer_warning'), 'error');
-      // Pokaz przycisk potwierdzenia
+      // Show the confirm button
       const btn = document.getElementById('ft8-timer-confirm');
       if (btn) btn.style.display = 'inline-block';
     }
 
     if (_remaining <= 0) {
-      // Czas minał — zatrzymaj TX i zablokuj automatyke do potwierdzenia
+      // Time's up — stop TX and block the automation until confirmed
       stop();
       _expired = true;
       _stopTX();
