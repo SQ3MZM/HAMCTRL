@@ -1,12 +1,12 @@
 /*
- * relay_ui.js - Przyciski przekaznikow w zakladce Radio (obok akcji radia).
+ * relay_ui.js - Relay buttons in the Radio tab (next to the radio actions).
  *
- * Uzywa /api/relay/state (co user widzi) i /api/relay/action (klikniecia).
- * Sluchacze WS: 'relay_state' updates buttony w czasie rzeczywistym.
+ * Uses /api/relay/state (what the user sees) and /api/relay/action (clicks).
+ * WS listener: 'relay_state' updates the buttons in real time.
  */
 
 window.RelayUI = (function() {
-  let _relays = [];    // widoczne dla tego usera
+  let _relays = [];    // visible to this user
   let _connected = false;
 
   async function refresh() {
@@ -18,7 +18,7 @@ window.RelayUI = (function() {
       _relays = data.relays || [];
       _connected = !!data.connected;
       render();
-    } catch(e) { console.warn('[relay-ui] refresh blad:', e); }
+    } catch(e) { console.warn('[relay-ui] refresh error:', e); }
   }
 
   function render() {
@@ -59,7 +59,7 @@ window.RelayUI = (function() {
       window.UI?.toast?.('⛔ Kontroler przekaźników niepodłączony', 'error');
       return;
     }
-    // Optymistyczny feedback — przycisk mruga
+    // Optimistic feedback — the button dims
     const btn = document.querySelector(`.relay-btn[data-relay-id="${relayId}"]`);
     if (btn) btn.style.opacity = '0.5';
     try {
@@ -95,10 +95,10 @@ window.RelayUI = (function() {
     }[m]));
   }
 
-  // Auto-refresh po zalogowaniu
+  // Auto-refresh after login
   window.addEventListener('app:ready', () => {
     refresh();
-    // Odswiez co 30s (na wypadek zmian konfiguracji przez admina)
+    // Refresh every 30s (in case the admin changes the config)
     setInterval(refresh, 30000);
   });
 
