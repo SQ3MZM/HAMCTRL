@@ -4,7 +4,14 @@ deepcw_engine.py — DeepCW server-side decoder
 Model: e04/deepcw-engine (MIT)
 - ONNX Runtime inference
 - Audio PCM Float32 @ 3200 Hz via WebSocket
-- CTC greedy decode → tekst → broadcast do UI
+- CTC greedy decode -> text -> broadcast to the UI
+
+NOTE ON TRANSLATION SCOPE: the "msg" field passed to _bcast() in download()
+reaches the browser verbatim via the "deepcw_progress" WS broadcast —
+public/js/ws.js renders msg.msg directly into the DOM with no I18n lookup
+(same pattern as deepcw_model.py). Those four progress strings are
+deliberately left in Polish; everything else (comments, docstrings,
+print() logs) is translated.
 """
 from __future__ import annotations
 import asyncio
@@ -16,8 +23,9 @@ import urllib.request
 
 import numpy as np
 
-# Model trzymamy w katalogu DANYCH (APPDATA), nie obok EXE — inaczej kazda
-# aktualizacja kasowalaby pobrany model (ten sam problem co z dziennikiem QSO).
+# The model is kept in the DATA directory (APPDATA), not next to the EXE —
+# otherwise every update would delete the downloaded model (the same
+# problem as with the QSO log).
 try:
     from config import DATA as _DATA
     MODEL_DIR = pathlib.Path(_DATA) / "deepcw"
@@ -28,7 +36,7 @@ META_FILE  = MODEL_DIR / "model.onnx.json"
 MODEL_URL  = "https://raw.githubusercontent.com/e04/deepcw-engine/main/model.onnx"
 META_URL   = "https://raw.githubusercontent.com/e04/deepcw-engine/main/model.onnx.json"
 
-# ── Metadane modelu (z model.onnx.json) ───────────────────────────────────────
+# ── Model metadata (from model.onnx.json) ───────────────────────────────────────
 DEFAULT_META = {
     "chars": list(",./0123456789?ABCDEFGHIJKLMNOPQRSTUVWXYZ "),
     "blank_index": 41,
@@ -50,65 +58,69 @@ class DeepCWEngine:
         self.session  = None
         self.meta     = DEFAULT_META
         self._ready   = False
-        # Waskofiltrowa analiza tonu (jak Skimmer). Domyslnie wlaczona;
-        # HAM_CW_BANDPASS=0 wylacza do porownania na zywo.
+        # Narrow-band tone analysis (like Skimmer). Enabled by default;
+        # HAM_CW_BANDPASS=0 disables it for a live comparison.
         import os as _os
         self._bandpass_on = _os.environ.get("HAM_CW_BANDPASS", "1") != "0"
         self._tone_hz = None
-        self._dbg_n = 0        # licznik okien do rzadkiego logowania
+        self._dbg_n = 0        # window counter for sparse logging
         self._buf     = np.zeros(0, dtype=np.float32)
-        # Dlugosc okna to KLUCZOWY parametr dokladnosci. Model CTC korzysta
-        # z kontekstu: przy dlugim oknie widzi znak w otoczeniu sasiadow
-        # i sam sie koryguje, przy krotkim czesciej zgaduje. Proba skrocenia
-        # do 6 s (dla oszczednosci CPU) wyraznie pogorszyla dekodowanie —
-        # zamiast 'QSO HR OP JURE RST' zwracal ciagi typu '3LGDEDLTHYN'.
-        # Wracamy do 10 s; obciazenie regulujemy KROKIEM, nie oknem.
+        # Window length is a KEY accuracy parameter. The CTC model uses
+        # context: with a long window it sees a character surrounded by its
+        # neighbors and self-corrects, with a short one it guesses more
+        # often. Trying to shorten it to 6s (to save CPU) clearly degraded
+        # decoding — instead of 'QSO HR OP JURE RST' it returned garbage
+        # like '3LGDEDLTHYN'. Back to 10s; load is tuned via the STEP, not
+        # the window.
         self._win_sec  = 10.0
-        # Okno 10 s — SPRAWDZONA wartosc, przy ktorej dekoder dziala dobrze.
-        # Probowalem 8 s dla oszczednosci CPU, ale to zmiana "na wiare" — a
-        # jakosc jest wazniejsza. Obciazenie tniemy INACZEJ: pomijaniem
-        # inferencji na pustym pasmie (test tonu nizej), co nie dotyka jakosci
-        # dekodowania realnego sygnalu. 6 s psulo model (kasza '3LGDEDLTHYN').
+        # 10s window — a PROVEN value at which the decoder works well.
+        # Tried 8s to save CPU, but that change was "on faith" — and
+        # quality matters more. Load is cut a DIFFERENT way: skipping
+        # inference on an empty band (tone test below), which doesn't touch
+        # the quality of decoding a real signal. 6s broke the model
+        # (garbage '3LGDEDLTHYN').
         self._hop_sec  = 2.0
-        # Krok 2 s — SPRAWDZONA wartosc, przy ktorej dekoder dziala tak, jak
-        # ma dzialac. Probowalem 2.5 s dla odciazenia dwurdzeniowego testu, ale
-        # docelowa maszyna bedzie 4-rdzeniowa i udzwignie pelna szybkosc.
-        # Kazdy fragment okna dekodowany 5x — az nadto dla glosowania.
-        # Wyliczane ponownie w load() wg metadanych modelu, ale muszą istnieć
-        # od razu — feed() moze zostac wywolane zanim model sie zaladuje.
+        # 2s step — a PROVEN value at which the decoder works as intended.
+        # Tried 2.5s to lighten a dual-core test machine, but the target
+        # machine will be 4-core and can handle full speed. Each part of
+        # the window gets decoded 5x — more than enough for voting.
+        # Recomputed in load() from the model's metadata, but they need to
+        # exist right away — feed() may be called before the model loads.
         self._win_samp = int(self._win_sec * DEFAULT_META["sample_rate"])
         self._hop_samp = int(self._hop_sec * DEFAULT_META["sample_rate"])
         self._last_decode_time = 0.0
-        # Prog energii — ADAPTACYJNY, sledzi poziom tla.
+        # Energy threshold — ADAPTIVE, tracks the noise floor.
         #
-        # Staly prog nie dziala, bo tlo zmienia sie w czasie: przy szumie
-        # z oswietlenia LED RMS siega 0.020, w nocy przy czystym eterze bywa
-        # 10x nizszy. Prog 0.008 przepuszczal wtedy sam szum (model zwracal ''
-        # i marnowal ~700 ms na okno), a podniesienie go na sztywno odcieloby
-        # slabe stacje po ustaniu zaklocen.
+        # A fixed threshold doesn't work, because the noise floor changes
+        # over time: with noise from LED lighting RMS reaches 0.020, at
+        # night on a clean band it can be 10x lower. A threshold of 0.008
+        # would then let pure noise through (the model returns '' and
+        # wastes ~700ms per window), while hard-raising it would cut off
+        # weak stations once the interference stops.
         #
-        # Dlatego: obserwujemy najnizsze RMS z ostatnich okien (to jest tlo)
-        # i wymagamy, zeby sygnal byl wyraznie powyzej niego.
-        # Dolna granica bezwzgledna — chroni przed dekodowaniem przy calkiem
-        # martwym wejsciu (np. odlaczona karta). Nisko, bo przy czystym eterze
-        # slabe stacje maja RMS rzedu 0.006.
+        # So instead: we track the lowest RMS from recent windows (that's
+        # the floor) and require the signal to be clearly above it.
+        # Absolute lower bound — protects against decoding on a completely
+        # dead input (e.g. disconnected card). Kept low, since on a clean
+        # band weak stations have an RMS around 0.006.
         self._rms_threshold    = 0.003
-        self._rms_floor        = None      # biezacy poziom tla (adaptacyjny)
-        self._rms_hist: list   = []        # historia do wyznaczania tla
-        # Voting — historia ostatnich N dekodowań
-        self._history    : list[str] = []  # ostatnie dekodingi (okna)
-        self._history_max = 3              # glosowanie po 3 oknach (bylo 5)
-        # Prog glosowania: znak wchodzi gdy pojawil sie w >=50% okien.
-        # Krotsza historia = szybsze potwierdzanie (znak pojawia sie po 2
-        # oknach zamiast 3), a serwer liczy TYLE SAMO — glosowanie to samo
-        # porownywanie tekstu, zero dodatkowej inferencji. Kompromis: przy
-        # slabym sygnale odrobine wiecej przekłaman przechodzi, ale na
-        # zawodach liczy sie tempo. Warstwa jezykowa i tak czysci wyjscie.
+        self._rms_floor        = None      # current noise floor (adaptive)
+        self._rms_hist: list   = []        # history for determining the floor
+        # Voting — history of the last N decodes
+        self._history    : list[str] = []  # recent decodes (windows)
+        self._history_max = 3              # vote over 3 windows (was 5)
+        # Voting threshold: a character is accepted once it appears in
+        # >=50% of windows. A shorter history = faster confirmation (a
+        # character appears after 2 windows instead of 3), and the server
+        # does the SAME AMOUNT of work — voting is just text comparison,
+        # zero extra inference. Tradeoff: with a weak signal, slightly more
+        # misreads get through, but on contests speed matters. The language
+        # layer cleans up the output anyway.
         self._vote_ratio  = 0.5
-        self._confirmed  : str = ""        # potwierdzony (zwyciezki) tekst
-        self._sent_len   : int = 0         # ile znakow juz wyslano
+        self._confirmed  : str = ""        # confirmed (winning) text
+        self._sent_len   : int = 0         # how many characters already sent
 
-    # ── Pobranie modelu ───────────────────────────────────────────────────────
+    # ── Model download ───────────────────────────────────────────────────────
     def get_status(self) -> dict:
         has = MODEL_FILE.exists()
         size = MODEL_FILE.stat().st_size if has else 0
@@ -133,12 +145,12 @@ class DeepCWEngine:
             req = urllib.request.Request(META_URL, headers={"User-Agent": "curl/7.0"})
             with urllib.request.urlopen(req, timeout=10) as r:
                 META_FILE.write_bytes(r.read())
-            print("[deepcw] Metadata pobrana", flush=True)
+            print("[deepcw] Metadata downloaded", flush=True)
 
             await _bcast("Pobieranie modelu (15 MB)...", 2)
             req = urllib.request.Request(MODEL_URL, headers={"User-Agent": "curl/7.0"})
 
-            # Pobierz w wątku executor żeby nie blokować event loop
+            # Download in an executor thread so as not to block the event loop
             loop = asyncio.get_event_loop()
 
             def _download_sync():
@@ -154,16 +166,16 @@ class DeepCWEngine:
 
             data, total = await loop.run_in_executor(None, _download_sync)
             MODEL_FILE.write_bytes(data)
-            print(f"[deepcw] Model pobrany: {len(data)/1e6:.1f} MB", flush=True)
+            print(f"[deepcw] Model downloaded: {len(data)/1e6:.1f} MB", flush=True)
             await _bcast(f"✓ Model gotowy ({len(data)/1e6:.1f} MB)", 100, len(data), total)
             await self.load()
             return {"ok": True, "sizeBytes": len(data)}
         except Exception as e:
-            print(f"[deepcw] Błąd pobierania: {e}", flush=True)
+            print(f"[deepcw] Download error: {e}", flush=True)
             await _bcast(f"✗ {e}", -1)
             return {"ok": False, "error": str(e)}
 
-    # ── Załaduj model do ONNX Runtime ─────────────────────────────────────────
+    # ── Load the model into ONNX Runtime ─────────────────────────────────────────
     async def load(self):
         if not MODEL_FILE.exists():
             return False
@@ -172,14 +184,15 @@ class DeepCWEngine:
             if META_FILE.exists():
                 self.meta = json.loads(META_FILE.read_text())
             loop = asyncio.get_event_loop()
-            # ONNX domyslnie zrownolegla inferencje na WSZYSTKIE rdzenie.
-            # Przy modelu 15 MB i oknie 10 s narzut koordynacji watkow bywa
-            # wiekszy niz zysk, a kazdy watek to dodatkowa pamiec robocza.
-            # Jeden watek = mniej RAM i mniej rywalizacji z torem audio.
+            # ONNX parallelizes inference across ALL cores by default. With
+            # a 15MB model and a 10s window, the thread-coordination
+            # overhead can exceed the gain, and each thread is extra
+            # working memory. One thread = less RAM and less contention
+            # with the audio path.
             _so = ort.SessionOptions()
             _so.intra_op_num_threads = 1
             _so.inter_op_num_threads = 1
-            _so.enable_mem_pattern   = False   # mniejszy narzut pamieci
+            _so.enable_mem_pattern   = False   # lower memory overhead
             self.session = await loop.run_in_executor(
                 None, lambda: ort.InferenceSession(str(MODEL_FILE),
                     sess_options=_so,
@@ -200,13 +213,13 @@ class DeepCWEngine:
             sr = self.meta["sample_rate"]
             self._win_samp = int(self._win_sec * sr)
             self._hop_samp = int(self._hop_sec * sr)
-            print(f"[deepcw] Model załadowany, SR={sr}", flush=True)
+            print(f"[deepcw] Model loaded, SR={sr}", flush=True)
             return True
         except Exception as e:
-            print(f"[deepcw] Błąd ładowania: {e}", flush=True)
+            print(f"[deepcw] Load error: {e}", flush=True)
             return False
 
-    # ── Przyjmij PCM Float32 z przeglądarki ───────────────────────────────────
+    # ── Accept PCM Float32 from the browser ───────────────────────────────────
     async def feed(self, pcm_f32: np.ndarray, src_rate: int, broadcast_fn=None) -> str | None:
         if not self._ready or self.session is None:
             return None
@@ -227,30 +240,31 @@ class DeepCWEngine:
                 None, _resample, pcm_f32)
 
         self._buf = np.concatenate([self._buf, pcm_f32])
-        # Diagnostyka: zapisz to, co WLASNIE trafia do modelu (po resamplingu
-        # i filtrze). Odsluch tego pliku rozstrzyga, czy problem jest w torze
-        # audio, czy w samym modelu.
+        # Diagnostics: save exactly what's being fed into the model (after
+        # resampling and the filter). Listening to this file settles
+        # whether the problem is in the audio path or in the model itself.
         self._capture_feed(pcm_f32)
-        # WYCIEK PAMIECI (naprawiony): bufor byl przycinany dopiero PO bramce
-        # czasowej ponizej, a ta odrzuca wiekszosc wywolan (return None).
-        # Przegladarka sle audio kilkadziesiat razy na sekunde, wiec miedzy
-        # kolejnymi dekodowaniami _buf rosl bez ograniczenia. Trzymamy tylko
-        # tyle, ile potrzebuje okno dekodujace — reszta jest bezuzyteczna.
+        # MEMORY LEAK (fixed): the buffer used to be trimmed only AFTER the
+        # time gate below, and that gate rejects most calls (return None).
+        # The browser sends audio dozens of times per second, so between
+        # decodes _buf grew without bound. We only keep as much as the
+        # decode window needs — the rest is useless.
         if len(self._buf) > self._win_samp:
             self._buf = self._buf[-self._win_samp:]
 
-        # WYKRYWANIE KONCA KROTKIEJ TRANSMISJI — dla szybkich QSO.
+        # DETECTING THE END OF A SHORT TRANSMISSION — for fast QSOs.
         #
-        # Przy krotkiej wymianie ('RR 5NN TU', ~3 s) czekanie na pelne
-        # 10-sekundowe okno i krok 2 s dawalo kilka sekund opoznienia — tekst
-        # pojawial sie, gdy operator juz nadawal odpowiedz. Dlatego: gdy sygnal
-        # byl obecny, a WLASNIE ucichl, przeliczamy natychmiast to, co przyszlo,
-        # nie czekajac na pelne okno ani na krok. Kosztuje to JEDNA dodatkowa
-        # inferencje na koniec transmisji — nie zwieksza obciazenia przy
-        # dluzszej pracy, bo dlugie transmisje nie maja takich przerw.
-        # Wykrywanie ciszy na KROTKIM ogonie (0.3 s), nie na calym kroku —
-        # inaczej przerwa krotsza niz krok tonelaby w usrednieniu i konca
-        # transmisji nie widac.
+        # For a short exchange ('RR 5NN TU', ~3s), waiting for the full
+        # 10-second window and 2s step added several seconds of delay — the
+        # text appeared once the operator was already transmitting a reply.
+        # So: when a signal was present and has JUST stopped, we
+        # immediately re-decode what came in, without waiting for the full
+        # window or the step. This costs ONE extra inference at the end of
+        # a transmission — it doesn't add load during longer operation,
+        # since long transmissions don't have such gaps. Silence is
+        # detected on a SHORT tail (0.3s), not over the whole step —
+        # otherwise a gap shorter than the step would drown in the
+        # averaging and the end of the transmission wouldn't be visible.
         _tail_n = int(0.3 * self.meta["sample_rate"])
         _rms_now = float(np.sqrt(np.mean(self._buf[-_tail_n:]**2))) \
             if len(self._buf) >= _tail_n else 0.0
@@ -259,19 +273,19 @@ class DeepCWEngine:
         _just_ended = _was_active and not _is_active
         self._sig_active = _is_active
         if _is_active:
-            self._close_hold = 0        # sygnal wrocil — zeruj licznik zamkniecia
+            self._close_hold = 0        # signal came back — reset the close counter
 
         if len(self._buf) < self._win_samp and not _just_ended:
             return None
 
         now = time.time()
-        # Normalna bramka czasowa — ALE koniec krotkiej transmisji ja omija,
-        # zeby zareagowac od razu.
+        # Normal time gate — BUT the end of a short transmission bypasses
+        # it, to react immediately.
         if not _just_ended and now - self._last_decode_time < self._hop_sec * 0.9:
             return None
-        # Nie zaczynaj kolejnej inferencji, gdy poprzednia jeszcze trwa.
-        # Bez tego przy wolniejszym procesorze zadania pietrzylyby sie
-        # w executorze, zjadajac pamiec i opozniajac audio coraz bardziej.
+        # Don't start another inference while the previous one is still
+        # running. Without this, on a slower CPU tasks would pile up in the
+        # executor, eating memory and delaying audio more and more.
         if getattr(self, "_infer_busy", False):
             return None
         self._infer_busy = True
@@ -279,93 +293,104 @@ class DeepCWEngine:
             return await self._decode_window(now, broadcast_fn,
                                              short_end=_just_ended)
         finally:
-            # Flaga MUSI byc zwolniona przy kazdym wyjsciu (takze wczesniejszym
-            # przez return albo wyjatek), inaczej dekoder zamilkl by na stale.
+            # The flag MUST be released on every exit path (including an
+            # early return or exception), otherwise the decoder would go
+            # silent forever.
             self._infer_busy = False
 
     async def _decode_window(self, now, broadcast_fn, short_end=False):
         self._last_decode_time = now
-        self._dbg_n += 1        # licznik okien (na gorze — uzywany tez w bandpass)
+        self._dbg_n += 1        # window counter (kept at the top — also used by bandpass)
 
-        # Przy koncu KROTKIEJ transmisji bierzemy fragment Z SYGNALEM (ostatnie
-        # sekundy przed cisza), nie aktualna cisze — inaczej model dostalby
-        # pusty ogon i nie mialby czego czytac.
+        # At the end of a SHORT transmission we take the fragment WITH
+        # SIGNAL (the last few seconds before silence), not the current
+        # silence — otherwise the model would get an empty tail and have
+        # nothing to read.
         if short_end:
-            # znajdz ostatni fragment z energia (do ~4 s wstecz)
+            # find the last fragment with energy (up to ~4s back)
             _look = min(len(self._buf), int(4.0 * self.meta["sample_rate"]))
             window = self._buf[-_look:] if _look > 0 else self._buf.copy()
         else:
             window = self._buf[-self._win_samp:] if len(self._buf) >= self._win_samp \
                 else self._buf.copy()
 
-        # WASKOFILTROWA ANALIZA wokol wykrytego tonu.
+        # NARROW-BAND ANALYSIS around the detected tone.
         #
-        # Model dostawal cale pasmo 400-1200 Hz z calym szumem w srodku.
-        # Izolacja pojedynczego sygnalu waskim filtrem daje lepszy stosunek
-        # sygnal/szum. Przy pracy zdalnej sluchamy JEDNEJ stacji (zmierzone: w
-        # nagraniu jeden ton), wiec wystarczy jeden filtr. Szerokosc +-120 Hz
-        # nie obcina bocznych wsteg kluczowania nawet przy 40 WPM (potrzeba
-        # +-67 Hz), a podnosi kontrast obwiedni. Zmierzone: 6.2x -> ~7x.
+        # The model used to get the whole 400-1200 Hz band with all the
+        # noise in the middle. Isolating a single signal with a narrow
+        # filter gives a better signal/noise ratio. For remote operation we
+        # listen to ONE station (measured: one tone in the recording), so a
+        # single filter is enough. A width of +-120 Hz doesn't clip the
+        # keying sidebands even at 40 WPM (needs +-67 Hz), and raises the
+        # envelope contrast. Measured: 6.2x -> ~7x.
         window = self._bandpass_tone(window)
 
-        # BEZ PRZETWARZANIA — model dostaje surowe audio, tak jak referencja.
+        # NO PROCESSING — the model gets raw audio, same as the reference.
         #
-        # Autor modelu (e04/deepcw-engine) karmi go zwyklym downsamplingiem:
+        # The model's author (e04/deepcw-engine) feeds it plain
+        # downsampling:
         #   ffmpeg -ac 1 -ar 3200 -sample_fmt s16
-        # bez normalizacji, filtra ani odejmowania szumu. Model byl TRENOWANY
-        # na surowym, zaszumionym CW i osiaga 0% bledu do -4 dB SNR — sam
-        # radzi sobie z szumem. Kazde nasze przetwarzanie (normalizacja,
-        # spectral subtraction, filtr) zmienialo sygnal na cos, czego model
-        # nie widzial na treningu, i DRASTYCZNIE pogarszalo wyniki. Redukcja
-        # szumu w oryginale istnieje, ale to OSOBNY model do sluchania uchem,
-        # nie do karmienia dekodera.
+        # with no normalization, filter, or noise subtraction. The model
+        # was TRAINED on raw, noisy CW and achieves 0% error down to -4 dB
+        # SNR — it handles noise on its own. Every processing step we added
+        # (normalization, spectral subtraction, filter) turned the signal
+        # into something the model never saw during training, and
+        # DRASTICALLY degraded results. Noise reduction exists in the
+        # original product, but that's a SEPARATE model for listening by
+        # ear, not for feeding the decoder.
         self._buf = self._buf[-self._win_samp:]
 
         rms = float(np.sqrt(np.mean(window**2)))
 
-        # Aktualizuj poziom tla — ale TYLKO z okien bez wyraznego sygnalu.
+        # Update the noise floor — but ONLY from windows without a clear
+        # signal.
         #
-        # Wczesniej do historii trafialy wszystkie okna, takze te z CW. Tlo
-        # rosло wiec razem z sygnalem, bramka szla w gore i zaczynala odrzucac
-        # realna transmisje (obserwowane: tlo skoczylo do 0.033, bramka do
-        # 0.038, a CW mialo 0.033 — trzy okna z rzedu odpadly w srodku QSO).
-        # Klasyczne dodatnie sprzezenie zwrotne: im wiecej sygnalu, tym mniej
-        # dekodowania. Dlatego probki tla bierzemy z okien CICHYCH.
-        # Poziom tla = MINIMUM z ostatnich okien, z powolnym dryfem w gore.
+        # Previously every window went into the history, including ones
+        # with CW. The floor would then rise together with the signal, the
+        # gate would climb and start rejecting real transmissions
+        # (observed: floor jumped to 0.033, gate to 0.038, while the CW was
+        # at 0.033 — three windows in a row dropped mid-QSO). A classic
+        # positive feedback loop: more signal means less decoding. So floor
+        # samples are taken only from QUIET windows. Floor level = MINIMUM
+        # of recent windows, with a slow upward drift.
         #
-        # Percentyl z historii zawodzil, gdy transmisja trwa bez przerwy:
-        # wszystkie probki zawieraly wtedy sygnal, tlo szlo w gore razem z nim,
-        # bramka przekraczala poziom CW i dekoder odrzucal realne okna
-        # (obserwowane: tlo 0.033, bramka 0.038, CW 0.033 — dziury w srodku
-        # QSO). Minimum jest odporne: nawet w ciaglej transmisji sa slabsze
-        # momenty, a przerwy miedzy nadawaniem daja prawdziwe tlo.
+        # A percentile of the history failed when a transmission runs
+        # without a gap: every sample then contained signal, the floor rose
+        # together with it, the gate exceeded the CW level and the decoder
+        # rejected real windows (observed: floor 0.033, gate 0.038, CW
+        # 0.033 — gaps in the middle of a QSO). The minimum is robust: even
+        # in a continuous transmission there are weaker moments, and gaps
+        # between transmissions give a true floor.
         self._rms_hist.append(rms)
         if len(self._rms_hist) > 40:
             self._rms_hist.pop(0)
 
-        # BRAMKA — celowo prosta i bezwzgledna.
+        # GATE — deliberately simple and absolute.
         #
-        # Probowalem tu bramki adaptacyjnej (tlo z percentyla, potem z minimum
-        # RMS) i obie zawodzily z tego samego powodu: w CW cisza miedzy znakami
-        # trwa milisekundy, a okno usrednia 10 sekund. Przy ciaglej transmisji
-        # nawet minimum jest niewiele nizsze od sredniej, wiec "tlo" ladowalo
-        # na poziomie sygnalu, bramka szla ponad niego i dekoder milczal do
-        # konca transmisji.
+        # Tried an adaptive gate here (floor from a percentile, then from
+        # the RMS minimum) and both failed for the same reason: in CW the
+        # silence between characters lasts milliseconds, while the window
+        # averages 10 seconds. In a continuous transmission even the
+        # minimum is only slightly below the average, so the "floor" would
+        # land at the signal level, the gate would climb above it, and the
+        # decoder would go silent until the end of the transmission.
         #
-        # Dlatego bramka odsiewa tylko WYRAZNIE martwe wejscie (odlaczona
-        # karta, wyciszone radio). O tym, czy w oknie jest tresc, decyduje sam
-        # model — gdy nie ma czego czytac, zwraca pusty ciag, co kosztuje jedna
-        # inferencje i nic nie psuje.
+        # So the gate only filters out CLEARLY dead input (disconnected
+        # card, muted radio). Whether there's content in the window is
+        # decided by the model itself — when there's nothing to read, it
+        # returns an empty string, which costs one inference and breaks
+        # nothing.
         _gate = self._rms_threshold
 
-        # OSZCZEDNOSC CPU: pomin inferencje, gdy w oknie NIE MA tonu CW.
+        # CPU SAVING: skip inference when the window has NO CW tone.
         #
-        # Na pustym pasmie (szum, brak nadawania) dekoder liczyl pelna
-        # inferencje co krok — marnujac procesor bez powodu. Tani test: czy w
-        # pasmie 400-1200 Hz jest wyrazny pik ponad szum. Jesli nie ma tonu,
-        # nie ma czego dekodowac — pomijamy ONNX (najciezsza operacje).
-        # To NIE bramka na sygnal CW (tego pilnuje model), tylko odsianie
-        # calkowicie pustego pasma. FFT jest tanie wobec inferencji.
+        # On an empty band (noise, no transmission), the decoder used to
+        # run a full inference every step — wasting CPU for nothing. Cheap
+        # test: is there a clear peak above the noise in the 400-1200 Hz
+        # band. If there's no tone, there's nothing to decode — ONNX (the
+        # heaviest operation) is skipped. This is NOT a gate on the CW
+        # signal itself (the model handles that), just a filter for a
+        # completely empty band. FFT is cheap compared to inference.
         if rms >= _gate and not short_end:
             try:
                 _sr = self.meta["sample_rate"]
@@ -375,16 +400,17 @@ class DeepCWEngine:
                 if _b.any():
                     _peak = _X[_b].max()
                     _med  = np.median(_X[_b]) + 1e-9
-                    # Prog CELOWO niski (4x): pomijamy TYLKO naprawde puste
-                    # pasmo (czysty szum daje ~3-4x). Slaby ale realny sygnal
-                    # CW daje kilkadziesiat-kilkaset x, wiec zawsze przejdzie.
-                    # Wolimy raz policzyc niepotrzebnie niz przegapic stacje —
-                    # jakosc dekodowania jest wazniejsza niz oszczednosc.
+                    # Threshold DELIBERATELY low (4x): we only skip a truly
+                    # empty band (pure noise gives ~3-4x). A weak but real
+                    # CW signal gives tens to hundreds of x, so it always
+                    # passes. We'd rather compute unnecessarily once than
+                    # miss a station — decode quality matters more than
+                    # savings.
                     if _peak / _med < 4.0:
                         self._no_tone_run = getattr(self, "_no_tone_run", 0) + 1
-                        # po kilku pustych oknach z rzedu pomijaj inferencje,
-                        # ale co ~10 okno sprawdz mimo to (zeby nie przegapic
-                        # slabego poczatku transmisji)
+                        # after a few empty windows in a row, skip
+                        # inference, but still check every ~10th window
+                        # (so as not to miss a weak start of a transmission)
                         if self._no_tone_run % 10 != 0:
                             return None
                     else:
@@ -392,40 +418,43 @@ class DeepCWEngine:
             except Exception:
                 pass
 
-        # Diagnostyka: co ~10s pokaz poziom sygnalu i stan konsensusu, zeby
-        # bylo widac CZY audio dochodzi i czy model cokolwiek zwraca.
-        # Diagnostyka co ~10 okien: poziom sygnalu i stan konsensusu
+        # Diagnostics: every ~10s show the signal level and consensus
+        # state, so it's visible WHETHER audio is arriving and whether the
+        # model returns anything at all.
+        # Diagnostics every ~10 windows: signal level and consensus state
         if self._dbg_n % 10 == 1:
-            print(f"[deepcw] RMS={rms:.5f} (bramka {_gate:.5f}) "
-                  f"okien={len(self._history)}", flush=True)
+            print(f"[deepcw] RMS={rms:.5f} (gate {_gate:.5f}) "
+                  f"windows={len(self._history)}", flush=True)
         if rms < _gate:
-            # Licz kolejne zablokowane okna — po kilku z rzedu bramka sama
-            # sie rozluzni (patrz wyzej), zeby zawyzone tlo nie unieruchomilo
-            # dekodera na stale.
+            # Count consecutive blocked windows — after a few in a row the
+            # gate loosens itself (see above), so an over-raised floor
+            # doesn't permanently silence the decoder.
             self._blocked_run = getattr(self, "_blocked_run", 0) + 1
-            # Cisza = koniec transmisji. Czyscimy konsensus, zeby nastepna
-            # stacja zaczela od zera (bez doklejania do poprzedniego tekstu).
+            # Silence = end of the transmission. Clear the consensus so the
+            # next station starts fresh (without appending to the previous
+            # text).
             self._history.clear()
             self._confirmed = ""
             self._sent_len  = 0
             self._last_block = None
-            # Zresetuj stan linii — nastepna stacja zaczyna od zera.
+            # Reset the line state — the next station starts from scratch.
             self._last_consensus = ""
             self._idle_windows   = 0
-            # Po ciszy NIE zamykamy linii natychmiast — przytrzymujemy ostatni
-            # odczyt widoczny przez chwile, zeby operator zdazyl go przeczytac.
-            # Przy szybkich QSO tekst znikal, zanim dalo sie go dostrzec.
+            # After silence we do NOT close the line immediately — we hold
+            # the last reading visible for a moment, so the operator has
+            # time to read it. On fast QSOs the text used to disappear
+            # before it could be noticed.
             _hold = getattr(self, "_close_hold", 0)
             if getattr(self, "_line_open", False) or getattr(self, "_had_preview", False):
                 if _hold < 3:
-                    # jeszcze przez kilka okien pokazuj to, co bylo
+                    # keep showing what was there for a few more windows
                     self._close_hold = _hold + 1
                     if broadcast_fn and getattr(self, "_preview_hold", ""):
                         await broadcast_fn({"type": "deepcw_text",
                                             "block": getattr(self, "_last_block", "") or "",
                                             "preview": self._preview_hold})
                     return None
-                # dopiero teraz zamknij
+                # only close it now
                 if broadcast_fn:
                     await broadcast_fn({"type": "deepcw_text",
                                         "block": "", "preview": "", "close": True})
@@ -436,31 +465,32 @@ class DeepCWEngine:
                 self._close_hold = 0
             return None
 
-        # Okno przeszlo bramke — zeruj licznik blokad.
+        # Window passed the gate — reset the blocked counter.
         self._blocked_run = 0
 
-        # Inferencja + liczenie spektrogramu w WATKU ROBOCZYM.
+        # Inference + spectrogram computation in a WORKER THREAD.
         #
-        # Wczesniej _infer bylo wolane wprost w korutynie — na czas obliczen
-        # (dziesiatki ms co sekunde) petla zdarzen stala, wiec serwer nie
-        # obslugiwal ani strumienia audio, ani WebSocketow. Objaw: "skoki audio
-        # od obciazenia". ONNX zwalnia GIL, wiec w osobnym watku liczy sie
-        # rownolegle i tor audio nie jest przerywany.
+        # Previously _infer was called directly in the coroutine — for the
+        # duration of the computation (tens of ms every second) the event
+        # loop stalled, so the server handled neither the audio stream nor
+        # the WebSockets. Symptom: "audio glitches under load". ONNX
+        # releases the GIL, so a separate thread computes in parallel and
+        # the audio path isn't interrupted.
         _t0 = time.time()
         loop = asyncio.get_event_loop()
         text = await loop.run_in_executor(None, self._infer, window)
         _ms = (time.time() - _t0) * 1000.0
-        # Ostrzez, gdy inferencja nie miesci sie w kroku okna — wtedy serwer
-        # liczy bez przerwy i audio zaczyna szarpac. Rozwiazanie: skrocic
-        # okno (_win_sec) albo zwiekszyc krok (_hop_sec).
+        # Warn when inference doesn't fit inside the window step — then the
+        # server computes without a break and audio starts to stutter.
+        # Fix: shorten the window (_win_sec) or increase the step (_hop_sec).
         if _ms > self._hop_sec * 1000 * 0.7:
             self._slow_warn = getattr(self, "_slow_warn", 0) + 1
             if self._slow_warn <= 3 or self._slow_warn % 20 == 0:
-                print(f"[deepcw] UWAGA: inferencja {_ms:.0f} ms przy kroku "
-                      f"{self._hop_sec*1000:.0f} ms — procesor nie nadaza, "
-                      f"audio moze szarpac", flush=True)
+                print(f"[deepcw] WARNING: inference {_ms:.0f} ms with step "
+                      f"{self._hop_sec*1000:.0f} ms — CPU can't keep up, "
+                      f"audio may stutter", flush=True)
         if self._dbg_n % 10 == 1:
-            print(f"[deepcw] model zwrocil: {text!r} ({_ms:.0f} ms)", flush=True)
+            print(f"[deepcw] model returned: {text!r} ({_ms:.0f} ms)", flush=True)
         if not text:
             return None
 
@@ -468,10 +498,11 @@ class DeepCWEngine:
         if len(self._history) > self._history_max:
             self._history.pop(0)
 
-        # Przy koncu KROTKIEJ transmisji glosowanie nie ma sensu — jest jeden
-        # przebieg, nie ma czego glosowac. Pokazujemy odczyt wprost, zeby
-        # szybkie QSO ('RR 5NN TU') pojawilo sie od razu. Przy dluzszej pracy
-        # dziala normalne glosowanie (odsiewa przeklamania z wielu okien).
+        # At the end of a SHORT transmission, voting makes no sense — there
+        # is one pass, nothing to vote over. We show the reading directly,
+        # so a fast QSO ('RR 5NN TU') appears right away. For longer
+        # operation, normal voting applies (filters out misreads across
+        # multiple windows).
         if short_end:
             consensus = text
         else:
@@ -479,51 +510,56 @@ class DeepCWEngine:
         if not consensus:
             return None
 
-        # Wyslij tylko to, co PRZYBYLO na koncu konsensusu.
+        # Send only what's NEW at the end of the consensus.
         #
-        # UWAGA — tu byl blad powodujacy WIELOKROTNE wysylanie tego samego
-        # fragmentu (w logu: "+'ANETM RIGIC'" po kilka razy pod rzad).
-        # Poprzednio porownywalem konsensus z wyslanym tekstem od POCZATKU
-        # (wspolny prefiks). Ale konsensus powstaje z okna przesuwajacego sie
-        # co sekunde — jego poczatek stale ucieka razem z audio, wiec po
-        # kilkunastu sekundach nie mial juz nic wspolnego z poczatkiem
-        # poprzedniego. Porownanie prefiksow zawodzilo i kod wysylal cala
-        # zawartosc okna od nowa, przy kazdym dekodowaniu.
+        # NOTE — there used to be a bug here that caused the SAME fragment
+        # to be sent MULTIPLE times (in the log: "+'ANETM RIGIC'" several
+        # times in a row). Previously the consensus was compared to the
+        # sent text from the START (common prefix). But the consensus comes
+        # from a window sliding every second — its start keeps drifting
+        # along with the audio, so after a dozen or so seconds it no longer
+        # had anything in common with the start of the previous one. Prefix
+        # comparison failed and the code resent the entire window content
+        # from scratch on every decode.
         #
-        # Teraz szukamy NAKLADKI: ile znakow z konca juz wyslanego tekstu
-        # pokrywa sie z poczatkiem biezacego konsensusu. To co za nakladka —
-        # jest nowe i tylko to leci do UI.
-        # SKLADANIE TEKSTU — bez doklejania przyrostow.
+        # Now we look for the OVERLAP: how many characters from the end of
+        # the already-sent text coincide with the start of the current
+        # consensus. Whatever's past the overlap is new and is the only
+        # thing sent to the UI.
+        # ASSEMBLING TEXT — without appending increments.
         #
-        # Wczesniej wysylalem tylko to, co "przybylo" wzgledem poprzedniego
-        # konsensusu (nakladka). Problem: konsensus nie rosnie przewidywalnie,
-        # tylko PRZEBUDOWUJE sie przy kazdym oknie ('CQ CQ CQDE' -> 'CQ CQCQDE'
-        # -> 'CQ CQDE'). Dopasowanie raz trafialo, raz nie, wiec tekst wychodzil
-        # raz dobrze, raz posiekany na 2-3 znakowe strzepy. Tego nie da sie
-        # dostroic parametrem — to wada samego pomyslu.
+        # Previously only what "arrived" relative to the previous consensus
+        # (the overlap) was sent. Problem: the consensus doesn't grow
+        # predictably, it REBUILDS itself on every window ('CQ CQ CQDE' ->
+        # 'CQ CQCQDE' -> 'CQ CQDE'). The match hit sometimes and missed
+        # other times, so the text came out right sometimes and chopped
+        # into 2-3-character fragments other times. This can't be tuned
+        # with a parameter — it's a flaw in the approach itself.
         #
-        # Teraz wysylamy CALY biezacy konsensus jako blok, a przegladarka
-        # podmienia nim ostatnia linie. Nie ma czego gubic ani dublowac, bo
-        # nie ma sklejania. Gdy transmisja sie konczy (cisza), blok zostaje
-        # zamkniety i nastepna stacja zaczyna nowa linie.
-        # LINIA — biezace okno, zamykana po przerwie w NADAWANIU.
+        # Now we send the ENTIRE current consensus as a block, and the
+        # browser replaces the last line with it. There's nothing to lose
+        # or duplicate, since there's no appending. When a transmission
+        # ends (silence), the block is closed and the next station starts a
+        # new line.
+        # LINE — the current window, closed after a gap in TRANSMITTING.
         #
-        # Probowalem tu linii NARASTAJACEJ (doklejanie tego, co wypadlo
-        # z okna). Blad: w paśmie zawsze cos szumi, wiec cisza nigdy nie
-        # nadchodzila, linia rosla bez konca i sklejala kilka transmisji
-        # w jeden nieczytelny pas — z powtorkami w srodku, bo dopasowanie
-        # prefiksu tez potrafi chybic.
+        # Tried a GROWING line here (appending whatever fell out of the
+        # window). Bug: there's always something noisy in the band, so
+        # silence never arrived, the line grew endlessly and glued several
+        # transmissions into one unreadable strip — with repeats in the
+        # middle, since prefix matching can also miss.
         #
-        # Teraz: linia pokazuje biezacy konsensus, a zamyka sie gdy przez
-        # kilka okien nie przybywa nowej tresci (koniec nadawania, mimo ze
-        # szum trwa). Dostajemy kolejne krotkie linie — po jednej na fragment
-        # transmisji — zamiast jednego rosnacego pasa.
-        # Zamkniecie linii opieramy na POZIOMIE SYGNALU, nie na powtorzeniu
-        # tekstu. Wczesniej warunek 'consensus == poprzedni' nigdy nie
-        # zachodzil, bo przy szumie model za kazdym razem zwraca troche inny
-        # ciag — linia rosla bez konca i wszystko ladowalo w jednej. Koniec
-        # nadawania to spadek energii: gdy RMS przez kilka okien jest przy
-        # poziomie tla, transmisja sie skonczyla.
+        # Now: the line shows the current consensus, and closes when no new
+        # content arrives for a few windows (end of transmission, even
+        # though noise continues). We get a series of short lines — one per
+        # transmission fragment — instead of one endlessly growing strip.
+        # Closing the line is based on SIGNAL LEVEL, not on text
+        # repetition. Previously the condition 'consensus == previous'
+        # never held, since with noise the model returns a slightly
+        # different string every time — the line grew endlessly and
+        # everything ended up on one line. End of transmission means a drop
+        # in energy: when RMS stays near the floor for a few windows, the
+        # transmission has ended.
         _quiet_now = rms < (self._rms_threshold * 3.0)
         if _quiet_now:
             self._idle_windows = getattr(self, "_idle_windows", 0) + 1
@@ -531,20 +567,21 @@ class DeepCWEngine:
             self._idle_windows = 0
         self._last_consensus = consensus
 
-        # Poziom sygnalu do przegladarki (bargraf audio). Odbudowany po
-        # przejsciu na audio z karty — przegladarka nie ma juz wlasnego
-        # strumienia, wiec poziom podaje serwer.
+        # Signal level for the browser (audio bar graph). Rebuilt after
+        # switching to card audio — the browser no longer has its own
+        # stream, so the level is supplied by the server.
         if broadcast_fn:
-            _vu = min(1.0, rms * 8.0)   # skala do ~0..1 dla typowego CW
+            _vu = min(1.0, rms * 8.0)   # scale to ~0..1 for typical CW
             await broadcast_fn({"type": "deepcw_vu", "level": round(_vu, 3)})
 
-        # SKLADANIE LINII — narasta, gdy przybywa tresci; zamyka sie, gdy
-        # przez kilka okien nic nowego nie dochodzi.
+        # ASSEMBLING THE LINE — grows as content arrives; closes when
+        # nothing new comes in for a few windows.
         #
-        # Zamkniecia NIE opieramy na poziomie sygnalu (w pasmie zawsze cos
-        # szumi, RMS nie spada) ani na powtorzeniu konsensusu (model za kazdym
-        # razem zwraca troche inny ciag). Kryterium: czy do LINII przybyl nowy
-        # tekst. Gdy model przez 3 okna nie dokłada nic — koniec nadawania.
+        # Closing is NOT based on signal level (there's always something
+        # noisy in the band, RMS doesn't drop) or on consensus repetition
+        # (the model returns a slightly different string every time).
+        # Criterion: whether new text was added to the LINE. When the model
+        # adds nothing for 3 windows — end of transmission.
         _acc = getattr(self, "_line_acc", "")
         _grew = False
         if not _acc:
@@ -553,7 +590,7 @@ class DeepCWEngine:
         else:
             _tail = self._tail_after_overlap(_acc, consensus)
             if _tail and _tail.strip():
-                _acc = (_acc + _tail)[-200:]     # twardy limit dlugosci linii
+                _acc = (_acc + _tail)[-200:]     # hard cap on line length
                 _grew = True
         self._line_acc = _acc
 
@@ -562,7 +599,7 @@ class DeepCWEngine:
         else:
             self._idle_windows = getattr(self, "_idle_windows", 0) + 1
 
-        # Trzy okna bez nowej tresci = koniec nadawania -> zamknij linie
+        # Three windows with no new content = end of transmission -> close the line
         if self._idle_windows >= 3 and getattr(self, "_line_open", False):
             if broadcast_fn:
                 await broadcast_fn({"type": "deepcw_text",
@@ -574,12 +611,13 @@ class DeepCWEngine:
             self._idle_windows = 0
             return consensus
 
-        # Podzial dlugiej, ciaglej transmisji na czytelne wiersze. Bez tego
-        # linia rosnie w nieskonczonosc, a co okno caly pas leci do przegladarki
-        # (obciazenie serwera i klienta). Po ~72 znakach zamykamy biezacy
-        # wiersz na granicy slowa i zaczynamy nowy — transmisja trwa dalej.
+        # Splitting a long, continuous transmission into readable lines.
+        # Without this the line grows endlessly, and every window sends the
+        # whole strip to the browser (server and client load). After ~72
+        # characters we close the current line at a word boundary and start
+        # a new one — the transmission keeps going.
         if len(_acc) >= 64 and getattr(self, "_line_open", False):
-            _cut = _acc.rfind(" ", 32, 68)    # tnij na spacji w rozsadnym zakresie
+            _cut = _acc.rfind(" ", 32, 68)    # cut at a space in a reasonable range
             if _cut < 0:
                 _cut = 64
             _done = self._correct_calls(_acc[:_cut].strip())
@@ -589,7 +627,7 @@ class DeepCWEngine:
             except Exception:
                 pass
             if broadcast_fn:
-                # domknij wiersz gotowa trescia, potem zasygnalizuj nowy
+                # close the line with the finished content, then signal a new one
                 await broadcast_fn({"type": "deepcw_text",
                                     "block": _done, "preview": "", "close": False})
                 await broadcast_fn({"type": "deepcw_text",
@@ -599,24 +637,25 @@ class DeepCWEngine:
             _acc = self._line_acc
 
         block = self._correct_calls(_acc) if _acc else ""
-        # Warstwa jezykowa — poprawia zwroty CW, raporty i imiona wg struktury
-        # lacznosci (jak Skimmer). Dziala na tekscie, zero kosztu audio.
+        # Language layer — corrects CW phrases, reports, and names based on
+        # the structure of a contact (like Skimmer). Works on text, zero
+        # audio cost.
         if block:
             try:
                 import deepcw_lang
                 block = deepcw_lang.correct(block, self._known_calls)
             except Exception:
                 pass
-        # Odsiej pojedyncze smieciowe znaki (np. samotne 'X' z zaklocenia)
+        # Filter out isolated junk characters (e.g. a lone 'X' from interference)
         if block and len(block.strip()) <= 1:
             block = self._filter_noise(block)
 
-        # PODGLAD: najswiezszy odczyt modelu wykraczajacy poza konsensus —
-        # to, czego glosowanie jeszcze nie potwierdzilo. Operator widzi go
-        # od razu (szaro), zamiast czekac 3-4 s na potwierdzenie.
+        # PREVIEW: the freshest model reading beyond the consensus — what
+        # voting hasn't confirmed yet. The operator sees it right away
+        # (grayed out), instead of waiting 3-4s for confirmation.
         preview = ""
         if text and consensus:
-            # Ile z konca konsensusu pokrywa sie z ostatnim odczytem
+            # How much of the end of the consensus overlaps with the latest reading
             for n in range(min(len(text), len(consensus)), 0, -1):
                 if consensus.endswith(text[:n]):
                     preview = text[n:]
@@ -625,8 +664,8 @@ class DeepCWEngine:
                 preview = ""
         elif text:
             preview = text
-        # Dlugosc podgladu pod najszybszych korespondentow (40 WPM ~ 8 znakow
-        # na 2.5 s; z zapasem na spoznione okna).
+        # Preview length sized for the fastest correspondents (40 WPM ~ 8
+        # characters per 2.5s; with margin for late windows).
         preview = preview[:24]
 
         if block != getattr(self, "_last_block", None):
@@ -634,50 +673,52 @@ class DeepCWEngine:
             self._last_block = block
             self._line_open = True
 
-        # PODTRZYMANIE PODGLADU: gdy biezacy odczyt nie ma juz nowej koncowki
-        # (preview puste), NIE kasujemy szarego paska od razu — zostawiamy
-        # ostatnia widoczna tresc przez kilka okien, zeby operator zdazyl ja
-        # przeczytac. Przy szybkich QSO tekst pojawial sie i znikal, zanim
-        # dalo sie go dostrzec.
+        # HOLDING THE PREVIEW: when the current reading no longer has a new
+        # tail (preview empty), we do NOT clear the gray bar right away —
+        # we leave the last visible content for a few windows, so the
+        # operator has time to read it. On fast QSOs the text used to
+        # appear and disappear before it could be noticed.
         if preview:
             self._preview_hold = preview
-            self._preview_ttl = 4          # utrzymaj przez ~4 okna
+            self._preview_ttl = 4          # hold for ~4 windows
         elif getattr(self, "_preview_ttl", 0) > 0:
             self._preview_ttl -= 1
-            preview = getattr(self, "_preview_hold", "")   # pokazuj ostatni
+            preview = getattr(self, "_preview_hold", "")   # show the last one
         else:
             self._preview_hold = ""
 
         _prev_had = getattr(self, "_had_preview", False)
         if broadcast_fn and (block or preview or _prev_had):
             await broadcast_fn({"type": "deepcw_text",
-                                # 'block' = CALA biezaca linia do PODMIANY
-                                # (nie doklejenia). Przegladarka nadpisuje nim
-                                # ostatnia linie zamiast sklejac fragmenty.
+                                # 'block' = the ENTIRE current line to REPLACE
+                                # (not append). The browser overwrites the
+                                # last line with it instead of gluing fragments.
                                 "block": block,
                                 "preview": preview})
         self._had_preview = bool(preview)
         return consensus
 
-    # Cut numbers — skroty cyfr stosowane w CW dla oszczedzenia czasu.
-    # Nadawca zamiast pelnej cyfry nadaje krotsza litere o podobnym wzorcu:
-    #   0 -> T (jedna kreska zamiast pieciu)
+    # Cut numbers — digit shortcuts used in CW to save time.
+    # Instead of the full digit, the sender keys a shorter letter with a
+    # similar pattern:
+    #   0 -> T (one dash instead of five)
     #   9 -> N,  5 -> E,  1 -> A,  7 -> G,  8 -> D,  2 -> U,  6 -> B
-    # To NIE sa bledy dekodera — model odczytal dokladnie to, co poszlo
-    # w eter. Dlatego NIGDY ich nie "poprawiamy" w wyswietlanym tekscie;
-    # rozwijamy je wylacznie na czas POROWNANIA z baza znanych znakow.
+    # These are NOT decoder errors — the model read exactly what went out
+    # over the air. So they are NEVER "corrected" in the displayed text;
+    # they're only expanded for the duration of COMPARING against the known
+    # calls database.
     _CUT_NUMBERS = {"T": "0", "N": "9", "E": "5", "A": "1",
                     "G": "7", "D": "8", "U": "2", "B": "6"}
 
     @classmethod
     def _expand_cut_numbers(cls, token: str, known: str) -> str:
-        """Rozwin cut numbers w 'token' — ale TYLKO na pozycjach, gdzie
-        w znanym znaku stoi cyfra.
+        """Expand cut numbers in 'token' — but ONLY at positions where the
+        known call has a digit.
 
-        Rozwijanie na slepo dawaloby falszywe trafienia, bo T/N/E to takze
-        zwykle litery prawdziwych znakow (np. 'T' w G8KHF-podobnych). Dlatego
-        patrzymy pozycyjnie: jesli w bazie na tym miejscu jest cyfra, a my mamy
-        litere bedaca jej skrotem — traktujemy jako te sama cyfre.
+        Expanding blindly would give false matches, since T/N/E are also
+        ordinary letters in real calls (e.g. 'T' in G8KHF-like calls). So we
+        look positionally: if the database has a digit at this spot, and we
+        have a letter that's its shortcut — we treat it as that same digit.
         """
         if len(token) != len(known):
             return token
@@ -691,43 +732,45 @@ class DeepCWEngine:
 
     @staticmethod
     def _looks_like_report(tok: str) -> bool:
-        """Czy token to raport RST / numer w zawodach?
+        """Is this token an RST report / contest number?
 
-        Tam cut numbers sa NORMA (599 -> 5NN, 001 -> TT1), a kazda "korekta"
-        bylaby przeklamaniem tego, co operator nadal. Takich tokenow nie
-        ruszamy w ogole.
+        There, cut numbers are the NORM (599 -> 5NN, 001 -> TT1), and any
+        "correction" would misrepresent what the operator actually sent.
+        Such tokens are left untouched entirely.
         """
         t = tok.upper()
         if not t:
             return False
-        # Same cyfry / same skroty cyfr / mieszanka obu
+        # Pure digits / pure cut-number shortcuts / a mix of both
         digits_or_cuts = set("0123456789") | set(
             DeepCWEngine._CUT_NUMBERS.keys())
         return len(t) <= 5 and all(c in digits_or_cuts for c in t)
 
     def _correct_calls(self, text: str) -> str:
-        """Popraw przekrecone znaki wywolawcze wg puli znanych znakow.
+        """Correct garbled callsigns against the pool of known calls.
 
-        Siec neuronowa myli podobne znaki Morse'a (A/N, U/D, S/H, E/I), przez
-        co realny znak wychodzi z jedna litera obok. Jesli w puli jest dokladnie
-        JEDEN znak w odleglosci 1, podmieniamy — przy kilku kandydatach lepiej
-        zostawic oryginal niz zgadywac.
+        The neural network confuses similar Morse characters (A/N, U/D,
+        S/H, E/I), so the real call comes out with one letter off. If the
+        pool has EXACTLY ONE call at edit distance 1, we substitute it —
+        with several candidates it's better to leave the original than guess.
 
-        WAZNE: cut numbers (IC73TT, 5NN) NIE sa bledami — to swiadomy skrot
-        nadawcy. Rozwijamy je tylko po to, zeby DOPASOWAC token do bazy;
-        w wyniku zostaje forma, ktora naprawde poszla w eter.
+        IMPORTANT: cut numbers (IC73TT, 5NN) are NOT errors — they're a
+        deliberate shortcut by the sender. They are only expanded in order
+        to MATCH the token against the database; the result keeps the form
+        that actually went out over the air.
         """
         if not text or not self._known_calls:
             return text
         out = []
         for tok in text.split(" "):
             t = tok.upper()
-            # Raporty i numery zawodow zostawiamy nietkniete
+            # Reports and contest numbers are left untouched
             if self._looks_like_report(t):
                 out.append(tok)
                 continue
-            # Kandydat na znak: 4-10 znakow, jest litera, i jest cyfra ALBO
-            # cut number (znak moze byc nadany calkiem w skrocie: IC73TT)
+            # Call candidate: 4-10 characters, has a letter, and has a
+            # digit OR a cut number (a call may be sent entirely in
+            # shorthand: IC73TT)
             has_alpha = any(c.isalpha() for c in t)
             has_digit = any(c.isdigit() for c in t)
             has_cut   = any(c in self._CUT_NUMBERS for c in t)
@@ -741,28 +784,30 @@ class DeepCWEngine:
         return " ".join(out)
 
     def _match_with_cuts(self, token: str) -> str | None:
-        """Dopasuj token do bazy, uwzgledniajac cut numbers.
+        """Match a token against the database, accounting for cut numbers.
 
-        Zwraca ORYGINALNY token, gdy po rozwinieciu skrotow okazuje sie
-        poprawny (nie ma czego poprawiac), albo znany znak, gdy token jest
-        faktycznie przekrecony. None gdy brak jednoznacznego dopasowania.
+        Returns the ORIGINAL token when, after expanding shortcuts, it
+        turns out to already be correct (nothing to fix), or a known call
+        when the token is actually garbled. None when there's no
+        unambiguous match.
         """
-        # 1) Czy po rozwinieciu cut numbers token jest juz poprawny?
+        # 1) After expanding cut numbers, is the token already correct?
         for known in self._known_calls:
             if len(known) == len(token):
                 if self._expand_cut_numbers(token, known) == known:
-                    return token   # nadane w skrocie — zostaw jak nadano
-        # 2) Zwykla korekta o jeden znak (prawdziwe przekrecenie)
+                    return token   # sent as a shorthand — leave it as sent
+        # 2) Regular one-character correction (a real garble)
         return self.match_known_call(token)
 
     @staticmethod
     def _tail_after_overlap(sent: str, cons: str) -> str:
-        """Zwroc te czesc 'cons', ktora nie pokrywa sie z koncem 'sent'.
+        """Return the part of 'cons' that doesn't overlap with the end of 'sent'.
 
-        Sluzy do NARASTANIA linii: 'sent' to tekst od poczatku nadawania,
-        'cons' to biezace okno. Doklejamy tylko to, co w oknie przybylo na
-        koncu. Dopasowanie tolerancyjne, bo konsensus lekko sie przebudowuje
-        (spacje, pojedyncze znaki) — sztywne porownanie gubiloby ciaglosc.
+        Used for GROWING the line: 'sent' is the text since the start of
+        the transmission, 'cons' is the current window. Only what newly
+        arrived at the end of the window is appended. The match is
+        tolerant, since the consensus rebuilds itself slightly (spaces,
+        single characters) — a rigid comparison would lose continuity.
         """
         if not sent:
             return cons
@@ -784,35 +829,39 @@ class DeepCWEngine:
         return " " + cons
 
     def _consensus(self, history: list[str]) -> str:
-        """Glosowanie wiekszosciowe po WYROWNANYCH oknach dekodowania.
+        """Majority voting over ALIGNED decode windows.
 
-        Kazde okno wyrownujemy do okna-referencji (mediana dlugosci) przez
-        difflib, po czym na kazdej pozycji referencji wygrywa najczestszy znak
-        — o ile zebral co najmniej _vote_ratio glosow. Dzieki wyrownaniu
-        tolerujemy zgubione/wstawione znaki (sztywne porownanie po indeksie
-        rozjezdza sie po pierwszym zgubieniu litery).
+        Each window is aligned to a reference window (median length) via
+        difflib, then at every position of the reference the most frequent
+        character wins — provided it gathered at least _vote_ratio of the
+        votes. Alignment lets us tolerate lost/inserted characters (a rigid
+        index-based comparison would fall apart after the first dropped
+        letter).
         """
         h = [x for x in history if x]
-        # Prog minimalny obnizony z 3 do 2 okien — konsensus rusza szybciej,
-        # znak pojawia sie o jedno okno (2 s) wczesniej. Przy 2 oknach potrzeba
-        # ich zgodnosci (need=2), wiec to nadal potwierdzenie, nie pojedynczy
-        # odczyt. Wazne na zawodach, gdzie liczy sie tempo.
+        # Minimum threshold lowered from 3 to 2 windows — the consensus
+        # kicks in sooner, a character appears one window (2s) earlier.
+        # With 2 windows they still need to agree (need=2), so it's still a
+        # confirmation, not a single reading. Matters in contests, where
+        # speed counts.
         if len(h) < 2:
             return ""
         import difflib
         from collections import Counter
-        # Referencja = okno NAJBARDZIEJ PODOBNE do pozostalych, nie przypadkowe
-        # (wczesniej: mediana dlugosci). Gdy na referencje trafialo okno
-        # z bledem, difflib nie dopasowywal tam pozycji i poprawny znak
-        # z pozostalych okien przepadal — mimo ze mial wiekszosc glosow.
+        # Reference = the window MOST SIMILAR to the others, not arbitrary
+        # (previously: median length). When the reference landed on a
+        # window with an error, difflib wouldn't align positions there and
+        # the correct character from the other windows was lost — even
+        # though it had the majority of votes.
         if len(h) > 2:
             from collections import Counter as _C
-            # Najpierw: czy ktorys odczyt POWTARZA sie? Powtorzenie to
-            # najmocniejszy dowod poprawnosci — model dwa razy przeczytal
-            # tak samo. Bez tego referencja padala czasem na okno UCIETE
-            # (krotsze bywa "podobniejsze" do wszystkich), przez co koncowe
-            # znaki gubily sie mimo wiekszosci (obserwowane: 'I1GS' zamiast
-            # 'I1GIS' przy 3 z 4 okien poprawnych).
+            # First: does any reading REPEAT? A repeat is the strongest
+            # evidence of correctness — the model read the same thing
+            # twice. Without this the reference would sometimes land on a
+            # TRUNCATED window (a shorter one can be "more similar" to all
+            # of them), causing trailing characters to be lost despite
+            # having a majority (observed: 'I1GS' instead of 'I1GIS' with 3
+            # of 4 windows correct).
             _cnt = _C(h)
             _top, _n = _cnt.most_common(1)[0]
             if _n >= 2:
@@ -827,17 +876,19 @@ class DeepCWEngine:
         votes: list[list[str]] = [[] for _ in range(len(ref))]
         for cand in h:
             sm = difflib.SequenceMatcher(None, ref, cand, autojunk=False)
-            # opcodes daja PELNE odwzorowanie: nie tylko zgodne fragmenty
-            # ('equal'), ale takze podmiany ('replace'). Przy samych
-            # matching_blocks pozycje z bledem w referencji nie zbieraly
-            # zadnych glosow — poprawny znak z pozostalych okien przepadal,
-            # mimo ze mial wiekszosc (obserwowane: 'DG8G' -> 'DGG').
+            # opcodes give FULL coverage: not just matching fragments
+            # ('equal'), but also substitutions ('replace'). With only
+            # matching_blocks, positions with an error in the reference
+            # collected no votes at all — the correct character from the
+            # other windows was lost despite having the majority (observed:
+            # 'DG8G' -> 'DGG').
             for tag, i1, i2, j1, j2 in sm.get_opcodes():
                 if tag == "equal":
                     for k in range(i2 - i1):
                         votes[i1 + k].append(cand[j1 + k])
                 elif tag == "replace":
-                    # Podmiana: glosuj pozycyjnie na tyle znakow, ile sie pokrywa
+                    # Substitution: vote positionally for as many
+                    # characters as overlap
                     for k in range(min(i2 - i1, j2 - j1)):
                         votes[i1 + k].append(cand[j1 + k])
         need = max(2, int(len(h) * self._vote_ratio))
@@ -850,10 +901,11 @@ class DeepCWEngine:
                 out.append(ch)
         result = "".join(out).strip()
 
-        # Odzyskaj KONCOWKE, ktorej zabraklo w referencji. Gdy na referencje
-        # trafi okno uciete (np. 'JUR' przy wiekszosci 'JURE'), pozycji na
-        # ostatnie znaki po prostu nie ma i glosowanie nie moze ich wskazac.
-        # Sprawdzamy wiec, czy wiekszosc okien ma wspolne przedluzenie.
+        # Recover the TAIL missing from the reference. When the reference
+        # lands on a truncated window (e.g. 'JUR' while most say 'JURE'),
+        # the positions for the trailing characters simply don't exist and
+        # voting can't produce them. So we check whether most windows share
+        # a common extension.
         if result:
             ext = []
             for cand in h:
@@ -873,7 +925,7 @@ class DeepCWEngine:
         return result
 
     def _filter_noise(self, text: str) -> str:
-        """Usuń oczywisty szum — izolowane losowe znaki."""
+        """Strip obvious noise — isolated random characters."""
         if not text:
             return text
         stripped = text.strip()
@@ -881,39 +933,39 @@ class DeepCWEngine:
             return ''
         return text
 
-    # ── Baza znanych znakow (walidacja/korekta dekodow) ───────────────────────
-    # Zasilana ze WSZYSTKICH zrodel: dekody FT8, log QSO, spoty DX cluster
-    # wszystkich userow. Zdekodowany ciag porownujemy z realnymi znakami i
-    # poprawiamy typowe przekrecenia (CW przez siec neuronowa myli podobne
-    # znaki, np. A/N, U/D, S/H).
+    # ── Known-call database (validation/correction of decodes) ───────────────────────
+    # Fed from ALL sources: FT8 decodes, the QSO log, DX cluster spots from
+    # all users. The decoded string is compared against real calls and
+    # typical garbles are corrected (the CW neural network confuses similar
+    # characters, e.g. A/N, U/D, S/H).
     _known_calls: set = set()
 
     @classmethod
     def add_known_calls(cls, calls):
-        """Dodaj znaki do puli walidacyjnej (wielkie litery, bez smieci)."""
+        """Add calls to the validation pool (uppercase, no junk)."""
         for c in calls or ():
             c = (c or "").strip().upper()
-            # Znak wywolawczy: 3-10 znakow, zawiera cyfre i litere
+            # Callsign: 3-10 characters, contains a digit and a letter
             if (3 <= len(c) <= 10 and any(ch.isdigit() for ch in c)
                     and any(ch.isalpha() for ch in c)):
                 cls._known_calls.add(c)
-        # Limit pamieci — pula zyje w RAM, nie moze rosnac bez konca
+        # Memory limit — the pool lives in RAM, can't grow without bound
         if len(cls._known_calls) > 20000:
             cls._known_calls = set(list(cls._known_calls)[-10000:])
 
     @classmethod
     def match_known_call(cls, token: str) -> str | None:
-        """Zwroc znany znak pasujacy do tokenu (dokladnie lub o 1 znak obok).
+        """Return a known call matching the token (exactly or 1 character off).
 
-        Zwracamy dopasowanie tylko gdy jest JEDNOZNACZNE — przy kilku
-        kandydatach w odleglosci 1 lepiej nie zgadywac.
+        A match is returned only when it's UNAMBIGUOUS — with several
+        candidates at distance 1, it's better not to guess.
         """
         t = (token or "").strip().upper()
         if len(t) < 3:
             return None
         if t in cls._known_calls:
             return t
-        # Korekta o jeden znak (podmiana/brak/wstawka)
+        # One-character correction (substitution/deletion/insertion)
         cands = []
         for known in cls._known_calls:
             if abs(len(known) - len(t)) > 1:
@@ -921,12 +973,12 @@ class DeepCWEngine:
             if cls._dist1(t, known):
                 cands.append(known)
                 if len(cands) > 1:
-                    return None  # niejednoznaczne — nie poprawiamy
+                    return None  # ambiguous — don't correct
         return cands[0] if cands else None
 
     @staticmethod
     def _dist1(a: str, b: str) -> bool:
-        """Czy odleglosc edycyjna miedzy a i b wynosi dokladnie 1?"""
+        """Is the edit distance between a and b exactly 1?"""
         if a == b:
             return False
         la, lb = len(a), len(b)
@@ -934,7 +986,7 @@ class DeepCWEngine:
             return sum(1 for x, y in zip(a, b) if x != y) == 1
         if la > lb:
             a, b, la, lb = b, a, lb, la
-        # lb == la + 1 : sprawdz czy a jest b bez jednego znaku
+        # lb == la + 1 : check whether a is b with one character removed
         i = j = diff = 0
         while i < la and j < lb:
             if a[i] != b[j]:
@@ -949,16 +1001,17 @@ class DeepCWEngine:
 
     # ── ONNX inference ────────────────────────────────────────────────────────
     def _denoise(self, x: np.ndarray) -> np.ndarray:
-        """Odejmowanie widma szumu — podnosi kontrast obwiedni CW.
+        """Spectral noise subtraction — raises the CW envelope contrast.
 
-        Liczymy STFT, szacujemy poziom szumu w kazdym prazku (20. percentyl
-        magnitudy — tlo utrzymuje sie przez wiekszosc okna, znaki tylko
-        chwilami), odejmujemy 1.5x tego poziomu z podloga 5%, i odtwarzamy
-        sygnal. Faza zostaje oryginalna. Zmierzone: kontrast 14.6x -> 22x.
+        We compute the STFT, estimate the noise level in each bin (20th
+        percentile of magnitude — the floor persists over most of the
+        window, characters only briefly), subtract 1.5x that level with a
+        5% floor, and reconstruct the signal. Phase stays original.
+        Measured: contrast 14.6x -> 22x.
         """
         if x.size < 512:
             return x
-        nfft, hop = 256, 64      # hop = nfft/4: okno Hanninga sumuje sie do 1.5
+        nfft, hop = 256, 64      # hop = nfft/4: a Hanning window sums to 1.5
         win = np.hanning(nfft).astype(np.float32)
         n_frames = (len(x) - nfft) // hop + 1
         if n_frames < 4:
@@ -970,20 +1023,21 @@ class DeepCWEngine:
         noise = np.percentile(mag, 20, axis=0)
         mag_clean = np.maximum(mag - 1.5 * noise, 0.05 * mag)
         Fc = mag_clean * np.exp(1j * ph)
-        # Overlap-add rekonstrukcja. Hop = nfft/4 z oknem Hanninga daje stala
-        # sume okien (COLA), wiec normalizujemy przez znana wartosc, a nie
-        # przez lokalna sume — ta potrafila spadac do zera na brzegach i
-        # wysadzac amplitude do setek (obserwowane: peak 202, RMS 2.0 w logu).
+        # Overlap-add reconstruction. Hop = nfft/4 with a Hanning window
+        # gives a constant window sum (COLA), so we normalize by the known
+        # value rather than the local sum — the local sum could drop to
+        # zero at the edges and blow the amplitude up to the hundreds
+        # (observed: peak 202, RMS 2.0 in the log).
         out = np.zeros(n_frames * hop + nfft, dtype=np.float32)
         for i, fr in enumerate(Fc):
             seg = np.fft.irfft(fr).astype(np.float32)
             out[i*hop:i*hop+nfft] += seg * win
-        # Suma Hanninga przy hop=nfft/4 wynosi 1.5 na obszarze pelnego pokrycia
+        # The Hanning sum at hop=nfft/4 is 1.5 over the fully-covered region
         out /= 1.5
         return out[:len(x)].astype(np.float32)
 
     def reset(self):
-        """Wyczysc stan dekodera (przy wlaczaniu/wylaczaniu okna)."""
+        """Clear the decoder's state (when toggling the window on/off)."""
         self._buf = np.zeros(0, dtype=np.float32)
         self._history.clear()
         self._confirmed = ""
@@ -994,22 +1048,23 @@ class DeepCWEngine:
         self._had_preview = False
 
     def start_capture(self, seconds: float = 15.0) -> str:
-        """Wlacz zapis audio DOKLADNIE w postaci, w jakiej trafia do modelu.
+        """Enable audio recording EXACTLY as it's fed to the model.
 
-        Diagnostyka: pozwala odsluchac, co dekoder naprawde dostaje — po
-        resamplingu do 3200 Hz i po filtrze antyaliasingowym, tuz przed
-        inferencja. Jesli w pliku slychac czysty ton CW, problem jest w samym
-        modelu; jesli kasza — w torze audio przed nim.
+        Diagnostics: lets you listen to what the decoder actually gets —
+        after resampling to 3200Hz and after the anti-aliasing filter,
+        right before inference. If the file has a clean CW tone, the
+        problem is in the model itself; if it's garbled — it's in the
+        audio path before it.
         """
         self._cap_buf = []
         self._cap_left = int(seconds * self.meta["sample_rate"])
         self._cap_path = str(MODEL_DIR / "deepcw_capture.wav")
-        print(f"[deepcw] Zapis audio wlaczony ({seconds:.0f} s) -> "
+        print(f"[deepcw] Audio recording enabled ({seconds:.0f}s) -> "
               f"{self._cap_path}", flush=True)
         return self._cap_path
 
     def _capture_feed(self, pcm: np.ndarray):
-        """Dolóz probki do zapisu; gdy komplet — zapisz plik WAV."""
+        """Append samples to the recording; once complete — write the WAV file."""
         if not getattr(self, "_cap_left", 0):
             return
         self._cap_buf.append(pcm.copy())
@@ -1029,26 +1084,26 @@ class DeepCWEngine:
                 w.writeframes(pcm16.tobytes())
             _peak = float(np.max(np.abs(data))) if data.size else 0.0
             _rms  = float(np.sqrt(np.mean(data**2))) if data.size else 0.0
-            print(f"[deepcw] ZAPIS GOTOWY: {self._cap_path} "
-                  f"({len(data)/self.meta['sample_rate']:.1f} s, "
+            print(f"[deepcw] RECORDING DONE: {self._cap_path} "
+                  f"({len(data)/self.meta['sample_rate']:.1f}s, "
                   f"peak={_peak:.3f}, rms={_rms:.4f})", flush=True)
         except Exception as e:
-            print(f"[deepcw] Blad zapisu audio: {e}", flush=True)
+            print(f"[deepcw] Audio recording error: {e}", flush=True)
         finally:
             self._cap_buf = []
             self._cap_left = 0
 
     def _bandpass_tone(self, x: np.ndarray) -> np.ndarray:
-        """Izoluj wykryty ton CW waskim filtrem pasmowym (jak Skimmer).
+        """Isolate the detected CW tone with a narrow bandpass filter (like Skimmer).
 
-        Wykrywa dominujacy ton w pasmie 300-1200 Hz, sledzi go z wygladzaniem
-        (zeby nie skakac na chwilowy szum) i przepuszcza +-120 Hz wokol niego.
-        Gdy w oknie nie ma wyraznego tonu, zwraca sygnal bez zmian — nie
-        zgadujemy.
+        Detects the dominant tone in the 300-1200 Hz band, tracks it with
+        smoothing (so it doesn't jump on transient noise), and passes
+        +-120 Hz around it. When the window has no clear tone, the signal
+        is returned unchanged — we don't guess.
         """
         if x.size < 512:
             return x
-        # Mozna wylaczyc do porownania na zywo (HAM_CW_BANDPASS=0)
+        # Can be disabled for a live comparison (HAM_CW_BANDPASS=0)
         if not getattr(self, "_bandpass_on", True):
             return x
         sr = self.meta["sample_rate"]
@@ -1063,67 +1118,68 @@ class DeepCWEngine:
         peak_f = f[peak_i]
         med = np.median(mag[idx])
         if mag[peak_i] < med * 4:
-            return x                      # brak wyraznego tonu — nie filtruj
+            return x                      # no clear tone — don't filter
 
-        # Filtruj TYLKO sygnal zaszumiony. Na czystym, mocnym CW filtr pasmowy
-        # szkodzi — obciecie pasma wprowadza dzwonienie rozmywajace idealne
-        # krawedzie kluczowania (zmierzone: kontrast czystego sygnalu spadal
-        # z 263x do 98x). Miara szumu to KONTRAST OBWIEDNI: stosunek poziomu
-        # znaku do ciszy. Wysoki kontrast = czysty sygnal, zostaw; niski =
-        # szum w przerwach, filtr pomoze.
+        # Filter ONLY a noisy signal. On clean, strong CW, a bandpass
+        # filter hurts — cutting the band introduces ringing that blurs the
+        # sharp keying edges (measured: the envelope contrast of a clean
+        # signal dropped from 263x to 98x). The noise metric is ENVELOPE
+        # CONTRAST: the ratio of mark level to silence level. High contrast
+        # = clean signal, leave it; low = noise in the gaps, the filter helps.
         _wl = int(sr * 0.01)
         if _wl > 0 and len(x) > _wl * 4:
             _env = np.sqrt(np.convolve(x**2, np.ones(_wl)/_wl, mode="valid"))
             _contrast = np.percentile(_env, 90) / max(np.percentile(_env, 10), 1e-9)
             if _contrast > 15:
-                return x                  # sygnal juz czysty — nie psuj
+                return x                  # signal already clean — don't spoil it
         prev = getattr(self, "_tone_hz", None)
         if prev is None or abs(peak_f - prev) > 200:
-            tone = peak_f                 # nowa stacja / pierwszy raz
+            tone = peak_f                 # new station / first time
         else:
             tone = prev * 0.7 + peak_f * 0.3
         self._tone_hz = tone
         if self._dbg_n % 10 == 1:
-            print(f"[deepcw] ton {tone:.0f}Hz (filtr +-120Hz)", flush=True)
+            print(f"[deepcw] tone {tone:.0f}Hz (filter +-120Hz)", flush=True)
         bw = 120.0
         mask = (f >= tone - bw) & (f <= tone + bw)
         Xf = np.where(mask, X, 0)
         return np.fft.irfft(Xf, n=len(x)).astype(np.float32)
 
     def _lowpass(self, x: np.ndarray, sr: int, cutoff: float) -> np.ndarray:
-        """Filtr dolnoprzepustowy (FIR, okno Hamminga) przed decymacja.
+        """Low-pass filter (FIR, Hamming window) before decimation.
 
-        Zachowuje STAN miedzy kolejnymi porcjami audio — przegladarka sle
-        dzwiek w kawalkach, wiec filtrowanie kazdego z osobna zostawialoby
-        nieciaglosci na stykach (trzaski, ktore model widzi jako znaki).
+        Keeps STATE between successive audio chunks — the browser sends
+        sound in pieces, so filtering each one separately would leave
+        discontinuities at the seams (clicks that the model sees as
+        characters).
 
-        Wspolczynniki liczymy raz i cache'ujemy; koszt filtracji to ulamek
-        milisekundy, nieporownywalnie mniej niz sama inferencja.
+        Coefficients are computed once and cached; the filtering cost is a
+        fraction of a millisecond, negligible compared to inference itself.
         """
         if x.size == 0:
             return x
         key = (sr, round(cutoff))
         if getattr(self, "_lp_key", None) != key:
-            # 63 wspolczynniki = kompromis miedzy stromoscia a kosztem
+            # 63 taps = a compromise between rolloff steepness and cost
             n_taps = 63
-            fc = cutoff / sr                      # znormalizowana czestotliwosc
+            fc = cutoff / sr                      # normalized frequency
             m = np.arange(n_taps) - (n_taps - 1) / 2
             h = np.sinc(2 * fc * m) * np.hamming(n_taps)
             self._lp_taps = (h / h.sum()).astype(np.float32)
             self._lp_key = key
             self._lp_tail = np.zeros(n_taps - 1, dtype=np.float32)
 
-        # Doklej ogon z poprzedniego wywolania, przefiltruj, zapamietaj nowy
+        # Prepend the tail from the previous call, filter, save the new tail
         xin = np.concatenate([self._lp_tail, x])
         self._lp_tail = xin[-(len(self._lp_taps) - 1):].copy()
         return np.convolve(xin, self._lp_taps, mode="valid").astype(np.float32)
 
     def _infer(self, audio: np.ndarray) -> str:
-        # Obniz priorytet TEGO watku (inferencji), zeby tor audio i siec zawsze
-        # mialy pierwszenstwo. Bez tego ciezka inferencja ONNX potrafila na
-        # moment oblozyc wszystkie rdzenie i zatkac audio (Python 100% w /perf).
-        # Na Windows przez ctypes; gdzie indziej przez os.nice — best-effort,
-        # bledy ignorujemy (nie sa krytyczne).
+        # Lower the priority of THIS thread (inference), so the audio path
+        # and networking always get precedence. Without this, a heavy ONNX
+        # inference could momentarily occupy every core and choke audio
+        # (Python at 100% in /perf). Via ctypes on Windows; via os.nice
+        # elsewhere — best-effort, errors are ignored (not critical).
         if not getattr(self, "_prio_lowered", False):
             try:
                 import sys as _sys
@@ -1137,7 +1193,7 @@ class DeepCWEngine:
                     _os.nice(5)
                 self._prio_lowered = True
             except Exception:
-                self._prio_lowered = True   # nie probuj w kolko
+                self._prio_lowered = True   # don't keep retrying
         m    = self.meta
         sr   = m["sample_rate"]
         nfft = m["fft_length"]
@@ -1154,44 +1210,46 @@ class DeepCWEngine:
         return self._ctc_decode(out[0], m["chars"], m["blank_index"])
 
     def _stft_spectrogram(self, audio, nfft, hop, sr, fmin, fmax, n_bins):
-        # WEKTORYZACJA — kluczowa dla obciazenia CPU.
+        # VECTORIZATION — critical for CPU load.
         #
-        # Poprzednia wersja liczyla FFT w PETLI Pythona, ramka po ramce (~660
-        # iteracji na okno 10s przy hop=48). Petla FFT w czystym Pythonie to
-        # jedna z najwolniejszych operacji — to ona zjadala procesor (DeepCW
-        # skakal na 100%, zatykajac audio). Teraz skladamy wszystkie ramki w
-        # jedna macierz (sliding_window_view) i liczymy FFT RAZ, wektorowo.
-        # Wynik identyczny, ale dziesiatki razy szybciej.
+        # The previous version computed FFT in a Python LOOP, frame by
+        # frame (~660 iterations for a 10s window at hop=48). An FFT loop
+        # in pure Python is one of the slowest operations — it's what was
+        # eating the CPU (DeepCW spiked to 100%, choking audio). Now all
+        # frames are assembled into one matrix (sliding_window_view) and
+        # FFT is computed ONCE, vectorized. Result is identical, but tens
+        # of times faster.
         if len(audio) < nfft:
             return np.zeros((1, n_bins), dtype=np.float32)
         window = np.hanning(nfft).astype(np.float32)
-        # Widok przesuwnego okna: [n_frames, nfft] bez kopiowania danych
+        # Sliding-window view: [n_frames, nfft] without copying data
         try:
             from numpy.lib.stride_tricks import sliding_window_view
             frames = sliding_window_view(audio, nfft)[::hop]
         except Exception:
-            # Fallback dla bardzo starych numpy — recznie przez as_strided
+            # Fallback for very old numpy — manual via as_strided
             n_frames = (len(audio) - nfft) // hop + 1
             idx = np.arange(nfft)[None, :] + hop * np.arange(n_frames)[:, None]
             frames = audio[idx]
-        # Wszystkie ramki * okno, potem FFT wszystkich naraz (jedna operacja)
+        # All frames * window, then FFT of all of them at once (one operation)
         frames = frames * window                          # [T, nfft]
         spec = np.abs(np.fft.rfft(frames, n=nfft, axis=1)) ** 2   # [T, nfft//2+1]
-        # Wybierz pasmo fmin..fmax
+        # Select the fmin..fmax band
         freqs = np.fft.rfftfreq(nfft, d=1.0/sr)
         i0 = np.searchsorted(freqs, fmin)
         i1 = np.searchsorted(freqs, fmax)
         spec = spec[:, i0:i1]
-        # Interpoluj do n_bins — wektorowo, bez petli po wierszach.
-        # np.interp jest 1D, ale skala kolumn jest stala dla wszystkich ramek,
-        # wiec liczymy wagi interpolacji RAZ i stosujemy do calej macierzy.
+        # Interpolate to n_bins — vectorized, no per-row loop.
+        # np.interp is 1D, but the column scale is the same for every
+        # frame, so the interpolation weights are computed ONCE and applied
+        # to the whole matrix.
         if spec.shape[1] != n_bins:
             ncol = spec.shape[1]
             xp   = np.linspace(0, ncol - 1, n_bins)
             lo   = np.floor(xp).astype(np.int64)
             hi   = np.minimum(lo + 1, ncol - 1)
             frac = (xp - lo).astype(np.float32)
-            # liniowa interpolacja wszystkich ramek naraz: [T, n_bins]
+            # linear interpolation of all frames at once: [T, n_bins]
             spec = spec[:, lo] * (1.0 - frac) + spec[:, hi] * frac
         return spec.astype(np.float32)
 
