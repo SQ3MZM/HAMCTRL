@@ -5601,7 +5601,7 @@ class App:
                             self._qso_engine.my_grid != _ugrid):
                         self._qso_engine.my_call = _ucall
                         self._qso_engine.my_grid = _ugrid
-                        print(f"[cq] Operator CQ: {_ucall} / {_ugrid}")
+                        print(f"[cq] CQ operator: {_ucall} / {_ugrid}")
                 self._cq_call_de = call_de
                 self._cq_report = report
                 if not self._cq_calling:
@@ -5609,10 +5609,10 @@ class App:
                     if self._cq_task and not self._cq_task.done():
                         self._cq_task.cancel()
                     self._cq_task = asyncio.create_task(self._cq_calling_loop())
-                    print(f"[cq] Rozpoczeto cykliczne wolanie CQ: {call_de} {report}")
+                    print(f"[cq] Started periodic CQ calling: {call_de} {report}")
                 else:
-                    print(f"[cq] CQ juz aktywne - aktualizuje tresc")
-                # Rozglos zresetowany stan do UI (zeby front nie zostal ze starym)
+                    print(f"[cq] CQ already active - updating the content")
+                # Broadcast the reset state to the UI (so the frontend doesn't stay with the old one)
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
                                            "partner": None})
@@ -5620,31 +5620,32 @@ class App:
             asyncio.create_task(self._ft8_tx_sequence(call_to, call_de, report, r_flag))
 
         elif t == "ft8_abort":
-            # Awaryjne przerwanie nadawania FT8 (np. drugie klikniecie przycisku)
+            # Emergency abort of FT8 transmission (e.g. a second button click)
             self._ft8_tx_abort = True
-            self._stop_cq_calling()  # zatrzymaj tez cykliczne CQ
+            self._stop_cq_calling()  # also stop periodic CQ
 
         elif t == "ft8_tx_stop":
-            # Zatrzymanie TX z frontendu (przycisk HALT, wygasniecie timera
-            # bezpieczenstwa). Zatrzymuje cykliczne CQ i biezaca transmisje.
-            print("[ft8] ft8_tx_stop - zatrzymuje TX i CQ")
+            # Stop TX from the frontend (HALT button, safety timer expiry).
+            # Stops periodic CQ and the current transmission.
+            print("[ft8] ft8_tx_stop - stopping TX and CQ")
             self._ft8_tx_abort = True
             self._stop_cq_calling()
-            # Zatrzymaj TEZ silnik automatyki QSO, nie tylko fizyczne TX —
-            # bez tego HALT przerywal jedynie biezaca transmisje audio, ale
-            # silnik (self._qso_engine) zostawal w swoim stanie (np. w
-            # trakcie rozmowy z partnerem) i przy KOLEJNYM dekodzie tej
-            # stacji (albo przy wlasnej retransmisji z timera) sam planowal
-            # NOWA transmisje — objaw: "zrobilem HALT i wyczyscilem kolejke,
-            # a automat i tak za jakis czas wypycha nadawanie z pamieci".
-            # Kolejki CELOWO nie ruszamy (do tego jest osobny przycisk
-            # "wyczysc kolejke") — HALT ma zatrzymac biezaca akcje, nie
-            # kasowac liste oczekujacych stacji.
+            # ALSO stop the QSO automation engine, not just the physical TX
+            # — without this, HALT only interrupted the current audio
+            # transmission, but the engine (self._qso_engine) stayed in its
+            # state (e.g. mid-conversation with a partner) and on the NEXT
+            # decode from that station (or its own retransmit from the
+            # timer) would schedule a NEW transmission on its own —
+            # symptom: "I hit HALT and cleared the queue, and the
+            # automation still pushes out a transmission from memory after
+            # a while". The queue is DELIBERATELY left untouched (there's a
+            # separate "clear queue" button for that) — HALT is meant to
+            # stop the current action, not wipe the list of waiting stations.
             if self._qso_engine.is_active():
-                print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
+                print(f"[autoqso] HALT: aborting QSO with {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
-                self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
+                self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
                                            "partner": None})
@@ -5657,9 +5658,9 @@ class App:
                 pass
 
         elif t == "ft8_tune":
-            # Nadaj stały ton 1500Hz przez X sekund dla strojenia ATU/anteny.
-            # Uzytkownik moze przerwac wysylajac ft8_tune_stop.
-            # Uwaga: cross-band split i radio_lock sprawdzane.
+            # Transmit a steady 1500Hz tone for X seconds, for ATU/antenna tuning.
+            # The user can abort by sending ft8_tune_stop.
+            # Note: cross-band split and radio_lock are checked.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5697,7 +5698,7 @@ class App:
                 self.audio.cw_rx_enabled = _want
             if _want and not getattr(self, "_cw_task", None):
                 self._cw_task = asyncio.create_task(self._cw_decode_loop())
-                print(f"[deepcw] dekoder WLACZONY (widzow: {len(self._cw_viewers)})",
+                print(f"[deepcw] decoder ENABLED (viewers: {len(self._cw_viewers)})",
                       flush=True)
             elif not _want:
                 _t = getattr(self, "_cw_task", None)
@@ -5706,7 +5707,7 @@ class App:
                     self._cw_task = None
                 if deepcw_engine is not None:
                     deepcw_engine.reset()
-                print("[deepcw] dekoder wylaczony (brak widzow)", flush=True)
+                print("[deepcw] decoder disabled (no viewers)", flush=True)
             # If a new viewer joined an already-running decoder, send them the
             # current state so their window opens in sync (no rozjazd).
             if _en and _want:
@@ -5717,26 +5718,28 @@ class App:
                     pass
 
         elif t == "ft8_rx_enable":
-            # Wlacza/wylacza wspolny dekoder RX (dla WSZYSTKICH klientow, patrz
-            # broadcast nizej) - bez tego gate'u dowolny viewer mogl zdalnie
-            # zgasic dekodowanie wszystkim, wlacznie z operatorem trzymajacym TRX.
+            # Turns the shared RX decoder on/off (for ALL clients, see the
+            # broadcast below) - without this gate, any viewer could
+            # remotely kill decoding for everyone, including the operator
+            # holding the TRX.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             enabled = bool(msg.get("enabled", True))
-            mode = self._ft8_decode_mode  # "FT8" lub "FT4"
-            # Zapisz kto wlacza (do auto-stop przy disconnect / oddaniu radia).
-            # uid pobieramy z online_users bo _ws_msg nie ma go jako parametr.
+            mode = self._ft8_decode_mode  # "FT8" or "FT4"
+            # Record who enabled it (for auto-stop on disconnect / releasing
+            # the radio). uid is fetched from online_users since _ws_msg
+            # doesn't have it as a parameter.
             sender_uid = self.online_users.get(ws, {}).get("user_id", "")
             if enabled:
                 self._ft8_rx_owner_uid = sender_uid
-                print(f"[ft8rx] WLACZONE ({mode}) przez uid={sender_uid}", flush=True)
+                print(f"[ft8rx] ENABLED ({mode}) by uid={sender_uid}", flush=True)
             else:
                 self._ft8_rx_owner_uid = None
-                print(f"[ft8rx] wylaczone ({mode})", flush=True)
+                print(f"[ft8rx] disabled ({mode})", flush=True)
             self._ft8_rx_enabled = enabled
-            # Przekaz do Rust — ham_audio.exe uruchamia/zatrzymuje decode loop
+            # Forward to Rust — ham_audio.exe starts/stops the decode loop
             if self.rust_audio:
                 await self.rust_audio.ft8_enable_rx(enabled, mode)
             await self.hub.broadcast({"type": "ft8_rx_status", "enabled": enabled})
@@ -5744,17 +5747,17 @@ class App:
                                        "decoding": enabled, "transmit": False})
 
         elif t == "ft8_set_tx_freq":
-            # Ustawienie docelowej czestotliwosci TX (np. przeciagniecie znacznika
-            # TX na wodospadzie). Respektuje zamrozenie (freeze) i tryb split
-            # (min. czestotliwosc). To parametr TX (gdzie faktycznie poleci
-            # nadawanie), w odroznieniu od ft8_set_rx_freq (celowo bez gate'u -
-            # patrz komentarz tam) - wymaga trzymania radia.
+            # Set the target TX frequency (e.g. dragging the TX marker on
+            # the waterfall). Respects freeze and split mode (min
+            # frequency). This is the TX parameter (where transmission will
+            # actually go), unlike ft8_set_rx_freq (deliberately without a
+            # gate - see the comment there) - this requires holding the radio.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if self._ft8_tx_frozen:
-                # Zamrozone — ignoruj prosby o zmiane, odpowiedz aktualnym stanem
+                # Frozen — ignore change requests, reply with the current state
                 await ws.send_json({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                      "frozen": True})
                 return
@@ -5771,11 +5774,11 @@ class App:
                                        "frozen": self._ft8_tx_frozen})
 
         elif t == "ft8_set_rx_freq":
-            # Ustawienie znacznika RX (Rx Frequency panel) — calkowicie niezalezne
-            # od TX, bez logiki split/lock (mozna nasluchiwac gdziekolwiek w pasmie).
-            # CELOWO bez _can_control_radio (sprawdzone w audycie 2026-08-16) -
-            # to tylko gdzie PATRZYMY, nie wplywa na TX ani na innych klientow
-            # w sposob ktory wymagalby wlasnosci radia.
+            # Set the RX marker (Rx Frequency panel) — completely
+            # independent of TX, no split/lock logic (you can listen
+            # anywhere in the band). DELIBERATELY without _can_control_radio -
+            # this is only where we're LISTENING, it doesn't affect TX or
+            # other clients in a way that would require owning the radio.
             freq = msg.get("freqHz")
             try:
                 freq = float(freq)
@@ -5786,13 +5789,13 @@ class App:
             await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": freq})
 
         elif t == "ft8_set_both_freq":
-            # Lewy klik na wodospadzie (poza juz istniejacymi znacznikami) ustawia
-            # OBA znaczniki (RX i TX) naraz na ta sama, nowa pozycje. Kazdy z nich
-            # mozna potem przeciagnac osobno (ft8_set_tx_freq / ft8_set_rx_freq).
-            # W odroznieniu od samego ft8_set_rx_freq - ten klik typowo oznacza
-            # "wybieram te stacje do wolania", czyli realnie celuje TX-em, wiec
-            # (inaczej niz przy samym przesuwaniu markera RX) wymaga trzymania
-            # radia.
+            # A left click on the waterfall (away from existing markers)
+            # sets BOTH markers (RX and TX) at once to the same new
+            # position. Each can then be dragged separately
+            # (ft8_set_tx_freq / ft8_set_rx_freq). Unlike plain
+            # ft8_set_rx_freq - this click typically means "I'm picking
+            # this station to call", i.e. it actually targets TX, so
+            # (unlike just moving the RX marker) it requires holding the radio.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5814,9 +5817,9 @@ class App:
                                        "frozen": self._ft8_tx_frozen})
 
         elif t == "ft8_rx_eq_tx":
-            # Przycisk "RX=TX": przesuwa znacznik RX na biezaca pozycje TX.
-            # CELOWO bez _can_control_radio - tylko marker RX, patrz komentarz
-            # przy ft8_set_rx_freq.
+            # "RX=TX" button: moves the RX marker to the current TX position.
+            # DELIBERATELY without _can_control_radio - just the RX marker,
+            # see the comment at ft8_set_rx_freq.
             self._ft8_rx_freq_hz = self._ft8_tx_freq_hz
             print(f"[ft8] RX=TX -> {self._ft8_rx_freq_hz:.0f}Hz")
             await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": self._ft8_rx_freq_hz})
