@@ -1,29 +1,30 @@
 /**
- * wsjtx.js — WSJT-X frontend (FT8/FT4/JT65 monitor + osobisty log QSO)
- * Każdy użytkownik widzi i loguje tylko swoje łączności.
+ * wsjtx.js — WSJT-X frontend (FT8/FT4/JT65 monitor + personal QSO log)
+ * Each user sees and logs only their own contacts.
  */
 (function() {
 'use strict';
 
 const S = window.AppState;
 
-// ── Stan ─────────────────────────────────────────────────────────────────────
+// ── State ─────────────────────────────────────────────────────────────────────
 let _decodes     = [];
 let _allDecodes  = [];
 let _myCall      = '';
-let _workedCalls = new Set(); // klucze CALL|BAND|MODE z logu QSO — kazde pasmo/tryb to osobna lacznosc
-let _hideWorked  = false;     // filtr — ukryj juz zaliczone
+let _workedCalls = new Set(); // CALL|BAND|MODE keys from the QSO log — each band/mode is a separate QSO
+let _hideWorked  = false;     // filter — hide already-worked ones
 
 function _workedKey(call, band, mode) {
   return `${(call||'').toUpperCase()}|${(band||'').toUpperCase()}|${(mode||'').toUpperCase()}`;
 }
 
-// Zaladuj znaki z logu (co 60s i przy starcie). Uzywa /api/qsolog/calls
-// (SELECT DISTINCT call+band+mode, bez capu na liczbe wpisow) zamiast
-// /api/qsolog, ktore ma twardy limit per<=200 po stronie backendu — przy
-// wiekszym logu starsze lacznosci znikaly z oznaczania jako zrobione.
-// Band+mode w kluczu, bo "kazde pasmo (i FT8 vs FT4) to nowa lacznosc":
-// stacja zrobiona na 40m nie powinna gasnac na 20m.
+// Load callsigns from the log (every 60s and on startup). Uses
+// /api/qsolog/calls (SELECT DISTINCT call+band+mode, no cap on the
+// number of entries) instead of /api/qsolog, which has a hard per<=200
+// limit on the backend — with a larger log, older QSOs used to
+// disappear from the worked-marking. Band+mode are in the key, because
+// "every band (and FT8 vs FT4) is a new QSO": a station worked on 40m
+// shouldn't gray out on 20m.
 async function _loadWorkedCalls() {
   try {
     const token = localStorage.getItem('token') || '';
@@ -36,7 +37,7 @@ async function _loadWorkedCalls() {
 }
 setInterval(_loadWorkedCalls, 60000);
 
-// Czy dany znak byl juz zrobiony na AKTUALNYM pasmie/trybie (nie globalnie).
+// Whether a callsign has already been worked on the CURRENT band/mode (not globally).
 function _isWorkedHere(call) {
   if (!call) return false;
   const band = window.UI?.getBandName ? window.UI.getBandName(S.freq) : '';
@@ -46,19 +47,19 @@ let _myGrid      = '';
 let _status      = { running: false, transmit: false, decoding: false };
 let _clockTimer  = null;
 let _decodeCount = 0;
-let _miniLogEntries = [];   // ostatnie QSO z prawdziwego logu (qso_db, /api/qsolog) - podglad pod automatyka
+let _miniLogEntries = [];   // recent QSOs from the real log (qso_db, /api/qsolog) - preview under the automation
 const MINI_LOG_MAX = 8;
 const MAX_DECODES = 300;
 
-// ── Kraj wolajacego CQ (kolumna "Kraj" w Band Activity / RX Frequency) ────────
-// Naglowek kolumny byl w HTML od dawna, ale nic jej nigdy nie wypelnialo -
-// _decodeRowHtml renderowal <span class="wj-d-country"></span> zawsze pusty.
-// Heurystyka prefiksowa (nie pelny/dokladny DXCC - to wymagaloby zewnetrznej
-// bazy zakresow prefiksow z wyjatkami), analogiczna do prefixToLatLon() w
-// beamheading.js (ta sama idea: probuj od najdluzszego prefiksu), ale osobna
-// tabela - tu potrzebna nazwa+flaga, nie wspolrzedne.
+// ── Country of the calling station (the "Country" column in Band Activity / RX Frequency) ─
+// The column header had been in the HTML for a while, but nothing ever
+// filled it in - _decodeRowHtml rendered <span class="wj-d-country"></span>
+// always empty. A prefix heuristic (not the full/exact DXCC - that would
+// need an external database of prefix ranges with exceptions), similar to
+// prefixToLatLon() in beamheading.js (same idea: try the longest prefix
+// first), but a separate table - here we need a name+flag, not coordinates.
 const _PREFIX_COUNTRY = {
-  // Europa
+  // Europe
   'SP':['Polska','PL'], 'SQ':['Polska','PL'], 'SN':['Polska','PL'], 'SO':['Polska','PL'], 'SR':['Polska','PL'], 'HF':['Polska','PL'], '3Z':['Polska','PL'],
   'DL':['Niemcy','DE'], 'DK':['Niemcy','DE'], 'DJ':['Niemcy','DE'], 'DF':['Niemcy','DE'], 'DB':['Niemcy','DE'], 'DA':['Niemcy','DE'], 'DC':['Niemcy','DE'], 'DD':['Niemcy','DE'], 'DG':['Niemcy','DE'], 'DH':['Niemcy','DE'], 'DM':['Niemcy','DE'], 'DO':['Niemcy','DE'],
   'G':['Anglia','GB'], 'M':['Anglia','GB'], '2E':['Anglia','GB'],
@@ -98,19 +99,19 @@ const _PREFIX_COUNTRY = {
   'R':['Rosja (Europ.)','RU'], 'UA':['Rosja (Europ.)','RU'], 'RA':['Rosja (Europ.)','RU'], 'RK':['Rosja (Europ.)','RU'], 'RN':['Rosja (Europ.)','RU'], 'RV':['Rosja (Europ.)','RU'], 'RW':['Rosja (Europ.)','RU'], 'RX':['Rosja (Europ.)','RU'], 'RZ':['Rosja (Europ.)','RU'], 'RC':['Rosja (Europ.)','RU'], 'RD':['Rosja (Europ.)','RU'], 'RG':['Rosja (Europ.)','RU'], 'RJ':['Rosja (Europ.)','RU'], 'RL':['Rosja (Europ.)','RU'], 'RM':['Rosja (Europ.)','RU'], 'RO':['Rosja (Europ.)','RU'], 'RP':['Rosja (Europ.)','RU'], 'RQ':['Rosja (Europ.)','RU'], 'RT':['Rosja (Europ.)','RU'], 'RU':['Rosja (Europ.)','RU'],
   'UA9':['Rosja (Azja)','RU'], 'RA9':['Rosja (Azja)','RU'], 'UA0':['Rosja (Azja)','RU'], 'RA0':['Rosja (Azja)','RU'], 'R9':['Rosja (Azja)','RU'], 'R0':['Rosja (Azja)','RU'],
   '4X':['Izrael','IL'], '4Z':['Izrael','IL'],
-  // Afryka Płn./Bliski Wschod
+  // N. Africa/Middle East
   'CN':['Maroko','MA'], 'SU':['Egipt','EG'], '3V':['Tunezja','TN'], '7X':['Algieria','DZ'], '5A':['Libia','LY'],
   'A4':['Oman','OM'], 'A6':['ZEA','AE'], 'A7':['Katar','QA'], 'A9':['Bahrajn','BH'], '9K':['Kuwejt','KW'], 'HZ':['Arabia Saudyjska','SA'], '7Z':['Arabia Saudyjska','SA'],
-  // Afryka Subsah.
+  // Sub-Saharan Africa
   'EL':['Liberia','LR'], '5N':['Nigeria','NG'], 'TR':['Gabon','GA'], '9J':['Zambia','ZM'], 'ZS':['RPA','ZA'], 'ZR':['RPA','ZA'], 'ZT':['RPA','ZA'], 'ZU':['RPA','ZA'], '5H':['Tanzania','TZ'], '5Z':['Kenia','KE'], '5X':['Uganda','UG'], '7P':['Lesotho','LS'], 'V5':['Namibia','NA'], 'C9':['Mozambik','MZ'],
-  // Ameryka Płn.
+  // North America
   'W':['USA','US'], 'K':['USA','US'], 'N':['USA','US'], 'AA':['USA','US'], 'AB':['USA','US'], 'AC':['USA','US'], 'AD':['USA','US'], 'AE':['USA','US'], 'AF':['USA','US'], 'AG':['USA','US'], 'AI':['USA','US'], 'AJ':['USA','US'], 'AK':['USA','US'],
   'KL':['Alaska','US'], 'KL7':['Alaska','US'], 'NL7':['Alaska','US'], 'KH6':['Hawaje','US'], 'NH6':['Hawaje','US'],
   'VE':['Kanada','CA'], 'VA':['Kanada','CA'], 'VO':['Kanada','CA'], 'VY':['Kanada','CA'], 'CF':['Kanada','CA'], 'CG':['Kanada','CA'], 'CJ':['Kanada','CA'], 'CK':['Kanada','CA'],
   'XE':['Meksyk','MX'], 'XF':['Meksyk','MX'],
-  // Ameryka Środk./Karaiby
+  // Central America/Caribbean
   'CO':['Kuba','CU'], 'CM':['Kuba','CU'], 'HI':['Dominikana','DO'], 'KP4':['Puerto Rico','PR'], 'NP4':['Puerto Rico','PR'], 'V2':['Antigua','AG'], '8P':['Barbados','BB'], 'J3':['Grenada','GD'], '6Y':['Jamajka','JM'], 'TG':['Gwatemala','GT'], 'TI':['Kostaryka','CR'], 'HP':['Panama','PA'], 'YN':['Nikaragua','NI'], 'HR':['Honduras','HN'], 'YS':['Salwador','SV'],
-  // Ameryka Płd.
+  // South America
   'PY':['Brazylia','BR'], 'PP':['Brazylia','BR'], 'PQ':['Brazylia','BR'], 'PR':['Brazylia','BR'], 'PS':['Brazylia','BR'], 'PT':['Brazylia','BR'], 'PU':['Brazylia','BR'], 'PV':['Brazylia','BR'], 'PW':['Brazylia','BR'], 'ZV':['Brazylia','BR'], 'ZW':['Brazylia','BR'], 'ZX':['Brazylia','BR'], 'ZY':['Brazylia','BR'], 'ZZ':['Brazylia','BR'],
   'LU':['Argentyna','AR'], 'LO':['Argentyna','AR'], 'LP':['Argentyna','AR'], 'LQ':['Argentyna','AR'], 'LR':['Argentyna','AR'], 'LS':['Argentyna','AR'], 'LT':['Argentyna','AR'], 'LV':['Argentyna','AR'], 'LW':['Argentyna','AR'],
   'CE':['Chile','CL'], 'CA':['Chile','CL'], 'CB':['Chile','CL'], 'CC':['Chile','CL'], 'CD':['Chile','CL'], 'XQ':['Chile','CL'], 'XR':['Chile','CL'],
@@ -118,7 +119,7 @@ const _PREFIX_COUNTRY = {
   'YV':['Wenezuela','VE'], 'YW':['Wenezuela','VE'], 'YX':['Wenezuela','VE'],
   'OA':['Peru','PE'], 'OB':['Peru','PE'], 'OC':['Peru','PE'],
   'CP':['Boliwia','BO'], 'HC':['Ekwador','EC'], 'HD':['Ekwador','EC'], 'CX':['Urugwaj','UY'], 'CV':['Urugwaj','UY'], 'ZP':['Paragwaj','PY'],
-  // Azja
+  // Asia
   'JA':['Japonia','JP'], 'JE':['Japonia','JP'], 'JF':['Japonia','JP'], 'JG':['Japonia','JP'], 'JH':['Japonia','JP'], 'JI':['Japonia','JP'], 'JJ':['Japonia','JP'], 'JK':['Japonia','JP'], 'JL':['Japonia','JP'], 'JM':['Japonia','JP'], 'JN':['Japonia','JP'], 'JO':['Japonia','JP'], 'JP':['Japonia','JP'], 'JQ':['Japonia','JP'], 'JR':['Japonia','JP'], 'JS':['Japonia','JP'], '7J':['Japonia','JP'], '7K':['Japonia','JP'], '7L':['Japonia','JP'], '7M':['Japonia','JP'], '7N':['Japonia','JP'], '8J':['Japonia','JP'],
   'HL':['Korea Płd.','KR'], 'DS':['Korea Płd.','KR'], '6K':['Korea Płd.','KR'], '6L':['Korea Płd.','KR'], '6M':['Korea Płd.','KR'], '6N':['Korea Płd.','KR'],
   'BY':['Chiny','CN'], 'BA':['Chiny','CN'], 'BD':['Chiny','CN'], 'BG':['Chiny','CN'], 'BH':['Chiny','CN'], 'BI':['Chiny','CN'],
@@ -133,12 +134,12 @@ const _PREFIX_COUNTRY = {
   'VK':['Australia','AU'], 'VH':['Australia','AU'], 'VI':['Australia','AU'], 'VJ':['Australia','AU'], 'VL':['Australia','AU'], 'VN':['Australia','AU'], 'VZ':['Australia','AU'],
   'ZL':['Nowa Zelandia','NZ'], 'ZK':['Nowa Zelandia','NZ'], 'ZM':['Nowa Zelandia','NZ'],
   'KH0':['Mariany Płn.','MP'], 'KH2':['Guam','GU'],
-  // Afryka Płd./inne
+  // S. Africa/other
   'ZS':['RPA','ZA'],
 };
 
-// Flaga z kodu ISO-3166 alpha-2 (regionalne wskazniki Unicode) - algorytm, nie
-// baza obrazkow, wiec nie trzeba trzymac osobnych plikow/emoji per kraj.
+// Flag from an ISO-3166 alpha-2 code (Unicode regional indicators) - an
+// algorithm, not an image database, so no need to keep separate files/emoji per country.
 function _isoToFlag(iso2) {
   if (!iso2 || iso2.length !== 2) return '';
   const codePoints = [...iso2.toUpperCase()].map(c => 127397 + c.charCodeAt(0));
@@ -161,10 +162,10 @@ function _countryForCall(call) {
   return null;
 }
 
-// Tryb wyswietlania kolumny "Kraj" - CELOWO tylko jedna opcja naraz (flaga
-// ALBO nazwa), nie obie jednoczesnie - przelacznik w naglowku Band Activity
-// i RX Frequency (ten sam globalny stan, dwa przyciski .wj-country-mode-btn
-// zeby dzialalo z obu paneli).
+// "Country" column display mode - DELIBERATELY only one option at a time
+// (flag OR name), never both at once - a toggle in the Band Activity and
+// RX Frequency headers (the same global state, two .wj-country-mode-btn
+// buttons so it works from both panels).
 let _countryMode = 'flag'; // 'flag' | 'name'
 
 function toggleCountryMode() {
@@ -179,15 +180,15 @@ function toggleCountryMode() {
   _renderRxFreqPanel();
 }
 
-// Automatyka QSO (stan UI, zrodlo prawdy jest na backendzie — synchronizowane
-// przez WS auto_seq_status/auto_qso_status/auto_qso_queue)
+// QSO automation (UI state, the source of truth is on the backend —
+// synced via WS auto_seq_status/auto_qso_status/auto_qso_queue)
 let _autoSeqEnabled = false;
 let _autoCall1st = false;
 let _autoQsoState = 'IDLE';
 let _autoQsoPartner = null;
 let _autoQsoQueue = [];
 
-// ── Zegar 15s ─────────────────────────────────────────────────────────────────
+// ── 15s clock ─────────────────────────────────────────────────────────────────
 function _startClock() {
   if (_clockTimer) clearInterval(_clockTimer);
   _clockTimer = setInterval(_updateClock, 200);
@@ -235,19 +236,20 @@ async function init() {
       decoding:  false,
       transmit:  false,
     });
-    // Pokaż info w statusie
+    // Show info in the status
     const pill = document.getElementById('wj-status-pill');
     if (d.running) {
       if (pill) { pill.textContent = '● ONLINE'; pill.className = 'wsjtx-status-pill online'; }
       window.UI?.showToast(I18n.t('wj_toast_monitor_active').replace('{port}', d.port));
     } else {
-      // Autostart (wsjtxAutostart w config, domyslnie wlaczony) normalnie
-      // sam nasluchuje na porcie 2238 - OFFLINE tutaj oznacza ze autostart
-      // sie nie udal (np. port zajety), nie ze trzeba cos recznie kliknac
-      // (przycisk START usuniety 2026-08-15, nasluch juz zawsze auto-startuje).
+      // Autostart (wsjtxAutostart in the config, enabled by default)
+      // normally listens on port 2238 by itself - OFFLINE here means
+      // autostart failed (e.g. the port is taken), not that something
+      // needs to be manually clicked (the START button was removed,
+      // listening now always auto-starts).
       if (pill) { pill.textContent = I18n.t('wj_offline_autostart_failed'); pill.className = 'wsjtx-status-pill'; }
     }
-    // Pokaż liczniki
+    // Show the counters
     if (d.packets_rx > 0 || d.decodes_rx > 0) {
       const countEl = document.getElementById('wj-decode-count');
       if (countEl) { countEl.removeAttribute('data-i18n'); countEl.textContent = I18n.t('wj_decode_count_session').replace('{n}', d.decodes_rx); }
@@ -258,8 +260,8 @@ async function init() {
     const rr = await fetch('/api/rotator');
     const rots = await rr.json();
     if (Array.isArray(rots) && rots.length > 0) _onRotatorUpdate(rots[0]);
-  } catch(e) { /* brak rotora - przyciski SP/LP zostaja wylaczone */ }
-  // Init scope — ponawia az canvas bedzie mial wymiary (WebGL wymaga width>0)
+  } catch(e) { /* no rotator - the SP/LP buttons stay disabled */ }
+  // Init the scope — retries until the canvas has dimensions (WebGL needs width>0)
   function _tryScopeInit(attempts) {
     const c = document.getElementById('wj-scope-canvas');
     if (!c) return;
@@ -270,7 +272,7 @@ async function init() {
       setTimeout(() => _tryScopeInit(attempts - 1), 100);
     }
   }
-  _tryScopeInit(20);  // max 2s prób co 100ms
+  _tryScopeInit(20);  // max 2s of attempts every 100ms
   _initSplitResizer();
   _startRadioSync();
   _populateBandSelect();
@@ -301,7 +303,7 @@ async function stopWsjtx() {
 }
 
 async function haltTx() {
-  // Zatrzymaj TX FT8 — wyslij do serwera i wylacz lokalnie
+  // Stop FT8 TX — send it to the server and disable it locally
   try {
     WS.send({ type: 'ft8_tx_stop' });
     await fetch('/api/ft8/halt', {method:'POST'});
@@ -320,27 +322,27 @@ function stopTx() {
   window.UI?.showToast(I18n.t('wj_toast_tx_paused'));
 }
 
-// ── Wlasny dekoder FT8 RX (zamiast fizycznego WSJT-X/JTDX) ────────────────────
+// ── Our own FT8 RX decoder (instead of a physical WSJT-X/JTDX) ────────────────
 let _ownRxEnabled = false;
 let _radioSyncTimer = null;
 let _lastSyncedFreq = null;
 
-// Synchronizacja wyswietlanej czestotliwosci (gorny pasek, wj-freq) z
-// PRAWDZIWA czestotliwoscia glownego radia (window.AppState.freq), ktora
-// jest aktualizowana globalnie przez ws.js (telemetry/freq) niezaleznie od
-// tego czy WSJTX jest aktywna zakladka. UWAGA: nie synchronizujemy wj-mode
-// z S.mode — S.mode to tryb PRACY RADIA (USB/LSB/CW/...), inne pojecie niz
-// tryb CYFROWY (FT8/FT4) pokazywany w wj-mode, ktory jest kontrolowany przez
-// osobny selektor trybu dekodowania.
+// Syncs the displayed frequency (top bar, wj-freq) with the main radio's
+// ACTUAL frequency (window.AppState.freq), which is updated globally by
+// ws.js (telemetry/freq) regardless of whether WSJTX is the active tab.
+// NOTE: we don't sync wj-mode with S.mode — S.mode is the radio's
+// OPERATING mode (USB/LSB/CW/...), a different concept from the DIGITAL
+// mode (FT8/FT4) shown in wj-mode, which is controlled by a separate
+// decode-mode selector.
 function _startRadioSync() {
   if (_radioSyncTimer) clearInterval(_radioSyncTimer);
   _radioSyncTimer = setInterval(_syncFreqFromRadio, 500);
-  _syncFreqFromRadio(); // natychmiastowa pierwsza aktualizacja, nie czekaj 500ms
+  _syncFreqFromRadio(); // an immediate first update, don't wait 500ms
 }
 
 function _syncFreqFromRadio() {
   if (!S || S.freq == null) return;
-  if (S.freq === _lastSyncedFreq) return; // bez zmian — pomin DOM write
+  if (S.freq === _lastSyncedFreq) return; // no change — skip the DOM write
   _lastSyncedFreq = S.freq;
   const mhz = (S.freq/1e6).toFixed(6).replace(/(\d+)\.(\d{3})(\d{3})/, '$1.$2.$3');
   const el = document.getElementById('wj-freq');
@@ -348,19 +350,19 @@ function _syncFreqFromRadio() {
 }
 
 let _decodeMode = 'FT8';
-let _lastDxSnr = null;  // SNR ostatnio wybranej (klikietej) stacji DX — do makra F3 (R+raport)
-// ZAMROZONY raport z backendu (partner_report_sent/recv). Gdy QSO aktywne,
-// makra i UI uzywaja TEJ wartosci zamiast _lastDxSnr (surowy, zmienny SNR),
-// zeby makro == eter == log. Ustawiane w _onAutoQsoStatus.
+let _lastDxSnr = null;  // SNR of the last selected (clicked) DX station — for macro F3 (R+report)
+// FROZEN report from the backend (partner_report_sent/recv). While a QSO
+// is active, macros and the UI use THIS value instead of _lastDxSnr (a
+// raw, changing SNR), so macro == on-air == log. Set in _onAutoQsoStatus.
 let _frozenRstSent = null;
 let _frozenRstRcvd = null;
 
-// Standardowe czestotliwosci robocze (dial freq, Hz) wg konwencji WSJT-X dla
-// FT8 i FT4, dla wszystkich glownych pasm amatorskich. Zrodlo: domyslna
-// tabela "Working Frequencies" WSJT-X (Settings | Frequencies), zgodna z
-// powszechnie publikowanymi listami (m.in. sigidwiki.com, dxzone.com).
-// Niektore pasma nie maja oficjalnej konwencji FT4 (np. gdzie FT4 rzadko
-// uzywane) — wtedy pomijamy wpis zamiast zgadywac.
+// Standard working frequencies (dial freq, Hz) per WSJT-X convention for
+// FT8 and FT4, for all major amateur bands. Source: WSJT-X's default
+// "Working Frequencies" table (Settings | Frequencies), matching commonly
+// published lists (e.g. sigidwiki.com, dxzone.com). Some bands have no
+// official FT4 convention (e.g. where FT4 is rarely used) — those entries
+// are omitted instead of guessed.
 const BAND_FREQUENCIES = [
   { band: '160m', ft8: 1840000,   ft4: 1840000  },
   { band: '80m',  ft8: 3573000,   ft4: 3575000  },
@@ -376,13 +378,13 @@ const BAND_FREQUENCIES = [
   { band: '2m',   ft8: 144174000, ft4: null     },
 ];
 
-// Przelacznik trybu dekodowania FT8/FT4 (gorny pasek). Zmienia aktywny
-// przycisk, synchronizuje wj-log-mode (selektor trybu w formularzu
-// logowania QSO) i powiadamia backend (ft8_set_decode_mode), ktory wybiera
-// odpowiedni enkoder/timing (ft8_encoder.py vs ft4_encoder.py, okno 15s vs
-// 7.5s). UWAGA: to przelacza tylko TX (nadawanie). Strona dekodowania RX
-// (rozpoznawanie sygnalow FT4 w eterze) NIE jest jeszcze zaimplementowana —
-// to osobny, duzy etap (kolejna sesja), wymagajacy innego pipeline'u FFT/sync.
+// FT8/FT4 decode-mode toggle (top bar). Switches the active button,
+// syncs wj-log-mode (the mode selector in the QSO logging form), and
+// notifies the backend (ft8_set_decode_mode), which picks the right
+// encoder/timing (ft8_encoder.py vs ft4_encoder.py, 15s vs 7.5s window).
+// NOTE: this only switches TX (transmitting). The RX decoding side
+// (recognizing FT4 signals on air) is NOT implemented yet — that's a
+// separate, large undertaking requiring a different FFT/sync pipeline.
 function setDecodeMode(mode) {
   _decodeMode = mode;
   const ft8Btn = document.getElementById('wj-mode-ft8-btn');
@@ -390,20 +392,20 @@ function setDecodeMode(mode) {
   if (ft8Btn) ft8Btn.classList.toggle('active', mode === 'FT8');
   if (ft4Btn) ft4Btn.classList.toggle('active', mode === 'FT4');
 
-  // Synchronizuj selektor trybu w formularzu logowania QSO
+  // Sync the mode selector in the QSO logging form
   const logModeEl = document.getElementById('wj-log-mode');
   if (logModeEl) logModeEl.value = mode;
 
-  _populateBandSelect(); // lista czestotliwosci zalezy od trybu (FT8 vs FT4)
+  _populateBandSelect(); // the frequency list depends on the mode (FT8 vs FT4)
   window.WSJTXScope?.setScopeDecodeMode(mode);
   window.WS?.send({ type: 'ft8_set_decode_mode', mode });
   window.UI?.showToast(I18n.t('wj_toast_decode_mode').replace('{mode}', mode));
 }
 
-// Wypelnia <select> pasm aktualnymi czestotliwosciami dla biezacego trybu
-// (FT8 lub FT4). Pasma bez zdefiniowanej konwencji dla danego trybu (np.
-// 60m/2m nie maja standardowej czestotliwosci FT4) sa pomijane z listy
-// zamiast pokazywac bledna/zgadywana wartosc.
+// Fills the band <select> with the current frequencies for the active
+// mode (FT8 or FT4). Bands without a defined convention for that mode
+// (e.g. 60m/2m have no standard FT4 frequency) are omitted from the list
+// instead of showing a wrong/guessed value.
 function _populateBandSelect() {
   const sel = document.getElementById('wj-band-select');
   if (!sel) return;
@@ -417,25 +419,26 @@ function _populateBandSelect() {
     opt.textContent = `${b.band} (${(hz/1e6).toFixed(3)} MHz)`;
     sel.appendChild(opt);
   }
-  // Zachowaj poprzedni wybor jesli nadal dostepny w nowej liscie (np. po
-  // przelaczeniu trybu na pasmo ktore ma konwencje w obu trybach)
+  // Keep the previous selection if it's still available in the new list
+  // (e.g. after switching mode, for a band with a convention in both modes)
   if (prevValue && [...sel.options].some(o => o.value === prevValue)) {
     sel.value = prevValue;
   }
 }
 
-// Przestraja glowne radio na czestotliwosc wybrana z listy pasm i ustawia
-// tryb USB-D — ATOMOWO, jedna komenda ft8_qsy do serwera. Wczesniej wysylalo
-// sie freq (przez debounce 50ms) i mode (natychmiast) OSOBNO, co powodowalo
-// wyscig na CI-V ("raz reaguje raz nie", trzeba bylo klikac kilka razy).
-// Teraz serwer ustawia tryb+freq sekwencyjnie, niezawodnie. Uprawnienia i
-// blokady (radio_lock, feature_allowed, pasmo) sprawdza backend.
+// Retunes the main radio to the frequency chosen from the band list and
+// sets USB-D mode — ATOMICALLY, a single ft8_qsy command to the server.
+// It used to send freq (debounced 50ms) and mode (immediately)
+// SEPARATELY, which raced on CI-V ("works sometimes, not other times",
+// had to click a few times). Now the server sets mode+freq sequentially,
+// reliably. Permissions and locks (radio_lock, feature_allowed, band) are
+// checked on the backend.
 function tuneToBand(hzStr) {
   if (!hzStr) return;
   const hz = parseInt(hzStr, 10);
   if (!hz) return;
-  // Sprawdz blokade radia po stronie klienta (szybki feedback) — backend
-  // i tak zweryfikuje ponownie.
+  // Check the radio lock client-side (fast feedback) — the backend
+  // re-verifies it anyway.
   const lock  = window.AppState?.radio_lock;
   const myUid = String(window.AppState?.my_uid || window.CurrentUser?.id || '');
   const role  = window.CurrentUser?.role;
@@ -444,15 +447,15 @@ function tuneToBand(hzStr) {
     window.UI?.showToast(I18n.t('wj_toast_radio_busy').replace('{holder}', holder), 'error');
     return;
   }
-  // Jedna atomowa komenda — serwer ustawi USB-D + freq w dobrej kolejnosci.
+  // A single atomic command — the server sets USB-D + freq in the right order.
   WS.send({ type:'ft8_qsy', freq: hz, mode: 'USB-D' });
   window.UI?.showToast(`${(hz/1e6).toFixed(3)} MHz — USB-D (${_decodeMode})`);
 }
 
-// Okres nadawania: dwie stacje w QSO nadaja na przemian w jednym z dwoch
-// naprzemiennych okien 15s (period 1 = xx:00/xx:30, period 2 = xx:15/xx:45),
-// zeby nigdy nie nadawac jednoczesnie. Backend uzywa tego do wyboru
-// WLASCIWEGO okna w seconds_until_next_tx_window().
+// TX period: the two stations in a QSO transmit alternately in one of two
+// alternating 15s windows (period 1 = xx:00/xx:30, period 2 =
+// xx:15/xx:45), so they never transmit at the same time. The backend uses
+// this to pick the CORRECT window in seconds_until_next_tx_window().
 function setTxPeriod(period) {
   const btn1 = document.getElementById('wj-period-1-btn');
   const btn2 = document.getElementById('wj-period-2-btn');
@@ -469,9 +472,9 @@ function _onTxPeriodUpdate(msg) {
   if (btn2) btn2.classList.toggle('active', msg.period === 2);
 }
 
-// Synchronizuje UI przelacznika trybu gdy zmiana przyszla z innego
-// podlaczonego klienta (broadcast od backendu) — NIE wysyla WS z powrotem,
-// inaczej petla w nieskonczonosc z setDecodeMode().
+// Syncs the mode-toggle UI when the change came from another connected
+// client (backend broadcast) — does NOT send WS back, otherwise it would
+// loop forever with setDecodeMode().
 function _onDecodeModeUpdate(msg) {
   _decodeMode = msg.mode;
   const ft8Btn = document.getElementById('wj-mode-ft8-btn');
@@ -500,9 +503,9 @@ function clearDecodes() {
   _renderDecodes(); _updateCount();
 }
 
-// Czyszczenie panelu RX Frequency NIE czysci samej tabeli _decodes (Band
-// Activity ma wlasne dane) — tylko ukrywa biezacy widok RX Frequency, dopoki
-// nie nadejdzie nowe dekodowanie/transmisja na czestotliwosci RX.
+// Clearing the RX Frequency panel does NOT clear the _decodes table
+// itself (Band Activity has its own data) — it only hides the current RX
+// Frequency view until a new decode/transmission arrives on the RX frequency.
 let _rxFreqPanelCleared = false;
 function clearRxFreqPanel() {
   _rxFreqPanelCleared = true;
@@ -510,7 +513,7 @@ function clearRxFreqPanel() {
   if (el) el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
 }
 
-// ── Resizer miedzy Band Activity i RX Frequency ────────────────────────────────
+// ── Resizer between Band Activity and RX Frequency ────────────────────────────
 function _initSplitResizer() {
   const resizer = document.getElementById('wj-split-resizer');
   const wrap = document.getElementById('wj-decodes-wrap');
