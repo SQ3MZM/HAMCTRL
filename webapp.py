@@ -4909,54 +4909,56 @@ class App:
                     f = await asyncio.wait_for(self.rig.get_freq(), timeout=2.0)
                     if f and f > 0:
                         radio_alive = True
-                        print(f"[rig] radio ozylo po power ON (proba {attempt+1}, "
+                        print(f"[rig] radio woke up after power ON (attempt {attempt+1}, "
                               f"freq={f})", flush=True)
                         break
             except Exception:
                 pass
-            print(f"[rig] czekam na wybudzenie radia... ({attempt+1}/5)", flush=True)
+            print(f"[rig] waiting for the radio to wake up... ({attempt+1}/5)", flush=True)
 
         if not radio_alive:
-            print("[rig] radio NIE odpowiada po power ON - scope pozostaje w SIM. "
-                  "Sprawdz zasilanie 12V i CI-V Transceive=ON", flush=True)
-            # Poinformuj userow ze radio nie wstalo
+            print("[rig] radio NOT responding after power ON - scope stays in SIM. "
+                  "Check the 12V power and CI-V Transceive=ON", flush=True)
+            # Let the users know the radio didn't come up
             await self.hub.broadcast({
                 "type": "toast",
                 "msg": "⚠️ Radio nie odpowiada po włączeniu — sprawdź zasilanie",
                 "level": "warning"})
             return
 
-        # Radio zyje - wznow scope. Po CI-V power OFF->ON radio przechodzi
-        # pelny boot i "zapomina" ustawienia scope. Wysylanie komend za wczesnie
-        # nie skutkuje - radio ich nie przyjmuje dopoki procesor scope nie wstanie
-        # (znacznie dluzej niz odpowiedz na freq).
+        # The radio is alive - resume the scope. After a CI-V power
+        # OFF->ON the radio goes through a full boot and "forgets" the
+        # scope settings. Sending commands too early has no effect - the
+        # radio doesn't accept them until the scope processor comes up
+        # (much later than the freq response).
         #
-        # STRATEGIA: ponawiaj _enable_scope co 1.5s i SPRAWDZAJ czy ramki
-        # faktycznie zaczely plynac (licznik _scope_rx_count w civ.py rosnie).
-        # Konczymy gdy ramki plyna albo po 6 probach (~10s).
+        # STRATEGY: retry _enable_scope every 1.5s and CHECK whether
+        # frames have actually started flowing (the _scope_rx_count
+        # counter in civ.py increases). Stop once frames flow, or after 6
+        # attempts (~10s).
         scope_ok = False
         try:
             if hasattr(self.rig, "scope_start"):
                 for scope_try in range(6):
-                    # Zapamietaj licznik ramek przed proba
+                    # Remember the frame counter before the attempt
                     cnt_before = getattr(self.rig, "_scope_rx_count", 0)
-                    # Wymus pelne wlaczenie scope
+                    # Force scope on fully
                     self.rig.scope_start()
                     await asyncio.sleep(1.5)
-                    # Czy przyszly nowe ramki?
+                    # Did new frames arrive?
                     cnt_after = getattr(self.rig, "_scope_rx_count", 0)
                     if cnt_after > cnt_before:
                         scope_ok = True
-                        print(f"[rig] scope ramki plyna po power ON "
-                              f"(proba {scope_try+1}, +{cnt_after-cnt_before} ramek)",
+                        print(f"[rig] scope frames flowing after power ON "
+                              f"(attempt {scope_try+1}, +{cnt_after-cnt_before} frames)",
                               flush=True)
                         break
-                    print(f"[rig] scope jeszcze nie wysyla ramek, ponawiam "
+                    print(f"[rig] scope not sending frames yet, retrying "
                           f"({scope_try+1}/6)...", flush=True)
                 if not scope_ok:
-                    print("[rig] UWAGA: scope nie wznowil sie po power ON. "
-                          "Radio moglo wyjsc z trybu scope - sprawdz czy na "
-                          "EKRANIE radia jest widoczny waterfall (przycisk SCOPE).",
+                    print("[rig] WARNING: scope didn't resume after power ON. "
+                          "The radio may have left scope mode - check whether "
+                          "the waterfall is visible on the radio's SCREEN (SCOPE button).",
                           flush=True)
                     await self.hub.broadcast({
                         "type": "toast",
@@ -4964,33 +4966,35 @@ class App:
                                "sprawdź czy na ekranie radia widać SCOPE",
                         "level": "warning"})
         except Exception as e:
-            print(f"[rig] scope_start po power ON blad: {e}", flush=True)
+            print(f"[rig] scope_start after power ON error: {e}", flush=True)
         await self._on_rig_reconnected()
-        # Potwierdz userom ze radio dziala
+        # Confirm to users that the radio is working
         await self.hub.broadcast({"type": "power_state", "value": True})
 
     async def _on_rig_reconnected(self):
         """
-        Odswiez capabilities cache i rozeslij rig_features po (re)polaczeniu CivRig.
+        Refresh the capabilities cache and broadcast rig_features after a
+        CivRig (re)connect.
 
-        WAZNE: to jest wolane ZA KAZDYM RAZEM gdy radio przechodzi z SIM na
-        realne (przez _reconnect_loop w civ.py). Wlaczamy tu scope, bo w
-        momencie _initial_rig_connect radio moglo jeszcze byc w SIM - scope
-        nie wystartowal wtedy. Tutaj mamy pewnosc ze radio odpowiada.
+        IMPORTANT: this is called EVERY TIME the radio switches from SIM
+        to real (via _reconnect_loop in civ.py). We turn the scope on
+        here, because at the time of _initial_rig_connect the radio could
+        still have been in SIM - the scope didn't start then. Here we know
+        for sure the radio is responding.
         """
         await self._refresh_caps_cache()
-        # Auto-wlacz scope (waterfall) - radio jest realne i odpowiada.
-        # Bez tego waterfall pokazuje tylko SIM, bo _enable_scope nie bylo
-        # wolane (frontend startScope() nikt nie wola).
+        # Auto-enable the scope (waterfall) - the radio is real and
+        # responding. Without this the waterfall only shows SIM, since
+        # _enable_scope was never called (nothing calls the frontend's startScope()).
         try:
             if not self.rig.sim and hasattr(self.rig, "scope_start"):
-                # scope_start robi zapisy do portu szeregowego z time.sleep —
-                # blokujace. Wywolane wprost w petli zamrazalo asyncio (~100ms,
-                # wykryte przez looplag). Wynosimy do watku.
+                # scope_start writes to the serial port with time.sleep —
+                # blocking. Calling it directly in the loop froze asyncio
+                # (~100ms, found via looplag). Offloaded to a thread.
                 await asyncio.to_thread(self.rig.scope_start)
-                print("[rig] scope wlaczony (radio realne, reconnect)", flush=True)
+                print("[rig] scope enabled (real radio, reconnect)", flush=True)
         except Exception as e:
-            print(f"[rig] scope_start w reconnect blad: {e}", flush=True)
+            print(f"[rig] scope_start on reconnect error: {e}", flush=True)
         rig_id = self._current_rig_id()
         enabled     = self._get_enabled_features(rig_id)
         enabled_dyn = self._get_enabled_dynamic(rig_id)
@@ -5004,25 +5008,25 @@ class App:
         await self.hub.broadcast({"type": "rig_features", "rigId": rig_id,
                                    "active": active,
                                    "actions": dyn["actions"], "sliders": dyn["sliders"]})
-        print("[rig] reconnect — rig_features rozeslane do klientow")
+        print("[rig] reconnect — rig_features sent to clients")
 
     def _webrtc_tx_start(self):
-        """Hook wywolywany gdy WebRTC track audio zaczyna nadawac."""
-        print("[webrtc] TX track aktywny")
+        """Hook called when the WebRTC audio track starts transmitting."""
+        print("[webrtc] TX track active")
 
     def _webrtc_tx_stop(self):
-        """Hook wywolywany gdy WebRTC track audio sie konczy."""
-        print("[webrtc] TX track zakonczony")
+        """Hook called when the WebRTC audio track ends."""
+        print("[webrtc] TX track ended")
         if self.audio.tx_active:
             self.audio.stop_tx()
 
     async def _cw_decode_loop(self):
-        """Karmi dekoder CW surowym audio z karty (z pominieciem Opus).
+        """Feeds the CW decoder raw audio from the card (bypassing Opus).
 
-        Kluczowe dla jakosci: sygnal z przegladarki przechodzil przez kodek
-        stratny, ktory rozmywa krawedzie kluczowania (zmierzony kontrast
-        obwiedni 6.4x wobec >20x potrzebnych modelowi). Tu bierzemy PCM prosto
-        z bufora karty, w tej samej postaci co dla FT8.
+        Critical for quality: the signal from the browser used to go
+        through a lossy codec, which blurs the keying edges (measured
+        envelope contrast 6.4x vs the >20x the model needs). Here we take
+        PCM straight from the card buffer, the same way as for FT8.
         """
         try:
             while True:
@@ -5040,35 +5044,36 @@ class App:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"[deepcw] petla dekodera przerwana: {e}", flush=True)
+            print(f"[deepcw] decoder loop aborted: {e}", flush=True)
 
     async def _ws_msg(self, msg: dict, ws, role: str = "viewer"):
         t = msg.get("type", "")
 
-        # ── Radio Lock: weryfikuj blokade dla akcji sterujacych radiem ────────
-        # Admin moze zawsze. Zwykly uzytkownik musi "trzymac" radio.
-        # Akcje read-only (subskrypcja audio, waterfall, pobieranie stanu)
-        # sa zawsze dozwolone.
+        # ── Radio Lock: verify the lock for radio-control actions ────────
+        # Admin can always. A regular user must be "holding" the radio.
+        # Read-only actions (audio/waterfall subscription, fetching state)
+        # are always allowed.
         _CONTROL_TYPES = {
             "freq","freqB","mode","ptt","rig_slider","rig_action","vfo","vfo_op",
             "split","preamp","attenuator","tuner","tuner_autotune","ft8_tx",
         }
 
-        # ── VIEWER: TWARDA BIALA LISTA (2026-07-05 operator) ──────────────────
-        # Viewer moze robic TYLKO: zmiana czestotliwosci, trybu i pasma
-        # (do sluchania). WSZYSTKO inne jest zablokowane na sztywno w backendzie
-        # NIEZALEZNIE od uprawnien ktore admin nadal przy tworzeniu usera
-        # (nowy user dostaje domyslnie prawa do ptt/buttonow, ale dla viewera
-        # sa one IGNOROWANE tutaj). Przyciski w UI pozostaja widoczne (zeby nie
-        # psuc ukladu), ale klikniecie nic nie robi - serwer odrzuca.
+        # ── VIEWER: HARD WHITELIST ──────────────────
+        # A viewer can do ONLY: change frequency, mode, and band (for
+        # listening). EVERYTHING else is hard-blocked in the backend
+        # REGARDLESS of the permissions the admin granted when creating
+        # the user (a new user gets ptt/button rights by default, but for
+        # a viewer they're IGNORED here). Buttons stay visible in the UI
+        # (so as not to break the layout), but clicking does nothing - the
+        # server rejects it.
         #
-        # Powod: viewer wczesniej mial dostep do power_toggle (wylaczyl radio!),
-        # sliderow i przyciskow funkcyjnych. Teraz moze tylko stroic.
+        # Reason: a viewer used to have access to power_toggle (could turn
+        # the radio off!), sliders, and function buttons. Now it can only tune.
         _VIEWER_ALLOWED = {
-            "freq", "freqB", "mode",   # strojenie + pasmo (pasmo = freq+mode)
-            # read-only (podglad) - zawsze OK, nie dotykaja radia:
+            "freq", "freqB", "mode",   # tuning + band (band = freq+mode)
+            # read-only (view-only) - always OK, don't touch the radio:
             "subscribe", "unsubscribe", "ping", "pong",
-            "ft8_rx_enable", "ft4_rx_enable",  # tylko odbior dekodowania
+            "ft8_rx_enable", "ft4_rx_enable",  # decode-receive only
             "get_state", "get_status",
         }
         if role == "viewer" and t in _CONTROL_TYPES and t not in _VIEWER_ALLOWED:
@@ -5079,12 +5084,12 @@ class App:
                        "Popros admina o role operatora.",
                 "level": "error",
             })
-            print(f"[viewer-block] odrzucono '{t}' dla viewera (id="
+            print(f"[viewer-block] rejected '{t}' for a viewer (id="
                   f"{self.online_users.get(ws, {}).get('user_id', '?')})", flush=True)
             return
 
-        # Akcje NADAWANIA (TX) - zabronione dla viewera NAWET z lockiem.
-        # (redundantne z whitelista wyzej, ale zostawiam jako druga warstwa)
+        # TRANSMIT (TX) actions - forbidden for a viewer EVEN with the
+        # lock. (redundant with the whitelist above, but kept as a second layer)
         _TX_TYPES = {"ptt", "ft8_tx", "ft4_tx", "cw", "cw_send", "tune"}
         if t in _TX_TYPES and role == "viewer":
             await ws.send_json({
@@ -5095,11 +5100,11 @@ class App:
             return
 
         if t in _CONTROL_TYPES and role != "admin":
-            # Znajdz uid nadawcy po ws w online_users
+            # Find the sender's uid via ws in online_users
             sender = self.online_users.get(ws, {})
             sender_uid = sender.get("user_id", "")
             if not self._user_has_lock(sender_uid):
-                # Radio wolne lub zajete przez kogos innego — blokuj TX
+                # Radio free or held by someone else — block TX
                 holder = self.radio_lock.get("callsign") or self.radio_lock.get("username") or ""
                 msg_err = f"Radio zajete przez {holder} — poproś o dostęp" if holder else "Najpierw przejmij radio (kliknij PRZEJMIJ TRX)"
                 await ws.send_str(json.dumps({
@@ -5109,17 +5114,17 @@ class App:
                 }))
                 return
 
-        # Ping — odpowiedz pong bezposrednio do nadawcy (RTT measurement)
+        # Ping — reply pong directly to the sender (RTT measurement)
         if t == "ping":
             await ws.send_json({"type": "pong", "t": msg.get("t", 0)})
             return
 
-        # ── Subscription channels — klient dodaje/usuwa kanaly przy zmianie zakladki
+        # ── Subscription channels — the client adds/removes channels when switching tabs
         if t == "subscribe":
             channels = msg.get("channels", [])
             if isinstance(channels, list):
-                # 'set' zastepuje pelen zestaw kanalow (uzywane przy setPage),
-                # 'add' dodaje bez usuwania (np. dla dodatkowych features)
+                # 'set' replaces the whole channel set (used by setPage),
+                # 'add' adds without removing (e.g. for extra features)
                 mode = msg.get("mode", "set")
                 if mode == "add":
                     await self.hub.subscribe(ws, channels)
