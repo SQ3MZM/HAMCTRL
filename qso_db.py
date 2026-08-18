@@ -1,11 +1,11 @@
 """
-qso_db.py — SQLite backend dla Log QSO
+qso_db.py — SQLite backend for the QSO Log
 
-Jeden plik .db na wszystkich użytkowników, ale każde QSO
-ma user_id — izolacja per user na poziomie zapytań SQL.
+One .db file for all users, but every QSO has a user_id — isolation
+per user at the SQL query level.
 
-Wątek-bezpieczny: każde połączenie tworzone w wątku który go używa
-(check_same_thread=False + WAL mode dla równoległych odczytów).
+Thread-safe: each connection is created in the thread that uses it
+(check_same_thread=False + WAL mode for concurrent reads).
 """
 
 import sqlite3
@@ -17,28 +17,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# ── Ścieżka do bazy ───────────────────────────────────────────────────────────
+# ── Database path ───────────────────────────────────────────────────────────
 def _db_path() -> Path:
-    """Katalog danych z config.DATA (APPDATA przy instalacji w Program Files).
+    """Data directory from config.DATA (APPDATA when installed under Program Files).
 
-    UWAGA — TU BYL BLAD POWODUJACY UTRATE DZIENNIKA PRZY AKTUALIZACJI:
-    importowalismy 'DATA_DIR', a config.py eksportuje 'DATA'. Import ZAWSZE
-    rzucal ImportError, wiec baza szla do fallbacku obok skryptu — czyli do
-    Program Files, skad kasowal ja kazdy nowy instalator. Reszta modulow
-    (cert, konfiguracja, konta) uzywala poprawnej nazwy i przezywala
-    aktualizacje — stad mylace wrazenie, ze ginie "tylko log".
+    NOTE — THIS IS WHERE A BUG ONCE CAUSED THE LOG TO BE LOST ON UPDATE:
+    the code used to import 'DATA_DIR', but config.py exports 'DATA'. The
+    import ALWAYS raised ImportError, so the database fell back to a path
+    next to the script — i.e. Program Files, from where every new installer
+    deleted it. The other modules (cert, config, accounts) used the correct
+    name and survived updates — hence the confusing impression that "only
+    the log" was disappearing.
     """
     try:
         from config import DATA
         return Path(DATA) / "qso.db"
     except Exception as _e:
-        # Fallback obok skryptu — przy instalacji w Program Files to miejsce,
-        # z ktorego kazda aktualizacja skasuje dziennik. Glosne ostrzezenie,
-        # zeby taki stan nigdy wiecej nie przeszedl niezauwazony.
+        # Fallback next to the script — when installed under Program Files
+        # this is the exact location every update will wipe the log from.
+        # Loud warning so this situation never goes unnoticed again.
         _p = Path(__file__).parent / "qso.db"
-        print(f"[qso_db] UWAGA: nie moge odczytac katalogu danych ({_e}). "
-              f"Baza QSO ladzie w {_p} — przy instalacji w Program Files "
-              f"aktualizacja moze ja SKASOWAC!", flush=True)
+        print(f"[qso_db] WARNING: cannot read the data directory ({_e}). "
+              f"QSO database goes to {_p} — when installed under Program "
+              f"Files, an update MAY DELETE IT!", flush=True)
         return _p
 
 
@@ -105,10 +106,10 @@ _conn = None
 
 import threading as _threading
 
-# Lock chroniacy wspoldzielone polaczenie SQLite. Odkad ciezkie operacje
-# (bulk import, delete_all, list_qsos) sa wolane przez asyncio.to_thread,
-# dwa watki moglyby pisac jednoczesnie. SQLite serializuje wewnetrznie, ale
-# jawny lock eliminuje wyscigi na poziomie kursorow i transakcji.
+# Lock protecting the shared SQLite connection. Since heavy operations
+# (bulk import, delete_all, list_qsos) are called via asyncio.to_thread,
+# two threads could write at the same time. SQLite serializes internally,
+# but an explicit lock eliminates races at the cursor/transaction level.
 _conn_lock = _threading.RLock()
 
 
@@ -118,43 +119,45 @@ def _get_conn() -> sqlite3.Connection:
         if _conn is None:
             path = _db_path()
             path.parent.mkdir(parents=True, exist_ok=True)
-            # Jawnie pokaz GDZIE jest dziennik — zeby od razu bylo widac, czy
-            # siedzi w APPDATA (przezyje aktualizacje) czy obok EXE (zginie).
+            # Explicitly show WHERE the log lives — so it's immediately
+            # visible whether it's in APPDATA (survives updates) or next to
+            # the EXE (gets wiped).
             _existed = path.exists()
-            print(f"[qso_db] Dziennik QSO: {path} "
-                  f"({'istnieje' if _existed else 'nowy - pusty'})", flush=True)
+            print(f"[qso_db] QSO log: {path} "
+                  f"({'exists' if _existed else 'new - empty'})", flush=True)
             _conn = sqlite3.connect(str(path), check_same_thread=False,
                                      timeout=10.0)
             _conn.row_factory = sqlite3.Row
-            # WAL: znacznie lepsza wspolbieznosc (czytelnicy nie blokuja
-            # pisarza) + odpornosc na uszkodzenie przy crashu.
+            # WAL: much better concurrency (readers don't block the writer)
+            # + resilience against corruption on crash.
             try:
                 _conn.execute("PRAGMA journal_mode=WAL")
                 _conn.execute("PRAGMA synchronous=NORMAL")
                 _conn.execute("PRAGMA busy_timeout=10000")
             except Exception as e:
-                print(f"[qso_db] PRAGMA blad: {e}", flush=True)
+                print(f"[qso_db] PRAGMA error: {e}", flush=True)
             _conn.executescript(_SCHEMA)
             _conn.commit()
             _migrate(_conn)
         return _conn
 
 
-# Kolumny dopisane PO pierwszym wydaniu — CREATE TABLE IF NOT EXISTS ich nie
-# doda do juz istniejacej bazy (SQLite tworzy tabele tylko raz), wiec trzeba
-# je dolozyc recznie przez ALTER TABLE. Bezpieczne: DEFAULT '' na istniejacych
-# wierszach, zadne dane sie nie rusza. Patrz komentarz przy _db_path() — ten
-# plik to prawdziwy dziennik lacznosci, wiec migracja musi byc addytywna,
-# nigdy destrukcyjna.
+# Columns added AFTER the first release — CREATE TABLE IF NOT EXISTS won't
+# add them to an already-existing database (SQLite creates the table only
+# once), so they have to be added manually via ALTER TABLE. Safe: DEFAULT ''
+# on existing rows, no data is touched. See the comment at _db_path() — this
+# file is the real contact log, so migration must be additive, never
+# destructive.
 _NEW_COLUMNS = {
     "prop_mode": "TEXT DEFAULT ''",
     "sat_name":  "TEXT DEFAULT ''",
     "sat_mode":  "TEXT DEFAULT ''",
     "freq_rx":   "TEXT DEFAULT ''",
     "band_rx":   "TEXT DEFAULT ''",
-    # NAME/QTH/KRAJ — wypelniane recznie albo (KRAJ/CONT juz teraz) lokalnie
-    # z tabeli prefiksow (dxcc.js), DXCC/CQZ/ITUZ/STATE/IOTA docelowo z
-    # lookupu QRZ/HamQTH (nie zaimplementowany jeszcze - pola gotowe na te dane).
+    # NAME/QTH/COUNTRY — filled in manually or (COUNTRY/CONT already now)
+    # locally from the prefix table (dxcc.js); DXCC/CQZ/ITUZ/STATE/IOTA are
+    # meant to eventually come from a QRZ/HamQTH lookup (not implemented
+    # yet - fields are ready for that data).
     "name":          "TEXT DEFAULT ''",
     "qth":           "TEXT DEFAULT ''",
     "dxcc":          "TEXT DEFAULT ''",
@@ -164,8 +167,8 @@ _NEW_COLUMNS = {
     "ituz":          "TEXT DEFAULT ''",
     "state":         "TEXT DEFAULT ''",
     "iota":          "TEXT DEFAULT ''",
-    # QSL tracking — pola gotowe, bez UI (aktywacja pozniej: wymaga
-    # integracji z LoTW/eQSL zeby cokolwiek tu realnie wpisywac).
+    # QSL tracking — fields ready, no UI yet (activation later: needs
+    # LoTW/eQSL integration before there's anything real to write here).
     "qsl_sent":      "TEXT DEFAULT ''",
     "qsl_rcvd":      "TEXT DEFAULT ''",
     "lotw_qsl_sent": "TEXT DEFAULT ''",
@@ -174,16 +177,17 @@ _NEW_COLUMNS = {
     "lotw_qslrdate": "TEXT DEFAULT ''",
     "eqsl_qsl_sent": "TEXT DEFAULT ''",
     "eqsl_qsl_rcvd": "TEXT DEFAULT ''",
-    # Aktywacje parkowe — pola gotowe, bez UI (aktywacja pozniej).
+    # Activation program references — fields ready, no UI yet (activation later).
     "pota_ref":      "TEXT DEFAULT ''",
     "sota_ref":      "TEXT DEFAULT ''",
     "wwff_ref":      "TEXT DEFAULT ''",
 }
 
-# Pola dopisane RAZEM z prop_mode/sat_* (satelity) - ale te ponizej nie maja
-# jeszcze UI do recznego wpisywania (poza NAME/QTH/COUNTRY - patrz qsolog.js
-# openNew/openEdit/saveQSO). Wspolna lista, zeby add_qso/update_qso/bulk
-# obslugiwaly je identycznie bez powtarzania 20 nazw pol w kazdej funkcji.
+# Fields added TOGETHER WITH prop_mode/sat_* (satellite) - but the ones
+# below don't have UI for manual entry yet (except NAME/QTH/COUNTRY - see
+# qsolog.js openNew/openEdit/saveQSO). Kept as a shared list so
+# add_qso/update_qso/bulk handle them identically without repeating 20
+# field names in every function.
 _EXTRA_FIELDS = [
     "name", "qth", "dxcc", "country", "cont", "cqz", "ituz", "state", "iota",
     "qsl_sent", "qsl_rcvd", "lotw_qsl_sent", "lotw_qsl_rcvd",
@@ -197,18 +201,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     for col, decl in _NEW_COLUMNS.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE qso ADD COLUMN {col} {decl}")
-            print(f"[qso_db] migracja: dodano kolumne '{col}'", flush=True)
+            print(f"[qso_db] migration: added column '{col}'", flush=True)
     conn.commit()
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
 def add_qsos_bulk(user_id: str, qsos: list) -> dict:
     """
-    Wstaw wiele QSO naraz — wydajny bulk insert.
-    Wolane przez asyncio.to_thread (import ADIF trwa sekundy), wiec chronione
-    lockiem przed rownoczesnym zapisem z innego watku.
+    Insert many QSOs at once — efficient bulk insert.
+    Called via asyncio.to_thread (ADIF import takes seconds), so protected
+    by a lock against concurrent writes from another thread.
     """
-    globals().pop("_WORKED_CACHE", None)   # import QSO — uniewaznij cache zrobionych znakow
+    globals().pop("_WORKED_CACHE", None)   # QSO import — invalidate the worked-calls cache
     import uuid as _uuid
     from datetime import datetime as _dt
 
@@ -231,11 +235,12 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
                 _date = str(data.get("qso_date", now[:8]))
                 _time = str(data.get("time_on", "000000"))
 
-                # SPRAWDZANIE DUPLIKATOW — nie wstawiaj tej samej lacznosci
-                # drugi raz (np. przy powtornym imporcie tego samego pliku).
-                # QSO to duplikat, gdy zgadza sie znak, pasmo, tryb, data i czas
-                # w granicach +-2 minut (rozne programy zapisuja czas nieco
-                # inaczej). Porownujemy czas jako HHMM, z tolerancja.
+                # DUPLICATE CHECK — don't insert the same contact twice
+                # (e.g. when re-importing the same file). A QSO is a
+                # duplicate when the call, band, mode, date, and time match
+                # within +-2 minutes (different programs record time
+                # slightly differently). Time is compared as HHMM, with
+                # tolerance.
                 _t4 = (_time + "0000")[:4]        # HHMM
                 try:
                     _tmin = int(_t4[:2]) * 60 + int(_t4[2:4])
@@ -292,8 +297,8 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
 
 
 def add_qso(user_id: str, data: dict) -> dict:
-    """Dodaj QSO do bazy. Zwraca zapisane QSO z id."""
-    globals().pop("_WORKED_CACHE", None)   # nowy QSO — uniewaznij cache zrobionych znakow
+    """Add a QSO to the database. Returns the saved QSO with its id."""
+    globals().pop("_WORKED_CACHE", None)   # new QSO — invalidate the worked-calls cache
     conn = _get_conn()
     qso_id    = str(uuid.uuid4())
     now_utc   = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -303,6 +308,10 @@ def add_qso(user_id: str, data: dict) -> dict:
     call      = (data.get("call") or "").strip().upper()
 
     if not call or not qso_date or not time_on:
+        # NOTE: this message reaches the browser as-is — webapp.py's
+        # /api/qsolog POST returns str(e) directly in the error response
+        # body, and qsolog.js's saveQSO() displays res.error raw with no
+        # I18n lookup. Kept in Polish deliberately, do not translate.
         raise ValueError("Brak wymaganych pól: call, qso_date, time_on")
 
     row = {
@@ -332,15 +341,16 @@ def add_qso(user_id: str, data: dict) -> dict:
         "sat_mode":      (data.get("sat_mode") or "").strip().upper(),
         "freq_rx":       data.get("freq_rx", ""),
         "band_rx":       data.get("band_rx", ""),
-        # NAME/QTH/geo/QSL/aktywacje — patrz komentarz przy _NEW_COLUMNS.
-        # Wartosci wpisywane tak jak przyszly (bez wymuszania wielkosci liter -
-        # NAME/QTH/COUNTRY to nazwy wlasne, wersaliki by je zniekształcały).
+        # NAME/QTH/geo/QSL/activation refs — see the comment at _NEW_COLUMNS.
+        # Values are stored as received (no case-forcing - NAME/QTH/COUNTRY
+        # are proper names, uppercasing them would mangle them).
         **{k: data.get(k, "") for k in _EXTRA_FIELDS},
     }
 
-    # Kolumny budowane Z SAMEGO row (nie recznie liczona lista VALUES) - eliminuje
-    # cala klase bledow "zapomnialem dopisac nowe pole w VALUES po dodaniu go
-    # do row" (dokladnie to co juz raz trzeba bylo naprawiac przy migracji).
+    # Columns built FROM row ITSELF (not a manually maintained VALUES list) -
+    # eliminates a whole class of "forgot to add the new field to VALUES
+    # after adding it to row" bugs (exactly what already had to be fixed once
+    # during a migration).
     cols = ", ".join(row.keys())
     placeholders = ", ".join(f":{k}" for k in row.keys())
     conn.execute(f"INSERT INTO qso ({cols}) VALUES ({placeholders})", row)
@@ -349,7 +359,7 @@ def add_qso(user_id: str, data: dict) -> dict:
 
 
 def get_qso(user_id: str, qso_id: str, is_admin: bool = False) -> dict | None:
-    """Pobierz pojedyncze QSO."""
+    """Fetch a single QSO."""
     conn = _get_conn()
     if is_admin:
         row = conn.execute("SELECT * FROM qso WHERE id=?", (qso_id,)).fetchone()
@@ -360,10 +370,13 @@ def get_qso(user_id: str, qso_id: str, is_admin: bool = False) -> dict | None:
 
 
 def update_qso(user_id: str, qso_id: str, data: dict, is_admin: bool = False) -> bool:
-    """Zaktualizuj QSO. Zwraca True jeśli znaleziono i zaktualizowano."""
+    """Update a QSO. Returns True if it was found and updated."""
     conn  = _get_conn()
     call  = (data.get("call") or "").strip().upper()
     if not call:
+        # NOTE: same as in add_qso — this reaches the browser verbatim via
+        # the PUT /api/qsolog/<id> error response. Kept in Polish, do not
+        # translate.
         raise ValueError("Brak znaku wywoławczego")
 
     fields = {
@@ -402,13 +415,13 @@ def update_qso(user_id: str, qso_id: str, data: dict, is_admin: bool = False) ->
 
 
 def delete_all(user_id: str) -> int:
-    """Usuń wszystkie QSO usera. Chronione lockiem (wolane z watku)."""
+    """Delete all of a user's QSOs. Protected by a lock (called from a thread)."""
     with _conn_lock, _get_conn() as conn:
         cur = conn.execute("DELETE FROM qso WHERE user_id=?", (user_id,))
         return cur.rowcount
 
 def delete_qso(user_id: str, qso_id: str, is_admin: bool = False) -> bool:
-    """Usuń QSO. Zwraca True jeśli usunięto."""
+    """Delete a QSO. Returns True if it was deleted."""
     conn = _get_conn()
     if is_admin:
         cur = conn.execute("DELETE FROM qso WHERE id=?", (qso_id,))
@@ -420,15 +433,15 @@ def delete_qso(user_id: str, qso_id: str, is_admin: bool = False) -> bool:
 
 
 def worked_before(call: str, band: str = None, mode: str = None) -> dict:
-    """Sprawdz czy dany call (opcjonalnie band/mode) juz byl worked przez
-    KOGOKOLWIEK w bazie. Zwraca:
+    """Check whether the given call (optionally band/mode) has already been
+    worked by ANYONE in the database. Returns:
       {
-        "worked":       bool,  # True gdy jest jakiekolwiek QSO z tym callem
-        "worked_band":  bool,  # True gdy jest QSO na TYM band
-        "worked_mode":  bool,  # True gdy jest QSO w TYM mode
-        "worked_all":   bool,  # True gdy jest QSO z tym call+band+mode (identyczne)
-        "count":        int,   # ile lacznie QSO z tym callem
-        "last_qso":     dict|None,  # ostatnie QSO {qso_date, band, mode}
+        "worked":       bool,  # True if there's any QSO with this call
+        "worked_band":  bool,  # True if there's a QSO on THIS band
+        "worked_mode":  bool,  # True if there's a QSO in THIS mode
+        "worked_all":   bool,  # True if there's a QSO with this exact call+band+mode
+        "count":        int,   # total number of QSOs with this call
+        "last_qso":     dict|None,  # most recent QSO {qso_date, band, mode}
       }
     """
     if not call:
@@ -466,7 +479,7 @@ def worked_before(call: str, band: str = None, mode: str = None) -> dict:
 
 def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **filters) -> dict:
     """
-    Listuj QSO z filtrowaniem, sortowaniem i paginacją.
+    List QSOs with filtering, sorting, and pagination.
 
     filters:
         page    int  (default 1)
@@ -480,7 +493,7 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
         mode    str
     """
     conn   = _get_conn()
-    # query moze byc MultiDict (aiohttp) — pobierz pierwsza wartosc
+    # query may be a MultiDict (aiohttp) — take the first value
     def _get(key, default=None):
         v = filters.get(key, default)
         return v[0] if isinstance(v, list) else v
@@ -489,7 +502,7 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
     sort   = _get("sort", "qso_date")
     direction = "DESC" if str(_get("dir", "desc")).lower() != "asc" else "ASC"
 
-    # Whitelist kolumn sortowania
+    # Whitelist of sort columns
     _SORT_COLS = {"qso_date", "call", "band", "mode", "freq", "created_at"}
     if sort not in _SORT_COLS:
         sort = "qso_date"
@@ -524,9 +537,10 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
         where.append("mode=?")
         params.append(str(_get("mode")))
 
-    # Filtr po konkretnych ID — do eksportu ZAZNACZONYCH QSO. Lista id przez
-    # przecinek. Ma priorytet: gdy podana, pozostale filtry i tak zawezaja,
-    # ale zwykle uzywana samodzielnie (operator zaznaczyl wpisy w tabeli).
+    # Filter by specific IDs — for exporting SELECTED QSOs. Comma-separated
+    # id list. Takes priority: when given, the other filters still narrow
+    # further, but it's normally used on its own (the operator selected
+    # rows in the table).
     _ids = _get("ids")
     if _ids:
         id_list = [x.strip() for x in str(_ids).split(",") if x.strip()]
@@ -558,14 +572,16 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
 # ── Export ────────────────────────────────────────────────────────────────────
 def worked_calls(user_id: str, is_admin: bool = False,
                  filter_uid: str = None) -> list:
-    """Zwraca liste UNIKALNYCH znakow z logu (do oznaczania 'zrobionych'
-    stacji w Band Activity). Lekki SELECT DISTINCT zamiast pelnej listy QSO —
-    list_qsos ma cap per<=200, przez co frontend widzial tylko 200 NAJNOWSZYCH
-    wpisow i starsze lacznosci nie byly oznaczane jako zrobione.
+    """Returns the list of UNIQUE calls from the log (to mark 'worked'
+    stations in Band Activity). A lightweight SELECT DISTINCT instead of a
+    full QSO list — list_qsos caps per<=200, which meant the frontend only
+    saw the 200 MOST RECENT entries and older contacts weren't marked as
+    worked.
 
-    CACHE: frontend odpytuje te liste cyklicznie (Band Activity), a zrobione
-    znaki nie zmieniaja sie co sekunde. Trzymamy wynik ~5s — eliminuje wiekszosc
-    skanow tabeli, ktore blokowaly petle zdarzen (wykryte przez looplag)."""
+    CACHE: the frontend polls this list periodically (Band Activity), and
+    worked calls don't change every second. We hold the result for ~5s —
+    eliminates most of the table scans that were blocking the event loop
+    (found via looplag)."""
     import time as _t
     _ck = (user_id, is_admin, filter_uid)
     _now = _t.monotonic()
@@ -585,9 +601,9 @@ def worked_calls(user_id: str, is_admin: bool = False,
         sql += " WHERE " + " AND ".join(where)
     conn = _get_conn()
     rows = conn.execute(sql, params).fetchall()
-    # Zwracamy pary call+mode+band, nie same znaki — FT8 i FT4 to ROZNE
-    # modulacje i osobne QSO, wiec stacja zrobiona na FT8 nie moze byc
-    # oznaczona jako zrobiona na FT4. Frontend dopasowuje po call+mode.
+    # Return call+mode+band tuples, not just calls — FT8 and FT4 are
+    # DIFFERENT modes and separate QSOs, so a station worked on FT8 must
+    # not be marked as worked on FT4. The frontend matches by call+mode.
     out = []
     for r in rows:
         call = (r[0] or "").upper()
@@ -601,7 +617,7 @@ def worked_calls(user_id: str, is_admin: bool = False,
 
 
 def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
-    """Eksportuj QSO do formatu ADIF (.adi)."""
+    """Export QSOs to ADIF format (.adi)."""
     data   = list_qsos(user_id, is_admin, per=999999, **filters)
     qsos   = data["qsos"]
     now    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -631,28 +647,30 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
         rec += field("RST_SENT",      q["rst_sent"])
         rec += field("RST_RCVD",      q["rst_rcvd"])
         rec += field("GRIDSQUARE",    q["gridsquare"])
-        # STATION_CALLSIGN to prawidlowy tag ADIF dla znaku stacji logujacej
-        # (wczesniej bylo "MY_CALL" - nie istnieje w standardzie, wiec inne
-        # programy przy imporcie po prostu go ignorowaly i nie wiedzialy
-        # czyj to log). OPERATOR dopisany obok - ten sam znak, ale to pole
-        # ADIF na "kto byl przy kluczu" (istotne gdy kilku userow dzieli
-        # jedna stacje/znak).
+        # STATION_CALLSIGN is the correct ADIF tag for the logging station's
+        # call (this used to be "MY_CALL" - not a standard tag, so other
+        # programs importing it simply ignored it and had no idea whose log
+        # it was). OPERATOR added alongside - same call, but this is the
+        # ADIF field for "who was at the key" (relevant when several users
+        # share one station/call).
         rec += field("STATION_CALLSIGN", q["my_call"])
         rec += field("OPERATOR",         q["my_call"])
         rec += field("MY_GRIDSQUARE", q["my_gridsquare"])
         rec += field("TX_PWR",        q["power"])
         rec += field("COMMENT",       q["comment"])
-        # Lacznosc satelitarna — standard ADIF: PROP_MODE=SAT, SAT_NAME/
-        # SAT_MODE opisuja satelite, FREQ_RX/BAND_RX to downlink (FREQ/BAND
-        # wyzej to uplink). Puste dla zwyklych QSO — field() pomija puste.
+        # Satellite contact — ADIF standard: PROP_MODE=SAT, SAT_NAME/
+        # SAT_MODE describe the satellite, FREQ_RX/BAND_RX are the downlink
+        # (FREQ/BAND above are the uplink). Empty for regular QSOs —
+        # field() skips empty values.
         rec += field("PROP_MODE",     q.get("prop_mode", ""))
         rec += field("SAT_NAME",      q.get("sat_name", ""))
         rec += field("SAT_MODE",      q.get("sat_mode", ""))
         rec += field("FREQ_RX",       q.get("freq_rx", ""))
         rec += field("BAND_RX",       q.get("band_rx", ""))
-        # NAME/QTH/geo drugiej stacji — NAME/QTH recznie lub (COUNTRY/CONT)
-        # z lokalnej tabeli prefiksow (dxcc.js); DXCC/CQZ/ITUZ/STATE/IOTA
-        # docelowo z lookupu QRZ/HamQTH (jeszcze nie podpiety - pola gotowe).
+        # NAME/QTH/geo for the other station — NAME/QTH entered manually or
+        # (COUNTRY/CONT) from the local prefix table (dxcc.js); DXCC/CQZ/
+        # ITUZ/STATE/IOTA meant to eventually come from a QRZ/HamQTH lookup
+        # (not wired up yet - fields are ready).
         rec += field("NAME",          q.get("name", ""))
         rec += field("QTH",           q.get("qth", ""))
         rec += field("DXCC",          q.get("dxcc", ""))
@@ -662,9 +680,10 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
         rec += field("ITUZ",          q.get("ituz", ""))
         rec += field("STATE",         q.get("state", ""))
         rec += field("IOTA",          q.get("iota", ""))
-        # QSL tracking i aktywacje parkowe — pola gotowe w bazie, bez UI do
-        # recznego wpisywania jeszcze (patrz komentarz przy _EXTRA_FIELDS).
-        # Eksportujemy co jest, zeby round-trip z importu ADIF nic nie gubil.
+        # QSL tracking and activation-program refs — fields ready in the
+        # database, no UI for manual entry yet (see the comment at
+        # _EXTRA_FIELDS). Exported anyway so a round-trip through ADIF
+        # import doesn't lose anything.
         rec += field("QSL_SENT",      q.get("qsl_sent", ""))
         rec += field("QSL_RCVD",      q.get("qsl_rcvd", ""))
         rec += field("LOTW_QSL_SENT", q.get("lotw_qsl_sent", ""))
@@ -683,7 +702,7 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
 
 
 def export_csv(user_id: str, is_admin: bool = False, **filters) -> str:
-    """Eksportuj QSO do CSV."""
+    """Export QSOs to CSV."""
     data = list_qsos(user_id, is_admin, per=999999, **filters)
     qsos = data["qsos"]
 
@@ -705,13 +724,13 @@ def export_csv(user_id: str, is_admin: bool = False, **filters) -> str:
 
 def export_edi(user_id: str, is_admin: bool = False, **filters) -> str:
     """
-    Eksportuj QSO do formatu REG1TEST (.edi) — standard dla zawodów UKF.
-    Format EDI (Electronic Data Interchange) wg IARU Region 1.
+    Export QSOs to REG1TEST format (.edi) — the standard for VHF/UHF contests.
+    EDI (Electronic Data Interchange) format per IARU Region 1.
     """
     data = list_qsos(user_id, is_admin, per=999999, **filters)
     qsos = data["qsos"]
 
-    # Pobierz dane stacji z pierwszego QSO
+    # Get station data from the first QSO
     my_call = (qsos[0]["my_call"] if qsos else "") or user_id.upper()
     my_grid = (qsos[0]["my_gridsquare"] if qsos else "")
     now     = datetime.now(timezone.utc)
@@ -730,7 +749,7 @@ def export_edi(user_id: str, is_admin: bool = False, **filters) -> str:
     ]
 
     for q in qsos:
-        # Format EDI: Date;Time;Call;Mode;SentNr;SentRST;RcvdNr;RcvdRST;Grid;Points;...
+        # EDI format: Date;Time;Call;Mode;SentNr;SentRST;RcvdNr;RcvdRST;Grid;Points;...
         date = q["qso_date"]       # YYYYMMDD
         time = q["time_on"][:4]    # HHMM
         lines.append(
