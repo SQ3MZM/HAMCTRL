@@ -1,16 +1,16 @@
 
 /**
- * admin.js — panel administratora
- * Zarządzanie użytkownikami (+ uprawnienia granularne) + konfiguracja rotatorów
+ * admin.js — admin panel
+ * User management (+ granular permissions) + rotator configuration
  */
 (function() {
 'use strict';
 
-// ── Definicja uprawnień ───────────────────────────────────────────────────────
-// UWAGA: labelki tlumaczone leniwie funkcja _permLabel() (nie w momencie
-// definicji tablicy) - I18n moze jeszcze nie byc zainicjalizowane (jezyk
-// nieznany) gdy ten plik sie laduje, poza tym PERM_DEFS musi zawsze
-// odzwierciedlac AKTUALNY jezyk (badge w tabeli userow renderuje sie wielokrotnie).
+// ── Permission definitions ────────────────────────────────────────────────────
+// NOTE: labels are translated lazily via the _permLabel() function (not at
+// the moment the array is defined) - I18n may not be initialized yet
+// (language unknown) when this file loads, and besides, PERM_DEFS must
+// always reflect the CURRENT language (the badge in the user table renders repeatedly).
 const PERM_DEFS = [
   { key: 'ptt',      get label() { return I18n.t('perm_ptt'); },      group: 'radio'  },
   { key: 'rfPower',  get label() { return I18n.t('perm_rfpower'); },  group: 'radio'  },
@@ -24,7 +24,7 @@ const PERM_DEFS = [
   { key: 'log',      get label() { return I18n.t('perm_log'); },      group: 'system' },
   { key: 'settings', get label() { return I18n.t('perm_settings'); }, group: 'system' },
   { key: 'admin',    get label() { return I18n.t('perm_admin'); },    group: 'system' },
-  // Przekazniki Arduino (0-7) - kazdy przydzielany osobno
+  // Arduino relays (0-7) - each assigned individually
   { key: 'relay_0',  get label() { return I18n.t('perm_relay_n').replace('{n}', 0); }, group: 'relay' },
   { key: 'relay_1',  get label() { return I18n.t('perm_relay_n').replace('{n}', 1); }, group: 'relay' },
   { key: 'relay_2',  get label() { return I18n.t('perm_relay_n').replace('{n}', 2); }, group: 'relay' },
@@ -40,7 +40,7 @@ const DEFAULT_PERMS = {
   freq:true, split:true, cw:true, rotator:true, log:true, settings:false, admin:false,
 };
 
-// ── Użytkownicy ───────────────────────────────────────────────────────────────
+// ── Users ─────────────────────────────────────────────────────────────────────
 async function loadUsers() {
   const token = localStorage.getItem('token') || '';
   const r = await fetch('/api/users', {
@@ -64,9 +64,9 @@ function renderUsers(users) {
         border:1px solid rgba(184,201,143,0.2);border-radius:2px;padding:1px 5px;color:var(--dim);
         white-space:nowrap;">${p.label.split('—')[0].split(' (')[0].trim()}</span>`).join('');
 
-    // Escapuj dane od userow przed wstawieniem do HTML - user z nazwa typu
-    // <img onerror=...> wykonalby skrypt w przegladarce ADMINA (kradziez
-    // tokenu). Fix XSS 2026-07-05.
+    // Escape user-supplied data before inserting into HTML - a user with
+    // a name like <img onerror=...> could execute a script in the
+    // ADMIN's browser (token theft). XSS fix.
     const _u   = _escapeHtmlAdmin(u.username || '');
     const _nm  = _escapeHtmlAdmin(u.name || '');
     const _cs  = _escapeHtmlAdmin(u.callsign || '—');
@@ -107,7 +107,7 @@ function renderUsers(users) {
   }).join('');
 }
 
-// ── Modal: dodaj użytkownika ──────────────────────────────────────────────────
+// ── Modal: add user ───────────────────────────────────────────────────────────
 function showAddUser() {
   _openModal(null);
 }
@@ -131,7 +131,7 @@ function _openModal(u) {
 
   const isNew = !u;
   const titleEl = document.getElementById('modal-title');
-  titleEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+  titleEl.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
   titleEl.textContent = isNew ? I18n.t('adm_new_user_title') : I18n.t('adm_edit_user_title').replace('{username}', u.username);
   document.getElementById('user-id').value       = u?.id    || '';
   document.getElementById('uname').value         = u?.username || '';
@@ -143,26 +143,27 @@ function _openModal(u) {
   document.getElementById('uemail').value        = u?.email || '';
   document.getElementById('upass-row').style.display = isNew ? '' : 'none';
 
-  // Zbuduj sekcje przekaznikow (dynamicznie, z realnymi nazwami z konfiguracji).
-  // Robimy to PRZED ustawianiem checkboxow, zeby perm-relay_N juz istnialy.
+  // Build the relay section (dynamically, with real names from the
+  // config). Done BEFORE setting the checkboxes, so perm-relay_N already
+  // exist.
   _renderRelayPerms(u?.permissions || {});
 
-  // Ustaw checkboxy uprawnień
+  // Set the permission checkboxes
   const perms = u?.permissions || DEFAULT_PERMS;
   PERM_DEFS.forEach(p => {
     const cb = document.getElementById('perm-' + p.key);
     if (cb) cb.checked = !!perms[p.key];
   });
 
-  // Admin ma zawsze wszystkie uprawnienia — zablokuj checkboxy
+  // Admin always has all permissions — disable the checkboxes
   _updatePermsByRole(document.getElementById('urole').value);
 
   modal.style.display = 'flex';
 }
 
-// Zbuduj checkboxy przekaznikow z aktualnej konfiguracji relay.
-// Pokazuje TYLKO skonfigurowane przekazniki z ich realnymi nazwami
-// (np. "Antena 40m" zamiast "Przekaznik 3"). Admin zaznacza ktore user widzi.
+// Build the relay checkboxes from the current relay config.
+// Shows ONLY configured relays with their real names (e.g. "Antena 40m"
+// instead of "Relay 3"). The admin selects which ones the user sees.
 async function _renderRelayPerms(userPerms) {
   const section = document.getElementById('perm-relay-section');
   const list    = document.getElementById('perm-relay-list');
@@ -180,7 +181,7 @@ async function _renderRelayPerms(userPerms) {
     }
   } catch(e) { console.warn('[admin] relay config fetch:', e); }
 
-  // Pokaz tylko wlaczone przekazniki (maja nazwe). Jesli brak - ukryj sekcje.
+  // Show only enabled relays (they have a name). If none - hide the section.
   const active = relays.filter(r => r && r.name);
   if (!active.length) {
     section.style.display = 'none';
@@ -198,7 +199,7 @@ async function _renderRelayPerms(userPerms) {
     </label>`;
   }).join('');
 
-  // Zablokuj jesli admin (admin widzi wszystkie zawsze)
+  // Disable if admin (admin always sees all of them)
   const role = document.getElementById('urole')?.value;
   if (role === 'admin') {
     active.forEach(r => {
@@ -222,7 +223,7 @@ function _updatePermsByRole(role) {
     if (isAdmin) { cb.checked = true; cb.disabled = true; }
     else { cb.disabled = false; }
   });
-  // Relay checkboxy tez (generowane dynamicznie) - admin widzi wszystkie
+  // Relay checkboxes too (generated dynamically) - admin sees all of them
   for (let i = 0; i < 8; i++) {
     const cb = document.getElementById('perm-relay_' + i);
     if (!cb) continue;
@@ -244,14 +245,14 @@ async function saveUser() {
 
   if (!username) { UI.showToast(I18n.t('adm_enter_login'), 'error'); return; }
 
-  // Zbierz uprawnienia z checkboxów — admin dostaje wszystko
+  // Collect permissions from the checkboxes — admin gets everything
   const permissions = {};
   PERM_DEFS.forEach(p => {
     const cb = document.getElementById('perm-' + p.key);
-    // relay_N moga nie istniec jesli przekaznik nieskonfigurowany - to OK
-    // (brak checkboxa = brak dostepu). Ostrzegaj tylko dla stalych uprawnien.
+    // relay_N may not exist if the relay isn't configured - that's fine
+    // (no checkbox = no access). Warn only for the fixed permissions.
     if (!cb && !p.key.startsWith('relay_')) {
-      console.warn('[admin] brak checkboxa:', 'perm-' + p.key);
+      console.warn('[admin] missing checkbox:', 'perm-' + p.key);
     }
     permissions[p.key] = (role === 'admin') ? true : !!(cb?.checked);
   });
@@ -282,7 +283,7 @@ async function saveUser() {
   }
 
   let res = {};
-  try { res = await r.json(); } catch(e) { /* puste body */ }
+  try { res = await r.json(); } catch(e) { /* empty body */ }
 
   console.log('[admin] saveUser response status=', r.status, 'body=', res);
 
@@ -295,7 +296,7 @@ async function saveUser() {
   loadUsers();
   UI.showToast(id ? I18n.t('adm_user_updated') : I18n.t('adm_user_added'));
 
-  // Jeśli admin edytował samego siebie — odśwież uprawnienia w UI natychmiast
+  // If the admin edited themselves — refresh the permissions in the UI immediately
   if (id && window.CurrentUser && String(window.CurrentUser.id) === String(id)) {
     fetch('/api/auth/me').then(r => r.json()).then(data => {
       if (data.user) {
@@ -344,9 +345,9 @@ function closeModal() {
   if (m) m.style.display = 'none';
 }
 
-// ── Konfiguracja rotatorów ────────────────────────────────────────────────────
+// ── Rotator configuration ─────────────────────────────────────────────────────
 async function loadRotatorConfig() {
-  loadStationLocator();   // lokator stacji — w tej samej sekcji ustawien
+  loadStationLocator();   // station locator — same settings section
   try {
     const r    = await fetch('/api/config');
     const cfg  = await r.json();
@@ -360,9 +361,10 @@ async function loadRotatorConfig() {
 function renderRotatorConfig(rots) {
   const el = document.getElementById('rotator-config-list');
   if (!el) return;
-  // Usun znacznik i18n statycznego placeholdera "Ladowanie..." - inaczej
-  // kolejne I18n.setLang() (apply() dziala na calym dokumencie) nadpisze
-  // ten kontener z powrotem na "Ladowanie..." i skasuje wyrenderowane rotatory.
+  // Remove the i18n marker from the static "Loading..." placeholder -
+  // otherwise the next I18n.setLang() (apply() runs over the whole
+  // document) would overwrite this container back to "Loading..." and
+  // wipe out the rendered rotators.
   el.removeAttribute('data-i18n');
   el.innerHTML = rots.map((rot, i) => `
     <div class="rot-cfg-row">
@@ -470,7 +472,7 @@ async function testRotator(idx) {
   }
 }
 
-// ── Funkcje radia (whitelist dla userow) ────────────────────────────────────
+// ── Radio features (whitelist for users) ─────────────────────────────────────
 let _rigFeaturesData = null;
 
 async function loadRigFeatures() {
@@ -494,13 +496,13 @@ async function loadRigFeatures() {
 function renderRigFeaturesConfig(features, dynamic) {
   const el = document.getElementById('rig-features-config-list');
   if (!el) return;
-  el.removeAttribute('data-i18n');  // patrz komentarz w renderRotatorConfig()
+  el.removeAttribute('data-i18n');  // see the comment in renderRotatorConfig()
 
   const actions = dynamic.actions || [];
   const sliders = dynamic.sliders || [];
 
   el.innerHTML = `
-    <!-- TABELKI WYBORU: PRZYCISKI i SLIDERY -->
+    <!-- SELECTION TABLES: BUTTONS and SLIDERS -->
     <div style="display:flex;flex-direction:column;gap:20px;">
 
       ${_renderTransferWidget({
@@ -532,7 +534,7 @@ function renderRigFeaturesConfig(features, dynamic) {
 
     </div>`;
 
-  // Podpięcie zdarzeń (po wstawieniu do DOM)
+  // Hook up events (after insertion into the DOM)
   ['feat-transfer', 'btn-transfer', 'sld-transfer'].forEach(id => _attachTransferEvents(id));
 }
 
@@ -587,7 +589,7 @@ function _attachTransferEvents(widgetId) {
   if (!selList || !avlList) return;
 
   [selList, avlList].forEach(list => {
-    // Podświetlenie przez klik
+    // Highlight on click
     list.addEventListener('click', e => {
       const item = e.target.closest('.tw-item');
       if (!item) return;
@@ -599,7 +601,7 @@ function _attachTransferEvents(widgetId) {
       _twUpdateCounts(widgetId);
     });
 
-    // Podwójny klik = przenieś od razu
+    // Double-click = move immediately
     list.addEventListener('dblclick', e => {
       const item = e.target.closest('.tw-item');
       if (!item) return;
@@ -625,7 +627,7 @@ function _attachTransferEvents(widgetId) {
     });
   });
 
-  // Drag start na elementach (delegacja — działa też na dynamicznie dodanych)
+  // Drag start on the elements (delegation — also works on dynamically added ones)
   document.getElementById(widgetId).addEventListener('dragstart', e => {
     const item = e.target.closest('.tw-item');
     if (!item) return;
@@ -635,7 +637,7 @@ function _attachTransferEvents(widgetId) {
   });
 }
 
-// ── Helper functions dla przycisków transferu ──────────────────────────────────
+// ── Helper functions for the transfer buttons ─────────────────────────────────
 function _twMoveSelected(widgetId, toSide) {
   const fromSide = toSide === 'selected' ? 'available' : 'selected';
   const fromList = document.getElementById(`${widgetId}-${fromSide}`);
@@ -679,7 +681,7 @@ function _twUpdateCounts(widgetId) {
   if (ac) ac.textContent = avl?.children.length ?? 0;
 }
 
-// ── Globalne helpery (wywoływane inline z onclick) ─────────────────────────────
+// ── Global helpers (called inline from onclick) ───────────────────────────────
 window._twMoveSelected = _twMoveSelected;
 window._twMoveAll      = _twMoveAll;
 window._twMoveUp       = _twMoveUp;
@@ -691,7 +693,7 @@ async function saveRigFeatures() {
   const dynamicOrder    = {};
   const enabledFeatures = {};
 
-  // Statyczne features (split, ptt, freq itd.)
+  // Static features (split, ptt, freq etc.)
   const featSel = document.getElementById('feat-transfer-selected');
   const featAvl = document.getElementById('feat-transfer-available');
   featSel?.querySelectorAll('.tw-item[data-feature-id]').forEach(item => {
@@ -701,7 +703,7 @@ async function saveRigFeatures() {
     enabledFeatures[item.dataset.featureId] = false;
   });
 
-  // Przyciski
+  // Buttons
   const btnSel = document.getElementById('btn-transfer-selected');
   const btnAvl = document.getElementById('btn-transfer-available');
   btnSel?.querySelectorAll('.tw-item[data-dynamic-id]').forEach((item, idx) => {
@@ -712,7 +714,7 @@ async function saveRigFeatures() {
     enabledDynamic[item.dataset.dynamicId] = false;
   });
 
-  // Slidery
+  // Sliders
   const sldSel = document.getElementById('sld-transfer-selected');
   const sldAvl = document.getElementById('sld-transfer-available');
   sldSel?.querySelectorAll('.tw-item[data-dynamic-id]').forEach((item, idx) => {
@@ -748,9 +750,9 @@ async function saveRigFeatures() {
 }
 
 
-// ── FT8 Timer — admin zarządzanie per user ────────────────────────────────────
+// ── FT8 Timer — admin per-user management ─────────────────────────────────────
 async function loadFt8Timers() {
-  // Zaladuj globalny timer
+  // Load the global timer
   const token = localStorage.getItem('token') || '';
   const h = token ? {'Authorization': `Bearer ${token}`} : {};
   try {
@@ -781,14 +783,14 @@ async function saveGlobalFt8Timer() {
   } catch(e) { window.UI?.showToast(I18n.t('adm_timer_save_error'), 'error'); }
 }
 
-// UWAGA: byla tu wczesniej DRUGA deklaracja "function saveFt8Timer(userId)"
-// (legacy stub przekierowujacy na saveGlobalFt8Timer) NAD tą - w JS druga
-// deklaracja funkcji o tej samej nazwie w tym samym zasiegu CICHO
-// PODMIENIA pierwsza, wiec ten legacy stub nigdy sie nie wykonywal. Zero
-// realnego wplywu (UI per-user timera i tak nie istnieje w index.html od
-// czasu uproszczenia do jednego globalnego timera - ani jedna, ani druga
-// wersja nie miala zadnego wywolujacego), ale usunieta zeby ktos kiedys
-// nie edytowal tej martwej kopii myslac ze to ona dziala.
+// NOTE: this used to have a SECOND "function saveFt8Timer(userId)"
+// declaration (a legacy stub redirecting to saveGlobalFt8Timer) ABOVE
+// this one - in JS a second function declaration with the same name in
+// the same scope SILENTLY OVERWRITES the first, so that legacy stub
+// never actually ran. Zero real impact (the per-user timer UI hasn't
+// existed in index.html since simplifying to a single global timer -
+// neither version had any caller), but removed so nobody edits that dead
+// copy thinking it's the one that works.
 async function saveFt8Timer(userId) {
   const durEl  = document.getElementById(`ft8t-dur-${userId}`);
   const editEl = document.getElementById(`ft8t-edit-${userId}`);
@@ -813,7 +815,7 @@ async function saveFt8Timer(userId) {
   }
 }
 
-// ── AdminBands — pasma i tryby ────────────────────────────────────────────────
+// ── AdminBands — bands and modes ──────────────────────────────────────────────
 window.AdminBands = (() => {
   const token = () => localStorage.getItem('token') || '';
 
@@ -821,7 +823,7 @@ window.AdminBands = (() => {
     await Promise.all([_loadBands(), _loadModes()]);
   }
 
-  // ── PASMA ────────────────────────────────────────────────────────────────────
+  // ── BANDS ───────────────────────────────────────────────────────────────────
   async function _loadBands() {
     const sel = document.getElementById('bands-transfer-selected');
     const avl = document.getElementById('bands-transfer-available');
@@ -862,7 +864,7 @@ window.AdminBands = (() => {
     } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
   }
 
-  // ── TRYBY ────────────────────────────────────────────────────────────────────
+  // ── MODES ───────────────────────────────────────────────────────────────────
   let _allModes = [];
   let _modeFilters = {};
 
@@ -928,7 +930,7 @@ window.AdminBands = (() => {
     } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
   }
 
-  // ── Drag & drop i eventy ─────────────────────────────────────────────────────
+  // ── Drag & drop and events ───────────────────────────────────────────────────
   function _attachBandEvents()  { _attachDnD('bands-transfer', 'band');  }
   function _attachModeEvents()  { _attachDnD('modes-transfer', 'mode');  }
 
@@ -936,21 +938,22 @@ window.AdminBands = (() => {
     ['selected','available'].forEach(side => {
       const list = document.getElementById(`${widgetId}-${side}`);
       if (!list) return;
-      // _loadBands/_loadModes wolane przy KAZDYM wejsciu na zakladke
-      // KONFIGURACJA, ale to sa STALE wezly DOM (tylko ich .innerHTML jest
-      // podmieniane) - bez tej strazniczki addEventListener stackowalby sie
-      // przy kazdej wizycie (delegacja na rodzicu, wiec przezywa podmiane
-      // dzieci), a klik/dblclick zaczynalby dzialac losowo po paru wizytach
-      // (parzysta/nieparzysta liczba nasluchiwaczy). Wystarczy podpiac raz.
+      // _loadBands/_loadModes are called EVERY time the CONFIGURATION tab
+      // is opened, but these are FIXED DOM nodes (only their .innerHTML
+      // gets replaced) - without this guard, addEventListener would stack
+      // up on every visit (delegated on the parent, so it survives the
+      // children being replaced), and click/dblclick would start
+      // behaving randomly after a few visits (odd/even number of
+      // listeners). Attaching once is enough.
       if (list.dataset.dndAttached === '1') return;
       list.dataset.dndAttached = '1';
       const other = document.getElementById(`${widgetId}-${side==='selected'?'available':'selected'}`);
 
-      // Podswietlenie przez klik (ctrl/cmd = multi-select) - bez tego przyciski
-      // "« Dodaj"/"Usun »" (ktore przenosza tylko .tw-item.tw-selected, patrz
-      // _twMoveSelected) nie mialy jak trafic w cokolwiek i byly martwe -
-      // dzialalo tylko podwojne kliknieciem i przeciaganie. _attachTransferEvents
-      // (uzywany przez FUNKCJE RADIA) mial ten handler, ten (PASMA/TRYBY) nie.
+      // Highlight on click (ctrl/cmd = multi-select) - without this, the
+      // "« Add"/"Remove »" buttons (which only move .tw-item.tw-selected,
+      // see _twMoveSelected) had nothing to act on and were dead - only
+      // double-click and dragging worked. _attachTransferEvents (used by
+      // RADIO FEATURES) had this handler, this one (BANDS/MODES) didn't.
       list.addEventListener('click', e => {
         const item = e.target.closest('.tw-item');
         if (!item) return;
@@ -1010,7 +1013,7 @@ window.AdminBands = (() => {
 window._adminAttachTransferEvents = _attachTransferEvents;
 window._adminTwUpdateCounts       = _twUpdateCounts;
 
-// ── Lokator stacji (pozycja anteny — baza dla azymutu rotora) ────────────────
+// ── Station locator (antenna position — base for rotator azimuth) ────────────
 async function loadStationLocator() {
   const el = document.getElementById('cfg-station-locator');
   if (!el) return;
@@ -1053,7 +1056,7 @@ async function saveStationLocator() {
   }
 }
 
-// ── DeepCW — zarzadzanie modelem ─────────────────────────────────────────────
+// ── DeepCW — model management ─────────────────────────────────────────────────
 async function deepcwStatus() {
   const el = document.getElementById('deepcw-admin-status');
   if (!el) return;
