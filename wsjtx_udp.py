@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-wsjtx_udp.py — odbiornik UDP WSJT-X
+wsjtx_udp.py — WSJT-X UDP receiver
 =====================================
-WSJT-X wysyła pakiety UDP (port 2237) z dekodowaniami FT8/FT4/JT65.
-Ten moduł nasłuchuje UDP, parsuje pakiety i broadcastuje przez WebSocket
-do wszystkich połączonych klientów przeglądarki.
+WSJT-X sends UDP packets (port 2237) with FT8/FT4/JT65 decodes.
+This module listens on UDP, parses the packets, and broadcasts them over
+WebSocket to all connected browser clients.
 
-Konfiguracja WSJT-X (na komputerze przy radiu):
-  Settings → Reporting → UDP Server: localhost (lub 127.0.0.1)
+WSJT-X configuration (on the computer next to the radio):
+  Settings → Reporting → UDP Server: localhost (or 127.0.0.1)
   Settings → Reporting → UDP port:   2237
   Settings → Reporting → ✓ Accept UDP requests
 
-Protokół: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/NetworkMessage.hpp
+Protocol: https://sourceforge.net/p/wsjt/wsjtx/ci/master/tree/NetworkMessage.hpp
 """
 
 import asyncio
@@ -19,7 +19,7 @@ import struct
 import socket
 from typing import Callable, Awaitable
 
-# ── Typy pakietów WSJT-X ─────────────────────────────────────────────────────
+# ── WSJT-X packet types ──────────────────────────────────────────────────────
 MSG_HEARTBEAT   = 0
 MSG_STATUS      = 1
 MSG_DECODE      = 2
@@ -49,7 +49,7 @@ def _read_f64(buf, pos):
     return struct.unpack_from('>d', buf, pos)[0], pos + 8
 
 def _read_str(buf, pos):
-    """Qt string: 4 bajty długość (0xFFFFFFFF = null), potem UTF-8."""
+    """Qt string: 4-byte length (0xFFFFFFFF = null), then UTF-8."""
     length, pos = _read_u32(buf, pos)
     if length == 0xFFFFFFFF:
         return '', pos
@@ -57,7 +57,7 @@ def _read_str(buf, pos):
     return s, pos + length
 
 def _read_qtime(buf, pos):
-    """QTime: ms od północy."""
+    """QTime: ms since midnight."""
     ms, pos = _read_u32(buf, pos)
     h  = ms // 3600000
     m  = (ms % 3600000) // 60000
@@ -66,7 +66,7 @@ def _read_qtime(buf, pos):
 
 
 def parse_packet(data: bytes) -> dict | None:
-    """Parsuj pakiet UDP WSJT-X. Zwróć dict lub None jeśli błąd."""
+    """Parse a WSJT-X UDP packet. Returns a dict, or None on error."""
     try:
         if len(data) < 8:
             return None
@@ -77,7 +77,7 @@ def parse_packet(data: bytes) -> dict | None:
             return None
 
         msg_type, pos = _read_u32(data, pos)
-        _id, pos      = _read_str(data, pos)   # ID stacji WSJT-X
+        _id, pos      = _read_str(data, pos)   # WSJT-X station ID
 
         # ── Heartbeat ─────────────────────────────────────────────────────────
         if msg_type == MSG_HEARTBEAT:
@@ -89,12 +89,12 @@ def parse_packet(data: bytes) -> dict | None:
                 "running": True,
                 "id":      _id,
                 "version": version,
-                "text":    f"WSJT-X {version} połączony",
+                "text":    f"WSJT-X {version} connected",
             }
 
         # ── Status ────────────────────────────────────────────────────────────
         if msg_type == MSG_STATUS:
-            freq, pos      = _read_u32(data, pos)  # Hz (tylko int, nie f64!)
+            freq, pos      = _read_u32(data, pos)  # Hz (int only, not f64!)
             mode, pos      = _read_str(data, pos)
             dx_call, pos   = _read_str(data, pos)
             report, pos    = _read_str(data, pos)
@@ -124,7 +124,7 @@ def parse_packet(data: bytes) -> dict | None:
                 "text":       f"{'📡 TX' if transmit else '📻 RX'} {mode} {freq/1e6:.3f}MHz",
             }
 
-        # ── Dekodowanie ───────────────────────────────────────────────────────
+        # ── Decode ────────────────────────────────────────────────────────────
         if msg_type == MSG_DECODE:
             is_new, pos     = _read_bool(data, pos)
             time_ms, pos    = _read_u32(data, pos)
@@ -152,18 +152,18 @@ def parse_packet(data: bytes) -> dict | None:
                 "lowConf":   low_conf,
             }
 
-        # ── Wyczyść ───────────────────────────────────────────────────────────
+        # ── Clear ─────────────────────────────────────────────────────────────
         if msg_type == MSG_CLEAR:
             return {"type": "wsjtx_clear"}
 
-        # ── QSO zalogowane ────────────────────────────────────────────────────
+        # ── QSO logged ────────────────────────────────────────────────────────
         if msg_type == MSG_QSO_LOGGED:
-            # Wg WSJT-X NetworkMessage.hpp QSOLogged:
+            # Per WSJT-X's NetworkMessage.hpp QSOLogged:
             # DateTimeOff(QDateTime), Frequency(u64/u32), DXCall, DXGrid,
             # TxPower, Comments, Name, DateTimeOn, OperatorCall,
             # MyCall, MyGrid, ExchangeSent, ExchangeRcvd [, PropMode, Adif]
-            _dt_off, pos  = _read_u32(data, pos)   # DateTimeOff (msec) — pomijamy
-            _dt_off2, pos = _read_u32(data, pos)   # DateTimeOff (utcOffset) — pomijamy
+            _dt_off, pos  = _read_u32(data, pos)   # DateTimeOff (msec) — skipped
+            _dt_off2, pos = _read_u32(data, pos)   # DateTimeOff (utcOffset) — skipped
             freq, pos     = _read_u32(data, pos)   # Frequency Hz
             mode, pos     = _read_str(data, pos)   # Mode (FT8/FT4/JT65...)
             dx_call, pos  = _read_str(data, pos)   # DXCall
@@ -177,7 +177,7 @@ def parse_packet(data: bytes) -> dict | None:
             op_call, pos  = _read_str(data, pos)   # OperatorCall
             my_call, pos  = _read_str(data, pos)   # MyCall
             my_grid, pos  = _read_str(data, pos)   # MyGrid
-            # ExchangeSent i ExchangeRcvd = raporty sygnalu (np. "-12", "+05")
+            # ExchangeSent and ExchangeRcvd = signal reports (e.g. "-12", "+05")
             rst_sent, pos = _read_str(data, pos)   # ExchangeSent
             rst_rcvd, pos = _read_str(data, pos)   # ExchangeRcvd
             return {
@@ -186,8 +186,8 @@ def parse_packet(data: bytes) -> dict | None:
                 "dxGrid":   dx_grid,
                 "freq":     freq,
                 "mode":     mode,
-                "rstSent":  rst_sent,   # np. "-12 dB"
-                "rstRcvd":  rst_rcvd,   # np. "+05 dB"
+                "rstSent":  rst_sent,   # e.g. "-12 dB"
+                "rstRcvd":  rst_rcvd,   # e.g. "+05 dB"
                 "myCall":   my_call,
                 "myGrid":   my_grid,
                 "txPower":  tx_power,
@@ -196,22 +196,22 @@ def parse_packet(data: bytes) -> dict | None:
 
         # ── Close ─────────────────────────────────────────────────────────────
         if msg_type == MSG_CLOSE:
-            return {"type": "wsjtx_status", "running": False, "text": "WSJT-X rozłączony"}
+            return {"type": "wsjtx_status", "running": False, "text": "WSJT-X disconnected"}
 
     except Exception as e:
-        pass  # uszkodzony pakiet — ignoruj
+        pass  # corrupted packet — ignore
 
     return None
 
 
-# ── Serwer UDP ────────────────────────────────────────────────────────────────
+# ── UDP server ────────────────────────────────────────────────────────────────
 
 class WsjtxUdpServer:
-    """Nasłuchuje UDP od WSJT-X i broadcastuje przez WebSocket."""
+    """Listens for UDP from WSJT-X and broadcasts over WebSocket."""
 
     def __init__(self, broadcast_fn: Callable):
         """
-        broadcast_fn: async funkcja(dict) → wysyła do wszystkich WS klientów
+        broadcast_fn: async function(dict) → sends to all WS clients
         """
         self.broadcast  = broadcast_fn
         self._transport = None
@@ -224,7 +224,7 @@ class WsjtxUdpServer:
         return self._running
 
     async def start(self, port: int = 2237, host: str = "0.0.0.0") -> bool:
-        """Uruchom nasłuchiwanie UDP."""
+        """Start listening on UDP."""
         if self._running:
             await self.stop()
 
@@ -238,26 +238,26 @@ class WsjtxUdpServer:
             )
             self._transport = transport
             self._running   = True
-            print(f"[wsjtx] UDP nasłuchuje na {host}:{port}")
+            print(f"[wsjtx] UDP listening on {host}:{port}")
             print(f"[wsjtx] WSJT-X: Settings → Reporting → UDP Server: localhost, Port: {port}")
             return True
 
         except OSError as e:
-            print(f"[wsjtx] UDP błąd: {e}")
-            if e.errno == 10048 or e.errno == 98:  # port zajęty
-                print(f"[wsjtx] Port {port} zajęty — sprawdź czy inny program nie używa UDP {port}")
+            print(f"[wsjtx] UDP error: {e}")
+            if e.errno == 10048 or e.errno == 98:  # port in use
+                print(f"[wsjtx] Port {port} in use — check whether another program is using UDP {port}")
             return False
 
     async def stop(self):
-        """Zatrzymaj nasłuchiwanie."""
+        """Stop listening."""
         if self._transport:
             self._transport.close()
             self._transport = None
         self._running = False
-        print("[wsjtx] UDP zatrzymany")
+        print("[wsjtx] UDP stopped")
 
     def _on_packet(self, data: bytes, addr):
-        """Callback z protokołu UDP — parsuj i broadcastuj."""
+        """Callback from the UDP protocol — parse and broadcast."""
         self.packets_rx += 1
         msg = parse_packet(data)
         if msg:
@@ -282,4 +282,4 @@ class _UdpProtocol(asyncio.DatagramProtocol):
         self._cb(data, addr)
 
     def error_received(self, exc):
-        print(f"[wsjtx] UDP protokół błąd: {exc}")
+        print(f"[wsjtx] UDP protocol error: {exc}")

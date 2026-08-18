@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-launcher.py — punkt wejscia dla spakowanego EXE (HAM RADIO CTRL).
+launcher.py — entry point for the bundled EXE (HAM RADIO CTRL).
 
-Zadania:
-  1. Uruchomic serwer (server.main()) w watku tla.
-  2. Poczekac az serwer zacznie odpowiadac na porcie HTTPS.
-  3. Otworzyc przegladarke na https://localhost:<port>.
-  4. Trzymac proces przy zyciu (serwer dziala w tle); Ctrl+C / zamkniecie
-     okna konczy prace.
+Responsibilities:
+  1. Start the server (server.main()) in a background thread.
+  2. Wait until the server starts responding on the HTTPS port.
+  3. Open a browser at https://localhost:<port>.
+  4. Keep the process alive (the server runs in the background); Ctrl+C /
+     closing the window ends the run.
 
-Dziala tak samo w trybie dev (python launcher.py) jak i spakowanym EXE.
+Behaves the same in dev mode (python launcher.py) as in the bundled EXE.
 """
 import sys
 import time
@@ -18,12 +18,12 @@ import threading
 import webbrowser
 import os
 
-# ── Limit watkow BLAS/numpy — KRYTYCZNE dla plynnosci audio ──────────────────
-# numpy/scipy domyslnie odpalaja BLAS na WSZYSTKICH rdzeniach. Pojedyncza
-# operacja FFT (filtr CW, waterfall, resampling) potrafila na moment zajac caly
-# procesor (100% w /perf) i zatkac tor audio — stad chwilowe przyciecia dzwieku.
-# Ograniczenie do 2 watkow: FFT dalej szybkie, ale zostaje CPU dla audio/sieci.
-# MUSI byc przed pierwszym importem numpy (inaczej BLAS juz sie zainicjalizuje).
+# ── BLAS/numpy thread limit — CRITICAL for audio smoothness ──────────────────
+# numpy/scipy launch BLAS on ALL cores by default. A single FFT operation
+# (CW filter, waterfall, resampling) could briefly pin the whole CPU (100%
+# in /perf) and stall the audio path — causing momentary audio glitches.
+# Capping it at 2 threads: FFT stays fast, but CPU is left for audio/network.
+# MUST run before numpy's first import (otherwise BLAS has already initialized).
 for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
            "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
     os.environ.setdefault(_v, "2")
@@ -31,22 +31,22 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
 
 def _setup_dll_path():
     """
-    W spakowanym EXE (PyInstaller) natywne DLL (libopus, opus) trafiaja do
-    _MEIPASS, ktory NIE jest w systemowym PATH. opuslib laduje libopus przez
-    ctypes szukajac w PATH - wiec bez tego nie znajdzie DLL i audio padnie.
-    Dodajemy katalog z DLL do sciezki wyszukiwania (Windows).
+    In the bundled EXE (PyInstaller), native DLLs (libopus, opus) end up in
+    _MEIPASS, which is NOT on the system PATH. opuslib loads libopus via
+    ctypes, searching PATH - so without this it won't find the DLL and
+    audio will fail. Add the DLL directory to the search path (Windows).
     """
     if not getattr(sys, "frozen", False):
-        return  # tryb dev - DLL w systemie/venv
+        return  # dev mode - DLLs come from the system/venv
     base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
     try:
-        # Python 3.8+ na Windows: oficjalny sposob dodania sciezki DLL
+        # Python 3.8+ on Windows: the official way to add a DLL search path
         if hasattr(os, "add_dll_directory"):
             os.add_dll_directory(base)
-        # Dodatkowo do PATH (dla ctypes.util.find_library i starszych mechanizmow)
+        # Also add to PATH (for ctypes.util.find_library and older mechanisms)
         os.environ["PATH"] = base + os.pathsep + os.environ.get("PATH", "")
     except Exception as e:
-        print(f"[launcher] Ostrzezenie: nie moge ustawic sciezki DLL: {e}",
+        print(f"[launcher] Warning: could not set the DLL path: {e}",
               flush=True)
 
 
@@ -54,7 +54,7 @@ _setup_dll_path()
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 30.0) -> bool:
-    """Czekaj az port zacznie akceptowac polaczenia (serwer wstal)."""
+    """Wait until the port starts accepting connections (the server is up)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -67,53 +67,54 @@ def _wait_for_port(host: str, port: int, timeout: float = 30.0) -> bool:
 
 def _open_browser_when_ready(https_port: int, http_port: int):
     """
-    W osobnym watku: poczekaj az serwer wstanie, potem otworz przegladarke.
-    Preferuj HTTPS (mikrofon TX wymaga bezpiecznego kontekstu), z fallbackiem
-    na HTTP jesli HTTPS nie wystartuje.
+    In a separate thread: wait until the server is up, then open a browser.
+    Prefer HTTPS (the TX microphone requires a secure context), falling
+    back to HTTP if HTTPS doesn't start.
     """
-    # Najpierw probuj HTTPS
+    # Try HTTPS first
     if _wait_for_port("127.0.0.1", https_port, timeout=30.0):
         url = f"https://localhost:{https_port}"
     elif _wait_for_port("127.0.0.1", http_port, timeout=5.0):
         url = f"http://localhost:{http_port}"
     else:
-        print("[launcher] Serwer nie wstal w oczekiwanym czasie — "
-              "otworz przegladarke recznie.", flush=True)
+        print("[launcher] The server didn't come up in the expected time — "
+              "open the browser manually.", flush=True)
         return
 
-    print(f"[launcher] Serwer gotowy — otwieram przegladarke: {url}", flush=True)
-    print(f"[launcher] Jesli sie nie otworzylo, wejdz recznie: {url}", flush=True)
-    # Krotka pauza zeby serwer w pelni zainicjalizowal handlery
+    print(f"[launcher] Server ready — opening the browser: {url}", flush=True)
+    print(f"[launcher] If it didn't open, go here manually: {url}", flush=True)
+    # Brief pause so the server fully initializes its handlers
     time.sleep(0.5)
     try:
         webbrowser.open(url)
     except Exception as e:
-        print(f"[launcher] Nie moge otworzyc przegladarki: {e}", flush=True)
+        print(f"[launcher] Could not open the browser: {e}", flush=True)
 
 
 def _reset_admin():
     """
-    Awaryjny reset hasla admina do domyslnego (Admin1234!). Uzywa sciezek
-    z config (czyli trafia we wlasciwy users.json - obok EXE albo APPDATA).
-    Po resecie admin loguje sie Admin1234! i kreator znowu wymusi zmiane.
+    Emergency reset of the admin password to the default (Admin1234!). Uses
+    paths from config (so it hits the right users.json - next to the EXE
+    or in APPDATA). After the reset, log in with Admin1234! and the wizard
+    will force a password change again.
 
-    Wywolanie: HAM-RADIO-CTRL.exe --reset-admin
+    Invocation: HAM-RADIO-CTRL.exe --reset-admin
     """
     import json
     import hashlib
     try:
         from config import USR_F, ADMIN_PW
     except Exception as e:
-        print(f"[reset] Nie moge zaladowac config: {e}", flush=True)
+        print(f"[reset] Could not load config: {e}", flush=True)
         return 1
 
     def hash_pw(pw):
         return hashlib.sha256(pw.encode()).hexdigest()
 
     print("=" * 56, flush=True)
-    print("  RESET HASLA ADMINA", flush=True)
+    print("  ADMIN PASSWORD RESET", flush=True)
     print("=" * 56, flush=True)
-    print(f"Plik uzytkownikow: {USR_F}", flush=True)
+    print(f"Users file: {USR_F}", flush=True)
 
     try:
         if USR_F.exists():
@@ -121,52 +122,53 @@ def _reset_admin():
         else:
             users = []
     except Exception as e:
-        print(f"[reset] Blad odczytu users.json: {e}", flush=True)
+        print(f"[reset] Error reading users.json: {e}", flush=True)
         users = []
 
-    # Znajdz admina, zresetuj haslo + flagi
+    # Find the admin, reset the password + flags
     found = False
     for u in users:
         if u.get("role") == "admin" or u.get("username") == "admin":
             u["password"] = hash_pw(ADMIN_PW)
             u["active"] = True
-            u["pw_changed"] = False           # kreator znowu wymusi zmiane
-            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # uniewaznij stare tokeny
+            u["pw_changed"] = False           # the wizard will force a change again
+            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # invalidate old tokens
             found = True
-            print(f"[reset] Zresetowano admina '{u.get('username')}'", flush=True)
+            print(f"[reset] Reset admin '{u.get('username')}'", flush=True)
 
     if not found:
-        # Brak admina - stworz nowego
+        # No admin - create a new one
         users.append({"id": "1", "username": "admin",
                       "password": hash_pw(ADMIN_PW), "role": "admin",
                       "active": True, "pw_changed": False, "pw_ver": 1})
-        print("[reset] Utworzono nowe konto admin", flush=True)
+        print("[reset] Created a new admin account", flush=True)
 
     try:
         USR_F.write_text(json.dumps(users, indent=2, ensure_ascii=False),
                          encoding="utf-8")
-        print(f"\n[reset] GOTOWE. Zaloguj sie:", flush=True)
-        print(f"        login:  admin", flush=True)
-        print(f"        haslo:  {ADMIN_PW}", flush=True)
-        print(f"\n        Przy logowaniu kreator poprosi o nowe haslo.", flush=True)
+        print(f"\n[reset] DONE. Log in:", flush=True)
+        print(f"        username: admin", flush=True)
+        print(f"        password: {ADMIN_PW}", flush=True)
+        print(f"\n        The wizard will ask for a new password at login.", flush=True)
     except Exception as e:
-        print(f"[reset] BLAD zapisu: {e}", flush=True)
+        print(f"[reset] WRITE ERROR: {e}", flush=True)
         return 1
     return 0
 
 
 def _gen_cert():
     """
-    Wygeneruj/odnow certyfikat Let's Encrypt - tryb STANDALONE (jako admin).
-    Oddzielony od normalnego startu serwera: certbot wymaga admina, ale sam
-    serwer NIE. Dzieki temu serwer dziala normalnie (bez admina, bez krzyku
-    Defendera), a cert generujesz osobno raz na ~90 dni tym skrotem.
+    Generate/renew a Let's Encrypt certificate - STANDALONE mode (as admin).
+    Kept separate from the normal server startup: certbot requires admin
+    rights, but the server itself does NOT. This way the server runs
+    normally (no admin, no Defender warnings), and the cert is generated
+    separately roughly every ~90 days with this shortcut.
 
-    Wywolanie: HAM-RADIO-CTRL.exe --gen-cert   (uruchom jako administrator)
+    Invocation: HAM-RADIO-CTRL.exe --gen-cert   (run as administrator)
     """
     import asyncio
     print("=" * 56, flush=True)
-    print("  GENEROWANIE CERTYFIKATU LET'S ENCRYPT", flush=True)
+    print("  GENERATING LET'S ENCRYPT CERTIFICATE", flush=True)
     print("=" * 56, flush=True)
 
     # certbot on Windows must run elevated (writes the system cert store).
@@ -180,7 +182,7 @@ def _gen_cert():
         except Exception:
             _is_admin = 0
         if not _is_admin:
-            print("Brak uprawnien administratora — prosze o podniesienie (UAC)...",
+            print("No administrator rights — requesting elevation (UAC)...",
                   flush=True)
             try:
                 import ctypes
@@ -192,27 +194,27 @@ def _gen_cert():
                 _rc = ctypes.windll.shell32.ShellExecuteW(
                     None, "runas", _exe, _params, None, 1)
                 if _rc <= 32:
-                    print(f"Nie udalo sie podniesc uprawnien (kod {_rc}). "
-                          "Kliknij skrot prawym → Uruchom jako administrator.",
+                    print(f"Could not elevate (code {_rc}). "
+                          "Right-click the shortcut → Run as administrator.",
                           flush=True)
                     if getattr(sys, "frozen", False):
-                        input("\nNacisnij Enter aby zamknac...")
+                        input("\nPress Enter to close...")
                     return 1
-                # Podniesiona instancja przejmuje robote — ta konczy sie cicho.
+                # The elevated instance takes over — this one exits quietly.
                 return 0
             except Exception as e:
-                print(f"Blad podnoszenia uprawnien: {e}", flush=True)
-                print("Kliknij skrot prawym przyciskiem → Uruchom jako administrator.",
+                print(f"Elevation error: {e}", flush=True)
+                print("Right-click the shortcut → Run as administrator.",
                       flush=True)
                 if getattr(sys, "frozen", False):
-                    input("\nNacisnij Enter aby zamknac...")
+                    input("\nPress Enter to close...")
                 return 1
 
-    print("Tryb administratora OK — generuje certyfikat.", flush=True)
+    print("Administrator mode OK — generating the certificate.", flush=True)
     print("", flush=True)
 
     class _DummyHub:
-        """Minimalny hub - gen_cert_task tylko broadcastuje status."""
+        """Minimal hub - gen_cert_task only broadcasts status."""
         async def broadcast(self, msg):
             t = msg.get("type", "")
             if t == "tunnel_msg" or "msg" in msg:
@@ -224,46 +226,47 @@ def _gen_cert():
             tm = TunnelManager(_DummyHub())
             await tm.gen_cert_task()
         except Exception as e:
-            print(f"[gen-cert] BLAD: {e}", flush=True)
+            print(f"[gen-cert] ERROR: {e}", flush=True)
             return 1
         return 0
 
     code = asyncio.run(_run())
     print("", flush=True)
     if code == 0:
-        print("GOTOWE. Teraz uruchom serwer NORMALNIE (bez admina) -", flush=True)
-        print("automatycznie uzyje nowego certyfikatu.", flush=True)
+        print("DONE. Now start the server NORMALLY (without admin) -", flush=True)
+        print("it will automatically use the new certificate.", flush=True)
     if getattr(sys, "frozen", False):
-        input("\nNacisnij Enter aby zamknac...")
+        input("\nPress Enter to close...")
     return code
 
 
 def main():
-    # Awaryjny reset hasla admina: HAM-RADIO-CTRL.exe --reset-admin
+    # Emergency admin password reset: HAM-RADIO-CTRL.exe --reset-admin
     if "--reset-admin" in sys.argv:
         code = _reset_admin()
         if getattr(sys, "frozen", False):
-            input("\nNacisnij Enter aby zamknac...")
+            input("\nPress Enter to close...")
         sys.exit(code)
 
-    # Generowanie certu Let's Encrypt (jako admin): HAM-RADIO-CTRL.exe --gen-cert
+    # Generate a Let's Encrypt cert (as admin): HAM-RADIO-CTRL.exe --gen-cert
     if "--gen-cert" in sys.argv:
         sys.exit(_gen_cert())
 
-    # Porty: domyslne z config (HTTP 8000, HTTPS 8001). Importujemy PO to zeby
-    # config wykryl sciezki (frozen/nie-frozen) i wygenerowal .env przy 1. starcie.
+    # Ports: defaults from config (HTTP 8000, HTTPS 8001). Imported AFTER
+    # so config detects the paths (frozen/not frozen) and generates .env on
+    # the first run.
     try:
         from config import PORT
     except Exception:
         PORT = 8000
     http_port  = PORT
-    https_port = PORT + 1  # server.py: HTTPS = PORT+1 (8001 gdy PORT=8000)
+    https_port = PORT + 1  # server.py: HTTPS = PORT+1 (8001 when PORT=8000)
 
     print("=" * 56, flush=True)
-    print("  HAM RADIO CTRL — uruchamianie serwera...", flush=True)
+    print("  HAM RADIO CTRL — starting the server...", flush=True)
     print("=" * 56, flush=True)
 
-    # Watek otwierajacy przegladarke gdy serwer wstanie
+    # Thread that opens the browser once the server is up
     t = threading.Thread(
         target=_open_browser_when_ready,
         args=(https_port, http_port),
@@ -271,19 +274,19 @@ def main():
     )
     t.start()
 
-    # Uruchom serwer (blokuje do zamkniecia). server.main() sam robi asyncio.run.
+    # Start the server (blocks until shutdown). server.main() runs its own asyncio.run.
     try:
         import server
         server.main()
     except KeyboardInterrupt:
-        print("\n[launcher] Zatrzymano (Ctrl+C).", flush=True)
+        print("\n[launcher] Stopped (Ctrl+C).", flush=True)
     except Exception as e:
-        print(f"[launcher] BLAD serwera: {e}", flush=True)
+        print(f"[launcher] SERVER ERROR: {e}", flush=True)
         import traceback
         traceback.print_exc()
-        # W trybie EXE okno konsoli zamknie sie od razu - daj userowi zobaczyc blad
+        # In EXE mode the console window would close immediately - let the user see the error
         if getattr(sys, "frozen", False):
-            input("\nNacisnij Enter aby zamknac...")
+            input("\nPress Enter to close...")
         sys.exit(1)
 
 

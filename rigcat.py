@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-rigcat.py — sterowanie radiem przez Hamlib (rigctld) po TCP.
-Na Replit (brak rigctld) -> symulacja.
+rigcat.py — radio control via Hamlib (rigctld) over TCP.
+On Replit (no rigctld) -> simulation.
 
-UWAGA: Hamlib NIE jest biblioteka Pythona. To osobny program `rigctld(.exe)`.
-Serwer sam go uruchamia i rozmawia z nim po TCP (domyslnie 127.0.0.1:4532).
-Instalacja na Windows: pobierz Hamlib (hamlib-w64-*.zip) z hamlib.github.io,
-rozpakuj np. do C:\\hamlib. Serwer szuka rigctld.exe w:
-  - HAMLIB_PATH z .env
+NOTE: Hamlib is NOT a Python library. It's a separate program,
+`rigctld(.exe)`. The server launches it itself and talks to it over TCP
+(default 127.0.0.1:4532). Windows install: download Hamlib
+(hamlib-w64-*.zip) from hamlib.github.io, extract it e.g. to C:\\hamlib.
+The server looks for rigctld.exe in:
+  - HAMLIB_PATH from .env
   - C:\\Program Files\\hamlib-w64-4.7.1\\bin\\rigctld.exe
   - C:\\hamlib\\bin\\rigctld.exe
   - PATH (where rigctld)
@@ -45,14 +46,15 @@ class RigCAT:
                 await w.drain()
                 buf = ""
                 while "RPRT" not in buf:
-                    # 1. odczyt: pelny timeout; kolejne (gdy mamy juz dane): krotki,
-                    # by nie czekac pelnych sekund gdy rigctld nie wysyla RPRT.
+                    # 1st read: full timeout; subsequent ones (once we have
+                    # data): short, so we don't wait full seconds when
+                    # rigctld doesn't send RPRT.
                     t = timeout if not buf else 0.2
                     try:
                         chunk = await asyncio.wait_for(r.read(512), timeout=t)
                     except asyncio.TimeoutError:
                         if buf.strip():
-                            break  # mamy dane bez RPRT — wystarczy
+                            break  # we have data without RPRT — good enough
                         raise
                     if not chunk: break
                     buf += chunk.decode(errors="replace")
@@ -63,8 +65,11 @@ class RigCAT:
                     if code != 0:
                         raise IOError(f"RPRT {code}")
                 else:
-                    # akceptuj tylko kompletna odpowiedz (z koncem linii)
+                    # only accept a complete response (with a line ending)
                     if "\n" not in buf:
+                        # NOTE: kept in Polish - this message can end up in
+                        # self.last_err, which is returned to the frontend UI
+                        # (see connect()'s except block), not just logged.
                         raise asyncio.TimeoutError("niekompletna odpowiedz bez RPRT")
                     data = buf.strip()
                 return data
@@ -77,17 +82,18 @@ class RigCAT:
         try:
             r = await self._cmd("f")
         except Exception as e:
-            print(f"[rig] get_freq BLAD: {type(e).__name__}: {e}")
+            print(f"[rig] get_freq ERROR: {type(e).__name__}: {e}")
             raise
-        # rigctld 'f' zwraca sama liczbe Hz w osobnej linii — najpierw szukaj
-        # pelnej linii-liczby, dopiero potem dowolnego duzego tokenu (odpornosc).
+        # rigctld 'f' returns just the Hz number on its own line — first
+        # look for a full number-only line, then fall back to any large
+        # token (resilience).
         for l in (ln.strip() for ln in r.splitlines()):
             if re.fullmatch(r"\d{6,}", l):
                 return int(l)
         for tok in re.findall(r"\d+", r):
             if int(tok) > 100000:
                 return int(tok)
-        print(f"[rig] get_freq: nie rozpoznano czestotliwosci w odpowiedzi: {r!r}")
+        print(f"[rig] get_freq: could not recognize a frequency in the response: {r!r}")
         return self.freq
 
     async def get_mode(self) -> tuple[str, int]:
@@ -106,14 +112,15 @@ class RigCAT:
         try:
             r = await self._cmd("l STRENGTH")
         except Exception as e:
-            print(f"[rig] get_smeter BLAD: {type(e).__name__}: {e}")
+            print(f"[rig] get_smeter ERROR: {type(e).__name__}: {e}")
             return self.s_meter
         try:
             db = float(re.findall(r"-?\d+\.?\d*", r)[0])
         except Exception:
             return self.s_meter
-        # Hamlib STRENGTH = dB wzgledem S9 (0 dB = S9). Panel oczekuje S-jednostek:
-        # powyzej S9 ~6 dB/S-unit, powyzej skala "S9+xx dB" (val>9 -> (val-9)*10 dB).
+        # Hamlib STRENGTH = dB relative to S9 (0 dB = S9). The panel expects
+        # S-units: above S9 ~6 dB/S-unit, beyond that the "S9+xx dB" scale
+        # (val>9 -> (val-9)*10 dB).
         s = 9 + db / 6.0 if db <= 0 else 9 + db / 10.0
         return max(0.0, s)
 
@@ -140,26 +147,26 @@ class RigCAT:
         await self._cmd(f"S {1 if on else 0} VFOB"); self.split = on
 
     async def set_vfo(self, vfo: str):
-        """Przelacz aktywne VFO (VFOA/VFOB) — komenda Hamlib 'V'."""
+        """Switch the active VFO (VFOA/VFOB) — Hamlib command 'V'."""
         if self.sim: return
         await self._cmd(f"V {vfo}")
 
     async def set_func(self, func: str, on: bool):
-        """Wlacz/wylacz funkcje radia (NB/VOX/COMP/...) — komenda Hamlib 'U'."""
+        """Enable/disable a radio function (NB/VOX/COMP/...) — Hamlib command 'U'."""
         if self.sim: return
         await self._cmd(f"U {func} {1 if on else 0}")
 
     async def get_capabilities(self) -> dict:
         """
-        Zwroc pelna strukture odkrytych mozliwosci radia:
+        Returns the full structure of discovered radio capabilities:
         {"actions": [...], "sliders": [...], "raw_caps": {feature_id: bool}}
 
-        - raw_caps: proste bool dla rigs/features.py (freq_set, ptt, split, ...)
-        - actions: przyciski (VFO A/B, toggle funkcji NB/VOX/COMP/...)
-        - sliders: regulacje z zakresem (RFPOWER, AF, MICGAIN, ...)
+        - raw_caps: simple bools for rigs/features.py (freq_set, ptt, split, ...)
+        - actions: buttons (VFO A/B, NB/VOX/COMP/... toggles)
+        - sliders: adjustments with a range (RFPOWER, AF, MICGAIN, ...)
 
-        W trybie symulacji (self.sim) zwraca puste listy/dict — admin moze
-        recznie skonfigurowac jesli testuje bez sprzetu.
+        In simulation mode (self.sim) returns empty lists/dict — the admin
+        can configure manually when testing without hardware.
         """
         if self.sim:
             return {"actions": [], "sliders": [], "raw_caps": {}}
@@ -167,8 +174,9 @@ class RigCAT:
         return await discover_capabilities(HAMLIB_PORT)
 
     async def connect(self, cfg: dict, override: dict | None = None) -> bool:
-        # Wybierz radio: po rigId z override, inaczej pierwsze. Scal z wartosciami
-        # z formularza (override), zeby CIV/port/model z UI byly uzyte natychmiast.
+        # Pick the radio: by rigId from override, otherwise the first one.
+        # Merge in the form values (override), so CIV/port/model from the UI
+        # take effect immediately.
         rigs = cfg.get("rigs") or [{}]
         rig  = rigs[0]
         if override:
@@ -179,7 +187,7 @@ class RigCAT:
         model = str(rig.get("model", ENV.get("RIG1_MODEL", "3073")))
         port  = rig.get("port",  ENV.get("RIG1_PORT", "COM3"))
         speed = str(rig.get("speed", ENV.get("RIG1_SPEED", "19200")))
-        # Znajdz rigctld
+        # Find rigctld
         ham = HAMLIB
         self.rigctld_found = False
         if Path(ham).exists():
@@ -190,7 +198,7 @@ class RigCAT:
                 r"C:\Program Files\hamlib-w64-4.7.1\bin\rigctld.exe",
                 r"C:\hamlib\bin\rigctld.exe",
             ]
-            # Dowolna wersja hamlib-w64-* w Program Files
+            # Any hamlib-w64-* version in Program Files
             _cands += sorted(_glob.glob(r"C:\Program Files\hamlib-*\bin\rigctld.exe"), reverse=True)
             _cands += sorted(_glob.glob(r"C:\hamlib*\bin\rigctld.exe"), reverse=True)
             for _c in _cands:
@@ -204,7 +212,7 @@ class RigCAT:
                         self.rigctld_found = True
                 except: pass
         self.rigctld_path = ham
-        print(f"[rig] rigctld: {ham} ({'znaleziony' if self.rigctld_found else 'NIE znaleziony'})")
+        print(f"[rig] rigctld: {ham} ({'found' if self.rigctld_found else 'NOT found'})")
         if not self.rigctld_found:
             self.last_err = ("Hamlib (rigctld.exe) nie znaleziony. Zainstaluj Hamlib dla Windows "
                              "i rozpakuj do C:\\hamlib (lub Program Files), albo dodaj rigctld do PATH.")
@@ -222,11 +230,11 @@ class RigCAT:
                              .replace("h", "").replace("H", ""))
                 cmd += [f"--set-conf=civ_addr=0x{civ_clean}"]
                 print(f"[rig] CIV addr: 0x{civ_clean}")
-            # Verbose rigctld -> plik rigctld.log (diagnostyka, gdy radio nie odpowiada)
+            # Verbose rigctld -> rigctld.log file (diagnostics, for when the radio doesn't respond)
             cmd += ["-vvvvv"]
             print(f"[rig] CMD: {' '.join(cmd)}")
-            print(f"[rig] Log rigctld: {RIGCTLD_LOG}")
-            # Czy rigctld juz dziala na tym porcie (np. z N1MM)?
+            print(f"[rig] rigctld log: {RIGCTLD_LOG}")
+            # Is rigctld already running on this port (e.g. started by N1MM)?
             _port_busy = False
             try:
                 _t = socket.socket(); _t.settimeout(0.5)
@@ -234,7 +242,7 @@ class RigCAT:
                 _t.close()
             except: pass
             if _port_busy:
-                print(f"[rig] Port {HAMLIB_PORT} zajety — lacze z istniejacym rigctld")
+                print(f"[rig] Port {HAMLIB_PORT} in use — connecting to the existing rigctld")
             else:
                 try:
                     self._logf = open(RIGCTLD_LOG, "wb")
@@ -246,11 +254,14 @@ class RigCAT:
                     stderr=(self._logf or subprocess.PIPE))
                 await asyncio.sleep(3.5)
                 if self._proc.poll() is not None:
+                    # NOTE: kept in Polish - this text can end up in
+                    # self.last_err via the except block below, which is
+                    # returned to the frontend UI, not just logged.
                     se = self._rigctld_log_tail() or "rigctld zamknal sie bez komunikatu"
                     raise IOError(f"rigctld zakonczyl sie: {se}")
-                print(f"[rig] rigctld uruchomiony na porcie {HAMLIB_PORT}")
+                print(f"[rig] rigctld started on port {HAMLIB_PORT}")
             self.sim = False
-            # Radio moze potrzebowac chwili — kilka prob odczytu czestotliwosci
+            # The radio may need a moment — a few attempts at reading the frequency
             last_exc = None
             for _try in range(3):
                 try:
@@ -273,12 +284,14 @@ class RigCAT:
             tail = self._rigctld_log_tail()
             base = f"{type(e).__name__}: {e}".strip()
             if isinstance(e, (asyncio.TimeoutError, TimeoutError)) and not str(e):
+                # NOTE: kept in Polish - assigned to self.last_err below,
+                # which is returned to the frontend UI, not just logged.
                 base = ("Radio nie odpowiada (timeout). rigctld dziala, ale nie dostaje "
                         "odpowiedzi z radia — sprawdz: zwolnij COM (zamknij RCForb/inny program), "
                         "CI-V baud w radiu = 19200, model, CI-V address.")
             self.last_err  = base + (f"\n--- rigctld.log ---\n{tail}" if tail else "")
             self.last_msg  = ""
-            print(f"[rig] BLAD polaczenia ({type(e).__name__}): {e}")
+            print(f"[rig] connection ERROR ({type(e).__name__}): {e}")
             if tail:
                 print(f"[rig] rigctld.log:\n{tail}")
             self.sim       = True
