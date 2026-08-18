@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-audio_stream.py — Opus audio streaming przez WebSocket
-RX: karta dzwiekowa → PyAudio → opuslib → binary WS → przegladarka
-TX: przegladarka → binary WS (WebM) → ffmpeg → PyAudio → karta dzwiekowa
+audio_stream.py — Opus audio streaming over WebSocket
+RX: sound card -> PyAudio -> opuslib -> binary WS -> browser
+TX: browser -> binary WS (WebM) -> ffmpeg -> PyAudio -> sound card
 """
 import asyncio, threading, time, struct, queue
 import numpy as np
@@ -12,7 +12,7 @@ try:
     _PA = True
 except ImportError:
     _PA = False
-    print("[audio] pyaudio niedostepne")
+    print("[audio] pyaudio unavailable")
 
 try:
     import opuslib, opuslib.api
@@ -20,7 +20,7 @@ try:
     print("[audio] opuslib OK")
 except Exception as e:
     _OPUS = False
-    print(f"[audio] opuslib niedostepne: {e}")
+    print(f"[audio] opuslib unavailable: {e}")
 
 OPUS_RATE   = 48000
 OPUS_CH     = 1
@@ -37,7 +37,7 @@ def _make_decoder():
 
 
 def _make_decoder_stereo():
-    """Dekoder stereo dla TX — MediaRecorder enkoduje 2 kanaly nawet z mono mikrofonu."""
+    """Stereo decoder for TX — MediaRecorder encodes 2 channels even from a mono mic."""
     if not _OPUS: return None
     try:
         return opuslib.Decoder(OPUS_RATE, 2)
@@ -46,7 +46,7 @@ def _make_decoder_stereo():
 
 
 def _webm_to_pcm(webm_data: bytes, volume: float = 1.0) -> bytes:
-    """Dekoduj WebM/Opus do PCM przez ffmpeg."""
+    """Decode WebM/Opus to PCM via ffmpeg."""
     import subprocess as _sp
     af = f"volume={volume}" if volume != 1.0 else "anull"
     for exe in ['ffmpeg', r'ffmpeg.exe']:
@@ -75,39 +75,41 @@ class AudioStream:
         self._rx_frames = OPUS_FRAMES
         self.tx_active  = False
         self._tx_stream = None; self._tx_thread = None
-        # Kolejka PCM do TX playback watku.
-        # FT8 = 12.64s = 632 kawałki po 20ms. FT4 = 4.48s = 224 kawałki.
-        # SSB/CW przez WebRTC = strumien ciagly (male porcje).
-        # maxsize=800 = 16s bufora, mieści FT8 z bezpiecznym marginesem.
-        # Przy stringu 12s FT8 wysylamy WSZYSTKO naraz (nie async trickle),
-        # wiec kolejka MUSI być wystarczająco duża, inaczej queue.Full drop-old
-        # zaczyna wyrzucać dane audio -> radio ma PTT ale nic nie leci na anteny.
+        # Queue of PCM for the TX playback thread.
+        # FT8 = 12.64s = 632 chunks of 20ms. FT4 = 4.48s = 224 chunks.
+        # SSB/CW over WebRTC = continuous stream (small chunks).
+        # maxsize=800 = 16s of buffer, fits FT8 with a safe margin.
+        # For a 12s FT8 transmission we push EVERYTHING at once (not an async
+        # trickle), so the queue MUST be large enough — otherwise the
+        # anti-lag drop-old logic starts discarding audio data and the radio
+        # keys PTT but nothing actually goes out on the air.
         self._webrtc_pcm_queue = queue.Queue(maxsize=800)
-        # Tryb bulk TX (FT8/FT4): caly sygnal wrzucany do kolejki NARAZ
-        # (200+ ramek). Anty-lag drop NIE MOZE wtedy dzialac - wyrzucalby
-        # zamierzone buforowanie jako "zaleglosc" (drop 239/248 ramek =
-        # 160ms bzyku zamiast 4.94s sygnalu = moc/ALC zero, nic nie wychodzi
-        # w eter). Ustawiane przez webapp na czas transmisji FT8/FT4.
+        # Bulk TX mode (FT8/FT4): the whole signal is pushed into the queue
+        # AT ONCE (200+ frames). The anti-lag drop must NOT run then — it
+        # would treat the intentional buffering as "backlog" (dropping
+        # 239/248 frames = 160ms of buzz instead of a 4.94s signal =
+        # zero power/ALC, nothing goes out on the air). Set by webapp for
+        # the duration of an FT8/FT4 transmission.
         self.bulk_tx = False
         self._webrtc_thread = None
         self._tx_dec    = None
         self._webm_buf  = b""
         self._pa = None
         self.rx_frames = 0; self.tx_frames = 0; self.tx_frames_received = 0
-        # Bufor surowego PCM dla dekodera CW (DeepCW), niezalezny od buforow
-        # waterfall — kazdy oprozniany na wlasnym cyklu przez swojego konsumenta.
+        # Raw PCM buffer for the CW decoder (DeepCW), independent of the
+        # waterfall buffers — each is drained on its own cycle by its own consumer.
         self._cw_rx_buf = bytearray()
         self._cw_rx_buf_lock = threading.Lock()
-        self.cw_rx_enabled = False      # wlaczane gdy operator otworzy dekoder
-        # Osobny, MALY bufor do waterfall (podglad widmowy) — pobierany czesto
-        # (co ~0.5-1s), niezalezny od cyklu dekodowania FT8 co 15s.
+        self.cw_rx_enabled = False      # enabled when the operator opens the decoder
+        # Separate, SMALL buffer for the waterfall (spectrum preview) —
+        # polled often (every ~0.5-1s), independent of the 15s FT8 decode cycle.
         self._waterfall_buf = bytearray()
         self._waterfall_buf_lock = threading.Lock()
 
     def set_loop(self, loop): self.loop = loop
 
     def _pa_inst(self):
-        if not _PA: raise RuntimeError("pyaudio niedostepne")
+        if not _PA: raise RuntimeError("pyaudio unavailable")
         if self._pa is None: self._pa = pyaudio.PyAudio()
         return self._pa
 
@@ -151,10 +153,10 @@ class AudioStream:
             self.rx_active = True; self.rx_frames = 0
             self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True, name="audio-rx")
             self._rx_thread.start()
-            print(f"[audio] RX START | '{device or 'domyslne'}' | {use_rate}Hz {use_ch}ch")
+            print(f"[audio] RX START | '{device or 'default'}' | {use_rate}Hz {use_ch}ch")
             return True
         except Exception as e:
-            print(f"[audio] RX blad: {e}"); self.rx_active = False; return False
+            print(f"[audio] RX error: {e}"); self.rx_active = False; return False
 
     def stop_rx(self):
         self.rx_active = False
@@ -165,10 +167,10 @@ class AudioStream:
         print("[audio] RX STOP")
 
     def _rx_loop(self):
-        """Wlasny odczyt PyAudio, ROWNOLEGLY do niezaleznego przechwytywania
-        Rust/cpal — realne sluchanie idzie bezposrednio przegladarka<->Rust
-        WS (patrz CLAUDE.md), ta petla zasila WYLACZNIE dekoder CW (DeepCW)
-        i podglad waterfall."""
+        """Our own PyAudio read loop, running IN PARALLEL to the independent
+        Rust/cpal capture — the actual monitoring path goes directly
+        browser<->Rust WS (see CLAUDE.md), this loop feeds ONLY the CW
+        decoder (DeepCW) and the waterfall preview."""
         log_n = int(OPUS_RATE / OPUS_FRAMES * 10)
         while self.rx_active:
             try:
@@ -180,15 +182,16 @@ class AudioStream:
                     mono_samples = [(samples[i] + samples[i+1]) // 2 for i in range(0, len(samples)-1, 2)]
                     mono_native = struct.pack(f"<{len(mono_samples)}h", *mono_samples)
 
-                # Bufor dla dekodera CW — SUROWY PCM prosto z karty.
+                # Buffer for the CW decoder — RAW PCM straight from the card.
                 #
-                # Wczesniej DeepCW dostawal audio z przegladarki, czyli PO
-                # kompresji Opus. Kodek stratny rozmywa krawedzie kluczowania
-                # i podbija szum w przerwach: zmierzony kontrast obwiedni
-                # spadal do 6.4x, podczas gdy model potrzebuje >20x. Stad kasza
-                # w dekodowaniu mimo czystego, mocnego sygnalu — audio nagrane
-                # mikrofonem z powietrza (bez kodeka) czyta sie lepiej wlasnie
-                # dlatego, ze nigdy nie przechodzi przez kompresje stratna.
+                # Previously DeepCW received audio from the browser, i.e.
+                # AFTER Opus compression. The lossy codec blurs the keying
+                # edges and raises the noise floor in the gaps: measured
+                # envelope contrast dropped to 6.4x, while the model needs
+                # >20x. Hence garbled decoding despite a clean, strong
+                # signal — audio captured straight from the microphone
+                # (no codec) decodes better precisely because it never
+                # goes through lossy compression.
                 if getattr(self, "cw_rx_enabled", False):
                     with self._cw_rx_buf_lock:
                         self._cw_rx_buf.extend(mono_native)
@@ -198,30 +201,31 @@ class AudioStream:
 
                 with self._waterfall_buf_lock:
                     self._waterfall_buf.extend(mono_native)
-                    max_wf_bytes = int(self._rx_rate * 3 * 2)  # max ~3s zapasu
+                    max_wf_bytes = int(self._rx_rate * 3 * 2)  # max ~3s of headroom
                     if len(self._waterfall_buf) > max_wf_bytes:
                         del self._waterfall_buf[:len(self._waterfall_buf) - max_wf_bytes]
 
                 self.rx_frames += 1
                 if self.rx_frames % log_n == 0:
-                    # RMS liczone tanio przez numpy (bylo: petla Pythona
-                    # sum(s*s) po 960 probkach — zbedna praca co log).
+                    # RMS computed cheaply via numpy (used to be a Python
+                    # loop summing s*s over 960 samples — unnecessary work
+                    # on every log tick).
                     _a = np.frombuffer(mono_native, dtype=np.int16)
                     rms = int(np.sqrt(np.mean(_a.astype(np.float32)**2))) if _a.size else 0
-                    print(f"[audio] RX {self.rx_frames} ramek | RMS={rms}")
+                    print(f"[audio] RX {self.rx_frames} frames | RMS={rms}")
             except OSError as e:
                 if self.rx_active: print(f"[audio] RX IO: {e}"); time.sleep(0.1)
             except Exception as e:
                 if self.rx_active: print(f"[audio] RX err: {e}")
-        print(f"[audio] Watek RX koniec — {self.rx_frames} ramek")
+        print(f"[audio] RX thread ended — {self.rx_frames} frames")
 
     def pop_waterfall_chunk(self):
         """
-        Wyciaga i czysci maly bufor waterfall. Zwraca (samples, sample_rate)
-        gdzie samples to numpy float64 znormalizowany -1..1 przy NATYWNEJ
-        stawce (bez resamplingu do 12000Hz — waterfall.compute_waterfall_column
-        przyjmuje sample_rate jako parametr). Zwraca (None, None) jesli
-        RX nieaktywne lub bufor pusty.
+        Drains and clears the small waterfall buffer. Returns (samples, sample_rate)
+        where samples is numpy float64 normalized to -1..1 at the NATIVE
+        rate (no resampling to 12000Hz — waterfall.compute_waterfall_column
+        takes sample_rate as a parameter). Returns (None, None) if
+        RX is inactive or the buffer is empty.
         """
         if not self.rx_active:
             return None, None
@@ -235,14 +239,14 @@ class AudioStream:
             samples = np.frombuffer(raw_bytes, dtype='<i2').astype(np.float64) / 32768.0
             return samples, self._rx_rate
         except Exception as e:
-            print(f"[audio] pop_waterfall_chunk blad: {e}")
+            print(f"[audio] pop_waterfall_chunk error: {e}")
             return None, None
 
     def pop_cw_rx_audio(self, target_rate: int = 3200):
-        """Zwraca surowy PCM dla dekodera CW, zresamplowany do target_rate.
+        """Returns raw PCM for the CW decoder, resampled to target_rate.
 
-        Sygnal pochodzi PROSTO Z KARTY — nie przechodzi przez kodek Opus,
-        wiec zachowuje ostre krawedzie kluczowania, ktorych potrzebuje model.
+        The signal comes STRAIGHT FROM THE CARD — it never passes through
+        the Opus codec, so it keeps the sharp keying edges the model needs.
         """
         if not self.rx_active or not self.cw_rx_enabled:
             return None
@@ -254,11 +258,12 @@ class AudioStream:
         try:
             import numpy as np
             samples = np.frombuffer(raw_bytes, dtype='<i2').astype(np.float32) / 32768.0
-            # Zwracamy surowe probki i ich stawke — filtr antyaliasingowy
-            # i decymacje robi silnik CW (ma stan miedzy wywolaniami).
+            # Return raw samples and their rate — the anti-aliasing filter
+            # and decimation are handled by the CW engine (it holds state
+            # across calls).
             return samples, self._rx_rate
         except Exception as e:
-            print(f"[audio] pop_cw_rx_audio blad: {e}", flush=True)
+            print(f"[audio] pop_cw_rx_audio error: {e}", flush=True)
             return None
 
     def start_tx(self, device=None):
@@ -269,7 +274,7 @@ class AudioStream:
             self._tx_dec = _make_decoder_stereo()
             self._webm_buf = b""
             kw = dict(format=pyaudio.paInt16, channels=1, rate=OPUS_RATE,
-                      output=True, frames_per_buffer=OPUS_FRAMES * 2)  # 40ms bufor
+                      output=True, frames_per_buffer=OPUS_FRAMES * 2)  # 40ms buffer
             if idx is not None: kw["output_device_index"] = idx
             self._tx_stream = pa.open(**kw)
             self.tx_active = True; self.tx_frames = 0; self.tx_frames_received = 0
@@ -277,10 +282,10 @@ class AudioStream:
             self._tx_thread.start()
             self._webrtc_thread = threading.Thread(target=self._webrtc_playback_loop, daemon=True, name="audio-tx-webrtc")
             self._webrtc_thread.start()
-            print(f"[audio] TX START | '{device or 'domyslne'}'")
+            print(f"[audio] TX START | '{device or 'default'}'")
             return True
         except Exception as e:
-            print(f"[audio] TX blad: {e}"); self.tx_active = False; return False
+            print(f"[audio] TX error: {e}"); self.tx_active = False; return False
 
     def stop_tx(self):
         self.tx_active = False
@@ -296,48 +301,51 @@ class AudioStream:
 
     def feed_tx_pcm(self, pcm: bytes):
         """
-        Przyjmij juz zdekodowany PCM int16 mono @ 48kHz (np. z WebRTC lub FT8).
-        NIE blokuje event loop — kolejkuje do osobnego watku odtwarzajacego.
+        Accepts already-decoded int16 mono PCM @ 48kHz (e.g. from WebRTC or FT8).
+        Does NOT block the event loop — queues to a separate playback thread.
 
-        UWAGA (fix bug 2026-07-04): stara logika przy pelnej kolejce robila
-        drop-old (usuwaj najstarsze, dodaj nowe). To dziala dla live audio
-        (SSB WebRTC) gdzie preferujesz świezy strumien, ale KATASTROFALNIE
-        dla FT8/FT4 gdzie musisz odtworzyc dokladnie ten sam sekwencyjny
-        strumien. Efekt: FT8 12s slot z PTT ON, ale w eter szly tylko
-        pierwsze ~2s audio (100 ramek maxsize) — reszta wyrzucona.
+        NOTE (fix, 2026-07-04): the old logic did drop-old on a full queue
+        (discard the oldest, add the newest). That works for live audio
+        (SSB WebRTC) where you prefer a fresh stream, but is CATASTROPHIC
+        for FT8/FT4 where you must play back exactly the same sequential
+        stream. Effect: a 12s FT8 slot with PTT ON, but only the first
+        ~2s of audio (100-frame maxsize) actually went out on the air —
+        the rest was discarded.
 
-        Nowa logika: log warning ale nadal drop, bo maxsize=800 juz mieści
-        FT8 z zapasem. Warning pokazuje jesli cos naprawde pojdzie nie tak.
+        New logic: log a warning but still drop, since maxsize=800 already
+        fits FT8 with margin. The warning fires if something actually goes wrong.
         """
         if not self.tx_active or not pcm:
             return
         try:
             self._webrtc_pcm_queue.put_nowait(pcm)
         except queue.Full:
-            # Kolejka pelna — nie powinno sie zdarzyc przy maxsize=800.
-            # Jesli sie zdarza -> playback watek zablokowany, karta zapchana,
-            # lub ktos wysyla wiele godzin audio naraz.
-            print(f"[audio] UWAGA: kolejka TX PCM pelna ({self._webrtc_pcm_queue.qsize()}), "
-                  f"drop kawalka {len(pcm)}B — audio moze mieć luki!")
+            # Queue full — shouldn't happen with maxsize=800. If it does,
+            # the playback thread is stuck, the card is jammed, or someone
+            # is sending hours of audio at once.
+            print(f"[audio] WARNING: TX PCM queue full ({self._webrtc_pcm_queue.qsize()}), "
+                  f"dropping chunk {len(pcm)}B — audio may have gaps!")
             try: self._webrtc_pcm_queue.get_nowait()
             except: pass
             try: self._webrtc_pcm_queue.put_nowait(pcm)
             except: pass
 
     def _webrtc_playback_loop(self):
-        """Watek odtwarzajacy PCM z kolejki WebRTC na karte audio."""
-        print("[audio] WebRTC playback watek start")
+        """Thread that plays PCM from the WebRTC queue out to the sound card."""
+        print("[audio] WebRTC playback thread start")
         while self.tx_active:
             try:
                 pcm = self._webrtc_pcm_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            # Gdy kolejka narosla (karta odtwarza wolniej niz WebRTC produkuje),
-            # wyrzuc zalegle ramki i wez najswiezsza. Bez tego bufor puchnie do
-            # setek ramek = wiele sekund opoznienia, audio rozjechane. Lepiej
-            # stracic ulamek dzwieku niz miec 9s lagu. Prog 8 ramek = ~160ms.
-            # WYJATEK: bulk_tx (FT8/FT4) - caly sygnal celowo w kolejce naraz,
-            # dropowanie NISZCZYLO transmisje (zostawalo 160ms z 4.94s).
+            # When the queue has grown (card plays back slower than WebRTC
+            # produces), discard the backlog and take the freshest frame.
+            # Without this the buffer swells to hundreds of frames = many
+            # seconds of lag, audio out of sync. Better to lose a fraction
+            # of sound than have 9s of lag. Threshold 8 frames = ~160ms.
+            # EXCEPTION: bulk_tx (FT8/FT4) - the whole signal is deliberately
+            # queued at once, dropping would DESTROY the transmission
+            # (only 160ms out of 4.94s would remain).
             _drop = 0
             while not self.bulk_tx and self._webrtc_pcm_queue.qsize() > 8:
                 try:
@@ -346,16 +354,18 @@ class AudioStream:
                 except queue.Empty:
                     break
             if _drop and self.tx_frames % 200 == 0:
-                print(f"[audio] TX drop {_drop} zaleglych ramek (anty-lag)")
+                print(f"[audio] TX dropped {_drop} backlog frames (anti-lag)")
             if not self._tx_stream:
                 continue
             try:
-                # bulk_tx=True -> to jest PCM z enkodera FT8/FT4 (ton o stalej
-                # amplitudzie, wlasny mnoznik). bulk_tx=False -> to jest zdekodowane
-                # audio z mikrofonu WebRTC (SSB/glos) - inna charakterystyka
-                # sygnalu (juz blisko pelnej skali), wlasny, osobny mnoznik. Bez
-                # tego rozdzielenia jeden suwak musial kompromisowo obslugiwac
-                # oba tak rozne sygnaly, utrudniajac trafienie w prawidlowe ALC.
+                # bulk_tx=True -> this is PCM from the FT8/FT4 encoder
+                # (constant-amplitude tone, own multiplier). bulk_tx=False
+                # -> this is decoded audio from the WebRTC microphone
+                # (SSB/voice) - a different signal characteristic (already
+                # close to full scale), its own separate multiplier. Without
+                # this split a single slider would have to compromise
+                # between two such different signals, making it hard to
+                # hit the right ALC.
                 _vol_key = "txVolume" if self.bulk_tx else "txVolumeSsb"
                 vol_scale = min(float(self.cfg.get(_vol_key, 1.0)), 8.0)
                 if vol_scale != 1.0:
@@ -373,22 +383,23 @@ class AudioStream:
                 self._tx_stream.write(pcm, exception_on_underflow=False)
                 self.tx_frames += 1
                 if self.tx_frames % 100 == 0:
-                    print(f"[audio] TX (WebRTC) odtworzono {self.tx_frames} ramek "
-                          f"(kolejka={self._webrtc_pcm_queue.qsize()})")
+                    print(f"[audio] TX (WebRTC) played {self.tx_frames} frames "
+                          f"(queue={self._webrtc_pcm_queue.qsize()})")
             except OSError as e:
                 print(f"[audio] TX PCM write err: {e}")
-        print(f"[audio] WebRTC playback watek koniec — {self.tx_frames} ramek")
+        print(f"[audio] WebRTC playback thread ended — {self.tx_frames} frames")
 
     def _flush_webm(self):
         webm = self._webm_buf
         self._webm_buf = b""
-        # Ta sciezka to WYLACZNIE zdekodowane audio z mikrofonu WebRTC (FT8/FT4
-        # idzie inna droga - feed_tx_pcm, patrz webapp.py) - zawsze txVolumeSsb.
+        # This path is EXCLUSIVELY decoded audio from the WebRTC microphone
+        # (FT8/FT4 takes a different path - feed_tx_pcm, see webapp.py) -
+        # always txVolumeSsb.
         vol = float(self.cfg.get("txVolumeSsb", 1.0))
         print(f"[audio] TX flush: {len(webm)}B WebM, volume={vol}x")
         pcm_data = _webm_to_pcm(webm, vol)
         if not pcm_data:
-            print("[audio] TX flush: ffmpeg nie zwrocil PCM")
+            print("[audio] TX flush: ffmpeg returned no PCM")
             return
         frame_size = OPUS_FRAMES * 2
         pos = 0
@@ -398,7 +409,7 @@ class AudioStream:
                 self.tx_frames += 1
             except OSError: break
             pos += frame_size
-        print(f"[audio] TX flush: odtworzono {self.tx_frames} ramek ({self.tx_frames*20}ms)")
+        print(f"[audio] TX flush: played {self.tx_frames} frames ({self.tx_frames*20}ms)")
 
     async def feed_tx(self, data):
         if not self.tx_active or not data: return
@@ -406,23 +417,23 @@ class AudioStream:
 
         self._webm_buf += data
 
-        # Debug pierwszych kilku chunków
+        # Debug for the first few chunks
         if self.tx_frames_received <= 5:
             print(f"[audio] TX chunk #{self.tx_frames_received}: {len(data)}B "
                   f"hex={data[:16].hex()} buf={len(self._webm_buf)}B")
 
-        # Wyciagnij ramki Opus z bufora WebM i dekoduj przez opuslib
+        # Extract Opus frames from the WebM buffer and decode via opuslib
         frames, consumed = extract_opus_frames(self._webm_buf)
         if self.tx_frames_received <= 8:
             stuck_hex = self._webm_buf[consumed:consumed+12].hex() if consumed < len(self._webm_buf) else ""
             print(f"[audio] TX parser: frames={len(frames)} consumed={consumed}/{len(self._webm_buf)} "
                   f"stuck_at_hex={stuck_hex}")
-        # Przytnij bufor nawet jesli frames puste
+        # Trim the buffer even if frames is empty
         if consumed > 0:
             self._webm_buf = self._webm_buf[consumed:]
-        # Anty-deadlock: jesli bufor rosnie bez postepu, wymus przesuniecie
+        # Anti-deadlock: if the buffer grows with no progress, force it forward
         elif len(self._webm_buf) > 4096:
-            if self.tx_frames_received % 20 == 0:  # nie zaśmiecaj logów
+            if self.tx_frames_received % 20 == 0:  # don't flood the logs
                 print(f"[audio] TX deadlock: buf={len(self._webm_buf)}B "
                       f"start={self._webm_buf[:16].hex()}")
             self._webm_buf = self._webm_buf[1:]
@@ -430,7 +441,7 @@ class AudioStream:
             return
 
         dec       = self._tx_dec
-        # feed_tx() dekoduje Opus z WebM od mikrofonu WebRTC - to zawsze SSB/glos.
+        # feed_tx() decodes Opus from WebM coming from the WebRTC microphone - always SSB/voice.
         vol_scale = min(float(self.cfg.get("txVolumeSsb", 1.0)), 8.0)
 
         for opus_frame in frames:
@@ -450,7 +461,7 @@ class AudioStream:
                     if pcm is None:
                         continue
 
-                    # Konwertuj stereo -> mono (usrednij L+R)
+                    # Convert stereo -> mono (average L+R)
                     n_stereo_samples = len(pcm) // 4
                     if n_stereo_samples > 0:
                         try:
@@ -467,7 +478,7 @@ class AudioStream:
                 if not pcm:
                     continue
                 n_samples = len(pcm) // 2
-                # Wzmocnienie - numpy jesli dostepne
+                # Gain — numpy if available
                 if vol_scale != 1.0 and n_samples > 0:
                     try:
                         import numpy as np
@@ -485,16 +496,16 @@ class AudioStream:
                 self._tx_stream.write(pcm, exception_on_underflow=False)
                 self.tx_frames += 1
                 if self.tx_frames % 100 == 0:
-                    print(f"[audio] TX odtworzono {self.tx_frames} ramek")
+                    print(f"[audio] TX played {self.tx_frames} frames")
             except Exception as e:
                 if "corrupted" not in str(e).lower():
                     print(f"[audio] TX decode err: {e}")
 
     def _tx_loop(self):
-        print("[audio] Watek TX gotowy (zbiera WebM, odtwarza po PTT OFF)")
+        print("[audio] TX thread ready (collecting WebM, plays back after PTT OFF)")
         while self.tx_active:
             time.sleep(0.05)
-        print(f"[audio] Watek TX koniec — {self.tx_frames} ramek")
+        print(f"[audio] TX thread ended — {self.tx_frames} frames")
 
     def get_status(self):
         return {
@@ -520,7 +531,7 @@ class AudioStream:
 # ── WebM/Opus parser ──────────────────────────────────────────────────────────
 
 def _vint_size(data, pos):
-    """EBML variable-length integer — zwraca (wartosc, nowa_pozycja)."""
+    """EBML variable-length integer — returns (value, new_pos)."""
     if pos >= len(data): return None, pos
     b = data[pos]
     if   b & 0x80: return b & 0x7F, pos+1
@@ -549,7 +560,7 @@ def _vint_size(data, pos):
         for i in range(7): v = (v << 8) | data[pos+i]
         return v & 0x01FFFFFFFFFFFF, pos+7
     elif b & 0x01:
-        # 8-bajtowy vint — obejmuje "unknown size" 0x01FFFFFFFFFFFFFF
+        # 8-byte vint — covers the "unknown size" 0x01FFFFFFFFFFFFFF
         if pos+7 >= len(data): return None, pos
         v = 0
         for i in range(8): v = (v << 8) | data[pos+i]
@@ -558,7 +569,7 @@ def _vint_size(data, pos):
 
 
 def _ebml_id_len(b):
-    """Ile bajtow zajmuje EBML ID zaczynajacy sie od bajtu b."""
+    """Number of bytes occupied by the EBML ID starting with byte b."""
     if   b & 0x80: return 1
     elif b & 0x40: return 2
     elif b & 0x20: return 3
@@ -567,19 +578,19 @@ def _ebml_id_len(b):
 
 
 def extract_opus_frames(webm_buf: bytes):
-    """Wyciagnij ramki Opus z bufora WebM. Zwraca (frames, consumed_pos)."""
+    """Extract Opus frames from a WebM buffer. Returns (frames, consumed_pos)."""
     frames  = []
     pos     = 0
     n       = len(webm_buf)
     UNKNOWN = 0x00FFFFFFFFFFFFFF
-    last_consumed = 0  # pozycja po ostatniej kompletnej ramce
+    last_consumed = 0  # position after the last complete frame
 
-    # Kontenery z nieznanym rozmiarem (streaming) — wchodzimy w zawartosc
+    # Containers with unknown size (streaming) — descend into their content
     STREAM_CONTAINERS = {
         b'\x1f\x43\xb6\x75',  # Cluster
         b'\x18\x53\x80\x67',  # Segment
     }
-    # Elementy ze znanym rozmiarem ktore trzeba POMINAC (nie zawieraja Opus)
+    # Elements with known size that must be SKIPPED (contain no Opus)
     SKIP_CONTAINERS = {
         b'\x1a\x45\xdf\xa3',  # EBML Header
         b'\x16\x54\xae\x6b',  # Tracks
@@ -594,13 +605,13 @@ def extract_opus_frames(webm_buf: bytes):
                 pos += 4
                 size, pos = _vint_size(webm_buf, pos)
                 if size is None: break
-                continue  # wejdz w zawartosc (nieznany lub znany rozmiar)
+                continue  # descend into its content (unknown or known size)
             if id4 in SKIP_CONTAINERS:
                 pos += 4
                 size, pos = _vint_size(webm_buf, pos)
                 if size is None: break
                 if size == UNKNOWN or pos + size > n:
-                    break  # nie mozemy pominac — czekaj na wiecej danych
+                    break  # can't skip it — wait for more data
                 pos += size
                 last_consumed = pos
                 continue
@@ -613,7 +624,7 @@ def extract_opus_frames(webm_buf: bytes):
             pos += 1
             size, pos = _vint_size(webm_buf, pos)
             if size is None or size < 4 or pos + size > n:
-                break  # niepelna ramka — czekaj na wiecej danych
+                break  # incomplete frame — wait for more data
             block = webm_buf[pos:pos+size]; pos += size
             p = 0
             _, p = _vint_size(block, p)
@@ -667,11 +678,11 @@ def extract_opus_frames(webm_buf: bytes):
             pos += 1
             size, pos = _vint_size(webm_buf, pos)
             if size is None: break
-            if size == UNKNOWN: 
+            if size == UNKNOWN:
                 last_consumed = pos
                 continue
             if pos + size > n:
-                break  # niepelny element
+                break  # incomplete element
             pos += size
             last_consumed = pos
             continue
@@ -689,12 +700,11 @@ def extract_opus_frames(webm_buf: bytes):
             last_consumed = pos
             continue
 
-        # Nieznany bajt — jesli blisko konca bufora, zatrzymaj sie
-        # (moze byc poczatkiem 4-bajtowego ID przecietego miedzy chunkami)
+        # Unknown byte — if close to the end of the buffer, stop here
+        # (may be the start of a 4-byte ID cut across chunk boundaries)
         if n - pos <= 4:
             break
         pos += 1
         last_consumed = pos
 
     return frames, last_consumed
-
