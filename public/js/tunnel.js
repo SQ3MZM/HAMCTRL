@@ -1,10 +1,10 @@
 
 /**
- * tunnel.js — panel dostępu przez internet
- * Tryby:
- *   off    — tylko LAN
- *   quick  — Cloudflare Quick Tunnel (losowy adres, bez konta)
- *   custom — własna domena przez Cloudflare Tunnel token
+ * tunnel.js — internet-access panel
+ * Modes:
+ *   off    — LAN only
+ *   quick  — Cloudflare Quick Tunnel (random address, no account)
+ *   custom — own domain via a Cloudflare Tunnel token
  */
 (function () {
 'use strict';
@@ -14,13 +14,13 @@ let _saveTimer = null;
 
 let _refreshTimer = null;
 
-// ── Ładowanie stanu i konfiguracji ───────────────────────────────────────────
+// ── Load state and config ─────────────────────────────────────────────────────
 async function load() {
   try {
-    // UWAGA: auth.js patchuje globalny window.fetch dodajac Bearer token
-    // do wszystkich /api/* zadan automatycznie. Nie potrzeba _auth() helpera.
-    // Wczesniejsza wersja miala _auth() ktore NIE istnialo -> ReferenceError
-    // -> load() cicho failowal -> UI nigdy nie dostawal aktualnego statusu.
+    // NOTE: auth.js patches the global window.fetch to automatically add
+    // the Bearer token to every /api/* request. No _auth() helper needed.
+    // An earlier version had an _auth() call that did NOT exist ->
+    // ReferenceError -> load() failed silently -> the UI never got the current status.
     const [sr, cr] = await Promise.all([
       fetch('/api/tunnel/status'),
       fetch('/api/tunnel/config'),
@@ -150,7 +150,7 @@ function renderUrl() {
   const localEl = document.getElementById('tn-local-url');
   if (pubEl) {
     if (state.publicUrl && state.status === 'connected') {
-      // Prosty link bez inline copy button - globalny KOPIUJ jest w headerze karty
+      // Simple link, no inline copy button - the global COPY is in the card header
       pubEl.innerHTML = `<a href="${state.publicUrl}" target="_blank"
         style="color:var(--green);text-decoration:none;font-weight:bold;">${state.publicUrl}</a>`;
     } else if (state.status === 'starting') {
@@ -188,21 +188,21 @@ function copyUrl(url) {
   });
 }
 
-// ── Zmiana trybu ─────────────────────────────────────────────────────────────
+// ── Mode change ───────────────────────────────────────────────────────────────
 function modeChanged(mode) {
-  // Ukryj wszystkie panele
+  // Hide all panels
   ['tn-named-fields','tn-duckdns-fields','tn-staticip-fields','tn-customcert-fields'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   });
 
-  // Pokaż odpowiedni panel
+  // Show the matching panel
   if (mode === 'named')      { const el = document.getElementById('tn-named-fields');      if (el) el.style.display = 'block'; }
   if (mode === 'duckdns')    { const el = document.getElementById('tn-duckdns-fields');    if (el) el.style.display = 'block'; }
   if (mode === 'staticip')   { const el = document.getElementById('tn-staticip-fields');   if (el) el.style.display = 'block'; }
   if (mode === 'customcert') { const el = document.getElementById('tn-customcert-fields'); if (el) el.style.display = 'block'; }
 
-  // Zaznacz aktywny tryb
+  // Highlight the active mode
   document.querySelectorAll('.tn-mode-btn').forEach(b => {
     const active = b.dataset.mode === mode;
     b.style.borderColor = active ? 'var(--green)' : 'var(--border)';
@@ -210,14 +210,14 @@ function modeChanged(mode) {
     b.style.background  = active ? 'rgba(184,201,143,0.08)' : 'var(--panel2)';
   });
 
-  // Pokaż diagnostykę cloudflared tylko dla trybów Cloudflare
+  // Show cloudflared diagnostics only for Cloudflare modes
   const cfStatus = document.getElementById('tn-cf-status');
   if (cfStatus) {
     const showCf = (mode === 'quick' || mode === 'named');
     cfStatus.style.display = showCf ? 'flex' : 'none';
   }
 
-  // Pokaż detail-pills wg trybu (cert dla DuckDNS/stałe IP/własny cert, tunel dla Cloudflare)
+  // Show detail pills based on mode (cert for DuckDNS/static IP/custom cert, tunnel for Cloudflare)
   const showCert   = (mode === 'duckdns' || mode === 'staticip' || mode === 'customcert');
   const showTunnel = (mode === 'quick'  || mode === 'named'   || mode === 'duckdns');
   const cert = document.getElementById('tn-detail-cert');
@@ -229,11 +229,11 @@ function modeChanged(mode) {
   if (modeEl) modeEl.value = mode;
 }
 
-// Kopiowanie adresu publicznego do schowka
+// Copy the public address to the clipboard
 async function copyPublic() {
   const el = document.getElementById('tn-public-url');
   if (!el) return;
-  // Wyciągnij URL - może być z <a> albo bezpośrednio tekst
+  // Extract the URL - may come from an <a> or plain text
   const link = el.querySelector('a');
   const url = (link ? link.href : el.textContent).trim();
   if (!url || url === '—') {
@@ -244,7 +244,7 @@ async function copyPublic() {
     await navigator.clipboard.writeText(url);
     window.UI?.showToast(I18n.t('in_toast_copied_prefix') + url);
   } catch (e) {
-    // Fallback dla starszych przeglądarek
+    // Fallback for older browsers
     const tmp = document.createElement('textarea');
     tmp.value = url;
     document.body.appendChild(tmp);
@@ -255,7 +255,7 @@ async function copyPublic() {
   }
 }
 
-// ── Akcje ─────────────────────────────────────────────────────────────────────
+// ── Actions ───────────────────────────────────────────────────────────────────
 async function startTunnel() {
   const mode           = document.getElementById('tn-mode')?.value?.trim()        || 'quick';
   const token          = document.getElementById('tn-token')?.value?.trim()       || '';
@@ -264,7 +264,7 @@ async function startTunnel() {
   const staticIp       = document.getElementById('tn-static-ip')?.value?.trim()   || '';
   const customHostname = document.getElementById('tn-custom-hostname')?.value?.trim() || '';
 
-  // Walidacja per tryb
+  // Per-mode validation
   if (mode === 'named' && !token) {
     window.UI?.showToast(I18n.t('in_toast_paste_token'), 'error'); return;
   }
@@ -278,13 +278,13 @@ async function startTunnel() {
     window.UI?.showToast(I18n.t('in_toast_enter_domain'), 'error'); return;
   }
 
-  // Zapisz konfigurację przed uruchomieniem
+  // Save the config before starting
   await saveTunnelConfig(false);
 
   const btn = document.getElementById('tn-start-btn');
-  // Usun data-i18n statycznego HTML - inaczej kolejny I18n.setLang() nadpisze
-  // ten przycisk z powrotem na "URUCHOM" w trakcie faktycznego laczenia
-  // (patrz ta sama uwaga przy rot-status-badge w rotormini.js).
+  // Remove the static HTML's data-i18n - otherwise the next
+  // I18n.setLang() would overwrite this button back to "START" while it's
+  // actually connecting (see the same note at rot-status-badge in rotormini.js).
   if (btn) { btn.removeAttribute('data-i18n'); btn.textContent = I18n.t('in_connecting_btn'); btn.disabled = true; }
 
   const tkn = localStorage.getItem('token') || '';
@@ -313,7 +313,7 @@ async function stopTunnel() {
   window.UI?.showToast(I18n.t('in_toast_tunnel_stopped'));
 }
 
-// Zapisz konfigurację tunelu
+// Save the tunnel config
 async function saveTunnelConfig(showToast = true) {
   const mode           = document.getElementById('tn-mode')?.value?.trim()        || 'off';
   const token          = document.getElementById('tn-token')?.value?.trim()       || '';
@@ -328,7 +328,7 @@ async function saveTunnelConfig(showToast = true) {
   const customKeyPath  = document.getElementById('tn-custom-keypath')?.value?.trim()  || '';
   const autoStart  = document.getElementById('tn-autostart')?.checked         || false;
 
-  // Podgląd adresu DuckDNS
+  // DuckDNS address preview
   const duckPreview = document.getElementById('tn-duck-preview');
   if (duckPreview) duckPreview.textContent = duckDomain ? `${duckDomain}.duckdns.org` : 'mojradio.duckdns.org';
 
@@ -368,7 +368,7 @@ async function checkCF() {
         verEl.innerHTML = `<span style="color:var(--amber)">${I18n.t('in_cf_missing')}</span>`;
       }
     }
-    // Stale procs
+    // Stale processes
     if (staleEl) {
       staleEl.style.display = (res.stale_procs > 0) ? 'inline' : 'none';
       if (res.stale_procs > 0) staleEl.textContent = I18n.t('in_stale_procs').replace('{n}', res.stale_procs);
