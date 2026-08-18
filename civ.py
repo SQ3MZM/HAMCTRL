@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-civ.py — bezposredni sterownik CI-V (Icom) dla radia ze scope.
+civ.py — direct CI-V (Icom) driver for a radio with a scope.
 
-Tryb BEZPOSREDNI: serwer sam otwiera port COM i obsluguje JEDNOCZESNIE:
-  - sterowanie (czestotliwosc 0x03/0x05, mode 0x04/0x06, PTT 0x1C00, S-metr 0x15 02)
-  - szerokopasmowy SCOPE (waterfall) — strumien CI-V 0x27 0x00
+DIRECT mode: the server opens the COM port itself and handles
+SIMULTANEOUSLY:
+  - control (frequency 0x03/0x05, mode 0x04/0x06, PTT 0x1C00, S-meter 0x15 02)
+  - wideband SCOPE (waterfall) — CI-V 0x27 0x00 stream
 
-Uzywane TYLKO dla radia z wbudowanym spektroskopem (IC-7300/7610/705/9100/7100).
-Pozostale radia (IC-746 itd.) dalej chodza przez rigctld (RigCAT) — bez zmian.
+Used ONLY for radios with a built-in spectrum scope (IC-7300/7610/705/9100/7100).
+Other radios (IC-746 etc.) still go through rigctld (RigCAT) — unchanged.
 
-Interfejs (async) jest IDENTYCZNY jak RigCAT, wiec App.rig mozna podmienic w locie.
+The (async) interface is IDENTICAL to RigCAT, so App.rig can be swapped on the fly.
 
-Parametry specyficzne dla modelu (adres CI-V, predkosc, mapowanie trybow,
-parametry scope) sa ladowane z rigs/civ_profiles.py na podstawie model_id —
-dzieki temu dodanie/poprawienie modelu nie wymaga zmian w tym pliku.
+Model-specific parameters (CI-V address, baud rate, mode mapping, scope
+parameters) are loaded from rigs/civ_profiles.py based on model_id — so
+adding/fixing a model needs no changes to this file.
 
-Brak pyserial / brak portu COM (np. na Replit) -> tryb SYMULACJA: generujemy
-ruchome spektrum + telemetrie, zeby panel dzialal takze bez sprzetu.
+No pyserial / no COM port (e.g. on Replit) -> SIMULATION mode: generates a
+moving spectrum + telemetry, so the panel works even without hardware.
+
+NOTE ON TRANSLATION SCOPE: self.last_err/self.last_msg reach the browser
+verbatim — webapp.py returns them directly in an API response body (same
+pattern as rigcat.py's last_err/last_msg, see webapp.py:2783-2784). Every
+literal string assigned to them in this file is deliberately left in
+Polish; only comments, docstrings, and print()/self.log() console text are
+translated.
 """
 import asyncio, threading, time, math, random
 import numpy as np
@@ -32,9 +40,9 @@ from rigs import get_civ_profile
 CTRL_ADDR = 0xE0  # adres kontrolera (PC)
 
 
-# ── BCD <-> liczby ────────────────────────────────────────────────────────────
+# ── BCD <-> numbers ────────────────────────────────────────────────────────────
 def bcd_to_freq(b: bytes) -> int:
-    """Icom freq: 5 bajtow BCD little-endian (mlodsze cyfry pierwsze)."""
+    """Icom freq: 5 bytes BCD little-endian (least significant digits first)."""
     hz = 0
     mult = 1
     for byte in b:
@@ -44,8 +52,8 @@ def bcd_to_freq(b: bytes) -> int:
 
 
 def freq_to_bcd(hz: int, n: int = 5) -> bytes:
-    s = f"{int(hz):0{n*2}d}"[-n * 2:]   # ostatnie n*2 cyfr
-    rev = s[::-1]                        # rev[0] = jednostki
+    s = f"{int(hz):0{n*2}d}"[-n * 2:]   # last n*2 digits
+    rev = s[::-1]                        # rev[0] = units
     out = bytearray()
     for i in range(0, n * 2, 2):
         lo = int(rev[i]); hi = int(rev[i + 1])
@@ -54,53 +62,54 @@ def freq_to_bcd(hz: int, n: int = 5) -> bytes:
 
 
 def bcd2(b: bytes) -> int:
-    """2-bajtowe BCD (np. S-metr 0000..0255) -> int."""
+    """2-byte BCD (e.g. S-meter 0000..0255) -> int."""
     if len(b) < 2:
         return 0
     return (b[0] >> 4) * 1000 + (b[0] & 0x0F) * 100 + (b[1] >> 4) * 10 + (b[1] & 0x0F)
 
 
-# Mapowanie subcommand 27 15 (Scope span, Center/SCROLL-C mode) -> kHz.
-# Wartosc to 4 cyfry BCD (0000..0500 wg dokumentacji), patrz CI-V Ref. str.19-14.
+# Mapping for subcommand 27 15 (Scope span, Center/SCROLL-C mode) -> kHz.
+# The value is 4 BCD digits (0000..0500 per the docs), see CI-V Ref. p.19-14.
 SCOPE_SPAN_KHZ = {
     2500: 2.5, 5000: 5, 10000: 10, 25000: 25, 50000: 50,
     100000: 100, 250000: 250, 500000: 500,
 }
 
-# Dokladna tabela szerokosci filtra IC-7300 dla SSB/CW/RTTY (CI-V 1A 03,
-# idx 00-31 = 50Hz/100Hz kroki, zgodne z Instruction Manual):
-#   idx 0-9:  50Hz kroki   ->  50, 100, 150, ..., 500
-#   idx 10-31: 100Hz kroki -> 600, 700, ..., 2700
+# Exact IC-7300 filter width table for SSB/CW/RTTY (CI-V 1A 03,
+# idx 00-31 = 50Hz/100Hz steps, per the Instruction Manual):
+#   idx 0-9:  50Hz steps   ->  50, 100, 150, ..., 500
+#   idx 10-31: 100Hz steps -> 600, 700, ..., 2700
 _SSB_FILTER_TABLE = {}
 for _i in range(0, 32):
     _SSB_FILTER_TABLE[_i] = (50 + _i*50) if _i <= 9 else (600 + (_i-10)*100)
 
-# idx 32-40: zakres SSB-D (DATA mode, USB-D/LSB-D) — szerszy filtr do 3600Hz,
-# dostepny TYLKO gdy radio jest w trybie DATA (1A 06). Civ.py aktualnie nie
-# sledzi flagi data-mode, wiec gdy spotkamy idx>31 (co w trybie voice SSB nie
-# powinno sie zdarzyc), interpolujemy liniowo 2700->3600Hz jako przyblizenie
-# zamiast zwracac blednie zacisniety 2700Hz.
+# idx 32-40: SSB-D range (DATA mode, USB-D/LSB-D) — wider filter up to
+# 3600Hz, available ONLY when the radio is in DATA mode (1A 06). civ.py
+# doesn't currently track the data-mode flag here, so when we encounter
+# idx>31 (which shouldn't happen in voice SSB mode), we linearly
+# interpolate 2700->3600Hz as an approximation instead of returning an
+# incorrectly clamped 2700Hz.
 for _i in range(32, 41):
     _SSB_FILTER_TABLE[_i] = round(2700 + (_i-31) * (3600-2700) / 9)
 
 
-# AM/FM (CI-V 1A 03, idx 00=200Hz .. 49=10000Hz wg dokumentacji str.19-6).
-# Krok nie jest jednolity w dokumentacji Icom — uzywamy znanej tabeli AM
-# filter dla IC-7300 (typowe wartosci 200Hz do 10kHz w nierownych krokach
-# zgrubsza odpowiadajacych szerokosci pasma odbiornika AM). Dla idx>0
-# stosujemy interpolacje liniowa 200..10000Hz na 50 punktow (0-49) jako
-# najlepsze dostepne przyblizenie bez dostepu do pelnej tabeli firmware.
+# AM/FM (CI-V 1A 03, idx 00=200Hz .. 49=10000Hz per the docs p.19-6).
+# The step isn't uniform in Icom's documentation — we use the known AM
+# filter table for the IC-7300 (typical values from 200Hz to 10kHz in
+# uneven steps, roughly matching the AM receiver's bandwidth). For idx>0 we
+# apply linear interpolation of 200..10000Hz over 50 points (0-49) as the
+# best available approximation without access to the full firmware table.
 _AMFM_FILTER_TABLE = {i: round(200 + i * (10000-200) / 49) for i in range(0, 50)}
 
 
 def filter_width_hz(mode: str, idx: int, data_mode: bool = False) -> int:
-    """Dokladna (SSB/CW/RTTY) lub przyblizona (AM/FM) szerokosc filtra w Hz
-    dla danego CI-V 1A 03 index, w zaleznosci od trybu pracy.
+    """Exact (SSB/CW/RTTY) or approximate (AM/FM) filter width in Hz for a
+    given CI-V 1A 03 index, depending on the operating mode.
 
-    idx 32-40 (SSB-D, do 3600Hz) jest dostepny tylko gdy radio jest w trybie
-    DATA (data_mode=True, odpytywane przez 1A 06). W trybie voice SSB
-    (data_mode=False) radio nie powinno zwracac idx>31 — gdyby jednak
-    sie to zdarzylo, zacisk do 2700Hz (idx 31) zamiast ekstrapolacji."""
+    idx 32-40 (SSB-D, up to 3600Hz) is only available when the radio is in
+    DATA mode (data_mode=True, polled via 1A 06). In voice SSB mode
+    (data_mode=False) the radio shouldn't return idx>31 — if it did anyway,
+    clamp to 2700Hz (idx 31) instead of extrapolating."""
     if mode in ("AM", "FM"):
         return _AMFM_FILTER_TABLE.get(idx, _AMFM_FILTER_TABLE[49])
     if idx > 31 and not data_mode:
@@ -109,7 +118,7 @@ def filter_width_hz(mode: str, idx: int, data_mode: bool = False) -> int:
 
 
 def smeter_to_sunit(raw: int) -> float:
-    """Surowy S-metr Icom 0..255 -> S-jednostki (S9 = 9, S9+60dB = 15)."""
+    """Raw Icom S-meter 0..255 -> S-units (S9 = 9, S9+60dB = 15)."""
     if raw <= 120:
         return raw / 120.0 * 9.0
     return 9.0 + (raw - 120) / (241 - 120) * 60.0 / 10.0
@@ -121,64 +130,63 @@ class CivRig:
         self.bcast = broadcast_sync or (lambda m: None)
         self.log   = log
 
-        # ── atrybuty zgodne z RigCAT ──
+        # ── attributes compatible with RigCAT ──
         self.freq      = 14074000
         self.freq_b    = 14074000
-        # Czas i wartosc ostatniego LOKALNEGO ustawienia czestotliwosci
-        # (set_freq, np. z click-to-tune). Uzywane w _handle_frame, aby
-        # zignorowac "stary" odczyt 0x03 z radia ktory moze przyjsc tuz po
-        # wyslaniu 0x05 (CI-V echo/odpowiedz z opoznieniem) i nie nadpisac
-        # nowo ustawionej czestotliwosci w UI przed faktyczna aktualizacja
-        # radia.
+        # Time and value of the last LOCAL frequency set (set_freq, e.g.
+        # from click-to-tune). Used in _handle_frame to ignore a "stale"
+        # 0x03 reading from the radio that may arrive right after sending
+        # 0x05 (a delayed CI-V echo/response), so it doesn't overwrite the
+        # newly set frequency in the UI before the radio actually updates.
         self._local_freq_set_at  = 0.0
         self._local_freq_set_val = None
         self.mode      = "USB"
-        # Aktywny filtr DSP radia (FIL1/2/3, CI-V 06 <mode> <fil>) — wybor
-        # KTOREGO mechanicznie/programowo skonfigurowanego filtra uzyc, nie
-        # zmiana jego szerokosci (to ustawia sie w menu radia).
+        # The radio's active DSP filter (FIL1/2/3, CI-V 06 <mode> <fil>) —
+        # selects WHICH mechanically/programmatically configured filter to
+        # use, not a change to its width (that's set in the radio's menu).
         self.filter_num = 1
         # Preamp (16 02): 0=OFF, 1=P.AMP1, 2=P.AMP2
         self.preamp = 0
         # Attenuator (11): False=OFF, True=ATT 20dB ON
         self.attenuator = False
-        # Antenna Tuner (1C 01): False=OFF (bypass), True=ON (w lancuchu)
+        # Antenna Tuner (1C 01): False=OFF (bypass), True=ON (in the chain)
         self.tuner = False
         self.bw        = 2400
-        self.data_mode = False   # tryb DATA (USB-D/LSB-D), z 1A 06 — wplywa na tabele filtra
+        self.data_mode = False   # DATA mode (USB-D/LSB-D), from 1A 06 — affects the filter table
         self.ptt       = False
         self.split     = False
-        self.powered   = True     # stan zasilania radia (CI-V 0x18). Po power
-                                  # OFF radio nie odpowiada — pomijamy odpytywanie
-        self.vfo       = "VFOA"   # aktywne VFO — sledzone lokalnie (IC-7300
-                                  # nie ma CI-V query aktywnego VFO). Default A
-                                  # = radio po wlaczeniu zawsze na VFO A.
+        self.powered   = True     # radio's power state (CI-V 0x18). After
+                                  # power OFF the radio doesn't respond — polling is skipped
+        self.vfo       = "VFOA"   # active VFO — tracked locally (the IC-7300
+                                  # has no CI-V query for the active VFO). Default A
+                                  # = the radio is always on VFO A after power-on.
         self.s_meter   = 0.0
-        # Aktualne wartosci sliderow Set Level (CI-V 14 <sub>), w jednostkach
-        # UI (lvl['min']..lvl['max']) — odczytywane z radia przy polaczeniu i
-        # okresowo w pollerze, zeby slidery w UI startowaly z faktycznych
-        # nastaw radia, nie od 0.
+        # Current Set Level slider values (CI-V 14 <sub>), in UI units
+        # (lvl['min']..lvl['max']) — read from the radio on connect and
+        # periodically in the poller, so the UI sliders start from the
+        # radio's actual settings, not from 0.
         self.level_values = {}
         self.connected = False
         self.sim       = True
         self.last_err  = ""
         self.last_msg  = ""
         self.rigctld_path  = "(tryb bezposredni CI-V)"
-        self.rigctld_found = True   # nie uzywamy rigctld, ale UI tego oczekuje
+        self.rigctld_found = True   # rigctld isn't used, but the UI expects this
 
-        # ── konfiguracja polaczenia ──
+        # ── connection configuration ──
         self.addr  = 0x94
         self.port  = "COM3"
         self.speed = 115200
         self.model = "3073"
 
-        # ── profil modelu (CI-V) — ustawiany w connect() ──
+        # ── model profile (CI-V) — set in connect() ──
         self.profile    = get_civ_profile(self.model)
         self.mode_map   = self.profile["mode_map"]
         self.mode_rev   = {v: k for k, v in self.mode_map.items()}
         self.scope_max  = self.profile["scope_max"]
         self.scope_header_len = self.profile["scope_header_len"]
 
-        # ── stan wewnetrzny ──
+        # ── internal state ──
         self._ser = None
         self._running = False
         self._reader_th = None
@@ -187,52 +195,52 @@ class CivRig:
         self._reconnect_th = None
 
         # ── DTR/RTS keyer ─────────────────────────────────────────────────────
-        # Port szeregowy dla kluczowania DTR/RTS (moze byc ten sam co CI-V
-        # lub osobny port COM z konwertera USB). Kluczuje linie DTR lub RTS
-        # generujac sygnal Morse'a z tekstu (zamiast CI-V cmd 17).
-        self._keyer_port  = None   # osobny port dla DTR/RTS lub None (=uzyj _ser)
+        # Serial port for DTR/RTS keying (may be the same one as CI-V or a
+        # separate COM port from a USB adapter). Keys the DTR or RTS line
+        # to generate a Morse signal from text (instead of CI-V cmd 17).
+        self._keyer_port  = None   # separate port for DTR/RTS, or None (=use _ser)
         self._keyer_line  = None   # 'DTR' | 'RTS' | None
-        self._keyer_ser   = None   # serial.Serial dla osobnego portu, lub ref do _ser
+        self._keyer_ser   = None   # serial.Serial for a separate port, or a ref to _ser
         self._keyer_stop  = threading.Event()
         self._keyer_th    = None
 
-        # transakcje (jedna naraz)
+        # transactions (one at a time)
         self._txlock = threading.Lock()
         self._wlock  = threading.Lock()
         self._resp_ev = threading.Event()
         self._resp_cmd = None
         self._resp_payload = None
 
-        # CI-V TCP Bridge — subskrybenci surowych bajtow z radia.
-        # Callback wywolywany dla kazdej porcji bajtow odebranej z portu,
-        # ZANIM zostana sparsowane w _reader_loop. Uzywane przez civ_bridge.py
-        # zeby broadcastowac raw CI-V do TCP klientow (Logger32, HRD itp.).
-        # Callback musi byc thread-safe (wywolywany z wątku _reader_loop).
+        # CI-V TCP Bridge — subscribers to raw bytes from the radio.
+        # Callback called for every chunk of bytes received from the port,
+        # BEFORE it's parsed in _reader_loop. Used by civ_bridge.py to
+        # broadcast raw CI-V to TCP clients (Logger32, HRD, etc.).
+        # The callback must be thread-safe (called from the _reader_loop thread).
         self._bridge_listeners: list = []
         self._bridge_lock = threading.Lock()
 
         # scope
         self.scope_running = False
         self._scope_acc = bytearray()
-        self._latest_scope = None   # najswiezsza gotowa ramka (czytana przez pompe scope)
+        self._latest_scope = None   # freshest complete frame (read by the scope pump)
         self._scope_total = 0
         self._scope_logged = 0
         self._tx_logged = 0
         self._rx_logged = 0
         self._scope_last = 0.0
-        # naglowek scope (parsowany z 0x27 0x00, patrz _handle_scope)
+        # scope header (parsed from 0x27 0x00, see _handle_scope)
         self._scope_mode_code = 0       # 00=Center,01=Fixed,02=SCROLL-C,03=SCROLL-F
         self._scope_center = self.freq
-        self._scope_span_hz = 25000     # domyslny span 25kHz (typowy dla Center mode IC-7300)
+        self._scope_span_hz = 25000     # default 25kHz span (typical for IC-7300 Center mode)
         self._scope_lo = self.freq - self._scope_span_hz // 2
         self._scope_hi = self.freq + self._scope_span_hz // 2
         self._scope_oor = 0
-        # szerokosc filtra (CI-V 1A 03), odpytywana w pollerze
+        # filter width (CI-V 1A 03), polled in the poller
         self._filter_idx = 0
-        self._filter_width_hz = 2400    # domyslna szerokosc SSB
+        self._filter_width_hz = 2400    # default SSB width
 
     # ════════════════════════════════════════════════════════════════════════
-    # Interfejs async (wolany przez endpointy / rig_poll)
+    # Async interface (called by endpoints / rig_poll)
     # ════════════════════════════════════════════════════════════════════════
     async def connect(self, cfg: dict, override: dict | None = None) -> bool:
         cfg = cfg or self.cfg or {}
@@ -246,7 +254,7 @@ class CivRig:
 
         self.model = str(rig.get("model", "3073"))
 
-        # Zaladuj profil dla tego modelu
+        # Load the profile for this model
         self.profile   = get_civ_profile(self.model)
         self.mode_map  = self.profile["mode_map"]
         self.mode_rev  = {v: k for k, v in self.mode_map.items()}
@@ -267,19 +275,19 @@ class CivRig:
 
         self._rig_name = rig.get("name", self.profile.get("name", "Radio"))
 
-        self.log(f"[civ] Tryb BEZPOSREDNI CI-V — model={self.model} "
+        self.log(f"[civ] DIRECT CI-V mode — model={self.model} "
                  f"({self.profile.get('name','?')}) port={self.port} "
                  f"{self.speed}bd CI-V=0x{self.addr:02X}")
         if self.profile is not None and "NIEZWERYFIKOWANE" in self.profile.get("notes", ""):
-            self.log(f"[civ] UWAGA dla {self.profile.get('name')}: {self.profile['notes']}")
+            self.log(f"[civ] WARNING for {self.profile.get('name')}: {self.profile['notes']}")
 
-        # Jesli ten obiekt mial juz otwarty port (np. ponowne kliknniecie
-        # "Polacz" bez zmiany modelu — webapp.py nie tworzy wtedy nowego
-        # CivRig) — zamknij stare polaczenie przed otwarciem nowego, inaczej
-        # serial.Serial() dostanie PermissionError (port juz otwarty przez
-        # ten sam proces).
+        # If this object already had an open port (e.g. clicking "Connect"
+        # again without changing the model — webapp.py doesn't create a new
+        # CivRig in that case) — close the old connection before opening a
+        # new one, otherwise serial.Serial() gets a PermissionError (port
+        # already open by this same process).
         if self._ser is not None:
-            self.log("[civ] Ponowne polaczenie — zamykam istniejacy port")
+            self.log("[civ] Reconnecting — closing existing port")
             self.close()
             await asyncio.sleep(0.3)
 
@@ -300,19 +308,19 @@ class CivRig:
         self._local_freq_set_val = int(hz)
         if self.sim or not self._ser:
             return
-        # Fire-and-forget: nie czekamy na ACK (0xFB/0xFA) — radio rzadko NAK-uje
-        # ustawienie czestotliwosci, a oczekiwanie do 0.4s na ACK powodowalo
-        # zauwazalne opoznienie przy click-to-tune / szybkim przestrajaniu.
+        # Fire-and-forget: we don't wait for ACK (0xFB/0xFA) — the radio
+        # rarely NAKs a frequency set, and waiting up to 0.4s for the ACK
+        # caused a noticeable delay on click-to-tune / fast retuning.
         try:
             await asyncio.to_thread(self._write, bytes([0x05]) + freq_to_bcd(hz))
         except Exception as e:
-            self.log(f"[civ] set_freq write blad: {e}")
+            self.log(f"[civ] set_freq write error: {e}")
 
     async def set_freq_b(self, hz: int):
-        """Ustaw czestotliwosc VFO-B (nieaktywnego VFO) bez przelaczania.
-        CI-V: 25 01 [5B freq BCD] (per doc str.19-13 "Selected/unselected
-        VFO frequency settings", 01=unselected). Fire-and-forget jak
-        set_freq — radio rzadko NAK-uje ustawianie freq.
+        """Set the VFO-B (inactive VFO) frequency without switching to it.
+        CI-V: 25 01 [5B freq BCD] (per doc p.19-13 "Selected/unselected
+        VFO frequency settings", 01=unselected). Fire-and-forget like
+        set_freq — the radio rarely NAKs a frequency set.
         """
         self.freq_b = int(hz)
         if self.sim or not self._ser:
@@ -320,27 +328,27 @@ class CivRig:
         try:
             await asyncio.to_thread(self._write, bytes([0x25, 0x01]) + freq_to_bcd(hz))
         except Exception as e:
-            self.log(f"[civ] set_freq_b write blad: {e}")
+            self.log(f"[civ] set_freq_b write error: {e}")
 
     def set_scope_span(self, span_hz: int) -> bool:
-        """Ustaw span waterfallu (Center mode). CI-V: 27 15 [5B BCD little-endian].
-        Zwraca True jesli span wspierany, False w przeciwnym razie.
+        """Set the waterfall span (Center mode). CI-V: 27 15 [5B BCD little-endian].
+        Returns True if the span is supported, False otherwise.
 
-        Wspierane wartosci (Hz): 2500, 5000, 10000, 25000, 50000, 100000,
-        250000, 500000 — reszta odrzucana. Format BCD LE: rozklada wartosc
-        Hz na 5 bajtow po 2 cyfry (10 cyfr lacznie), gdzie bajt 0 to
-        najnizsze cyfry (jednostki + dziesiatki).
+        Supported values (Hz): 2500, 5000, 10000, 25000, 50000, 100000,
+        250000, 500000 — anything else is rejected. BCD LE format: breaks
+        the Hz value into 5 bytes of 2 digits each (10 digits total), where
+        byte 0 holds the lowest digits (units + tens).
         """
         if span_hz not in SCOPE_SPAN_KHZ:
             return False
         if self.sim or not self._ser:
             self._scope_span_hz = span_hz
             return True
-        # Rozloz span_hz na 5 bajtow BCD little-endian
-        digits = f"{span_hz:010d}"  # np. 25000 -> "0000025000"
-        # BCD LE: bajt 0 = digits[8:10], bajt 1 = digits[6:8], ...
+        # Break span_hz into 5 BCD little-endian bytes
+        digits = f"{span_hz:010d}"  # e.g. 25000 -> "0000025000"
+        # BCD LE: byte 0 = digits[8:10], byte 1 = digits[6:8], ...
         b = [int(digits[8-i*2:10-i*2], 16) if 8-i*2 >= 0 else 0 for i in range(5)]
-        # Uwaga: musimy uzyc BCD (nie hex) — kazda cyfra 0-9 w polbajcie
+        # Note: we must use BCD (not hex) — each digit 0-9 in a nibble
         b = []
         for i in range(5):
             lo = int(digits[9-i*2])
@@ -352,41 +360,41 @@ class CivRig:
             self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {' '.join(f'{x:02X}' for x in b)})")
             return True
         except Exception as e:
-            self.log(f"[civ] set_scope_span blad: {e}")
+            self.log(f"[civ] set_scope_span error: {e}")
             return False
 
     async def set_mode(self, mode: str, bw: int = 0, fil: int = 0):
         """
-        Ustaw mode (CI-V 06 <mode_byte> <filter_byte>).
-        fil: 1=FIL1, 2=FIL2, 3=FIL3 (mechaniczne/DSP filtry skonfigurowane
-        bezposrednio w radiu — wybieramy tylko KTORY jest aktywny, nie
-        zmieniamy ich szerokosci). 0 = nie zmieniaj (zostaw self.filter_num
-        lub domyslny FIL1 jesli nieznany).
+        Set the mode (CI-V 06 <mode_byte> <filter_byte>).
+        fil: 1=FIL1, 2=FIL2, 3=FIL3 (mechanical/DSP filters configured
+        directly in the radio — we only select WHICH one is active, we
+        don't change its width). 0 = don't change (keep self.filter_num,
+        or default to FIL1 if unknown).
 
-        UWAGA o USB-D/LSB-D: to NIE sa osobne bajty trybu CI-V na IC-7300 —
-        radio rozumie tylko base mode (USB=1, LSB=0) + osobna komenda
-        "DATA mode" (1A 06 01=ON/00=OFF). Wczesniejsza wersja tej funkcji
-        probowala znalezc "USB-D" w mode_rev (ktore zawiera tylko bazowe
-        tryby z _BASE_MODE_MAP), nie znajdowala go i CICHO wysylala bajt
-        domyslny (1=USB) BEZ wlaczania trybu DATA — efekt: radio zostawalo
-        w zwyklym USB, mimo ze UI pokazywalo "USB-D". Teraz: rozpoznajemy
-        sufiks "-D", wysylamy bazowy tryb + 1A 06 01, i domyslnie wybieramy
-        FIL1 (najszerszy/najczesciej uzywany filtr DATA, zgodnie z
-        konfiguracja juz ustawiona w radiu — nie zmieniamy SZEROKOSCI
-        filtra, tylko KTORY slot jest aktywny).
+        NOTE on USB-D/LSB-D: these are NOT separate CI-V mode bytes on the
+        IC-7300 — the radio only understands the base mode (USB=1, LSB=0) +
+        a separate "DATA mode" command (1A 06 01=ON/00=OFF). An earlier
+        version of this function tried to find "USB-D" in mode_rev (which
+        only contains the base modes from _BASE_MODE_MAP), didn't find it,
+        and SILENTLY sent the default byte (1=USB) WITHOUT enabling DATA
+        mode — the effect was the radio staying in plain USB, even though
+        the UI showed "USB-D". Now: we recognize the "-D" suffix, send the
+        base mode + 1A 06 01, and default to FIL1 (the widest/most commonly
+        used DATA filter, matching the configuration already set in the
+        radio — we don't change the filter's WIDTH, only which slot is active).
         """
         is_data = mode.endswith("-D")
         base_mode = mode[:-2] if is_data else mode  # "USB-D" -> "USB"
 
-        self.mode = mode  # zachowujemy PELNA nazwe (z "-D") dla UI/logiki wyzszego poziomu
+        self.mode = mode  # keep the FULL name (with "-D") for the UI/higher-level logic
         if bw:
             self.bw = bw
         if fil in (1, 2, 3):
             self.filter_num = fil
         elif is_data and not getattr(self, "_data_filter_initialized", False):
-            # Pierwsze wejscie w tryb DATA bez jawnie podanego filtra —
-            # domyslnie FIL1, zgodnie z prosba uzytkownika (FIL1 ma juz
-            # skonfigurowana szerokosc 3000Hz bezposrednio w radiu).
+            # First entry into DATA mode with no explicit filter given —
+            # default to FIL1 (FIL1 already has a width of 3000Hz
+            # configured directly in the radio).
             self.filter_num = 1
         fb = getattr(self, "filter_num", 1)
 
@@ -398,8 +406,8 @@ class CivRig:
         await asyncio.to_thread(self._transact,
                                 bytes([0x06, mb, fb]), {0xFB, 0xFA}, 0.4)
 
-        # Wlacz/wylacz tryb DATA osobna komenda (1A 06), niezaleznie od
-        # bazowego trybu — to jest faktyczny przelacznik USB<->USB-D na IC-7300.
+        # Turn DATA mode on/off with a separate command (1A 06), independent
+        # of the base mode — this is the actual USB<->USB-D switch on the IC-7300.
         if is_data != self.data_mode:
             await asyncio.to_thread(self._transact,
                                     bytes([0x1A, 0x06, 0x01 if is_data else 0x00]),
@@ -418,28 +426,28 @@ class CivRig:
         await asyncio.to_thread(self._transact,
                                 bytes([0x1C, 0x00, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
 
-    # Mapowanie znakow na kody CI-V CW message (cmd 17, doc str.19-12).
-    # Wiekszosc to standardowe ASCII (0-9, A-Z, a-z) — wysylamy bezposrednio.
-    # Dodatkowe symbole: / ? . - , : ' ( ) = + " @ spacja — rowniez ASCII.
-    # "^" laczy znaki bez przerwy miedzy nimi (prosody); "FF" przerywa wysylke.
+    # Mapping of characters to CI-V CW message codes (cmd 17, doc p.19-12).
+    # Most are standard ASCII (0-9, A-Z, a-z) — sent directly. Additional
+    # symbols: / ? . - , : ' ( ) = + " @ space — also ASCII. "^" joins
+    # characters with no gap between them (prosody); "FF" aborts sending.
     _CW_ALLOWED = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
                       "/?.-,:'()=+\"@ ^")
 
     async def send_cw_message(self, text: str):
         """
-        Wyslij tekst jako CW przez CI-V (cmd 17, max 30 znakow na raz wg
-        dokumentacji IC-7300/IC-746).
+        Send text as CW over CI-V (cmd 17, max 30 characters at a time per
+        the IC-7300/IC-746 documentation).
 
-        Warunki wymagane przez radio:
-        1. Tryb musi byc CW lub CW-R (cmd 06 03 / 06 07)
-        2. Break-In musi byc wlaczony (cmd 16 47 01) — inaczej radio
-           przetwarza cmd 17 ale nie wchodzi w TX
-        3. Dla IC-746: identyczna sekwencja, te same komendy
+        Conditions required by the radio:
+        1. Mode must be CW or CW-R (cmd 06 03 / 06 07)
+        2. Break-In must be enabled (cmd 16 47 01) — otherwise the radio
+           processes cmd 17 but doesn't enter TX
+        3. For IC-746: identical sequence, same commands
 
-        Funkcja automatycznie:
-        - Przelacza na CW jesli aktualny tryb nie jest CW/CW-R
-        - Wlacza BK-IN jesli nie jest wlaczony
-        - Przywraca poprzedni tryb po zakonczeniu wysylania
+        The function automatically:
+        - Switches to CW if the current mode isn't CW/CW-R
+        - Enables BK-IN if it isn't already enabled
+        - Restores the previous mode once sending is finished
         """
         text = "".join(c for c in text.upper() if c in self._CW_ALLOWED)
         if not text:
@@ -450,32 +458,32 @@ class CivRig:
 
         prev_mode = self.mode
 
-        # Krok 1: Przelacz na CW jesli potrzeba
+        # Step 1: Switch to CW if needed
         cw_modes = ('CW', 'CW-R')
         if self.mode not in cw_modes:
-            self.log(f"[civ] CW send: przelaczam z {self.mode!r} na CW")
+            self.log(f"[civ] CW send: switching from {self.mode!r} to CW")
             await asyncio.to_thread(
                 self._transact, bytes([0x06, 0x03]), {0xFB, 0xFA}, 0.4)
             self.mode = 'CW'
             await asyncio.sleep(0.15)
 
-        # Krok 2: PTT ON (1C 00 01) — przez USB radio wymaga PTT przed cmd 17
-        # BK-IN przez USB powoduje ciagly sygnal — zamiast tego uzywamy PTT
+        # Step 2: PTT ON (1C 00 01) — over USB the radio requires PTT before cmd 17
+        # BK-IN over USB causes a continuous carrier — PTT is used instead
         self.log("[civ] CW send: PTT ON")
         await asyncio.to_thread(
             self._transact, bytes([0x1C, 0x00, 0x01]), {0xFB, 0xFA}, 0.4)
         self.ptt = True
-        # Opoznienie PTT->kluczowanie. IC-7300 przez USB potrzebuje czasu na
-        # przejscie na nadawanie (przekaznik T/R, ewentualny tuner). Przy zbyt
-        # krotkim opoznieniu pierwszy znak idzie, zanim radio w pelni nadaje,
-        # i poczatek sie ucina (obserwowane: 'XX0XXX' -> gubione 'S'/'SQ').
-        # 50 ms bylo za malo; 250 ms daje zapas. Konfigurowalne przez
-        # cwPttDelay w ustawieniach (ms), bo tunery potrzebuja wiecej.
+        # PTT->keying delay. The IC-7300 over USB needs time to switch to
+        # transmit (T/R relay, possibly the tuner). With too short a delay,
+        # the first character goes out before the radio is fully
+        # transmitting, and the start gets clipped (observed: 'XX0XXX' ->
+        # dropped 'S'/'SQ'). 50ms was too little; 250ms gives margin.
+        # Configurable via cwPttDelay in settings (ms), since tuners need more.
         _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
         await asyncio.sleep(max(0.05, _ptt_delay))
 
-        # Krok 3: Wyslij tekst przez CI-V cmd 17
-        # Radio moduluje CW z aktywnym PTT
+        # Step 3: Send the text via CI-V cmd 17
+        # The radio modulates CW while PTT is active
         for i in range(0, len(text), 30):
             chunk = text[i:i+30]
             self.log(f"[civ] CW send chunk: {chunk!r}")
@@ -484,7 +492,7 @@ class CivRig:
             if i + 30 < len(text):
                 await asyncio.sleep(0.1)
 
-        # Krok 4: Odczytaj aktualny WPM z radia i poczekaj
+        # Step 4: Read the current WPM from the radio and wait
         try:
             lvl = self.profile.get("levels", {}).get("KEYSPD")
             if lvl:
@@ -503,10 +511,10 @@ class CivRig:
         # matches what the rig's keyer actually sends.
         wait_s = self._cw_text_duration_s(text, wpm) + 0.15
         wait_s = max(0.3, min(wait_s, 120.0))
-        self.log(f"[civ] CW send: czekam {wait_s:.1f}s ({wpm} WPM)")
+        self.log(f"[civ] CW send: waiting {wait_s:.1f}s ({wpm} WPM)")
         await asyncio.sleep(wait_s)
 
-        # Krok 5: PTT OFF
+        # Step 5: PTT OFF
         self.log("[civ] CW send: PTT OFF")
         await asyncio.to_thread(
             self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
@@ -519,19 +527,19 @@ class CivRig:
         # with a valid chunk in the log). Configurable via cwTrRecovery (ms).
         _tr_recovery = float(self.profile.get("cwTrRecovery", 200)) / 1000.0
         await asyncio.sleep(max(0.05, _tr_recovery))
-        self.log("[civ] CW send: zakonczono")
+        self.log("[civ] CW send: done")
 
     async def stop_cw_message(self):
-        """Przerwij wysylanie CW message (cmd 17 FF = clear buffer)."""
+        """Abort CW message sending (cmd 17 FF = clear buffer)."""
         if self.sim or not self._ser:
             return
-        # Przerwij bufor CW — radio samo wylaczy TX po otrzymaniu FF
+        # Clear the CW buffer — the radio drops TX on its own once it gets FF
         await asyncio.to_thread(self._write, bytes([0x17, 0xFF]))
-        self.log("[civ] CW stop: bufor wyczyszczony")
+        self.log("[civ] CW stop: buffer cleared")
 
     # ── DTR/RTS Keyer ─────────────────────────────────────────────────────────
 
-    # Tabela Morse'a — znak -> ciag '.' i '-'
+    # Morse table — character -> string of '.' and '-'
     _MORSE_TABLE = {
         'A':'.-',   'B':'-...',  'C':'-.-.',  'D':'-..',
         'E':'.',    'F':'..-.',  'G':'--.',   'H':'....',
@@ -547,7 +555,7 @@ class CivRig:
         '/':'-..-.',  '+':'.-.-.',  '-':'-....-',
         '=':'-...-',  ':':'---...',  '\'':'.----.',
         '@':'.--.-.', '(':'-.--.', ')':'-.--.-',
-        ' ': None,   # przerwa miedzy slowami
+        ' ': None,   # word gap
     }
 
     def _cw_text_duration_s(self, text: str, wpm: int) -> float:
@@ -582,38 +590,38 @@ class CivRig:
 
     def configure_keyer(self, port: str, line: str):
         """
-        Skonfiguruj keyer DTR/RTS.
-        port: 'COM3', 'COM5' itp. (moze byc ten sam co CI-V lub osobny)
-        line: 'DTR' lub 'RTS'
-        Jezeli port == '' (pusty) — uzyj tego samego portu co CI-V (_ser).
+        Configure the DTR/RTS keyer.
+        port: 'COM3', 'COM5' etc. (may be the same as CI-V or a separate one)
+        line: 'DTR' or 'RTS'
+        If port == '' (empty) — use the same port as CI-V (_ser).
         """
         import serial as _serial
         self._keyer_line = line.upper() if line else 'DTR'
         if port and port != getattr(self, '_port', ''):
-            # Osobny port dla keyera
+            # Separate port for the keyer
             try:
                 if self._keyer_ser and self._keyer_ser is not self._ser:
                     try: self._keyer_ser.close()
                     except: pass
                 self._keyer_ser = _serial.Serial(port, baudrate=9600, timeout=0.1)
-                # Wyzeruj DTR/RTS od razu - inaczej otwarcie portu wrzuca KEY DOWN
+                # Zero DTR/RTS right away - otherwise opening the port throws a KEY DOWN
                 try:
                     self._keyer_ser.dtr = False
                     self._keyer_ser.rts = False
                 except Exception:
                     pass
                 self._keyer_port = port
-                self.log(f"[keyer] Otwarty port {port} dla {line} keying")
+                self.log(f"[keyer] Opened port {port} for {line} keying")
             except Exception as e:
-                self.log(f"[keyer] Blad otwierania portu {port}: {e}")
+                self.log(f"[keyer] Error opening port {port}: {e}")
                 self._keyer_ser = None
         else:
-            # Uzyj tego samego portu co CI-V
+            # Use the same port as CI-V
             self._keyer_ser = self._ser
             self._keyer_port = ''
 
     def _set_key(self, state: bool):
-        """Ustaw linie DTR lub RTS (True=KEY DOWN, False=KEY UP)."""
+        """Set the DTR or RTS line (True=KEY DOWN, False=KEY UP)."""
         ser = self._keyer_ser or self._ser
         if not ser:
             return
@@ -623,22 +631,23 @@ class CivRig:
             else:
                 ser.dtr = state
         except Exception as e:
-            self.log(f"[keyer] _set_key blad: {e}")
+            self.log(f"[keyer] _set_key error: {e}")
 
     def _send_morse_blocking(self, text: str, wpm: int, stop_event):
         """
-        Synchroniczne wysylanie CW przez DTR/RTS (wywolywane w osobnym watku).
+        Synchronous CW sending via DTR/RTS (called in a separate thread).
         dit_ms = 1200 / wpm  (standard Morse timing, PARIS word = 50 units).
-        stop_event: threading.Event — przerywa wysylanie natychmiast.
+        stop_event: threading.Event — aborts sending immediately.
         """
         import time as _time
         wpm = max(5, min(60, wpm))
-        dit = 1.200 / wpm   # czas dita w sekundach
+        dit = 1.200 / wpm   # dit duration in seconds
 
-        # Opoznienie na starcie — radio potrzebuje chwili na przejscie na
-        # nadawanie (przekaznik T/R, tuner). Bez tego pierwszy dit idzie, zanim
-        # radio nadaje, i poczatek znaku sie ucina (gubione 'S'/'SQ' na starcie
-        # operator). Konfigurowalne przez cwPttDelay (ms).
+        # Delay at the start — the radio needs a moment to switch to
+        # transmit (T/R relay, tuner). Without this, the first dit goes out
+        # before the radio is transmitting, and the start of the character
+        # gets clipped (dropped 'S'/'SQ' at the operator's start).
+        # Configurable via cwPttDelay (ms).
         _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
         _time.sleep(max(0.05, _ptt_delay))
 
@@ -654,7 +663,7 @@ class CivRig:
             if stop_event.is_set():
                 break
             if char == ' ':
-                pause(dit * 7)  # przerwa miedzy slowami
+                pause(dit * 7)  # word gap
                 continue
             code = self._MORSE_TABLE.get(char)
             if not code:
@@ -667,16 +676,16 @@ class CivRig:
                 else:
                     key_down(dit * 3)
                 if i < len(code) - 1:
-                    pause(dit)   # przerwa miedzy elementami
-            pause(dit * 3)   # przerwa miedzy literami
-        self._set_key(False)   # upewnij sie ze klucz jest zwolniony
+                    pause(dit)   # gap between elements
+            pause(dit * 3)   # gap between letters
+        self._set_key(False)   # make sure the key is released
 
     async def send_cw_dtr_rts(self, text: str, wpm: int):
         """
-        Wyslij tekst CW przez DTR/RTS keying (asynchronicznie, w osobnym watku).
-        Przerywa poprzednie wysylanie jezeli jest aktywne.
+        Send CW text via DTR/RTS keying (asynchronously, in a separate thread).
+        Aborts a previous send if one is active.
         """
-        # Zatrzymaj poprzednie wysylanie
+        # Stop a previous send
         self._keyer_stop.set()
         if self._keyer_th and self._keyer_th.is_alive():
             self._keyer_th.join(timeout=0.5)
@@ -696,7 +705,7 @@ class CivRig:
         th.start()
 
     async def stop_cw_dtr_rts(self):
-        """Przerwij wysylanie DTR/RTS natychmiast."""
+        """Abort DTR/RTS sending immediately."""
         self._keyer_stop.set()
         self._set_key(False)
 
@@ -709,27 +718,29 @@ class CivRig:
 
     async def set_power(self, on: bool):
         """
-        Wlacz/wylacz radio (CI-V cmd 0x18 0x01/0x00).
+        Turn the radio on/off (CI-V cmd 0x18 0x01/0x00).
 
-        WAZNE — power ON wymaga "wakeup": gdy radio jest w pelni wylaczone,
-        UART nie nasluchuje na pelnej predkosci. Standardowa sekwencja Icom:
-        wyslij dlugi preambul bajtow 0xFE (~150ms przy danym baudrate) PRZED
-        ramka 0x18 0x01 — to "budzi" odbiornik UART radia.
+        IMPORTANT — power ON requires a "wakeup": when the radio is fully
+        off, the UART isn't listening at full speed. Standard Icom
+        sequence: send a long preamble of 0xFE bytes (~150ms at the given
+        baud rate) BEFORE the 0x18 0x01 frame — this "wakes up" the
+        radio's UART receiver.
 
-        Wymaga w radiu: MENU > SET > Connectors > CI-V > "CI-V Transceive" = ON
-        oraz zasilanie 12V podane do radia (sam USB nie wystarczy gdy radio
-        jest w trybie pelnego OFF na niektorych modelach).
+        Requires in the radio: MENU > SET > Connectors > CI-V > "CI-V
+        Transceive" = ON, and 12V power applied to the radio (USB alone
+        isn't enough when the radio is in full OFF mode on some models).
 
-        Po "power OFF" polaczenie CI-V przestanie odpowiadac na zwykle
-        transakcje (radio nie nasluchuje) — to oczekiwane, dopoki nie
-        wyslemy wakeup+power ON.
+        After "power OFF" the CI-V link stops responding to normal
+        transactions (the radio isn't listening) — this is expected until
+        we send wakeup+power ON.
         """
         if self.sim or not self._ser:
             return
 
-        # Zapamietaj stan zasilania — po power OFF radio nie odpowiada na
-        # zadne transakcje CI-V. Bez tego petla telemetrii dalej odpytuje
-        # S-metr i co sekunde wypisuje "S-metr transact fail", zasmiecajac log.
+        # Remember the power state — after power OFF the radio doesn't
+        # respond to any CI-V transactions. Without this, the telemetry
+        # loop keeps polling the S-meter and prints "S-metr transact fail"
+        # every second, spamming the log.
         self.powered = bool(on)
 
         if on:
@@ -740,14 +751,15 @@ class CivRig:
 
     def _wakeup_and_power_on(self):
         """
-        Wysyla preambul 0xFE (wakeup) + ramke 0x18 0x01 (power ON).
-        Czas trwania preambulu zalezy od baudrate: przy 115200bd Icom
-        zaleca min. ~150ms ciaglej transmisji 0xFE (ok. 150 bajtow).
-        Po power-on radio potrzebuje kilku sekund na boot — nie czekamy
-        na ACK (transakcja zwykle timeoutuje, bo radio jeszcze nie gotowe).
+        Sends the 0xFE preamble (wakeup) + the 0x18 0x01 frame (power ON).
+        Preamble duration depends on baud rate: at 115200bd Icom recommends
+        at least ~150ms of continuous 0xFE transmission (about 150 bytes).
+        After power-on the radio needs a few seconds to boot — we don't
+        wait for an ACK (the transaction usually times out, since the
+        radio isn't ready yet).
         """
         try:
-            preamble_len = max(150, self.speed // 768)  # ~150ms danych
+            preamble_len = max(150, self.speed // 768)  # ~150ms of data
             preamble = b"\xfe" * preamble_len
             frame = bytes([0xFE, 0xFE, self.addr, CTRL_ADDR, 0x18, 0x01, 0xFD])
             with self._wlock:
@@ -755,17 +767,17 @@ class CivRig:
                     self._ser.write(preamble)
                     time.sleep(0.05)
                     self._ser.write(frame)
-            self.log(f"[civ] wakeup+power ON wyslany (preambul {preamble_len}B)")
+            self.log(f"[civ] wakeup+power ON sent (preamble {preamble_len}B)")
         except Exception as e:
-            self.log(f"[civ] wakeup_and_power_on blad: {e}")
+            self.log(f"[civ] wakeup_and_power_on error: {e}")
 
     async def set_vfo(self, vfo: str):
         """
-        Przelacz aktywne VFO — CI-V cmd 0x07.
+        Switch the active VFO — CI-V cmd 0x07.
         vfo: 'VFOA' -> 0x00, 'VFOB' -> 0x01
         """
         _name = "VFOA" if vfo.upper() in ("VFOA", "A") else "VFOB"
-        self.vfo = _name  # sledz stan (takze w sim — UI ma znac prawde)
+        self.vfo = _name  # track the state (also in sim — the UI needs to know the truth)
         if self.sim or not self._ser:
             return
         sub = 0x00 if _name == "VFOA" else 0x01
@@ -773,7 +785,7 @@ class CivRig:
                                 bytes([0x07, sub]), {0xFB, 0xFA}, 0.4)
 
     async def vfo_equalize(self):
-        """A->B: skopiuj czestotliwosc/mode z VFO A do VFO B (CI-V 07 A0)."""
+        """A->B: copy the frequency/mode from VFO A to VFO B (CI-V 07 A0)."""
         if self.sim or not self._ser:
             self.freq_b = self.freq
             return
@@ -781,7 +793,7 @@ class CivRig:
                                 bytes([0x07, 0xA0]), {0xFB, 0xFA}, 0.4)
 
     async def vfo_swap(self):
-        """A<->B: zamien VFO A i B (CI-V 07 B0)."""
+        """A<->B: swap VFO A and B (CI-V 07 B0)."""
         if self.sim or not self._ser:
             self.freq, self.freq_b = self.freq_b, self.freq
             return
@@ -790,15 +802,15 @@ class CivRig:
 
     async def set_func(self, func: str, on: bool):
         """
-        Wlacz/wylacz funkcje radia — CI-V cmd 0x16 <sub> <00|01>.
-        Mapowanie nazwa->subcommand jest w profilu modelu (profile['funcs']).
+        Turn a radio function on/off — CI-V cmd 0x16 <sub> <00|01>.
+        The name->subcommand mapping is in the model profile (profile['funcs']).
         """
         if self.sim or not self._ser:
             return
         funcs = self.profile.get("funcs", {})
         sub = funcs.get(func.upper())
         if sub is None:
-            self.log(f"[civ] set_func: nieznana funkcja '{func}' dla {self.profile.get('name')}")
+            self.log(f"[civ] set_func: unknown function '{func}' for {self.profile.get('name')}")
             return
         await asyncio.to_thread(self._transact,
                                 bytes([0x16, sub, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
@@ -806,7 +818,7 @@ class CivRig:
     async def set_preamp(self, level: int):
         """
         Preamp — CI-V 16 02 <00|01|02>.
-        level: 0=OFF, 1=Preamp1 (P.AMP1), 2=Preamp2 (P.AMP2, tylko IC-7300/7610 itp.)
+        level: 0=OFF, 1=Preamp1 (P.AMP1), 2=Preamp2 (P.AMP2, IC-7300/7610 etc. only)
         """
         level = max(0, min(2, int(level)))
         self.preamp = level
@@ -818,7 +830,7 @@ class CivRig:
     async def set_attenuator(self, on: bool):
         """
         Attenuator — CI-V 11 <00|20>.
-        IC-7300 ma jeden stopien tlumika 20dB: 00=OFF, 20=ON (20dB).
+        The IC-7300 has one 20dB attenuator stage: 00=OFF, 20=ON (20dB).
         """
         on = bool(on)
         self.attenuator = on
@@ -830,8 +842,8 @@ class CivRig:
     async def set_tuner(self, on: bool):
         """
         Antenna Tuner ON/OFF — CI-V 1C 01 <00|01>.
-        00=OFF (tuner w obwodzie bypass), 01=ON (tuner wlaczony w lancuch
-        sygnalu — wymagane przed AUTOTUNE).
+        00=OFF (tuner bypassed), 01=ON (tuner switched into the signal
+        path — required before AUTOTUNE).
         """
         on = bool(on)
         self.tuner = on
@@ -842,36 +854,36 @@ class CivRig:
 
     async def start_tuner_autotune(self):
         """
-        Antenna Tuner START (cykl auto-tuningu) — CI-V 1C 01 02.
-        Radio rozpoczyna szukanie dopasowania (kilka sekund, generuje sygnal
-        TX o niskiej mocy). Tuner musi byc ON (01) przed wywolaniem — w
-        praktyce IC-7300 wlacza tuner automatycznie razem ze START, ale dla
-        pewnosci ustawiamy ON tuz przed.
+        Antenna Tuner START (auto-tuning cycle) — CI-V 1C 01 02.
+        The radio starts searching for a match (a few seconds, generates a
+        low-power TX signal). The tuner must be ON (01) before calling this
+        — in practice the IC-7300 turns the tuner on automatically together
+        with START, but we set it ON right before, just to be safe.
         """
         self.tuner = True
         if self.sim or not self._ser:
             return
-        # Krok 1: Upewnij sie ze tuner jest ON
+        # Step 1: Make sure the tuner is ON
         await asyncio.to_thread(self._transact,
                                 bytes([0x1C, 0x01, 0x01]), {0xFB, 0xFA}, 0.5)
-        # Krok 2: Krotkie opoznienie — radio potrzebuje chwili na przelaczenie
+        # Step 2: Short delay — the radio needs a moment to switch over
         await asyncio.sleep(0.1)
-        # Krok 3: START autotune — radio generuje sygnal TX i stroi ATU
-        # Timeout 2.0s bo radio moze nie odpowiedziec od razu (zajete strojeniem)
+        # Step 3: START autotune — the radio generates a TX signal and tunes the ATU
+        # 2.0s timeout since the radio may not respond right away (busy tuning)
         await asyncio.to_thread(self._transact,
                                 bytes([0x1C, 0x01, 0x02]), {0xFB, 0xFA}, 2.0)
 
     async def set_level(self, level_name: str, value: float):
         """
-        Ustaw poziom (np. RFPOWER, AF, MICGAIN) — CI-V cmd 0x14 <sub> <BCD 0000-0255>.
-        'value' jest w jednostkach UI (zakres level['min']..level['max']
-        z profilu) i jest liniowo skalowane do 0-255 dla CI-V.
-        Mapowanie nazwa->subcommand+zakres jest w profilu modelu (profile['levels']).
+        Set a level (e.g. RFPOWER, AF, MICGAIN) — CI-V cmd 0x14 <sub> <BCD 0000-0255>.
+        'value' is in UI units (the level['min']..level['max'] range from
+        the profile) and is linearly scaled to 0-255 for CI-V.
+        The name->subcommand+range mapping is in the model profile (profile['levels']).
         """
         levels = self.profile.get("levels", {})
         lvl = levels.get(level_name.upper())
         if lvl is None:
-            self.log(f"[civ] set_level: nieznany poziom '{level_name}' dla {self.profile.get('name')}")
+            self.log(f"[civ] set_level: unknown level '{level_name}' for {self.profile.get('name')}")
             return
 
         lo, hi = lvl["min"], lvl["max"]
@@ -879,7 +891,7 @@ class CivRig:
             value = float(value)
         except (TypeError, ValueError):
             return
-        # Skaluj value (lo..hi) -> civ_val (0..civ_max)
+        # Scale value (lo..hi) -> civ_val (0..civ_max)
         civ_max = lvl.get("civ_max", 255)
         if hi != lo:
             frac = (value - lo) / (hi - lo)
@@ -891,13 +903,13 @@ class CivRig:
         if self.sim or not self._ser:
             return
 
-        # CI-V 0x14: subcommand + 2-bajtowe BCD (0000-0255)
+        # CI-V 0x14: subcommand + 2-byte BCD (0000-0255)
         bcd = self._int_to_bcd2(civ_val)
 
-        # Aktualizuj lokalny cache od razu (optymistycznie) — odczyt z radia
-        # nastapi przy nastepnym _read_all_levels()/pollerze i ewentualnie
-        # skoryguje, ale to pozwala UI/innym klientom widziec nowa wartosc
-        # natychmiast po WS broadcast (jesli webapp.py to zrobi).
+        # Update the local cache right away (optimistically) — a read from
+        # the radio will happen on the next _read_all_levels()/poller cycle
+        # and may correct it, but this lets the UI/other clients see the
+        # new value immediately after the WS broadcast (if webapp.py does one).
         self.level_values[level_name.upper()] = value
 
         if self.sim or not self._ser:
@@ -908,10 +920,11 @@ class CivRig:
 
     def _read_level(self, level_name: str, lvl: dict) -> float | None:
         """
-        Odczytaj aktualna wartosc slidera Set Level (CI-V 14 <sub>) z radia
-        i przeskaluj BCD (0..civ_max) na jednostki UI (lvl['min']..lvl['max']).
-        Zwraca None jesli radio nie odpowiedzialo. Wywolywane synchronicznie
-        (w wątku polaczenia/pollera, nie w asyncio loop).
+        Read the current Set Level slider value (CI-V 14 <sub>) from the
+        radio and rescale the BCD (0..civ_max) to UI units
+        (lvl['min']..lvl['max']). Returns None if the radio didn't
+        respond. Called synchronously (in the connection/poller thread,
+        not in the asyncio loop).
         """
         p = self._transact(bytes([0x14, lvl["sub"]]), {0x14}, 0.3)
         if not p or len(p) < 3 or p[0] != lvl["sub"]:
@@ -925,13 +938,13 @@ class CivRig:
 
     def _read_all_levels(self):
         """
-        Odczytaj aktualne wartosci WSZYSTKICH sliderow Set Level zdefiniowanych
-        w profilu radia i zapisz w self.level_values. Wywolywane raz po
-        polaczeniu (_open) — zeby UI startowal z faktycznych nastaw radia,
-        nie od 0/min.
+        Read the current values of ALL Set Level sliders defined in the
+        radio profile and store them in self.level_values. Called once
+        after connecting (_open) — so the UI starts from the radio's
+        actual settings, not from 0/min.
 
-        UWAGA: NB_LEVEL i BKINDL maja rozne subcommand (0x12 vs 0x0F po
-        poprawce) wiec nie ma juz kolizji odczytu miedzy nimi.
+        NOTE: NB_LEVEL and BKINDL have different subcommands (0x12 vs 0x0F
+        after the fix), so there's no read collision between them anymore.
         """
         levels = self.profile.get("levels", {})
         for name, lvl in levels.items():
@@ -940,37 +953,36 @@ class CivRig:
                 if val is not None:
                     self.level_values[name] = val
             except Exception as e:
-                self.log(f"[civ] _read_all_levels: blad odczytu {name}: {e}")
+                self.log(f"[civ] _read_all_levels: error reading {name}: {e}")
 
     @staticmethod
     def _int_to_bcd2(v: int) -> bytes:
         """
-        0-255 (lub do 999) -> 2-bajtowe BCD jak Icom CI-V Set Level
-        (np. 0255 -> bytes([0x02, 0x55]), zgodnie z dokumentacja:
-        "00 00=min. to 02 55=max."). Odwrotnosc bcd2().
+        0-255 (or up to 999) -> 2-byte BCD like Icom CI-V Set Level
+        (e.g. 0255 -> bytes([0x02, 0x55]), per the documentation:
+        "00 00=min. to 02 55=max."). Inverse of bcd2().
 
-        POPRAWKA: poprzednia wersja zwracala bytes([(d1<<4)|d0, d2]) co dla
-        255 dawalo [0x55, 0x02] — bajty zamienione miejscami wzgledem
-        bcd2() i specyfikacji CI-V. Po tej poprawce
-        bcd2(_int_to_bcd2(v)) == v dla v w 0..255.
+        FIX: the previous version returned bytes([(d1<<4)|d0, d2]) which
+        for 255 gave [0x55, 0x02] — bytes swapped relative to bcd2() and
+        the CI-V spec. After this fix, bcd2(_int_to_bcd2(v)) == v for v in 0..255.
         """
         v = max(0, min(255, int(v)))
         hi = v // 100          # 0-2
         lo = v % 100           # 0-99
-        byte0 = hi              # 0x00, 0x01, lub 0x02 (BCD == binarne dla 0-2)
+        byte0 = hi              # 0x00, 0x01, or 0x02 (BCD == binary for 0-2)
         byte1 = ((lo // 10) << 4) | (lo % 10)
         return bytes([byte0, byte1])
 
     async def get_capabilities(self) -> dict:
         """
-        Zwroc pelna strukture odkrytych mozliwosci CI-V:
+        Return the full structure of discovered CI-V capabilities:
         {"actions": [VFO A/B, func toggles], "sliders": [Set Level],
          "raw_caps": {feature_id: bool}}
 
-        Buduje liste na podstawie profilu modelu (profile['levels']/['funcs'])
-        — analogicznie do hamlib_caps.discover_capabilities, ale zrodlem
-        jest statyczny profil CI-V (nie odpytujemy radia o jego capabilities,
-        bo CI-V nie ma komendy "dump_caps").
+        Builds the list from the model profile (profile['levels']/['funcs'])
+        — analogous to hamlib_caps.discover_capabilities, but the source is
+        the static CI-V profile (the radio isn't queried for its
+        capabilities, since CI-V has no "dump_caps" command).
         """
         raw_caps = dict(self.profile.get("capabilities", {}))
 
@@ -982,9 +994,9 @@ class CivRig:
                              "kind": "vfo_select", "value": "VFOB"})
 
         if raw_caps.get("power"):
-            # Uniwersalna etykieta (PL/EN) zamiast opisu po polsku — ten
-            # przycisk renderuje sie tak samo w obu jezykach frontendu,
-            # kolor (zielony/czerwony) pokazuje faktyczny stan ON/OFF.
+            # Universal label (PL/EN) instead of a Polish description — this
+            # button renders the same in both frontend languages, the color
+            # (green/red) shows the actual ON/OFF state.
             actions.append({"id": "power_toggle", "label": "PWR ON/OFF", "group": "tx",
                              "kind": "power_toggle", "value": "POWER"})
 
@@ -998,15 +1010,15 @@ class CivRig:
 
         sliders = []
         for level_name, lvl in self.profile.get("levels", {}).items():
-            # Wartosc domyslna = lvl['min'] jesli nie odczytano jeszcze z
-            # radia (np. tryb symulacji) — inaczej realna nastawa z
-            # self.level_values (wypelniana przez _read_all_levels() po
-            # polaczeniu, patrz _open()).
+            # Default value = lvl['min'] if not read from the radio yet
+            # (e.g. simulation mode) — otherwise the real setting from
+            # self.level_values (filled in by _read_all_levels() after
+            # connecting, see _open()).
             current = self.level_values.get(level_name, lvl["min"])
-            # Step dla slidera: dla zakresow 0.0-1.0 (skalowane na 0-100% w
-            # UI) liczymy krok proporcjonalny do 255 poziomow CI-V. Dla
-            # zakresow calkowitych (np. KEYSPD 6-48 WPM, CWPITCH 300-900Hz)
-            # krok = 1 jednostka UI — sensowniejsze niz 0.16 WPM.
+            # Slider step: for 0.0-1.0 ranges (scaled to 0-100% in the UI)
+            # we compute a step proportional to the 255 CI-V levels. For
+            # integer ranges (e.g. KEYSPD 6-48 WPM, CWPITCH 300-900Hz) the
+            # step is 1 UI unit — more sensible than 0.16 WPM.
             if lvl["max"] <= 1.0:
                 step = (lvl["max"] - lvl["min"]) / 255.0 if lvl["max"] != lvl["min"] else 1
             else:
@@ -1025,7 +1037,7 @@ class CivRig:
         self.scope_running = False
         try:
             if self._ser:
-                # wylacz strumien scope, zeby radio nie zalewalo portu po rozlaczeniu
+                # turn off the scope stream, so the radio doesn't flood the port after disconnecting
                 try:
                     self._write(bytes([0x27, 0x11, 0x00]))
                     time.sleep(0.05)
@@ -1036,7 +1048,7 @@ class CivRig:
             pass
         self._ser = None
 
-    # ── sterowanie scope (z endpointu /api/scope/start|stop) ──
+    # ── scope control (from the /api/scope/start|stop endpoint) ──
     def scope_start(self):
         if self.sim or not self._ser:
             self.scope_running = True
@@ -1055,7 +1067,7 @@ class CivRig:
         return {"ok": True, "running": False}
 
     # ════════════════════════════════════════════════════════════════════════
-    # Warstwa szeregowa (watki)
+    # Serial layer (threads)
     # ════════════════════════════════════════════════════════════════════════
     def _parse_civ(self, civ) -> int:
         try:
@@ -1080,23 +1092,24 @@ class CivRig:
             self.log(f"[civ] {self.last_err}")
             return self._start_sim()
 
-        # KRYTYCZNE: pyserial domyslnie ustawia DTR=True i RTS=True przy
-        # otwarciu portu. Jesli radio ma DTR/RTS skonfigurowane jako PTT/CW-key
-        # (typowe dla IC-7300), radio NATYCHMIAST wchodzi w TX. Wymuszamy stan
-        # niski od razu po otwarciu - PRZED jakakolwiek komunikacja. Keyer sam
-        # podniesie linie gdy faktycznie bedzie kluczowal (KEY DOWN).
+        # CRITICAL: pyserial sets DTR=True and RTS=True by default when
+        # opening a port. If the radio has DTR/RTS configured as PTT/CW-key
+        # (typical for the IC-7300), the radio IMMEDIATELY goes into TX. We
+        # force a low state right after opening - BEFORE any communication.
+        # The keyer will raise the line itself when it's actually keying
+        # (KEY DOWN).
         try:
             self._ser.dtr = False
             self._ser.rts = False
         except Exception as _e:
-            self.log(f"[civ] Ostrzezenie: nie moge wyzerowac DTR/RTS: {_e}")
+            self.log(f"[civ] Warning: can't zero out DTR/RTS: {_e}")
 
         self.sim = False
         self._running = True
         self._reader_th = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_th.start()
 
-        # odczyt poczatkowy czestotliwosci / trybu
+        # initial frequency / mode read
         ok_freq = False
         for _ in range(3):
             p = self._transact(bytes([0x03]), {0x03, 0x00}, 0.6)
@@ -1107,12 +1120,12 @@ class CivRig:
             time.sleep(0.4)
 
         if not ok_freq:
-            # Radio moze byc fizycznie OFF — port USB-CI-V istnieje (ma
-            # zasilanie z USB) ale UART radia "spi" i nie odpowiada na
-            # zwykle zapytania. Wyslij wakeup+power-on (preambul 0xFE +
-            # 0x18 0x01, patrz IC-7300 manual *3) i sprobuj ponownie po
-            # czasie na boot radia (~2-3s).
-            self.log("[civ] 0x03 brak odpowiedzi — probuje wakeup+power ON (radio moze byc OFF)")
+            # The radio may be physically OFF — the USB-CI-V port exists
+            # (it's powered from USB) but the radio's UART is "asleep" and
+            # doesn't respond to normal queries. Send wakeup+power-on
+            # (0xFE preamble + 0x18 0x01, see IC-7300 manual *3) and retry
+            # after giving the radio time to boot (~2-3s).
+            self.log("[civ] 0x03 no response — trying wakeup+power ON (radio may be OFF)")
             self._wakeup_and_power_on()
             time.sleep(2.5)
             for _ in range(4):
@@ -1121,7 +1134,7 @@ class CivRig:
                     f = bcd_to_freq(p)
                     if f:
                         self.freq = f; ok_freq = True
-                        self.log("[civ] Radio obudzone przez wakeup+power ON")
+                        self.log("[civ] Radio woken up via wakeup+power ON")
                         break
                 time.sleep(0.5)
 
@@ -1147,34 +1160,34 @@ class CivRig:
         self.last_err = ""
         self.last_msg = (f"{getattr(self,'_rig_name','Radio')} (CI-V bezposredni) {self.port} "
                          f"{self.speed}bd — {self.freq}Hz {self.mode}")
-        self.log(f"[civ] POLACZONO: {self.last_msg}")
+        self.log(f"[civ] CONNECTED: {self.last_msg}")
 
-        # wlacz strumien scope + uruchom poller telemetrii
+        # turn on the scope stream + start the telemetry poller
         self._enable_scope(True)
         self.scope_running = True
 
-        # Odczytaj aktualne nastawy wszystkich sliderow (Set Level, CI-V 14
-        # <sub>) z radia PRZED ogloszeniem polaczenia — dzieki temu
-        # get_capabilities() (wolane przez _on_rig_reconnected w webapp.py)
-        # zwroci realne wartosci i slidery w UI wystartuja z faktycznych
-        # nastaw radia, nie od 0.
+        # Read the current settings of all sliders (Set Level, CI-V 14
+        # <sub>) from the radio BEFORE announcing the connection — this way
+        # get_capabilities() (called by _on_rig_reconnected in webapp.py)
+        # returns real values and the UI sliders start from the radio's
+        # actual settings, not from 0.
         self._read_all_levels()
 
-        # Odczytaj czestotliwosc i tryb jednorazowo przed startem pollera —
-        # bez tego self.freq ma hardkodowana domyslna wartosc (14074000) az
-        # do pierwszego cyklu _poller_loop (kilka sekund). Klienci laczacy
-        # sie w tym oknie dostaja zla czestotliwosc w wiadomosci 'init' i
-        # wyswietlacz VFO pokazuje np. 14.074 zamiast faktycznej czestotliwosci
-        # radia. Ten sam wzorzec co _read_all_levels() powyzej.
+        # Read frequency and mode once before starting the poller —
+        # without this, self.freq holds its hardcoded default (14074000)
+        # until the first _poller_loop cycle (a few seconds). Clients
+        # connecting in that window get the wrong frequency in the 'init'
+        # message and the VFO display shows e.g. 14.074 instead of the
+        # radio's actual frequency. Same pattern as _read_all_levels() above.
         try:
-            # freq: komenda 03, odpowiedz 03 lub 00
+            # freq: command 03, response 03 or 00
             bp = self._transact(bytes([0x03]), {0x03, 0x00}, 0.4)
             if bp:
                 f = bcd_to_freq(bp[:5])
                 if f and f > 0:
                     self.freq = f
-                    self.log(f"[civ] odczyt startowy freq={f}Hz")
-            # mode: komenda 04, odpowiedz 04 lub 01
+                    self.log(f"[civ] startup read freq={f}Hz")
+            # mode: command 04, response 04 or 01
             bm = self._transact(bytes([0x04]), {0x04, 0x01}, 0.3)
             if bm and len(bm) >= 1:
                 mode_byte = bm[0]
@@ -1183,98 +1196,102 @@ class CivRig:
                             0x08:'LSB-D',0x09:'USB-D',0x11:'PKTUSB',0x12:'PKTLSB'}
                 if mode_byte in MODE_MAP:
                     self.mode = MODE_MAP[mode_byte]
-                    self.log(f"[civ] odczyt startowy mode={self.mode}")
+                    self.log(f"[civ] startup read mode={self.mode}")
         except Exception as e:
-            self.log(f"[civ] odczyt startowy freq/mode blad (nieblokujacy): {e}")
+            self.log(f"[civ] startup freq/mode read error (non-blocking): {e}")
 
-        # Bezpieczenstwo: wyłacz BK-IN przy starcie zeby radio nie wchodzilo
-        # w ciagle TX. BK-IN (CI-V 16 47 00) moze byc wlaczone z poprzedniej
-        # sesji lub przez blad. Uzytkownik moze wlaczyc recznie w panelu.
+        # Safety: disable BK-IN at startup so the radio doesn't go into
+        # continuous TX. BK-IN (CI-V 16 47 00) may be left on from a
+        # previous session or by mistake. The user can enable it manually
+        # in the panel.
         try:
             self._transact(bytes([0x16, 0x47, 0x00]), {0xFB, 0xFA}, 0.4)
-            self.log("[civ] BK-IN wylaczone przy starcie (bezpieczenstwo)")
+            self.log("[civ] BK-IN disabled at startup (safety)")
         except Exception as e:
-            self.log(f"[civ] BK-IN wylaczenie blad (nieblokujace): {e}")
+            self.log(f"[civ] BK-IN disable error (non-blocking): {e}")
 
         self._poller_th = threading.Thread(target=self._poller_loop, daemon=True)
         self._poller_th.start()
 
-        # Powiadom webapp.py (przez WS broadcast) ze polaczenie zostalo
-        # (po)nawiazane — odbiorca powinien odswiezyc _caps_cache i wyslac
-        # nowy /api/rig/features (rig_features) do klientow, bo panel
-        # VFO/PWR/sliders moglby byc puste jesli polaczenie nastapilo w
-        # tle (np. przez _reconnect_loop po wlaczeniu radia po starcie
-        # serwera).
+        # Notify webapp.py (via WS broadcast) that a connection has been
+        # (re-)established — the receiver should refresh _caps_cache and
+        # send a fresh /api/rig/features (rig_features) to clients, since
+        # the VFO/PWR/sliders panel could be empty if the connection
+        # happened in the background (e.g. via _reconnect_loop after the
+        # radio was turned on after the server started).
         try:
             self.bcast({"type": "rig_reconnected"})
         except Exception as e:
-            self.log(f"[civ] bcast rig_reconnected blad: {e}")
+            self.log(f"[civ] bcast rig_reconnected error: {e}")
 
         return True
 
     def _enable_scope(self, on: bool):
-        # TEST DIAGNOSTYCZNY: HAM_NO_SCOPE=1 wymusza scope OFF, zeby sprawdzic
-        # czy to strumien scope powoduje blokady petli / skoki RTT / rwanie
-        # audio. Jesli z wylaczonym scope audio jest gladkie, a RTT stabilne —
-        # winowajca to scope (a na 2 rdzeniach: konkurencja watku readera o
-        # procesor). Zdejmij zmienna, by wrocic do normalnej pracy.
+        # DIAGNOSTIC TEST: HAM_NO_SCOPE=1 forces scope OFF, to check whether
+        # it's the scope stream causing loop stalls / RTT spikes / audio
+        # tearing. If audio is smooth and RTT stable with the scope off —
+        # the scope is the culprit (on 2 cores: the reader thread competing
+        # for CPU). Remove the variable to return to normal operation.
         import os as _os
         if _os.environ.get("HAM_NO_SCOPE") == "1":
             on = False
         """
-        Wlacz/wylacz wysylanie danych waveform scope przez CI-V.
+        Turn the CI-V scope waveform data stream on/off.
 
-        Gdy wlaczamy, ustawiamy tryb Center mode (27 14 00 00) — w tym
-        trybie radio wysyla center freq + span w naglowku i okno scope
-        "podaza" za aktualnym VFO (w przeciwienstwie do Fixed mode, gdzie
-        okno to staly zakres band-edge i NIE sledzi VFO). To realizuje
-        zachowanie "jak oryginalny ekran scope" zgodnie z oczekiwaniem.
+        When turning it on, we set Center mode (27 14 00 00) — in this
+        mode the radio sends center freq + span in the header and the
+        scope window "follows" the current VFO (unlike Fixed mode, where
+        the window is a fixed band-edge range and does NOT track the
+        VFO). This achieves the "like the original scope screen" behavior
+        that's expected.
 
-        Ustawiamy rowniez span na 25kHz (27 15 = "0250" wg tabeli SPAN
-        str.19-14: 2500 -> 2.5kHz, wartosc 25000 -> indeks "2500"*10... patrz
-        komentarz przy SCOPE_SPAN_KHZ) — daje dobry kompromis miedzy
-        szerokoscia podgladu i precyzja sledzenia filtra.
+        We also set the span to 25kHz (27 15 = "0250" per the SPAN table
+        p.19-14: 2500 -> 2.5kHz, value 25000 -> index "2500"*10... see the
+        comment at SCOPE_SPAN_KHZ) — gives a good compromise between
+        preview width and filter-tracking precision.
         """
         try:
-            # Baud 115200 jest WYMAGANY dla scope. Przy 19200 (CI-V USB =
-            # "Link to REMOTE") radio nie wysyla waveform - najczestsza
-            # przyczyna "brak waterfall".
+            # Baud 115200 is REQUIRED for the scope. At 19200 (CI-V USB =
+            # "Link to REMOTE") the radio doesn't send waveform data - the
+            # most common cause of "no waterfall".
             if on and self.speed < 115200:
-                self.log(f"[civ] UWAGA baud={self.speed} — scope wymaga 115200! "
-                         f"Ustaw MENU>SET>Connectors>CI-V baud=115200 i "
+                self.log(f"[civ] WARNING baud={self.speed} — scope requires 115200! "
+                         f"Set MENU>SET>Connectors>CI-V baud=115200 and "
                          f"CI-V USB Port=Unlink from REMOTE")
             self._write(bytes([0x27, 0x10, 0x01 if on else 0x00]))  # scope ON/OFF
             time.sleep(0.05)
-            self._write(bytes([0x27, 0x11, 0x01 if on else 0x00]))  # wysylanie danych ON/OFF
+            self._write(bytes([0x27, 0x11, 0x01 if on else 0x00]))  # data output ON/OFF
             if on:
                 time.sleep(0.05)
-                # Center mode (00) — scope sledzi VFO
+                # Center mode (00) — the scope tracks the VFO
                 self._write(bytes([0x27, 0x14, 0x00, 0x00]))
                 time.sleep(0.05)
-                # Span 25kHz: CI-V cmd 27 15, dane = 5 bajtow (10 cyfr BCD)
+                # 25kHz span: CI-V cmd 27 15, data = 5 bytes (10 BCD digits)
                 self._write(bytes([0x27, 0x15, 0x00, 0x50, 0x02, 0x00, 0x00]))
                 self._scope_span_hz = 25000
             self.log(f"[civ] scope output {'ON' if on else 'OFF'} (baud={self.speed})"
                      + (" + Center mode 25kHz" if on else ""))
         except Exception as e:
-            self.log(f"[civ] _enable_scope blad: {e}")
+            self.log(f"[civ] _enable_scope error: {e}")
 
     def _write(self, payload: bytes):
         frame = bytes([0xFE, 0xFE, self.addr, CTRL_ADDR]) + payload + bytes([0xFD])
-        # UWAGA (perf): usunieto per-write log — polling wywoluje write co ~100ms
-        # (poll freq/smeter/scope), kazdy print to blokujacy syscall (~0.5-2ms).
-        # Przy zapchaniu logi kumulowaly sie i blokowaly wątek reader/writer.
-        # Zeby wlaczyc na debugowanie: odkomentuj ponizsza linie.
+        # NOTE (perf): removed the per-write log — polling calls write
+        # every ~100ms (poll freq/smeter/scope), and every print is a
+        # blocking syscall (~0.5-2ms). Under load the logs piled up and
+        # blocked the reader/writer thread. To enable for debugging:
+        # uncomment the line below.
         # self.log(f"[civ] TX: {frame.hex()}")
         with self._wlock:
             if self._ser:
                 self._ser.write(frame)
 
     def write_bytes_raw(self, data: bytes):
-        """Zapisz surowe bajty do portu CI-V bez wrappera FE FE addr ctrl ... FD.
-        Uzywane przez civ_bridge dla TCP klientow ktorzy wysylaja cale ramki
-        CI-V (Logger32, HRD itp.). Bajty przekazywane sa dokladnie jak przyszly.
-        Chronione self._wlock zeby nie kolidowac z komendami z UI serwera.
+        """Write raw bytes to the CI-V port without the FE FE addr ctrl ... FD
+        wrapper. Used by civ_bridge for TCP clients that send whole CI-V
+        frames themselves (Logger32, HRD, etc.). Bytes are passed through
+        exactly as received. Protected by self._wlock to avoid colliding
+        with commands from the server's own UI.
         """
         if self.sim or not self._ser:
             return
@@ -1282,12 +1299,12 @@ class CivRig:
             try:
                 self._ser.write(data)
             except Exception as e:
-                self.log(f"[civ] write_bytes_raw blad: {e}")
+                self.log(f"[civ] write_bytes_raw error: {e}")
 
     def add_bridge_listener(self, callback):
-        """Zarejestruj callback wywolywany dla kazdej porcji bajtow z radia.
-        Callback: fn(bytes). Uzywane przez civ_bridge do broadcastu do TCP.
-        Uwaga: callback wywolywany w watku _reader_loop, musi byc thread-safe."""
+        """Register a callback called for every chunk of bytes from the radio.
+        Callback: fn(bytes). Used by civ_bridge to broadcast to TCP.
+        Note: the callback is called from the _reader_loop thread, it must be thread-safe."""
         with self._bridge_lock:
             if callback not in self._bridge_listeners:
                 self._bridge_listeners.append(callback)
@@ -1298,7 +1315,7 @@ class CivRig:
                 self._bridge_listeners.remove(callback)
 
     def _transact(self, payload: bytes, expect, timeout: float):
-        """Wyslij komende i poczekaj na odpowiedz (kod cmd w 'expect' lub ACK 0xFB/0xFA)."""
+        """Send a command and wait for a response (a cmd code in 'expect' or ACK 0xFB/0xFA)."""
         if not self._ser:
             return None
         if isinstance(expect, int):
@@ -1310,7 +1327,7 @@ class CivRig:
             try:
                 self._write(payload)
             except Exception as e:
-                self.log(f"[civ] write blad: {e}")
+                self.log(f"[civ] write error: {e}")
                 self._resp_cmd = None
                 return None
             got = self._resp_ev.wait(timeout)
@@ -1323,16 +1340,16 @@ class CivRig:
             try:
                 data = self._ser.read(512)
             except Exception as e:
-                self.log(f"[civ] reader read blad: {e}")
+                self.log(f"[civ] reader read error: {e}")
                 break
             if not data:
                 continue
             if self._rx_logged < 10:
                 self.log(f"[civ] RX: {data.hex()}")
                 self._rx_logged += 1
-            # Bridge: przekaz surowe bajty do listenerow (TCP klienci civ_bridge).
-            # Robimy to PRZED parsowaniem zeby TCP klienci dostali dokladnie
-            # to co dostaje nasza logika parsowania (te same eventy, ta sama kolejnosc).
+            # Bridge: forward raw bytes to listeners (civ_bridge TCP clients).
+            # This is done BEFORE parsing so TCP clients get exactly what
+            # our own parsing logic gets (same events, same order).
             if self._bridge_listeners:
                 with self._bridge_lock:
                     listeners = list(self._bridge_listeners)
@@ -1340,9 +1357,9 @@ class CivRig:
                     try:
                         cb(bytes(data))
                     except Exception as e:
-                        self.log(f"[civ] bridge listener blad: {e}")
+                        self.log(f"[civ] bridge listener error: {e}")
             buf += data
-            # wytnij ramki FE FE ... FD
+            # cut out FE FE ... FD frames
             while True:
                 i = buf.find(b"\xfe\xfe")
                 if i < 0:
@@ -1359,76 +1376,78 @@ class CivRig:
                 try:
                     self._handle_frame(frame)
                 except Exception as e:
-                    self.log(f"[civ] handle_frame blad: {e}")
+                    self.log(f"[civ] handle_frame error: {e}")
 
     def _handle_frame(self, frame: bytes):
         if len(frame) < 6:
             return
         to, frm, cmd = frame[2], frame[3], frame[4]
         payload = frame[5:-1]
-        # echo wlasnej komendy (do radia) — ignoruj
+        # echo of our own command (to the radio) — ignore
         if to == self.addr:
             return
-        # przyjmuj tylko ramki do kontrolera (0xE0) lub broadcast transceive (0x00)
+        # only accept frames addressed to the controller (0xE0) or transceive broadcast (0x00)
         if to not in (CTRL_ADDR, 0x00):
             return
 
-        # SCOPE: 0x27 0x00 <dane>
+        # SCOPE: 0x27 0x00 <data>
         if cmd == 0x27 and len(payload) >= 1 and payload[0] == 0x00:
-            # Licznik ramek scope - uzywany przez logike ponawiania scope
-            # po power ON (webapp: _verify_radio_awake_and_start_scope
-            # sprawdza czy licznik rosnie = ramki plyna).
+            # Scope frame counter - used by the scope-restart-after-power-ON
+            # logic (webapp: _verify_radio_awake_and_start_scope checks
+            # whether the counter is increasing = frames are flowing).
             self._scope_rx_count = getattr(self, "_scope_rx_count", 0) + 1
             _hs_t0 = time.monotonic()
             self._handle_scope(payload[1:])
             _hs_ms = (time.monotonic() - _hs_t0) * 1000.0
-            # Diagnostyka: ile trwa obrobka JEDNEJ ramki scope. Jesli to setki
-            # ms, wina jest w _handle_scope; jesli mikrosekundy — problem lezy
-            # w czestotliwosci/konkurencji o rdzen, nie w samej obrobce.
+            # Diagnostics: how long processing ONE scope frame takes. If
+            # it's hundreds of ms, the culprit is _handle_scope; if it's
+            # microseconds — the problem is in frame rate/core contention,
+            # not the processing itself.
             if _hs_ms > 20:
                 print(f"[scopetime] _handle_scope: {_hs_ms:.1f}ms", flush=True)
             return
 
-        # czestotliwosc (odpowiedz 0x03 lub transceive 0x00)
+        # frequency (response 0x03 or transceive 0x00)
         if cmd in (0x00, 0x03) and len(payload) >= 4:
             f = bcd_to_freq(payload[:5])
             if f and abs(f - self.freq) >= 1:
-                # Jesli niedawno (< 0.8s) lokalnie ustawilismy czestotliwosc
-                # (np. click-to-tune) i radio zwraca INNA wartosc, to
-                # prawdopodobnie "stary" odczyt ktory wystartowal przed
-                # zadziallaniem 0x05 — ignoruj, zeby nie nadpisac UI starym
-                # freq tuz po kliknieciu.
+                # If we recently (< 0.8s) set the frequency locally (e.g.
+                # click-to-tune) and the radio returns a DIFFERENT value,
+                # it's probably a "stale" reading that started before 0x05
+                # took effect — ignore it, so it doesn't overwrite the UI
+                # with the old freq right after the click.
                 grace = (time.time() - self._local_freq_set_at) < 0.8
                 if grace and self._local_freq_set_val is not None and f != self._local_freq_set_val:
-                    pass  # ignoruj stary odczyt
+                    pass  # ignore the stale reading
                 else:
-                    # Ochrona przed uszkodzonym odczytem BCD z radia (widziano
-                    # 2026-07-04 gdy bridge klient wyslal zla ramke - poller
-                    # odczytal freq=1 Hz i UI pokazywalo 0.000001 MHz).
-                    # IC-7300 min freq = 30kHz, max = 74MHz. Odrzucamy odczyty
-                    # ponizej 100kHz jako bledne (bardzo malo kto uzywa LF).
-                    # Ochrania to tylko przed drastycznym uszkodzeniem, nie
-                    # przed subtelnymi bledami paru Hz.
+                    # Protection against a corrupted BCD reading from the
+                    # radio (seen when a bridge client sent a bad frame -
+                    # the poller read freq=1 Hz and the UI showed
+                    # 0.000001 MHz). IC-7300 min freq = 30kHz, max = 74MHz.
+                    # We reject readings below 100kHz as invalid (very few
+                    # people use LF). This only guards against drastic
+                    # corruption, not subtle few-Hz errors.
                     if f < 100_000:
-                        self.log(f"[civ] IGNORUJE absurdalny freq={f} Hz (BCD corruption?)")
+                        self.log(f"[civ] IGNORING absurd freq={f} Hz (BCD corruption?)")
                     else:
                         self.freq = f
                         self.bcast({"type": "freq", "freq": f})
-        # tryb (0x04 odpowiedz / 0x01 transceive) — payload[0]=mode,
-        # payload[1]=filter (01/02/03=FIL1/2/3, gdy radio go raportuje)
+        # mode (0x04 response / 0x01 transceive) — payload[0]=mode,
+        # payload[1]=filter (01/02/03=FIL1/2/3, when the radio reports it)
         #
-        # UWAGA KRYTYCZNA: payload[0] to ZAWSZE bazowy tryb CI-V (np. USB=1),
-        # NIGDY nie zawiera informacji o DATA mode — to osobna komenda (1A 06),
-        # ktora radio wysyla NIEZALEZNIE. Wczesniejsza wersja tego handlera
-        # robila self.mode = nm BEZPOSREDNIO z mode_map (ktora zna tylko
-        # tryby bazowe), co KASOWALO sufiks "-D" za kazdym razem gdy radio
-        # echo'walo/transceive'owalo swoj tryb (co dzieje sie czesto — m.in.
-        # przy kazdym set_mode() ktore samo wysylamy, bo IC-7300 odsyla
-        # potwierdzenie przez ten sam kanal transceive). Efekt zaobserwowany
-        # na zywo: UI pokazywalo USB-D'na ulamek sekundy po klikni eciu, a
-        # polling co ~2s (rig_poll w server.py) przywracal je z powrotem do
-        # USB. Naprawa: doklej "-D" na podstawie JUZ SLEDZONEGO self.data_mode,
-        # dokladnie tak samo jak robi to set_mode przy wysylaniu.
+        # CRITICAL NOTE: payload[0] is ALWAYS the base CI-V mode (e.g.
+        # USB=1), it NEVER carries DATA-mode information — that's a
+        # separate command (1A 06), which the radio sends INDEPENDENTLY.
+        # An earlier version of this handler did self.mode = nm DIRECTLY
+        # from mode_map (which only knows base modes), which WIPED the
+        # "-D" suffix every time the radio echoed/transceived its mode
+        # (which happens often — including on every set_mode() we send
+        # ourselves, since the IC-7300 sends back a confirmation through
+        # the same transceive channel). Effect observed live: the UI
+        # showed USB-D for a fraction of a second after clicking, and
+        # polling every ~2s (rig_poll in server.py) reverted it back to
+        # USB. Fix: append "-D" based on the ALREADY-TRACKED self.data_mode,
+        # exactly the way set_mode does it when sending.
         elif cmd in (0x01, 0x04) and len(payload) >= 1:
             base_nm = self.mode_map.get(payload[0])
             nm = f"{base_nm}-D" if (base_nm and self.data_mode) else base_nm
@@ -1444,9 +1463,10 @@ class CivRig:
         elif cmd == 0x1C and len(payload) >= 2 and payload[0] == 0x00:
             self.ptt = bool(payload[1])
 
-        # przekaz do oczekujacej transakcji — TYLKO gdy kod cmd jest oczekiwany
-        # (komendy 'set' jawnie podaja {0xFB,0xFA}, wiec ACK/NAK nie zakonczy
-        #  falszywie odczytu freq/mode/S-metr pod mieszanym ruchem CI-V).
+        # forward to a waiting transaction — ONLY when the cmd code is
+        # expected (set commands explicitly give {0xFB,0xFA}, so an
+        # ACK/NAK won't falsely complete a freq/mode/S-meter read under
+        # mixed CI-V traffic).
         ec = self._resp_cmd
         if ec and cmd in ec:
             self._resp_payload = payload
@@ -1454,7 +1474,7 @@ class CivRig:
 
     def _handle_scope(self, d: bytes):
         if self._scope_logged < 4:
-            self.log(f"[scope] surowa ramka ({len(d)}B): {d.hex()}")
+            self.log(f"[scope] raw frame ({len(d)}B): {d.hex()}")
             self._scope_logged += 1
         if len(d) < 3:
             return
@@ -1462,14 +1482,14 @@ class CivRig:
         total = d[2]
 
         if seq <= 1:
-            # Pierwsza ramka: pelny naglowek wg CI-V Ref. str 19-14
+            # First frame: full header per CI-V Ref. p.19-14
             #   d[3]    = spectrum scope mode (00=Center,01=Fixed,02=SCROLL-C,03=SCROLL-F)
-            #   d[4:9]  = center freq (Center mode) LUB lower edge (Fixed/SCROLL)  — 5B BCD
-            #   d[9:14] = span (Center mode, 5B "BCD-like" wg tabeli SPAN)
-            #             LUB higher edge (Fixed/SCROLL) — 5B BCD
+            #   d[4:9]  = center freq (Center mode) OR lower edge (Fixed/SCROLL)  — 5B BCD
+            #   d[9:14] = span (Center mode, 5B "BCD-like" per the SPAN table)
+            #             OR higher edge (Fixed/SCROLL) — 5B BCD
             #   d[14]   = out-of-range (00=in range, 01=out of range)
-            #   d[15:]  = dane waveform (tylko gdy total==1 i oor==00, lub
-            #             pomijane w 1-ej ramce gdy total>1 — patrz uwaga w doc)
+            #   d[15:]  = waveform data (only when total==1 and oor==00, or
+            #             skipped in the 1st frame when total>1 — see the note in the docs)
             self._scope_mode_code = d[3] if len(d) > 3 else 0
             self._scope_oor = d[14] if len(d) > 14 else 0
 
@@ -1504,34 +1524,38 @@ class CivRig:
             self._scope_acc += d[3:]
 
         if total and seq >= total and self._scope_acc:
-            # Rate limit: max 20 klatek/s (50ms interval). IC-7300 wysyla scope
-            # ~30-60fps ale klientowi WS nie potrzeba tyle - 20fps to gladki
-            # waterfall + o polowe mniejsze obciazenie asyncio/JSON/WebSocket.
-            # Uwaga: to jest OPCJONALNE, gdy wielu klientow bardzo pomaga.
+            # Rate limit: max 20 frames/s (50ms interval). The IC-7300
+            # sends the scope at ~30-60fps but the WS client doesn't need
+            # that much - 20fps is a smooth waterfall + half the
+            # asyncio/JSON/WebSocket load. Note: this is OPTIONAL, it
+            # helps a lot with many clients.
             now = time.time()
             if (now - self._scope_last) < 0.050:
-                # Za wczesnie - odrzuc tą klatke, poczekaj do nastepnej.
-                # NIE resetujemy _scope_acc zeby proces akumulacji trwal.
-                # Ale trzeba zeby przy nastepnym packecie zaczal od nowa:
+                # Too early - drop this frame, wait for the next one.
+                # We do NOT reset _scope_acc so accumulation keeps going.
+                # But it needs to start fresh on the next packet:
                 self._scope_acc = bytearray()
                 self._scope_total = 0
                 return
 
             smax = self.scope_max
-            # Skalowanie danych scope do 0-255. Bylo: petla Pythona po ~475
-            # punktach widma, wywolywana KILKANASCIE razy na sekunde — to ona
-            # blokowala petle zdarzen na 100-250ms (potwierdzone: lag rosnie z
-            # liczba ramek scope). numpy robi to samo wektorowo, ~100x szybciej.
+            # Scaling scope data to 0-255. Used to be: a Python loop over
+            # ~475 spectrum points, called a DOZEN-PLUS times per second —
+            # this is what was blocking the event loop for 100-250ms
+            # (confirmed: lag grows with the number of scope frames). numpy
+            # does the same thing vectorized, ~100x faster.
             _raw = np.frombuffer(bytes(self._scope_acc), dtype=np.uint8)
             arr = np.minimum(255, (_raw.astype(np.uint32) * 255) // max(smax, 1)).astype(np.uint8).tolist()
 
-            # W Center mode (scopeMode==0) uzywamy self.freq (z 0x03 pollera,
-            # potwierdzonego jako dokladny) jako centerHz — zamiast wartosci
-            # z naglowka scope (_scope_center), ktora w testach wykazywala
-            # rozbieznosc wzgledem realnej czestotliwosci radia (do kilku kHz,
-            # mozliwy artefakt parsowania pola BCD w tym konkretnym firmware).
-            # Lo/Hi przeliczamy wzgledem self.freq i spanu z naglowka, zeby
-            # os czestotliwosci i click-to-tune byly zgodne z faktycznym VFO.
+            # In Center mode (scopeMode==0) we use self.freq (from the
+            # 0x03 poller, confirmed accurate) as centerHz — instead of the
+            # value from the scope header (_scope_center), which in
+            # testing showed a discrepancy against the radio's actual
+            # frequency (up to a few kHz, possibly a BCD field parsing
+            # artifact in this particular firmware). Lo/Hi are recomputed
+            # relative to self.freq and the span from the header, so the
+            # frequency axis and click-to-tune stay consistent with the
+            # actual VFO.
             if self._scope_mode_code == 0x00:
                 center = self.freq
                 lo = center - self._scope_span_hz // 2
@@ -1540,17 +1564,19 @@ class CivRig:
                 center = self._scope_center
                 lo, hi = self._scope_lo, self._scope_hi
 
-            # ODSPRZEGNIECIE scope od watku readera.
+            # DECOUPLING the scope from the reader thread.
             #
-            # Wczesniej reader wolal broadcast_sync (run_coroutine_threadsafe)
-            # przy kazdej ramce — ta synchronizacja watek->petla, robiona
-            # kilkanascie razy na sekunde, zderzala sie z petla asyncio i ja
-            # blokowala (potwierdzone: lag rosnie liniowo z liczba ramek, a
-            # obrobka JEDNEJ ramki jest szybka). Teraz reader TYLKO zapisuje
-            # najswiezsza gotowa ramke do zmiennej — zero synchronizacji z
-            # petla. Osobna, lekka petla asyncio (_scope_pump w webapp) czyta
-            # te zmienna i wysyla w stalym tempie 15 fps. Reader oddaje dane i
-            # wraca do czytania portu, nie czekajac na petle.
+            # Previously the reader called broadcast_sync
+            # (run_coroutine_threadsafe) on every frame — this thread->loop
+            # sync, done a dozen-plus times per second, collided with the
+            # asyncio loop and blocked it (confirmed: lag grows linearly
+            # with the number of frames, while processing ONE frame is
+            # fast). Now the reader ONLY writes the freshest complete frame
+            # to a variable — zero synchronization with the loop. A
+            # separate, lightweight asyncio loop (_scope_pump in webapp)
+            # reads that variable and sends it at a steady 15fps. The
+            # reader hands off the data and goes back to reading the port,
+            # without waiting for the loop.
             self._latest_scope = {
                 "type": "scope_frame",
                 "data": arr,
@@ -1570,30 +1596,31 @@ class CivRig:
             return
 
     def _poller_loop(self):
-        """Cyklicznie odpytuj freq/mode/S-metr/filter (odpowiedzi aktualizuja stan w readerze)."""
+        """Periodically poll freq/mode/S-meter/filter (responses update state in the reader)."""
         n = 0
         _off_logged = False
         while self._running and self._ser:
             try:
-                # Radio wylaczone (power OFF przez CI-V) nie odpowiada na zadne
-                # transakcje. Bez tego kazdy obieg petli konczyl sie bledem
-                # odczytu i zasmiecal log ("S-metr transact fail" w kolko).
+                # A powered-off radio (power OFF via CI-V) doesn't respond
+                # to any transactions. Without this check every loop cycle
+                # ended in a read error and spammed the log ("S-metr
+                # transact fail" repeatedly).
                 if not self.powered:
                     if not _off_logged:
-                        self.log("[civ] Radio wylaczone — telemetria wstrzymana")
+                        self.log("[civ] Radio off — telemetry paused")
                         _off_logged = True
                     time.sleep(1.0)
                     continue
                 if _off_logged:
-                    self.log("[civ] Radio wlaczone — telemetria wznowiona")
+                    self.log("[civ] Radio on — telemetry resumed")
                     _off_logged = False
                 self._transact(bytes([0x03]), {0x03, 0x00}, 0.3)        # freq
                 if n % 4 == 0:
                     self._transact(bytes([0x04]), {0x04, 0x01}, 0.3)    # mode
-                # VFO B (nieaktywny VFO): CI-V 25 01 -> odpowiedz [01, 5B freq BCD]
-                # (per doc str.19-13: "Selected or unselected VFO frequency
-                # settings", 00=selected/aktywny, 01=unselected). Odpytywane
-                # co ~1.2s — zmienia sie rzadko (split/A-B swap).
+                # VFO B (inactive VFO): CI-V 25 01 -> response [01, 5B freq BCD]
+                # (per doc p.19-13: "Selected or unselected VFO frequency
+                # settings", 00=selected/active, 01=unselected). Polled
+                # every ~1.2s — changes rarely (split/A-B swap).
                 if n % 4 == 2:
                     bp = self._transact(bytes([0x25, 0x01]), {0x25}, 0.3)
                     if bp and len(bp) >= 6 and bp[0] == 0x01:
@@ -1601,37 +1628,39 @@ class CivRig:
                         if fb and abs(fb - self.freq_b) >= 1:
                             self.freq_b = fb
                             self.bcast({"type": "freqB", "freqB": fb})
-                # S-metr: 0x15 0x02 -> odpowiedz 0x15 ...
+                # S-meter: 0x15 0x02 -> response 0x15 ...
                 p = self._transact(bytes([0x15, 0x02]), {0x15}, 0.3)
                 if p and len(p) >= 3 and p[0] == 0x02:
                     raw = bcd2(p[1:3])
                     lvl = smeter_to_sunit(raw)
                     if abs(lvl - self.s_meter) > 0.2:
                         self.s_meter = lvl
-                        # Frontend (ws.js) sluchna msg.value - NIE msg.smeter!
+                        # The frontend (ws.js) listens for msg.value - NOT msg.smeter!
                         self.bcast({"type": "smeter", "value": round(lvl, 1)})
                 elif getattr(self, '_smeter_fail_logged', 0) < 5:
                     self.log(f"[civ] S-metr transact fail: p={p.hex() if p else None}")
                     self._smeter_fail_logged = getattr(self, '_smeter_fail_logged', 0) + 1
 
-                # TX Metery: ALC (15 13), PWR (15 11), SWR (15 12), VOLT (15 15)
-                # Odpytywane tylko gdy PTT aktywne (lub gdy wskaznik wybrany przez usera)
-                # BCD 2 bajty -> wartości (punkty kalibracji z oficjalnego
-                # IC-7300MK2 CI-V Reference Guide, patrz komentarze przy kazdym
-                # mierniku ponizej):
-                #   ALC:  0..120 -> 0..100% (liniowo)
-                #   PWR:  0=0%, 143=50%, 213=100% (nieliniowo)
-                #   SWR:  0=1.0, 48=1.5, 80=2.0, 120=3.0 (nieliniowo)
-                #   VOLT: 0=0V, 13=10V, 241=16V (mocno nieliniowo)
+                # TX Meters: ALC (15 13), PWR (15 11), SWR (15 12), VOLT (15 15)
+                # Polled only while PTT is active (or when the meter is
+                # selected by the user)
+                # 2-byte BCD -> values (calibration points from the
+                # official IC-7300MK2 CI-V Reference Guide, see the
+                # comments at each meter below):
+                #   ALC:  0..120 -> 0..100% (linear)
+                #   PWR:  0=0%, 143=50%, 213=100% (nonlinear)
+                #   SWR:  0=1.0, 48=1.5, 80=2.0, 120=3.0 (nonlinear)
+                #   VOLT: 0=0V, 13=10V, 241=16V (strongly nonlinear)
                 if self.ptt or n % 8 == 0:
                     _dbg_alc = None
                     _dbg_pwr = None
-                    # ALC. POPRAWKA: poprzednio uzywano komendy "15 11", ktora
-                    # wg oficjalnej dokumentacji CI-V IC-7300 to w rzeczywistosci
-                    # "PO" (moc wyjsciowa), NIE ALC — etykiety ALC/PWR w kodzie
-                    # byly zamienione miejscami wzgledem faktycznych komend.
-                    # Wlasciwa komenda dla ALC to "15 13", z udokumentowanym
-                    # zakresem 0000=Min do 0120=Max (NIE 0-241).
+                    # ALC. FIX: command "15 11" used to be used here, which
+                    # per the official IC-7300 CI-V documentation is
+                    # actually "PO" (output power), NOT ALC — the ALC/PWR
+                    # labels in the code were swapped relative to the
+                    # actual commands. The correct command for ALC is
+                    # "15 13", with a documented range of 0000=Min to
+                    # 0120=Max (NOT 0-241).
                     ap = self._transact(bytes([0x15, 0x13]), {0x15}, 0.25)
                     if ap and len(ap) >= 3 and ap[0] == 0x13:
                         alc_raw = bcd2(ap[1:3])
@@ -1641,12 +1670,13 @@ class CivRig:
                                     "raw": alc_raw,
                                     "value": round(alc_pct, 1),
                                     "pct": min(1.0, alc_raw / 120)})
-                    # PWR output. POPRAWKA: poprzednio uzywano komendy "15 14"
-                    # (to w rzeczywistosci COMP — kompresor mowy w dB, NIE moc).
-                    # Wlasciwa komenda dla PO (mocy wyjsciowej) to "15 11", z
-                    # udokumentowana NIELINIOWA skala: 0000=0%, 0143=50%,
-                    # 0213=100% (pelna skala osiagana juz przy raw=213, nie 241)
-                    # — interpolacja odcinkowa miedzy tymi punktami.
+                    # PWR output. FIX: command "15 14" used to be used here
+                    # (that's actually COMP — the speech compressor in dB,
+                    # NOT power). The correct command for PO (output power)
+                    # is "15 11", with a documented NONLINEAR scale:
+                    # 0000=0%, 0143=50%, 0213=100% (full scale reached
+                    # already at raw=213, not 241) — piecewise
+                    # interpolation between these points.
                     pp = self._transact(bytes([0x15, 0x11]), {0x15}, 0.25)
                     if pp and len(pp) >= 3 and pp[0] == 0x11:
                         pwr_raw = bcd2(pp[1:3])
@@ -1665,12 +1695,12 @@ class CivRig:
                                     pwr_pct = round(_y0 + _t * (_y1 - _y0), 1)
                                     break
                         _dbg_pwr = pwr_pct
-                        # DIAGNOSTYKA: podczas TX loguj odczyty co ~1.2s zeby
-                        # rozstrzygnac czy mierniki w ogole sa odczytywane
-                        # podczas FT8 TX (UI "nie reaguje" - backend czy front?)
+                        # DIAGNOSTICS: during TX, log readings every ~1.2s
+                        # to settle whether the meters are being read at
+                        # all during FT8 TX (UI "not responding" - backend or frontend?)
                         if self.ptt and n % 4 == 0:
-                            self.log(f"[txmeter] TX odczyt: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
-                                     f"PWR={_dbg_pwr}% (bcast poszedl)")
+                            self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
+                                     f"PWR={_dbg_pwr}% (bcast sent)")
                         self.bcast({"type": "txmeter", "meter": "PWR",
                                     "raw": pwr_raw,
                                     "value": pwr_pct,
@@ -1680,14 +1710,15 @@ class CivRig:
                     if sp and len(sp) >= 3 and sp[0] == 0x12:
                         swr_raw = bcd2(sp[1:3])
                         # IC-7300 SWR: 0=1.0, 48=1.5, 80=2.0, 120=3.0, 241=50
-                        # POPRAWKA: poprzedni wzor byl liniowy wzgledem CALEGO
-                        # zakresu 0-241, co nie zgadzalo sie z powyzszymi
-                        # punktami kalibracyjnymi z dokumentacji IC-7300 (SWR
-                        # rosnie szybko do 3.0 juz w polowie zakresu raw=120,
-                        # potem znacznie wolniej do 50 przy raw=241) — dawalo
-                        # to mocno zawyzone wartosci (np. raw=48 -> 10.76
-                        # zamiast udokumentowanego 1.5). Interpolacja
-                        # odcinkowa miedzy faktycznymi punktami kalibracyjnymi.
+                        # FIX: the previous formula was linear over the
+                        # WHOLE 0-241 range, which didn't match the
+                        # calibration points above from the IC-7300
+                        # documentation (SWR rises quickly to 3.0 already
+                        # at half the raw=120 range, then much more slowly
+                        # to 50 at raw=241) — this gave heavily inflated
+                        # values (e.g. raw=48 -> 10.76 instead of the
+                        # documented 1.5). Piecewise interpolation between
+                        # the actual calibration points.
                         _swr_points = [(0, 1.0), (48, 1.5), (80, 2.0), (120, 3.0), (241, 50.0)]
                         swr_val = _swr_points[-1][1]
                         for _i in range(len(_swr_points) - 1):
@@ -1700,19 +1731,21 @@ class CivRig:
                         self.bcast({"type": "txmeter", "meter": "SWR",
                                     "raw": swr_raw,
                                     "value": swr_val,
-                                    "pct": min(1.0, swr_raw / 120)})  # skala do SWR=3
-                    # Napięcie zasilania (Vd — drain voltage / napiecie zasilania
-                    # koncowki mocy). Komenda "15 15" (NIE "15 16" — to Id, prad,
-                    # inny miernik). Kalibracja zweryfikowana wprost z oficjalnego
-                    # IC-7300MK2 CI-V Reference Guide (icomuk.co.uk), tabela
-                    # komend, wpis "15 15": 0000=0V, 0013=10V, 0241=16V.
-                    # POPRAWKA: poprzednie punkty (0=0V, 151=10V, 211=16V) byly
-                    # bledne — skala realnie jest mocno nieliniowa (pierwsze 10V
-                    # to tylko 13 jednostek raw, reszta 10-16V rozciaga sie na
-                    # pozostale 228 jednostek, bo to zakres w ktorym realnie
-                    # pracuje zasilanie 12-13.8V). Bledne punkty dawaly np. dla
-                    # realnych 13.8V (raw~157) odczyt ~10.6V — dokladnie taki
-                    # zanizony wynik jaki byl zgłaszany na zywo.
+                                    "pct": min(1.0, swr_raw / 120)})  # scale to SWR=3
+                    # Supply voltage (Vd — drain voltage / power amp supply
+                    # voltage). Command "15 15" (NOT "15 16" — that's Id,
+                    # current, a different meter). Calibration verified
+                    # directly against the official IC-7300MK2 CI-V
+                    # Reference Guide (icomuk.co.uk), command table, entry
+                    # "15 15": 0000=0V, 0013=10V, 0241=16V.
+                    # FIX: the previous points (0=0V, 151=10V, 211=16V) were
+                    # wrong — the scale is actually strongly nonlinear (the
+                    # first 10V is only 13 raw units, the rest, 10-16V,
+                    # stretches over the remaining 228 units, since that's
+                    # the range where the 12-13.8V supply actually
+                    # operates). The wrong points gave, e.g. for a real
+                    # 13.8V (raw~157), a reading of ~10.6V — exactly the
+                    # kind of low reading that was reported live.
                     vp = self._transact(bytes([0x15, 0x15]), {0x15}, 0.25)
                     if vp and len(vp) >= 3 and vp[0] == 0x15:
                         v_raw = bcd2(vp[1:3])
@@ -1733,24 +1766,26 @@ class CivRig:
                         self.bcast({"type": "txmeter", "meter": "VOLT",
                                     "raw": v_raw,
                                     "value": volt,
-                                    "pct": volt / 16.0})  # skala do 16V nominal
-                # Szerokosc filtra: 1A 03 -> odpowiedz [03, idx_bcd_2B] (00..49)
-                # Tryb DATA: 1A 06 -> odpowiedz [06, data_mode(0/1), filter(1-3)]
-                #   (per doc p.19-10) — wplywa na interpretacje idx>31 w
-                #   _SSB_FILTER_TABLE (zakres SSB-D do 3600Hz tylko w DATA).
-                # Odpytywane rzadziej (co ~1.2s) — obie wartosci zmieniaja sie rzadko
+                                    "pct": volt / 16.0})  # scale to nominal 16V
+                # Filter width: 1A 03 -> response [03, idx_bcd_2B] (00..49)
+                # DATA mode: 1A 06 -> response [06, data_mode(0/1), filter(1-3)]
+                #   (per doc p.19-10) — affects the interpretation of
+                #   idx>31 in _SSB_FILTER_TABLE (SSB-D range up to 3600Hz,
+                #   DATA mode only).
+                # Polled less often (every ~1.2s) — both values rarely change
                 if n % 4 == 1:
                     dp = self._transact(bytes([0x1A, 0x06]), {0x1A}, 0.3)
                     if dp and len(dp) >= 2 and dp[0] == 0x06:
                         new_dm = bool(dp[1])
                         if new_dm != self.data_mode:
                             self.data_mode = new_dm
-                            # KRYTYCZNE: zaktualizuj tez self.mode (sufiks -D).
-                            # Bez tego radio w USB-D mialo self.mode="USB" ->
-                            # UI trzymalo "USB" -> kazde t='mode' z UI (np.
-                            # zmiana filtra) robilo set_mode("USB") -> 1A 06 00
-                            # -> WYLACZALO data mode w radiu. Objaw: "ciagle
-                            # przelacza z USB-D na USB w cyfrowce".
+                            # CRITICAL: also update self.mode (the -D
+                            # suffix). Without this, a radio in USB-D had
+                            # self.mode="USB" -> the UI held "USB" -> every
+                            # t='mode' from the UI (e.g. a filter change)
+                            # did set_mode("USB") -> 1A 06 00 -> TURNED OFF
+                            # data mode in the radio. Symptom: "keeps
+                            # switching from USB-D back to USB in a digital mode".
                             base = self.mode[:-2] if self.mode.endswith("-D") else self.mode
                             if base in ("USB", "LSB"):
                                 self.mode = f"{base}-D" if new_dm else base
@@ -1769,10 +1804,11 @@ class CivRig:
                             self._filter_width_hz = filter_width_hz(self.mode, idx, self.data_mode)
                             self.bcast({"type": "filter_width", "hz": self._filter_width_hz,
                                         "idx": idx, "mode": self.mode, "dataMode": self.data_mode})
-                # Round-robin odczyt sliderow Set Level (CI-V 14 <sub>) — jeden
-                # poziom na cykl (~0.3s), pelny przeglad 14 poziomow ~4.2s.
-                # Pozwala UI zauwazyc zmiany dokonane recznie na panelu radia
-                # (np. obrot galki AF/RF na froncie IC-7300).
+                # Round-robin read of the Set Level sliders (CI-V 14 <sub>) —
+                # one level per cycle (~0.3s), a full sweep of 14 levels
+                # takes ~4.2s. Lets the UI notice changes made manually on
+                # the radio's front panel (e.g. turning the AF/RF knob on
+                # the IC-7300).
                 level_items = list(self.profile.get("levels", {}).items())
                 if level_items:
                     name, lvl = level_items[n % len(level_items)]
@@ -1783,9 +1819,9 @@ class CivRig:
                             self.level_values[name] = new_val
                             self.bcast({"type": "level_value",
                                         "id": f"level_{name.lower()}", "value": new_val})
-                # Preamp (16 02 -> odpowiedz [02, 00|01|02]) i Attenuator
-                # (11 -> odpowiedz [00|20]) — odpytywane co ~1.2s (zmieniaja
-                # sie rzadko, zwykle recznie na panelu radia).
+                # Preamp (16 02 -> response [02, 00|01|02]) and Attenuator
+                # (11 -> response [00|20]) — polled every ~1.2s (rarely
+                # change, usually set manually on the radio's panel).
                 if n % 4 == 3:
                     pp = self._transact(bytes([0x16, 0x02]), {0x16}, 0.3)
                     if pp and len(pp) >= 2 and pp[0] == 0x02:
@@ -1801,9 +1837,10 @@ class CivRig:
                             self.attenuator = new_att
                             self.bcast({"type": "attenuator", "value": new_att})
 
-                    # Tuner ON/OFF: 1C 01 -> odpowiedz [01, 00|01]. Nie
-                    # odpytujemy stanu "START" (1C 01 02 to jednorazowa
-                    # komenda, radio nie raportuje jej jako trwaly stan).
+                    # Tuner ON/OFF: 1C 01 -> response [01, 00|01]. We don't
+                    # poll the "START" state (1C 01 02 is a one-shot
+                    # command, the radio doesn't report it as a persistent
+                    # state).
                     tp = self._transact(bytes([0x1C, 0x01]), {0x1C}, 0.3)
                     if tp and len(tp) >= 2 and tp[0] == 0x01:
                         new_tuner = (tp[1] != 0x00)
@@ -1811,12 +1848,12 @@ class CivRig:
                             self.tuner = new_tuner
                             self.bcast({"type": "tuner", "value": new_tuner})
             except Exception as e:
-                self.log(f"[civ] poller blad: {e}")
+                self.log(f"[civ] poller error: {e}")
             n += 1
             time.sleep(0.3)
 
     # ════════════════════════════════════════════════════════════════════════
-    # SYMULACJA (brak sprzetu / Replit)
+    # SIMULATION (no hardware / Replit)
     # ════════════════════════════════════════════════════════════════════════
     def _start_sim(self) -> bool:
         self.sim = True
@@ -1828,10 +1865,10 @@ class CivRig:
         if not (self._sim_th and self._sim_th.is_alive()):
             self._sim_th = threading.Thread(target=self._sim_loop, daemon=True)
             self._sim_th.start()
-            self.log("[civ] SYMULACJA scope uruchomiona")
-        # Watek prob ponownego polaczenia w tle (np. radio bylo wylaczone
-        # przy starcie serwera, uzytkownik wlaczy je pozniej fizycznie
-        # lub przez przycisk Zasilanie po wczesniejszym wakeup)
+            self.log("[civ] Scope SIMULATION started")
+        # Background reconnect-attempt thread (e.g. the radio was off when
+        # the server started, the user will power it on later physically
+        # or via the Power button after an earlier wakeup)
         if not (self._reconnect_th and self._reconnect_th.is_alive()):
             self._reconnect_th = threading.Thread(target=self._reconnect_loop, daemon=True)
             self._reconnect_th.start()
@@ -1839,24 +1876,24 @@ class CivRig:
 
     def _reconnect_loop(self):
         """
-        Co RECONNECT_INTERVAL sekund (w trybie symulacji) sprobuj ponownie
-        otworzyc port i odpytac 0x03. Jesli radio odpowie — przelacz z
-        symulacji na realne polaczenie (analogicznie do _open() sukcesu).
+        Every RECONNECT_INTERVAL seconds (in simulation mode) try to reopen
+        the port and poll 0x03. If the radio responds — switch from
+        simulation to a real connection (analogous to a successful _open()).
         """
         RECONNECT_INTERVAL = 10.0
         while self._running and self.sim:
             time.sleep(RECONNECT_INTERVAL)
             if not self.sim or not self._running:
-                return  # ktos juz polaczyl recznie / zamknieto
+                return  # someone already connected manually / it's been closed
             if not HAS_SERIAL:
                 continue
             try:
                 test_ser = serial.Serial(self.port, self.speed, timeout=0.3, write_timeout=1.0)
             except Exception:
-                continue  # port nadal niedostepny — sprobuj pozniej
+                continue  # port still unavailable — try again later
 
             try:
-                # Wyslij 0x03 (get freq) i sprawdz odpowiedz
+                # Send 0x03 (get freq) and check the response
                 frame = bytes([0xFE, 0xFE, self.addr, CTRL_ADDR, 0x03, 0xFD])
                 test_ser.write(frame)
                 time.sleep(0.3)
@@ -1868,30 +1905,30 @@ class CivRig:
                 continue
 
             if not resp or 0xFD not in resp:
-                continue  # brak odpowiedzi — radio jeszcze niegotowe
+                continue  # no response — radio not ready yet
 
-            self.log("[civ] Reconnect: radio odpowiedzialo — przelaczam z symulacji")
-            # Zatrzymaj symulacje, otworz realne polaczenie
+            self.log("[civ] Reconnect: radio responded — switching out of simulation")
+            # Stop the simulation, open a real connection
             self.sim = False
-            self._running = False  # zatrzyma _sim_loop
+            self._running = False  # stops _sim_loop
             time.sleep(0.2)
             self._running = True
             self._open()
-            return  # _open() albo polaczy realnie, albo wroci do _start_sim
-                    # (ktory odpali nowy _reconnect_th jesli znow sim)
+            return  # _open() either connects for real, or falls back to
+                    # _start_sim (which spawns a new _reconnect_th if still in sim)
 
     def _sim_loop(self):
         N = 320
         t = 0.0
-        # kilka "sygnalow" ktore dryfuja po pasmie
+        # a few "signals" that drift across the band
         peaks = [{"pos": random.uniform(0.15, 0.85),
                   "amp": random.uniform(0.5, 1.0),
                   "w":   random.uniform(0.004, 0.02),
                   "drift": random.uniform(-0.0008, 0.0008)} for _ in range(4)]
-        # STABILNOSC: try WEWNATRZ petli. Bez tego pojedynczy blad w bcast()
-        # (np. hub w zlym stanie przy rozlaczaniu klientow) zabija watek
-        # symulacji na stale - waterfall w trybie SIM przestaje dzialac
-        # az do restartu serwera.
+        # STABILITY: try INSIDE the loop. Without this, a single error in
+        # bcast() (e.g. the hub in a bad state while disconnecting clients)
+        # kills the simulation thread permanently - the waterfall in SIM
+        # mode stops working until the server restarts.
         _errs = 0
         while self._running and self.sim:
             try:
@@ -1920,9 +1957,9 @@ class CivRig:
             except Exception as e:
                 _errs += 1
                 if _errs <= 3:
-                    print(f"[civ] _sim_loop blad ({_errs}): {e}", flush=True)
+                    print(f"[civ] _sim_loop error ({_errs}): {e}", flush=True)
                 elif _errs == 4:
-                    print("[civ] _sim_loop: dalsze bledy pomijane w logu", flush=True)
-                time.sleep(0.5)  # backoff zeby nie zalac loga
+                    print("[civ] _sim_loop: further errors suppressed in the log", flush=True)
+                time.sleep(0.5)  # backoff to avoid flooding the log
             t += 0.08
             time.sleep(0.08)
