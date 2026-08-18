@@ -1,45 +1,45 @@
 """
-FT4 RX Decoder - pelny pipeline: audio (~7.5s, 12000Hz, mono float) -> lista
-zdekodowanych wiadomosci.
+FT4 RX Decoder - full pipeline: audio (~7.5s, 12000Hz, mono float) -> list
+of decoded messages.
 
-Etapy (kazdy zweryfikowany osobno):
-  1. sync_ft4.find_candidates      - zgrubne wyszukiwanie pozycji (czas, freq),
-                                      uzywa 4 roznych wzorcow Costas (nie 1x3)
-  2. demod_ft4.extract_tone_power   - demodulacja bezposrednio z pozycji
-                                      find_candidates (BEZ refine_sync — patrz
-                                      uzasadnienie w decode_window ponizej:
-                                      profiling wykazal ze refine_sync byl
-                                      waskim gardlem ~8s/kandydat dla
-                                      marginalnej poprawy jakosci)
-  3. demod_ft4.extract_llr174       - miekkie LLR dla 174 bitow LDPC (2bit/symbol)
-  4. ldpc_decode.bp_decode          - belief propagation (REUZYWANE 1:1 z FT8 —
-                                      ta sama macierz parzystosci Nm/Mn)
-  5. CRC-14 check                   - na bitach PRZED de-scramblingiem (bo
-                                      enkoder liczy CRC na scrambled77, patrz
-                                      ft4_encoder.py::encode_message_ft4)
-  6. DESCRAMBLING                   - XOR z RVEC, jedyny krok specyficzny dla
-                                      FT4 ktory nie ma odpowiednika w FT8
-  7. unpack.unpack77                - bity -> czytelny tekst (REUZYWANE 1:1
-                                      z FT8 — operuje na "czystych" 77 bitach,
-                                      identycznych niezaleznie od protokolu)
+Stages (each verified independently):
+  1. sync_ft4.find_candidates      - coarse position search (time, freq),
+                                      uses 4 different Costas patterns (not 1x3)
+  2. demod_ft4.extract_tone_power   - demodulation directly from the
+                                      find_candidates position (WITHOUT
+                                      refine_sync — see the rationale in
+                                      decode_window below: profiling showed
+                                      refine_sync was the bottleneck at
+                                      ~8s/candidate for marginal quality gain)
+  3. demod_ft4.extract_llr174       - soft LLRs for the 174 LDPC bits (2bit/symbol)
+  4. ldpc_decode.bp_decode          - belief propagation (REUSED 1:1 from FT8 —
+                                      the same Nm/Mn parity-check matrix)
+  5. CRC-14 check                   - on the bits BEFORE de-scrambling (since
+                                      the encoder computes the CRC on scrambled77,
+                                      see ft4_encoder.py::encode_message_ft4)
+  6. DESCRAMBLING                   - XOR with RVEC, the only FT4-specific
+                                      step with no FT8 counterpart
+  7. unpack.unpack77                - bits -> readable text (REUSED 1:1 from
+                                      FT8 — operates on the "clean" 77 bits,
+                                      identical regardless of the protocol)
 
-ZWERYFIKOWANE na syntetycznym sygnale (sesja deweloperska 2026-06-21):
-  - sync_ft4.find_candidates: wykrywa wygenerowany sygnal z dokladnoscia
-    0.0Hz / 4ms na surowej siatce, bez falszywych alarmow
-  - Pelny pipeline (BEZ refine_sync): 103/103 symboli odzyskanych idealnie
-    poprawnie (100% zgodnosc) w czystym sygnale; quality 0.94-1.00 i poprawne
-    LDPC decode w testach z szumem (std 0.0-0.5) i 8 jednoczesnymi sygnalami
-    w pasmie (wszystkie 8/8 zdekodowane poprawnie)
-  - Wydajnosc: decode_window dla 8 jednoczesnych sygnalow = ~0.05s (vs 18.4s
-    PRZED usunieciem refine_sync) — mieszczy sie wielokrotnie w oknie 7.5s
-  - Pelny round-trip (ten plik): TX->RX dla wielu typow wiadomosci (CQ,
-    raport, R-raport, RRR, 73, RR73) z poprawnym tekstem wyjsciowym
+Verified against a synthetic signal:
+  - sync_ft4.find_candidates: detects a generated signal accurately to
+    0.0Hz / 4ms on the raw grid, with no false positives
+  - Full pipeline (WITHOUT refine_sync): 103/103 symbols recovered
+    perfectly (100% match) on a clean signal; quality 0.94-1.00 and
+    correct LDPC decode in tests with noise (std 0.0-0.5) and 8 simultaneous
+    signals in the band (all 8/8 decoded correctly)
+  - Performance: decode_window for 8 simultaneous signals = ~0.05s (vs 18.4s
+    BEFORE removing refine_sync) — fits comfortably within the 7.5s window
+  - Full round-trip (this file): TX->RX for various message types (CQ,
+    report, R-report, RRR, 73, RR73) with correct output text
 
-NIEZWERYFIKOWANE wobec prawdziwego dekodera FT4 ani prawdziwego
-sygnalu radiowego — wymaga testu na zywo, analogicznie do FT8 (patrz
-ft8_rx_decoder.py docstring o nagraniu 210703_133430.wav).
+NOT YET VERIFIED against a real FT4 decoder or a real radio signal —
+needs a live test, same as FT8 (see ft8_rx_decoder.py's docstring about
+the 210703_133430.wav recording).
 
-Uzycie:
+Usage:
     from ft4_rx_decoder import decode_window
     messages = decode_window(audio_75s_float_array)
     for m in messages:
@@ -47,7 +47,7 @@ Uzycie:
 """
 import numpy as np
 
-import ft8_encoder as fe  # _crc14 jest protokolo-niezalezne, reuzywane wprost
+import ft8_encoder as fe  # _crc14 is protocol-independent, reused directly
 from params_ft4 import RVEC
 from sync_ft4 import find_candidates
 from demod_ft4 import extract_tone_power, costas_sync_quality, extract_llr174
@@ -56,8 +56,8 @@ from unpack import unpack77, format_message
 
 
 def _descramble77(bits77):
-    """XOR z RVEC — wlasna odwrotnosc, identyczna operacja co
-    ft4_encoder._scramble77 (ten sam XOR dziala w obie strony)."""
+    """XOR with RVEC — its own inverse, the same operation as
+    ft4_encoder._scramble77 (the same XOR works both ways)."""
     a = np.array(bits77, dtype=np.int32)
     r = np.array(RVEC, dtype=np.int32)
     return list(np.mod(a + r, 2))
@@ -101,31 +101,31 @@ def _estimate_snr_db(psd, freqs, noise_floor, freq_hz):
 def decode_window(audio, sample_rate=12000, min_score=0.15, max_candidates=60,
                    ldpc_max_iters=50, dedup_freq_hz=8.0, dedup_time_s=0.1):
     """
-    Dekoduje jedno okno audio (typowo 7.5s, ale dziala na dowolnej dlugosci
-    >= ok. 6s) i zwraca liste zdekodowanych wiadomosci.
+    Decodes one audio window (typically 7.5s, but works with any length
+    >= roughly 6s) and returns a list of decoded messages.
 
-    Zwraca: lista dict, posortowana po freq_hz:
+    Returns: a list of dicts, sorted by freq_hz:
         {freq_hz, time_offset_s, message, call_to, call_de, report_or_grid,
          snr_db, ldpc_iters, sync_quality}
     """
     if sample_rate != 12000:
-        raise ValueError(f"decode_window oczekuje sample_rate=12000, otrzymano {sample_rate}")
+        raise ValueError(f"decode_window expects sample_rate=12000, got {sample_rate}")
 
     candidates = find_candidates(audio, max_candidates=max_candidates, min_score=min_score)
     _psd, _freqs, _noise_floor = _compute_window_noise_floor(audio, sample_rate)
 
     decoded = []
     for c in candidates:
-        # UWAGA: refine_sync ZAMIERZENIE pominiety tutaj — profiling wykazal
-        # ze byl dominujacym waskim gardlem (~8s/kandydat z petla freq x time
-        # przeszukania), podczas gdy find_candidates' domyslna siatka
-        # nadprobkowania (time_osr=2, freq_osr=2) juz daje sync_quality
-        # 0.94-1.00 i bezbledne dekodowanie LDPC w testach z 1-8 jednoczesnymi
-        # sygnalami i poziomami szumu 0.0-0.5. Usuniecie tego kroku
-        # przyspieszylo decode_window z 18.4s do ~0.05s dla 8 sygnalow,
-        # niezbedne zeby zmiescic sie w 7.5s oknie FT4. Funkcja refine_sync
-        # nadal istnieje w demod_ft4.py (dostepna do debugowania/przyszlego
-        # dostrajania), po prostu nie jest uzywana w domyslnym pipeline.
+        # NOTE: refine_sync is DELIBERATELY skipped here — profiling showed
+        # it was the dominant bottleneck (~8s/candidate with its freq x
+        # time search loop), while find_candidates' default oversampling
+        # grid (time_osr=2, freq_osr=2) already gives sync_quality
+        # 0.94-1.00 and flawless LDPC decoding in tests with 1-8
+        # simultaneous signals and noise levels 0.0-0.5. Removing this step
+        # sped up decode_window from 18.4s to ~0.05s for 8 signals,
+        # necessary to fit within FT4's 7.5s window. The refine_sync
+        # function still exists in demod_ft4.py (available for
+        # debugging/future tuning), it's just not used in the default pipeline.
         power = extract_tone_power(audio, c['freq_hz'], c['time_offset_s'])
         quality = costas_sync_quality(power)
         rfreq, rtime = c['freq_hz'], c['time_offset_s']
@@ -138,16 +138,16 @@ def decode_window(audio, sample_rate=12000, min_score=0.15, max_candidates=60,
         bits91 = hard[:91]
         scrambled77 = bits91[:77]
         crc_received = bits91[77:91]
-        # CRC liczone na SCRAMBLED bitach (zgodnie z enkoderem — patrz
-        # ft4_encoder.encode_message_ft4, gdzie crc = _crc14(scrambled77+pad))
+        # CRC is computed on the SCRAMBLED bits (matching the encoder — see
+        # ft4_encoder.encode_message_ft4, where crc = _crc14(scrambled77+pad))
         padded82 = scrambled77 + [0, 0, 0, 0, 0]
         crc_check = fe._crc14(padded82)
         if crc_received != crc_check:
             continue
 
-        # Descrambling DOPIERO PO weryfikacji CRC — odzyskuje oryginalne
-        # 77 bitow, identyczne strukturalnie z tym co produkuje FT8's pack77,
-        # wiec unpack77/format_message dzialaja bez zadnych zmian.
+        # Descrambling happens ONLY AFTER CRC verification — recovers the
+        # original 77 bits, structurally identical to what FT8's pack77
+        # produces, so unpack77/format_message work without any changes.
         data77 = _descramble77(scrambled77)
 
         parsed = unpack77(data77)
@@ -172,7 +172,7 @@ def decode_window(audio, sample_rate=12000, min_score=0.15, max_candidates=60,
 
 
 def _dedup(decoded, freq_tol_hz, time_tol_s):
-    """Identyczna logika co FT8's _dedup."""
+    """Identical logic to FT8's _dedup."""
     if not decoded:
         return decoded
     decoded_sorted = sorted(decoded, key=lambda d: -d['snr_db'])

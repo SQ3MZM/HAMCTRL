@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-build_server.py — budowanie HAM-RADIO-CTRL.exe (serwer) przez PyInstaller.
+build_server.py — builds HAM-RADIO-CTRL.exe (the server) via PyInstaller.
 
-URUCHOMIENIE (na Windows, w katalogu z kodem serwera):
+RUN (on Windows, in the server code directory):
     py build_server.py
 
-Kroki:
-  1. Sprawdz Python 3.10+
-  2. Zainstaluj zaleznosci (pyinstaller + biblioteki serwera)
-  3. Sprawdz obecnosc ham_audio.exe + opus DLL (ostrzez jesli brak)
-  4. Uruchom PyInstaller wg hamctrl.spec
-  5. Pokaz wynik: dist/HAM-RADIO-CTRL.exe
+Steps:
+  1. Check for Python 3.10+
+  2. Install dependencies (pyinstaller + server libraries)
+  3. Check for ham_audio.exe + opus DLLs (warn if missing)
+  4. Run PyInstaller against hamctrl.spec
+  5. Report the result: dist/HAM-RADIO-CTRL.exe
 
-Wynik: dist/HAM-RADIO-CTRL.exe (szac. 150-250 MB - aiortc+scipy sa duze)
+Output: dist/HAM-RADIO-CTRL.exe (approx. 150-250 MB - aiortc+scipy are large)
 """
 import subprocess
 import sys
@@ -21,94 +21,94 @@ from pathlib import Path
 BASE = Path(__file__).parent
 DIST = BASE / "dist"
 
-# Zaleznosci wymagane do dzialania serwera
+# Required dependencies for the server to run
 REQUIRED = ["pyinstaller", "aiohttp", "pyserial", "numpy", "scipy"]
-# Opcjonalne - audio/WebRTC (bez nich serwer dziala, ale bez streamingu audio)
+# Optional - audio/WebRTC (the server works without them, just no audio streaming)
 OPTIONAL = ["aiortc", "pyaudio", "opuslib", "cryptography"]
 
 
 def check_python():
     v = sys.version_info
     if v < (3, 10):
-        print(f"[X] Wymagany Python 3.10+, masz {v.major}.{v.minor}")
+        print(f"[X] Python 3.10+ required, you have {v.major}.{v.minor}")
         return False
     print(f"[OK] Python {v.major}.{v.minor}.{v.micro}")
     return True
 
 
 def install_deps():
-    print("\n[*] Instaluje zaleznosci wymagane...")
+    print("\n[*] Installing required dependencies...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install",
                                "--upgrade", *REQUIRED])
-        print("[OK] Zaleznosci wymagane zainstalowane")
+        print("[OK] Required dependencies installed")
     except subprocess.CalledProcessError as e:
-        print(f"[X] pip fail (wymagane): {e}")
+        print(f"[X] pip failed (required): {e}")
         return False
 
-    print("\n[*] Instaluje zaleznosci opcjonalne (audio/WebRTC)...")
-    print("    (jesli ktoras padnie, serwer dziala bez tej funkcji)")
+    print("\n[*] Installing optional dependencies (audio/WebRTC)...")
+    print("    (if one fails, the server still works without that feature)")
     for pkg in OPTIONAL:
         try:
             subprocess.check_call([sys.executable, "-m", "pip", "install",
                                    "--upgrade", pkg])
             print(f"[OK] {pkg}")
         except subprocess.CalledProcessError:
-            print(f"[!] {pkg} - nie udalo sie (pomijam, EXE zbuduje sie bez)")
+            print(f"[!] {pkg} - failed (skipping, the EXE will build without it)")
     return True
 
 
 def check_binaries():
-    print("\n[*] Sprawdzam binaria zewnetrzne...")
+    print("\n[*] Checking external binaries...")
     ham = BASE / "ham_audio.exe"
     if ham.exists():
         mb = ham.stat().st_size / 1024 / 1024
-        print(f"[OK] ham_audio.exe ({mb:.1f} MB) - zostanie zbundlowany")
+        print(f"[OK] ham_audio.exe ({mb:.1f} MB) - will be bundled")
     else:
-        print("[!] BRAK ham_audio.exe - EXE zbuduje sie, ale audio nie zadziala")
-        print("    Skopiuj ham_audio.exe do tego katalogu przed buildem.")
+        print("[!] ham_audio.exe MISSING - the EXE will build, but audio won't work")
+        print("    Copy ham_audio.exe into this directory before building.")
 
     opus_found = []
     for name in ("libopus.dll", "opus.dll", "opuslib.dll"):
         if (BASE / name).exists():
-            print(f"[OK] {name} - zbundlowany")
+            print(f"[OK] {name} - bundled")
             opus_found.append(name)
     if not opus_found:
-        print("[!] BRAK opus DLL - audio Opus moze nie dzialac")
-        print("    Skopiuj libopus.dll, opus.dll, opuslib.dll do tego katalogu.")
+        print("[!] Opus DLLs MISSING - Opus audio may not work")
+        print("    Copy libopus.dll, opus.dll, opuslib.dll into this directory.")
     else:
-        print(f"[OK] opus: {len(opus_found)}/3 DLL znalezione")
+        print(f"[OK] opus: {len(opus_found)}/3 DLLs found")
 
-    return True  # nie blokuj - build moze przejsc bez audio
+    return True  # don't block - the build can proceed without audio
 
 
 def patch_scipy():
     """
-    Napraw bug scipy.stats._distn_infrastructure 'del obj' NameError, ktory
-    wywala aplikacje pod PyInstaller + Python 3.12.
+    Fix the scipy.stats._distn_infrastructure 'del obj' NameError that
+    crashes the app under PyInstaller + Python 3.12.
 
-    Plik konczy sie:
+    The file ends with:
         for obj in [...]:
             exec('del ' + obj)
-        del obj          # <- to wybucha
-    Zamieniamy 'del obj' na bezpieczna wersje w NAMESPACE (try/except).
-    Patchujemy zainstalowany pakiet scipy (nie kod projektu).
+        del obj          # <- this blows up
+    We replace 'del obj' with a safe version in the NAMESPACE (try/except).
+    This patches the installed scipy package (not our project code).
     """
-    print("\n[*] Sprawdzam/lataam bug scipy 'del obj' (Py3.12 + PyInstaller)...")
+    print("\n[*] Checking/patching the scipy 'del obj' bug (Py3.12 + PyInstaller)...")
     try:
         import scipy.stats._distn_infrastructure as _m
         fpath = Path(_m.__file__)
     except Exception as e:
-        print(f"[!] Nie moge znalezc scipy do zalatania: {e}")
-        return True  # nie blokuj
+        print(f"[!] Could not find scipy to patch: {e}")
+        return True  # don't block
 
     try:
         src = fpath.read_text(encoding="utf-8")
     except Exception as e:
-        print(f"[!] Nie moge odczytac {fpath}: {e}")
+        print(f"[!] Could not read {fpath}: {e}")
         return True
 
-    # Szukamy samotnego 'del obj' (po petli czyszczacej docstringi)
+    # Look for a lone 'del obj' (after the docstring-cleanup loop)
     if "\ndel obj\n" in src and "try:\n    del obj\nexcept NameError" not in src:
         patched = src.replace(
             "\ndel obj\n",
@@ -117,40 +117,40 @@ def patch_scipy():
         )
         try:
             fpath.write_text(patched, encoding="utf-8")
-            print(f"[OK] Zalatano {fpath.name} (del obj -> try/except)")
+            print(f"[OK] Patched {fpath.name} (del obj -> try/except)")
         except Exception as e:
-            print(f"[!] Nie moge zapisac patcha (moze brak praw): {e}")
-            print("    Uruchom jako administrator albo zalataj recznie.")
+            print(f"[!] Could not write the patch (maybe missing permissions): {e}")
+            print("    Run as administrator or patch it manually.")
     else:
-        print("[OK] scipy juz zalatane lub inna wersja - pomijam")
+        print("[OK] scipy already patched or a different version - skipping")
     return True
 
 
 def build():
     spec = BASE / "hamctrl.spec"
     if not spec.exists():
-        print(f"[X] Brak {spec}")
+        print(f"[X] {spec} missing")
         return False
 
-    # Wyczysc poprzedni build
+    # Clean the previous build
     import shutil
     for d in ("build", "dist", "__pycache__"):
         p = BASE / d
         if p.exists():
-            print(f"[*] Czyszcze {d}/")
+            print(f"[*] Cleaning {d}/")
             shutil.rmtree(p, ignore_errors=True)
 
-    print("\n[*] PyInstaller build (to potrwa kilka minut)...")
+    print("\n[*] PyInstaller build (this will take a few minutes)...")
     try:
         subprocess.check_call([sys.executable, "-m", "PyInstaller",
                                "--clean", "--noconfirm", str(spec)])
     except subprocess.CalledProcessError as e:
-        print(f"[X] PyInstaller fail: {e}")
+        print(f"[X] PyInstaller failed: {e}")
         return False
 
     exe = DIST / "HAM-RADIO-CTRL.exe"
     if not exe.exists():
-        print(f"[X] Brak {exe} po buildzie")
+        print(f"[X] {exe} missing after the build")
         return False
     mb = exe.stat().st_size / 1024 / 1024
     print(f"\n[OK] {exe} ({mb:.1f} MB)")
@@ -159,7 +159,7 @@ def build():
 
 def main():
     print("=" * 56)
-    print("  HAM RADIO CTRL - build serwera (EXE)")
+    print("  HAM RADIO CTRL - server build (EXE)")
     print("=" * 56)
 
     if not check_python():
@@ -172,14 +172,14 @@ def main():
         return 1
 
     print("\n" + "=" * 56)
-    print("  BUILD SUKCES!")
+    print("  BUILD SUCCESSFUL!")
     print("=" * 56)
-    print(f"Wynik: {DIST / 'HAM-RADIO-CTRL.exe'}")
+    print(f"Output: {DIST / 'HAM-RADIO-CTRL.exe'}")
     print("\nTest:")
-    print("  1. Uruchom EXE na maszynie BEZ Pythona")
-    print("  2. Powinno otworzyc przegladarke na https://localhost:8001")
-    print("  3. Zaloguj admin / Admin1234! -> kreator zmiany hasla")
-    print("\nDane usera (config.json, users.json, .env) tworza sie OBOK exe.")
+    print("  1. Run the EXE on a machine WITHOUT Python")
+    print("  2. It should open a browser at https://localhost:8001")
+    print("  3. Log in as admin / Admin1234! -> the password-change wizard")
+    print("\nUser data (config.json, users.json, .env) is created NEXT TO the exe.")
     return 0
 
 

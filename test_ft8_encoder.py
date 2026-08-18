@@ -39,110 +39,111 @@ def roundtrip(call_to, call_de, report_or_grid, r_flag=False):
 
 
 def test_standard_baseline():
-    section("Format standardowy (bez zmian) - XX0XXX")
+    section("Standard format (no changes) - XX0XXX")
     d = roundtrip("CQ", "SQ3MZM", "JO72")
     check(d["i3"] == 1, "CQ SQ3MZM JO72: i3=1")
-    check(d["call_to"] == "CQ" and d["call_de"] == "SQ3MZM", "CQ SQ3MZM JO72: znaki poprawne")
-    check(d["report_or_grid"] == "JO72", "CQ SQ3MZM JO72: grid poprawny")
+    check(d["call_to"] == "CQ" and d["call_de"] == "SQ3MZM", "CQ SQ3MZM JO72: callsigns correct")
+    check(d["report_or_grid"] == "JO72", "CQ SQ3MZM JO72: grid correct")
 
     d = roundtrip("SQ3MZM", "SP9XYZ", "-12")
-    check(d["report_or_grid"] == "-12", "SQ3MZM SP9XYZ -12: raport poprawny")
+    check(d["report_or_grid"] == "-12", "SQ3MZM SP9XYZ -12: report correct")
 
 
 def test_pr_suffix():
-    section("Sufiks /P i /R (bity r1, i3=2 dla /P)")
+    section("/P and /R suffixes (r1 bits, i3=2 for /P)")
     d = roundtrip("SP9XYZ", "SQ3MZM/P", "JO90")
-    check(d["call_de"] == "SQ3MZM", "/P: base call bez sufiksu po odpakowaniu")
-    check(d["r1_2"] == 1, "/P: bit r1 dla call_de ustawiony")
+    check(d["call_de"] == "SQ3MZM", "/P: base call without suffix after unpacking")
+    check(d["r1_2"] == 1, "/P: r1 bit set for call_de")
     check(d["i3"] == 2, "/P: i3=2 (portable)")
 
     d = roundtrip("SP9XYZ", "SQ3MZM/R", "JO90")
-    check(d["call_de"] == "SQ3MZM", "/R: base call bez sufiksu po odpakowaniu")
-    check(d["r1_2"] == 1, "/R: bit r1 dla call_de ustawiony")
+    check(d["call_de"] == "SQ3MZM", "/R: base call without suffix after unpacking")
+    check(d["r1_2"] == 1, "/R: r1 bit set for call_de")
     check(d["i3"] == 1, "/R: i3=1 (rover)")
 
     d = roundtrip("SQ3MZM/P", "SP9XYZ", "JO90")
     check(d["call_to"] == "SQ3MZM" and d["r1_1"] == 1 and d["i3"] == 2,
-          "/P na call_to (nie tylko call_de) dziala tak samo")
+          "/P on call_to (not just call_de) works the same way")
 
 
 def test_swaziland_guinea_workarounds():
-    section("Historyczne wyjatki pack28 (3DA0 Eswatini, 3X Gwinea)")
-    # Jednokierunkowe podstawienie z oficjalnej specyfikacji protokolu FT8 -
-    # dzieki niemu znak pakuje sie jako standardowy (typ 1, z gridem) zamiast
-    # wpadac w wolniejsza sciezke niestandardowa (typ 4, bez gridu). Brak
-    # odwrocenia przy odbiorze to nie nasz blad - dokladnie tak samo dziala
-    # protokol: "3DA0RS" jest odbierane jako "3D0RS" przez KAZDA stacje.
+    section("Historical pack28 exceptions (3DA0 Eswatini, 3X Guinea)")
+    # A one-way substitution from the official FT8 protocol spec - thanks
+    # to it the callsign packs as standard (type 1, with grid) instead of
+    # falling into the slower non-standard path (type 4, no grid). Not
+    # reversing it on receive isn't our bug - that's exactly how the
+    # protocol works: "3DA0RS" is received as "3D0RS" by EVERY station.
     d = roundtrip("CQ", "3DA0RS", "JO72")
-    check(d["i3"] == 1, "3DA0RS: pakuje sie jako standardowy typ 1 (nie hash/typ 4)")
-    check(d["call_de"] == "3D0RS", "3DA0RS: podstawienie 3DA0->3D0 zgodne z protokolem")
-    check(d["report_or_grid"] == "JO72", "3DA0RS: grid przenoszony (typ 1 to umozliwia)")
+    check(d["i3"] == 1, "3DA0RS: packs as standard type 1 (not hash/type 4)")
+    check(d["call_de"] == "3D0RS", "3DA0RS: 3DA0->3D0 substitution matches the protocol")
+    check(d["report_or_grid"] == "JO72", "3DA0RS: grid carried through (type 1 allows it)")
 
     d = roundtrip("CQ", "3XY1AB", "JO72")
-    check(d["i3"] == 1, "3XY1AB: pakuje sie jako standardowy typ 1")
-    check(d["call_de"] == "QY1AB", "3XY1AB: podstawienie 3X->Q zgodne z protokolem")
+    check(d["i3"] == 1, "3XY1AB: packs as standard type 1")
+    check(d["call_de"] == "QY1AB", "3XY1AB: 3X->Q substitution matches the protocol")
 
-    # 3X + cyfra (nie litera) na 3 pozycji juz normalnie pasuje do formatu
-    # standardowego - podstawienie NIE powinno sie tu zadzialac.
+    # 3X + a digit (not a letter) at the 3rd position already fits the
+    # standard format - the substitution should NOT trigger here.
     d = roundtrip("CQ", "3X2CD", "JO72")
-    check(d["call_de"] == "3X2CD", "3X2CD: bez modyfikacji, juz standardowy format")
+    check(d["call_de"] == "3X2CD", "3X2CD: unmodified, already standard format")
 
 
 def test_nonstandard_prefix_call():
-    section("Znak zlozony z prefiksem (WX/SQ3MZM) - typ i3=4")
+    section("Compound callsign with a prefix (WX/SQ3MZM) - type i3=4")
     d = roundtrip("CQ", "WX/SQ3MZM", "")
-    check(d["i3"] == 4, "CQ WX/SQ3MZM: typ i3=4 (niestandardowy)")
+    check(d["i3"] == 4, "CQ WX/SQ3MZM: type i3=4 (non-standard)")
     check(d["call_to"] == "CQ" and d["call_de"] == "WX/SQ3MZM",
-          "CQ WX/SQ3MZM: pelny znak odtworzony poprawnie")
+          "CQ WX/SQ3MZM: full callsign reconstructed correctly")
 
-    # Typ i3=4 fizycznie nie ma pola na grid przy CQ - enkoder ma go
-    # pominac zamiast blokowac cale wywolanie CQ.
+    # Type i3=4 has no grid field at all for CQ - the encoder should drop
+    # it instead of blocking the whole CQ call.
     d = roundtrip("CQ", "WX/SQ3MZM", "JO72")
-    check(d["report_or_grid"] == "", "CQ ze znakiem niestandardowym: grid ucinany (limit protokolu)")
+    check(d["report_or_grid"] == "", "CQ with a non-standard callsign: grid dropped (protocol limit)")
 
-    # Po ogloszeniu pelnego znaku (dekoder go zapamietal), dalsza wymiana
-    # raportu odbywa sie przez odniesienie hashem w zwyklej wiadomosci
-    # typu 1 - to jest dokladnie sciezka opisana w specyfikacji protokolu.
+    # After the full callsign has been announced (the decoder remembered
+    # it), further report exchange happens via a hash reference in a
+    # regular type-1 message - this is exactly the path described in the
+    # protocol spec.
     d = roundtrip("WX/SQ3MZM", "SP9XYZ", "-12")
-    check(d["i3"] == 1, "WX/SQ3MZM SP9XYZ -12: odpowiedz z raportem = typ 1 (hash)")
+    check(d["i3"] == 1, "WX/SQ3MZM SP9XYZ -12: reply with report = type 1 (hash)")
     check(d["call_de"] == "SP9XYZ" and d["report_or_grid"] == "-12",
-          "WX/SQ3MZM SP9XYZ -12: druga strona i raport nietkniete")
+          "WX/SQ3MZM SP9XYZ -12: the other side and the report are untouched")
     check(d["call_to"] == "<WX/SQ3MZM>",
-          "WX/SQ3MZM SP9XYZ -12: hash odwrocony (cache zasilony wczesniejszym CQ)")
+          "WX/SQ3MZM SP9XYZ -12: hash resolved (cache seeded by the earlier CQ)")
 
 
 def test_nonstandard_long_call():
-    section("Znak za dlugi na standardowe pakowanie (SQ3MZMXX, 8 znakow)")
+    section("Callsign too long for standard packing (SQ3MZMXX, 8 characters)")
     d = roundtrip("CQ", "SQ3MZMXX", "")
-    check(d["i3"] == 4, "CQ SQ3MZMXX: typ i3=4")
-    check(d["call_de"] == "SQ3MZMXX", "CQ SQ3MZMXX: pelny (dlugi) znak odtworzony")
+    check(d["i3"] == 4, "CQ SQ3MZMXX: type i3=4")
+    check(d["call_de"] == "SQ3MZMXX", "CQ SQ3MZMXX: full (long) callsign reconstructed")
 
 
 def test_mixed_qso_sequence():
-    section("Pelna sekwencja QSO ze znakiem zlozonym (symulacja realnej lacznosci)")
-    # 1) Oni woluja CQ pelnym znakiem zlozonym - my (i kazdy inny odbiornik)
-    #    poznajemy ich pelny tekst i zapamietujemy w cache.
+    section("Full QSO sequence with a compound callsign (simulating a real contact)")
+    # 1) They call CQ with the full compound callsign - we (and every other
+    #    receiver) learn their full text and cache it.
     d1 = roundtrip("CQ", "PJ4/K1ABC", "")
-    check(d1["call_de"] == "PJ4/K1ABC", "Krok 1 (ich CQ): pelny znak poprawny")
+    check(d1["call_de"] == "PJ4/K1ABC", "Step 1 (their CQ): full callsign correct")
 
-    # 2) My odpowiadamy naszym gridem - ich znak jeszcze nie musi byc
-    #    hashowany (my go jeszcze nie musimy powtarzac w tej wiadomosci,
-    #    bo to MY jestesmy nadawca ze standardowym znakiem, call_to jest
-    #    ich niestandardowym znakiem, wiec i tak trzeba hash - sprawdz).
+    # 2) We reply with our grid - their callsign doesn't need to be hashed
+    #    yet (we don't need to repeat it in this message; we're the sender
+    #    with a standard callsign, call_to is their non-standard callsign,
+    #    so it still needs a hash - check it).
     d2 = roundtrip("PJ4/K1ABC", "SQ3MZM", "JO72")
-    check(d2["i3"] == 1, "Krok 2 (nasza odpowiedz z gridem): typ 1 (hash-reference)")
+    check(d2["i3"] == 1, "Step 2 (our reply with grid): type 1 (hash-reference)")
     check(d2["call_to"] == "<PJ4/K1ABC>" and d2["call_de"] == "SQ3MZM",
-          "Krok 2: hash rozwiazany z cache zbudowanego w kroku 1, nasz znak jawny")
+          "Step 2: hash resolved from the cache built in step 1, our callsign in the clear")
 
-    # 3) Oni odpowiadaja raportem - ich pelny znak (nadawca) musi byc
-    #    znowu opakowany hashem (typ 1, call_de=hash).
+    # 3) They reply with a report - their full callsign (the sender) must
+    #    be wrapped in a hash again (type 1, call_de=hash).
     d3 = roundtrip("SQ3MZM", "PJ4/K1ABC", "-08")
     check(d3["call_de"] == "<PJ4/K1ABC>" and d3["report_or_grid"] == "-08",
-          "Krok 3 (ich raport): hash + raport poprawne")
+          "Step 3 (their report): hash + report correct")
 
-    # 4) 73 na koniec
+    # 4) 73 to finish
     d4 = roundtrip("PJ4/K1ABC", "SQ3MZM", "73")
-    check(d4["report_or_grid"] == "73", "Krok 4 (73): koniec QSO poprawny")
+    check(d4["report_or_grid"] == "73", "Step 4 (73): QSO ending correct")
 
 
 def main():
@@ -160,9 +161,9 @@ def main():
     print("\n" + "=" * 60)
     total = _passed + _failed
     if _failed == 0:
-        print(f"  WYNIK: {_passed}/{total} - WSZYSTKO OK")
+        print(f"  RESULT: {_passed}/{total} - ALL OK")
     else:
-        print(f"  WYNIK: {_passed}/{total} - {_failed} BLEDOW")
+        print(f"  RESULT: {_passed}/{total} - {_failed} FAILURES")
         for d in _fail_details:
             print(f"    - {d}")
     print("=" * 60)
