@@ -1,12 +1,12 @@
 /*
- * audio_autodetect.js — Auto-detekcja karty audio radia (admin, zakladka
- * Konfiguracja).
+ * audio_autodetect.js — Auto-detection of the radio's audio card (admin,
+ * Configuration tab).
  *
- * Domyslnie serwer automatycznie wykrywa karte "USB Audio CODEC" (IC-7300,
- * IC-705) czy "SCU-17" (Yaesu) po nazwie. Ten modul pokazuje status
- * detekcji i pozwala:
- *   - odswiezyc detekcje (np. po podpięciu radia po starcie serwera)
- *   - przelaczyc w tryb "recznej" konfiguracji (ekspert) dla nietypowych radi
+ * By default the server automatically detects the "USB Audio CODEC"
+ * (IC-7300, IC-705) or "SCU-17" (Yaesu) card by name. This module shows
+ * the detection status and lets you:
+ *   - refresh the detection (e.g. after plugging in the radio after server start)
+ *   - switch to "manual" configuration mode (expert) for unusual radios
  */
 
 window.AudioAutoDetect = (function() {
@@ -19,14 +19,14 @@ window.AudioAutoDetect = (function() {
       const data = await r.json();
       if (!data.ok) return;
       _render(data);
-    } catch(e) { console.warn('[audio-detect] load blad:', e); }
+    } catch(e) { console.warn('[audio-detect] load error:', e); }
   }
 
   function _render(data) {
     const info = document.getElementById('audio-detect-info');
     const badge = document.getElementById('audio-detect-badge');
     if (!info || !badge) return;
-    badge.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+    badge.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
 
     const det = data.detection || {};
     const cur = data.current || {};
@@ -102,11 +102,12 @@ window.AudioAutoDetect = (function() {
     console.log('[audio-cfg] toggleExpert() ->', _expertMode);
     const el = document.getElementById('audio-manual-config');
     if (el) el.style.display = _expertMode ? '' : 'none';
-    // Gdy pokazujemy tryb ekspert, zaladuj karty ORAZ zapisane wartosci
-    // (rx/tx/bitrate/txVolume). Wczesniej wolano _audioDeviceRefresh, ktory
-    // laduje TYLKO liste kart — nie ustawial zapisanych wartosci ani txVolume,
-    // wiec suwak zostawal na HTML-owym 4x a karty na domyslnych. _audioDeviceLoad
-    // robi jedno i drugie (w srodku i tak wola refresh).
+    // When showing expert mode, load the cards AND the saved values
+    // (rx/tx/bitrate/txVolume). It used to call _audioDeviceRefresh, which
+    // loads ONLY the card list — it didn't set the saved values or
+    // txVolume, so the slider stayed at the HTML default of 4x while the
+    // cards showed the actual ones. _audioDeviceLoad does both (it calls
+    // refresh internally anyway).
     if (_expertMode && typeof window._audioDeviceLoad === 'function') {
       window._audioDeviceLoad();
     } else if (_expertMode && typeof window._audioDeviceRefresh === 'function') {
