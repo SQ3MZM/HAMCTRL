@@ -1,11 +1,11 @@
 /**
- * com_bridge.js - COM Bridge (klient EXE Windows).
+ * com_bridge.js - COM Bridge (Windows EXE client).
  *
- * Wersja informacyjna (2026-07-05): kazdy user ma STALE 2 porty CI-V.
- * Sekcja w web UI jest tylko informacyjna (bez konfiguracji per-user).
- * Ten modul obsluguje tylko:
- *   - Badge statusu (ilu klientow online)
- *   - Admin: statystyki podlaczonych klientow (/api/com/stats)
+ * Informational version: every user has FIXED 2 CI-V ports. The section in
+ * the web UI is informational only (no per-user configuration). This
+ * module only handles:
+ *   - Status badge (how many clients online)
+ *   - Admin: connected-client stats (/api/com/stats)
  */
 (function () {
 'use strict';
@@ -19,9 +19,9 @@ async function load() {
 }
 
 function _applyRoleVisibility() {
-  // Viewer NIE ma dostepu do mostow (COM Bridge) - tylko web UI.
-  // Ukrywamy obie sekcje COM Bridge (Konfiguracja + Ustawienia) dla viewera.
-  // Operator i admin je widza. (fix 2026-07-05 SQ3MZM)
+  // Viewer has NO access to the bridges (COM Bridge) - web UI only.
+  // Hide both COM Bridge sections (Configuration + Settings) for viewers.
+  // Operator and admin can see them.
   const role = window.AppState?.role || 'viewer';
   const isViewer = (role === 'viewer');
   ['com-bridge-config-section', 'com-bridge-settings-card'].forEach(id => {
@@ -62,7 +62,7 @@ function _renderStats(data) {
 
   const badge = document.getElementById('cb-client-status');
   if (badge) {
-    badge.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+    badge.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
     if (n > 0) {
       badge.textContent = I18n.t(n > 1 ? 'cfg_client_online_n' : 'cfg_client_online_1').replace('{n}', n);
       badge.style.color = 'var(--green)';
