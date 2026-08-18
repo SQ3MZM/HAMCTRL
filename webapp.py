@@ -5372,9 +5372,9 @@ class App:
             else:
                 await self.rig.vfo_equalize()
 
-            # Po operacji odczytaj swiezo freq A z radia (07 A0/B0 zmienia
-            # obie wartosci VFO) — w sim/fallback vfo_swap/vfo_equalize juz
-            # zaktualizowaly self.rig.freq/freq_b lokalnie.
+            # After the operation, freq A is freshly read from the radio
+            # (07 A0/B0 changes both VFO values) — in sim/fallback,
+            # vfo_swap/vfo_equalize already updated self.rig.freq/freq_b locally.
             await self.hub.broadcast({"type": "freq", "freq": self.rig.freq})
             await self.hub.broadcast({"type": "freqB", "freqB": self.rig.freq_b})
 
@@ -5391,7 +5391,7 @@ class App:
                 return
             if not self.rig.sim:
                 try: await self.rig.set_preamp(val)
-                except Exception as e: print(f"[rig] set_preamp blad: {e}")
+                except Exception as e: print(f"[rig] set_preamp error: {e}")
             else:
                 self.rig.preamp = val
             await self.hub.broadcast({"type": "preamp", "value": self.rig.preamp}, skip=ws)
@@ -5407,7 +5407,7 @@ class App:
             val = bool(msg.get("value", False))
             if not self.rig.sim:
                 try: await self.rig.set_attenuator(val)
-                except Exception as e: print(f"[rig] set_attenuator blad: {e}")
+                except Exception as e: print(f"[rig] set_attenuator error: {e}")
             else:
                 self.rig.attenuator = val
             await self.hub.broadcast({"type": "attenuator", "value": self.rig.attenuator}, skip=ws)
@@ -5423,15 +5423,15 @@ class App:
             val = bool(msg.get("value", False))
             if not self.rig.sim:
                 try: await self.rig.set_tuner(val)
-                except Exception as e: print(f"[rig] set_tuner blad: {e}")
+                except Exception as e: print(f"[rig] set_tuner error: {e}")
             else:
                 self.rig.tuner = val
             await self.hub.broadcast({"type": "tuner", "value": self.rig.tuner}, skip=ws)
 
         elif t == "tuner_autotune":
-            # {type:'tuner_autotune'} -> CI-V 1C 01 01 + 1C 01 02 (START cyklu
-            # auto-tuningu). Jednorazowa akcja — generuje krotki sygnal TX
-            # niskiej mocy. Uprawnienia jak PTT (faktycznie wywoluje TX).
+            # {type:'tuner_autotune'} -> CI-V 1C 01 01 + 1C 01 02 (START of
+            # the auto-tuning cycle). A one-shot action — generates a short
+            # low-power TX signal. Same permissions as PTT (it actually triggers TX).
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5442,7 +5442,7 @@ class App:
                 try:
                     await self.rig.start_tuner_autotune()
                 except Exception as e:
-                    print(f"[rig] start_tuner_autotune blad: {e}")
+                    print(f"[rig] start_tuner_autotune error: {e}")
                     return
             else:
                 self.rig.tuner = True
@@ -5450,47 +5450,47 @@ class App:
             await self.hub.broadcast({"type": "toast", "message": "Tuner: autotune w trakcie..."})
 
         elif t == "level":
-            # UI wysyla: {type:'level', param:'AF', value:50}
+            # The UI sends: {type:'level', param:'AF', value:50}
             lvl = msg.get("param") or msg.get("level", "RFPOWER")
             val = int(msg.get("value", 0))
             if lvl == "RFPOWER" and not self._feature_allowed("tx_power", role):
                 return
-            # Zapisz w stanie
+            # Save in state
             if lvl == "AF":      self.rig.af_gain  = val
             if lvl == "RFPOWER": self.rig.rf_power = val
             if lvl == "SQL":     self.rig.squelch  = val
             if not self.rig.sim:
                 try: await self.rig.set_level(lvl, val)
                 except: pass
-            # Broadcast do innych klientow
+            # Broadcast to other clients
             await self.hub.broadcast({"type":"level","param":lvl,"value":val}, skip=ws)
 
         elif t == "wsjtx_tx_start":
-            # WSJT-X zaczyna nadawac — powiadom przegladarke klienta
-            # zeby uruchomila TX mikrofon (getUserMedia → Opus → WS)
+            # WSJT-X starts transmitting — notify the client's browser
+            # so it starts the TX microphone (getUserMedia -> Opus -> WS)
             await self.hub.broadcast({"type": "wsjtx_tx_start"}, skip=ws)
 
         elif t == "wsjtx_tx_stop":
-            # WSJT-X konczy nadawanie — zatrzymaj TX mikrofon w przegladarce
+            # WSJT-X finishes transmitting — stop the TX microphone in the browser
             await self.hub.broadcast({"type": "wsjtx_tx_stop"}, skip=ws)
 
         elif t == "audio_tx_start":
-            # Przegladarka zaczyna wysylac TX audio — uruchom playback na serwerze
+            # The browser starts sending TX audio — start playback on the server
             if not self.audio.tx_active:
                 dev = self.cfg.get("audio", {}).get("txDevice")
                 ok  = self.audio.start_tx(device=dev)
-                print(f"[audio] TX start: {'OK' if ok else 'BLAD'} dev={dev}")
+                print(f"[audio] TX start: {'OK' if ok else 'ERROR'} dev={dev}")
 
         elif t == "audio_tx_stop":
-            # Przegladarka konczy TX — zatrzymaj playback
+            # The browser finishes TX — stop playback
             if self.audio.tx_active:
                 self.audio.stop_tx()
                 print("[audio] TX stop")
 
         elif t == "ft8_tx":
-            # Wlasny nadajnik FT8: PTT ON -> generuj+stream audio -> PTT OFF.
-            # msg: {call_to, call_de, report (grid/raport/RRR/73/...), rFlag?,
-            #       audioFreq? — opcjonalny override freq audio TX (Hz)}
+            # Our own FT8 transmitter: PTT ON -> generate+stream audio -> PTT OFF.
+            # msg: {call_to, call_de, report (grid/report/RRR/73/...), rFlag?,
+            #       audioFreq? — optional TX audio freq override (Hz)}
             call_to = (msg.get("callTo") or "").strip().upper()
             call_de = (msg.get("callDe") or "").strip().upper()
             report  = (msg.get("report") or "").strip()
@@ -5499,30 +5499,31 @@ class App:
             if not call_to or not call_de or not report:
                 await ws.send_json({"type": "ft8_tx_error", "error": "Brak callTo/callDe/report"})
                 return
-            # Radio lock: tylko operator trzymajacy radio (lub admin) moze
-            # nadawac FT8 - ten sam warunek co dla recznego PTT (elif t ==
-            # "ptt" powyzej). Bez tego kazdy polaczony klient (nawet w
-            # trybie ogladania, bez locka) mogl wywolac realne TX poprzez
-            # WS, calkowicie omijajac system wlasnosci radia.
+            # Radio lock: only the operator holding the radio (or admin)
+            # may transmit FT8 - the same condition as for manual PTT
+            # (elif t == "ptt" above). Without this, any connected client
+            # (even in view-only mode, without the lock) could trigger a
+            # real TX via WS, completely bypassing the radio-ownership system.
             _sender = self.online_users.get(ws, {})
             _sender_uid = _sender.get("user_id", "")
             if self.radio_lock["user_id"] and not self._user_has_lock(_sender_uid) and role != "admin":
                 _holder = self.radio_lock["callsign"] or self.radio_lock["username"] or "?"
                 await self.hub.broadcast({"type": "toast", "msg": f"⛔ FT8 TX zablokowany — radio ma {_holder}", "level": "error"})
                 return
-            # Sledz KTO ostatnio inicjowal FT8 TX - potrzebne (a) do auto-zapisu
-            # zakonczonych QSO do wlasciwego dziennika, (b) jako siatka
-            # bezpieczenstwa w _ft8_tx_sequence_inner (kontynuacja automatyki
-            # ma sie zatrzymac jesli radio zostalo w miedzyczasie przejete
-            # przez kogos innego). Aktualizowane dla KAZDEGO wywolania, nie
-            # tylko CQ - wczesniej reczne wywolanie stacji (bez CQ) zostawialo
-            # to pole nietkniete/przestarzale.
+            # Track WHO last initiated FT8 TX - needed (a) to auto-save
+            # finished QSOs to the right log, (b) as a safety net in
+            # _ft8_tx_sequence_inner (the automation's continuation must
+            # stop if the radio was taken over by someone else in the
+            # meantime). Updated on EVERY call, not just CQ - previously a
+            # manual call to a station (without CQ) left this field
+            # untouched/stale.
             if _sender_uid:
                 self._autoqso_uid = _sender_uid
-            # Jesli podano audioFreq — nadpisz TX freq PRZED enkodowaniem.
-            # Uzywane przez Hound mode ktory nadaje na roznych freq (CQ wolanie >1000Hz,
-            # potem R+RPT w slocie Foxa 300-540 Hz). Nie respektujemy self._ft8_tx_frozen
-            # bo Hound mode wie co robi - nie chce zeby freeze go zablokowal.
+            # If audioFreq was given — override the TX freq BEFORE encoding.
+            # Used by Hound mode, which transmits on different frequencies
+            # (CQ call >1000Hz, then R+RPT in the Fox's 300-540 Hz slot). We
+            # don't respect self._ft8_tx_frozen here since Hound mode knows
+            # what it's doing - we don't want freeze to block it.
             if audio_freq_override is not None:
                 try:
                     new_freq = int(audio_freq_override)
@@ -5532,62 +5533,67 @@ class App:
                                                    "freqHz": self._ft8_tx_freq_hz,
                                                    "frozen": self._ft8_tx_frozen})
                 except (ValueError, TypeError):
-                    pass  # cicho ignoruj zle audioFreq
-            # Jesli automat wlaczony i wyslujemy grid (Tx2) lub CQ do konkretnej
-            # stacji — automatycznie wstaw engine w stan CALLING zeby automat
-            # mogl zareagowac na odpowiedz bez potrzeby dwukliku
+                    pass  # silently ignore a bad audioFreq
+            # If the automation is on and we're sending a grid (Tx2) or a
+            # CQ to a specific station — automatically put the engine into
+            # CALLING state so the automation can react to the reply without needing a double-click
             if self._auto_seq_enabled and call_to != "CQ":
-                # Jesli wolamy konkretna stacje a leci petla CQ - zatrzymaj CQ.
-                # Inaczej CQ i wolanie stacji walcza o TX (ten sam konflikt co
-                # przy CQ ze starym QSO). Wolanie stacji ma pierwszenstwo.
+                # If we're calling a specific station while the CQ loop is
+                # running - stop the CQ. Otherwise CQ and the station call
+                # fight over TX (the same conflict as CQ with a stale QSO).
+                # Calling a station takes priority.
                 if self._cq_calling:
-                    print(f"[cq] Zatrzymuje CQ - user wola konkretna stacje {call_to}")
+                    print(f"[cq] Stopping CQ - the user is calling a specific station {call_to}")
                     self._stop_cq_calling()
                 is_grid = (len(report) in (4, 6) and
                            report[:2].isalpha() and report[2:4].isdigit())
                 print(f"[autoqso] ft8_tx check: auto_seq={self._auto_seq_enabled} call_to={call_to} report={report!r} is_grid={is_grid} state={self._qso_engine.state}")
                 if is_grid and self._qso_engine.state == "IDLE":
                     self._qso_engine.start_qso(call_to)
-                    print(f"[autoqso] Reczny TX grid -> auto-start QSO z {call_to}")
+                    print(f"[autoqso] Manual TX grid -> auto-start QSO with {call_to}")
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,
                                                "partner": self._qso_engine.partner_call})
                 elif is_grid and self._qso_engine.partner_call == call_to:
-                    # Juz mamy QSO z ta stacja — nie robimy nic
+                    # Already have a QSO with this station — do nothing
                     pass
-            # ── CQ: wolanie cykliczne (nie jednorazowe) ──────────────────────
-            # Gdy user wola CQ, uruchamiamy petle ktora ponawia CQ co pelny
-            # okres (2 okna) az ktos odpowie albo user/timer zatrzyma. Prawdziwy
-            # WSJT-X tak dziala - nie wiemy czy ktos odpowie po 1. czy 4. CQ.
+            # ── CQ: periodic calling (not a one-shot) ──────────────────────
+            # When the user calls CQ, we start a loop that repeats CQ every
+            # full period (2 windows) until someone answers or the
+            # user/timer stops it. That's how real WSJT-X behaves - we
+            # don't know if someone will answer the 1st or the 4th CQ.
             if call_to == "CQ":
-                # KRYTYCZNE: rozpoczecie CQ musi wyczyscic niedokonczone QSO.
-                # Bez tego, jesli wczesniej wolales stacje (start_qso -> stan
-                # ST_CALLING, partner_call ustawiony) i nie dokonczyles QSO,
-                # maszyna stanow zostaje w starym stanie. Wtedy pojawia sie
-                # KONFLIKT: petla CQ leci, ale engine wciaz probuje dokonczyc
-                # stare QSO wg starego stanu -> automatyka "wariuje", backend
-                # i UI sie rozjezdzaja. Reset stanu przed CQ to naprawia.
+                # CRITICAL: starting a CQ must clear an unfinished QSO.
+                # Without this, if you previously called a station
+                # (start_qso -> ST_CALLING state, partner_call set) and
+                # didn't finish the QSO, the state machine stays in the old
+                # state. Then a CONFLICT appears: the CQ loop is running,
+                # but the engine still tries to finish the old QSO per the
+                # old state -> the automation "goes haywire", backend and
+                # UI drift apart. Resetting the state before CQ fixes this.
                 if self._qso_engine.state != qso_engine.ST_IDLE:
-                    print(f"[cq] Reset niedokonczonego QSO ({self._qso_engine.state}, "
-                          f"partner={self._qso_engine.partner_call}) przed CQ")
+                    print(f"[cq] Resetting an unfinished QSO ({self._qso_engine.state}, "
+                          f"partner={self._qso_engine.partner_call}) before CQ")
                     self._qso_engine.abort_qso()
-                    self._autoqso_tx_seq += 1  # patrz komentarz przy REST /api/ft8/halt
-                # Przerwij tez ewentualny trwajacy TX sekwencer
+                    self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
+                # Also abort any in-flight TX sequencer
                 if self._ft8_tx_lock.locked():
                     self._ft8_tx_abort = True
-                # KRYTYCZNE (Call 1st): ustaw znak OPERATORA w silniku PRZED
-                # wolaniem CQ. Engine startuje z my_call=CALLSIGN z configu
-                # (placeholder XX0XXX / znak klubu); znak operatora byl
-                # ustawiany TYLKO przy kliku w stacje (ft8_start_auto_qso).
-                # Bez tego odpowiedzi na nasze CQ ("XX0XXX XXX ...") byly
-                # odrzucane w on_decode jako "nie do nas" (call_to != my_call)
-                # -> automat GLUCHY na wolajace stacje mimo wlaczonego 1st.
+                # CRITICAL (Call 1st): set the OPERATOR's callsign in the
+                # engine BEFORE calling CQ. The engine starts with
+                # my_call=CALLSIGN from the config (a placeholder XX0XXX /
+                # club callsign); the operator's callsign used to be set
+                # ONLY when clicking a station (ft8_start_auto_qso).
+                # Without this, replies to our CQ ("XX0XXX XXX ...") were
+                # rejected in on_decode as "not for us" (call_to !=
+                # my_call) -> the automation was DEAF to callers despite
+                # Call 1st being enabled.
                 _ui = self.online_users.get(ws, {})
                 _ucall = (_ui.get("callsign") or "").strip().upper() or \
                          (call_de or "").upper()
                 _uuid = _ui.get("user_id")
                 if _uuid:
-                    self._autoqso_uid = _uuid  # do auto-zapisu QSO z kolejki
+                    self._autoqso_uid = _uuid  # for auto-saving a QSO from the queue
                 if _ucall:
                     _uobj = self.find_user_by_id(_uuid) or {}
                     _ugrid = (_uobj.get("locator") or LOCATOR).strip().upper()[:4]
