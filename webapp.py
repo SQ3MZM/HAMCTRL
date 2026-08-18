@@ -6516,25 +6516,26 @@ class App:
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "waiting",
                                        "text": display_text,
                                        "waitSeconds": round(wait_s, 2)})
-            print(f"[ft8] Czekam {wait_s:.2f}s na okno 15s UTC...")
-            # Spij w krotkich kawalkach, zeby abort dzialal tez w trakcie oczekiwania.
-            # KRYTYCZNE: cel liczony jako ABSOLUTNY znacznik zegara (_time.time()
-            # + wait_s), NIE jako suma nominalnych krokow (waited += step).
-            # asyncio.sleep(0.1) gwarantuje co najmniej 0.1s, ale pod obciazonym
-            # event loopem (w tle leci jednoczesnie playback audio TX, txmeter
-            # co ~100ms) realnie smiga zawsze troche dluzej. Przy dziesiatkach
-            # iteracji (np. 147 dla 14.69s oczekiwania) ten drobny naddatek na
-            # iteracje kumulowal sie do ~1s dryfu — mierzone na zywo: DT
-            # wolania CQ wychodzilo +1.0s zamiast bliskiego 0. Liczenie wzgledem
-            # STALEGO celu samo sie koryguje (kazda iteracja mierzy realny
-            # dystans do celu), wiec dryf sie nie kumuluje.
+            print(f"[ft8] Waiting {wait_s:.2f}s for the 15s UTC window...")
+            # Sleep in short chunks, so abort also works while waiting.
+            # CRITICAL: the target is computed as an ABSOLUTE clock
+            # timestamp (_time.time() + wait_s), NOT as a sum of nominal
+            # steps (waited += step). asyncio.sleep(0.1) guarantees at
+            # least 0.1s, but under a loaded event loop (TX audio playback
+            # and txmeter polling every ~100ms run concurrently in the
+            # background) it actually always takes a bit longer. Over
+            # dozens of iterations (e.g. 147 for a 14.69s wait) this small
+            # per-iteration overrun accumulated to ~1s of drift — measured
+            # live: the DT of a CQ call came out +1.0s instead of near 0.
+            # Computing against a FIXED target self-corrects (each
+            # iteration measures the real remaining distance), so the drift doesn't accumulate.
             target_time = _time.time() + wait_s
             while True:
                 remaining = target_time - _time.time()
                 if remaining <= 0:
                     break
                 if self._ft8_tx_abort:
-                    print("[ft8] TX przerwane (abort) podczas oczekiwania na okno")
+                    print("[ft8] TX aborted while waiting for the window")
                     await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                     return
                 await asyncio.sleep(min(0.1, remaining))
@@ -6543,61 +6544,62 @@ class App:
                                        "text": display_text})
 
             if self._ft8_tx_abort:
-                print("[ft8] TX anulowane przed PTT (abort)")
+                print("[ft8] TX cancelled before PTT (abort)")
                 await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                 return
 
-            # Ostatnia kontrola aktualnosci TUZ przed PTT (nie na etapie
-            # planowania) — automatyka planuje wysylke jako osobny task
-            # (asyncio.create_task) ktory czeka na wlasciwe okno (nawet do
-            # ~15-30s wyzej). W tym czasie MOZE zostac zlecona NOWSZA akcja
-            # (np. partner odpowiedzial zanim ta stara doszla do PTT).
-            # Zaobserwowane na zywo 2026-08-15: retransmisja raportu "+08"
-            # (Brak odpowiedzi - powtarzam) i finalne "73" (partner faktycznie
-            # odpowiedzial RR73 W MIEDZYCZASIE) zostaly zlecone niemal
-            # rownoczesnie z tej samej paczki dekodow — "73" zdazylo sie
-            # nadac i ZALOGOWAC QSO, a przestarzale "+08" i tak nadalo sie
-            # PO fakcie.
+            # A final freshness check RIGHT BEFORE PTT (not at the
+            # scheduling stage) — the automation schedules a send as a
+            # separate task (asyncio.create_task) that waits for the right
+            # window (up to ~15-30s, see above). During that time a NEWER
+            # action MAY get scheduled (e.g. the partner answered before
+            # this old one reached PTT). Observed live: a retransmit of
+            # report "+08" (no reply - repeating) and the final "73" (the
+            # partner had actually already replied RR73 IN THE MEANTIME)
+            # were scheduled almost simultaneously from the same batch of
+            # decodes — "73" managed to transmit and LOG the QSO, while the
+            # stale "+08" still went out AFTER the fact.
             #
-            # PIERWSZA wersja tej ochrony (partner_call==call_to AND
-            # is_active()) byla BLEDNA w drugi sposob: koncowe "73" SAMO
-            # przestawia silnik w stan DONE (is_active()==False) jako
-            # BEZPOSREDNI skutek wygenerowania WLASNIE TEJ akcji — wiec
-            # blokowala dokladnie tę wiadomosc, ktora legalnie konczy QSO
-            # (na zywo 2026-08-15: "partner dostal RR73, automat nie
-            # potwierdzil 73"). Stan silnika w danej chwili nie mowi wiec
-            # nic o tym, czy TA KONKRETNA zaplanowana akcja jest wciaz
-            # aktualna, czy juz przestarzala — bo silnik sam siebie
-            # "konczy" jako naturalny skutek WYSYLANIA wlasnie tej akcji.
+            # The FIRST version of this guard (partner_call==call_to AND
+            # is_active()) was WRONG in a different way: the final "73"
+            # itself puts the engine into DONE state (is_active()==False)
+            # as a DIRECT consequence of generating THIS VERY action — so
+            # it blocked exactly the message that legitimately ends the QSO
+            # (observed live: "partner got RR73, the automation never
+            # confirmed 73"). So the engine's state at any given moment
+            # says nothing about whether THIS SPECIFIC scheduled action is
+            # still current or already stale — because the engine
+            # "finishes" itself as a natural side effect of SENDING this
+            # very action.
             #
-            # Poprawne kryterium: numer sekwencyjny (_autoqso_tx_seq,
-            # patrz _send_auto_tx) przypisany w chwili ZLECENIA tej akcji.
-            # Jesli od tego czasu zdazyla zostac zlecona JAKAKOLWIEK nowsza
-            # automatyczna akcja (bez wzgledu na to, w jakim stanie to
-            # zostawilo silnik), ta jest z definicji nieaktualna. Nie
-            # dotyczy CQ (auto_respond=False dla cyklicznego CQ) ani
-            # recznego TX (tx_seq=None wtedy).
+            # The correct criterion: a sequence number (_autoqso_tx_seq,
+            # see _send_auto_tx) assigned at the moment this action was
+            # SCHEDULED. If ANY newer automatic action has been scheduled
+            # since then (regardless of what state that left the engine
+            # in), this one is by definition stale. Doesn't apply to CQ
+            # (auto_respond=False for periodic CQ) or manual TX (tx_seq=None then).
             if auto_respond and call_to != "CQ" and tx_seq is not None:
                 if tx_seq != self._autoqso_tx_seq:
-                    print(f"[autoqso] TX '{call_to} {call_de} {report}' nieaktualne "
-                          f"(tx_seq={tx_seq}, aktualny={self._autoqso_tx_seq}) — pomijam")
+                    print(f"[autoqso] TX '{call_to} {call_de} {report}' stale "
+                          f"(tx_seq={tx_seq}, current={self._autoqso_tx_seq}) — skipping")
                     await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
                     return
 
             import time as _ttt
             _t0 = _ttt.time()
             _pos = _t0 % (ft4_encoder.FT4_SLOT_TIME if is_ft4 else 15.0)
-            print(f"[ft8] przed PTT: pozycja w oknie={_pos:.3f}s")
+            print(f"[ft8] before PTT: position in window={_pos:.3f}s")
             await self.rig.set_ptt(True)
             ptt_was_on = True
-            print(f"[ft8] PTT ON zajelo: {(_ttt.time()-_t0)*1000:.0f}ms")
+            print(f"[ft8] PTT ON took: {(_ttt.time()-_t0)*1000:.0f}ms")
             await self.hub.broadcast({"type": "ptt", "ptt": True})
             print(f"[ft8] TX START: '{call_to} {call_de} {report}' ({duration:.2f}s) DT={_pos:.2f}s")
 
-            # Wlasna transmisja jako wpis 'wsjtx_decode' (is_tx=True) — bez tego
-            # okno RX (Band Activity) nigdy nie widzialo NASZYCH wiadomosci
-            # przeplecionych z odebranymi w kolejnosci czasowej podczas QSO,
-            # tylko odbierane dekody z Rust (ktore nie wiedza nic o naszym TX).
+            # Our own transmission as a 'wsjtx_decode' entry (is_tx=True) —
+            # without this, the RX window (Band Activity) never saw OUR
+            # messages interleaved chronologically with received ones
+            # during a QSO, only decodes received from Rust (which know
+            # nothing about our TX).
             await self.hub.broadcast({
                 "type": "wsjtx_decode",
                 "timeStr": _ttt.strftime("%H%M%S", _ttt.gmtime(_t0)),
@@ -6610,7 +6612,7 @@ class App:
                 "is_tx": True,
             })
 
-            # DIAGNOSTYKA TX: sprawdz stan audio przed wyslaniem
+            # TX DIAGNOSTICS: check audio state before sending
             print(f"[ft8] TX audio state: tx_active={self.audio.tx_active} "
                   f"tx_stream={self.audio._tx_stream is not None} "
                   f"pcm_bytes_len={len(pcm_bytes)} "
@@ -6618,16 +6620,17 @@ class App:
                   f"txVolume={self.audio.cfg.get('txVolume', 4.0) if hasattr(self.audio, 'cfg') else '?'} "
                   f"txDevice={self.cfg.get('audio', {}).get('txDevice', '?')}")
 
-            # Wysylamy WSZYSTKIE kawałki naraz do kolejki PCM.
-            # bulk_tx=True wylacza anty-lag drop w petli TX - bez tego drop
-            # wyrzucal 239/248 ramek ("zaleglosc") i z 4.94s sygnalu zostawalo
-            # 160ms bzyku -> moc/ALC zero, FT8 nie wychodzil w eter.
+            # Send ALL chunks to the PCM queue at once.
+            # bulk_tx=True disables the anti-lag drop in the TX loop -
+            # without this the drop discarded 239/248 frames ("backlog") and
+            # a 4.94s signal was left as 160ms of buzz -> zero power/ALC,
+            # FT8 never made it on air.
             self.audio.bulk_tx = True
             chunks_sent = 0
             for chunk in ft8_encoder.chunk_pcm_bytes(pcm_bytes, chunk_samples=960):
                 if self._ft8_tx_abort:
-                    print("[ft8] TX przerwane (abort) — czyszcze kolejke PCM")
-                    # Wyczysc kolejke PCM zeby nie kontynuowalo nadawania
+                    print("[ft8] TX aborted — clearing PCM queue")
+                    # Clear the PCM queue so it doesn't keep transmitting
                     try:
                         while not self.audio._webrtc_pcm_queue.empty():
                             self.audio._webrtc_pcm_queue.get_nowait()
@@ -6636,14 +6639,14 @@ class App:
                     break
                 self.audio.feed_tx_pcm(chunk)
                 chunks_sent += 1
-            print(f"[ft8] wyslano {chunks_sent} kawalkow PCM do kolejki "
+            print(f"[ft8] sent {chunks_sent} PCM chunks to the queue "
                   f"(queue_size={self.audio._webrtc_pcm_queue.qsize()})")
 
-            # Czekaj az PCM sie odtworzy (czas trwania + margines)
+            # Wait for the PCM to finish playing (duration + margin)
             elapsed = 0.0
             while elapsed < duration + 0.3:
                 if self._ft8_tx_abort:
-                    print("[ft8] TX przerwane podczas odtwarzania")
+                    print("[ft8] TX aborted during playback")
                     try:
                         while not self.audio._webrtc_pcm_queue.empty():
                             self.audio._webrtc_pcm_queue.get_nowait()
@@ -6654,66 +6657,65 @@ class App:
                 elapsed += 0.1
 
         except Exception as e:
-            print(f"[ft8] BLAD podczas nadawania: {e}")
+            print(f"[ft8] ERROR while transmitting: {e}")
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "error", "error": str(e)})
         finally:
-            self.audio.bulk_tx = False  # przywroc anty-lag dla fonii WebRTC
+            self.audio.bulk_tx = False  # restore anti-lag for WebRTC voice
             try:
                 await self.rig.set_ptt(False)
                 await self.hub.broadcast({"type": "ptt", "ptt": False})
             except Exception as e:
-                print(f"[ft8] BLAD przy wylaczaniu PTT: {e}")
-            # Fake Split: VFO wraca na miejsce zaraz po PTT OFF (no-op jesli
-            # split nie zostal zastosowany dla tej transmisji).
+                print(f"[ft8] ERROR while turning off PTT: {e}")
+            # Fake Split: VFO moves back right after PTT OFF (no-op if
+            # split wasn't applied for this transmission).
             await self._restore_fake_split_after_tx()
             await self.hub.broadcast({"type": "ft8_tx_status", "status": "done"})
-            print("[ft8] TX KONIEC" if ptt_was_on else "[ft8] TX pominieto (bez PTT)")
-            # Trzymaj mutex do konca biezacego okresu (PTT juz OFF) zeby
-            # kolejny task nie wszedl w okres korespondenta — TYLKO jesli
-            # faktycznie bylo PTT. Przy wczesnym return (tx_seq nieaktualny,
-            # abort przed PTT, blad audio) nic nie poszlo w eter, wiec nie ma
-            # czego "doczekiwac" — zwolnij mutex NATYCHMIAST, zeby kolejna,
-            # wciaz aktualna wysylka (np. finalne "73") nie utknela w
-            # kolejce na lock az do nastepnego okresu (patrz komentarz przy
-            # ptt_was_on).
+            print("[ft8] TX END" if ptt_was_on else "[ft8] TX skipped (no PTT)")
+            # Hold the mutex until the end of the current period (PTT
+            # already OFF) so the next task doesn't step into the
+            # correspondent's period — ONLY if PTT actually fired. On an
+            # early return (stale tx_seq, abort before PTT, audio error)
+            # nothing went on air, so there's nothing to "wait out" —
+            # release the mutex IMMEDIATELY, so the next, still-current send
+            # (e.g. the final "73") doesn't get stuck waiting on the lock
+            # until the next period (see the comment at ptt_was_on).
             if ptt_was_on:
                 import time as _time
                 _window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
                 _remaining = _window_s - (_time.time() % _window_s)
                 if 0.5 < _remaining < _window_s - 0.5:
-                    print(f"[ft8] Czekam {_remaining:.1f}s do konca okresu (PTT OFF)")
+                    print(f"[ft8] Waiting {_remaining:.1f}s until end of period (PTT OFF)")
                     await asyncio.sleep(_remaining)
 
     @staticmethod
     def _format_report(snr_db: float) -> str:
-        """Formatuje zmierzony SNR (dB) jako standardowy raport FT8 z
-        wymuszonym znakiem, np. -12, +05. Zakres protokolu FT8 to -30..+49 —
-        przycinamy (clamp) ekstremalne pomiary do tego zakresu, bo encoder
-        rzuca ValueError poza nim."""
+        """Formats a measured SNR (dB) as a standard FT8 report with a
+        forced sign, e.g. -12, +05. The FT8 protocol range is -30..+49 —
+        clamp extreme measurements to this range, since the encoder raises
+        ValueError outside it."""
         snr_int = max(-30, min(49, int(round(snr_db))))
         return f"{snr_int:+03d}"
 
     async def _process_tx_freeze_rx_follow(self, m: dict):
         """
-        Automatyczne podazanie RX/TX prazkow za stacja z ktora prowadzimy QSO.
+        Automatically follows the RX/TX markers to the station we're having a QSO with.
 
-        WSJT-X standard: jesli klikniesz CQ na freq X, wywolujesz na X, i
-        stacja odpowiada rowniez z X, TX/RX zostaja na X. Ale jesli stacja
-        przesunie sie na inna freq w kolejnej wiadomosci (bo znalazla mniej
-        zaklocone miejsce), TX/RX powinny za nia podazac zeby QSO nie
-        zerwalo sie.
+        WSJT-X standard: if you click CQ on freq X, call on X, and the
+        station also replies from X, TX/RX stay on X. But if the station
+        moves to a different freq in a later message (because it found a
+        less crowded spot), TX/RX should follow it so the QSO doesn't break.
 
-        Logika:
-          - Wiadomosc jest ADRESOWANA DO NAS (call_to == self._qso_engine.my_call)? Tak/nie
-          - Nowa freq rozni sie od aktualnej? Tak/nie
-          - RX ZAWSZE przesuwane na nowa freq (RX freeze nie istnieje)
-          - TX przesuwane TYLKO jesli nie ma "Hold TX" (self._ft8_tx_frozen)
-            - Dlatego wczesniejsza nazwa metody _process_tx_freeze_rx_follow
-              odnosi sie do specyficznego przypadku - teraz robimy szerzej.
+        Logic:
+          - Is the message ADDRESSED TO US (call_to == self._qso_engine.my_call)? Yes/no
+          - Does the new freq differ from the current one? Yes/no
+          - RX ALWAYS moves to the new freq (RX freeze doesn't exist)
+          - TX moves ONLY if there's no "Hold TX" (self._ft8_tx_frozen)
+            - Hence the method's earlier name, _process_tx_freeze_rx_follow,
+              referred to a specific case — now it does more broadly.
 
-        Wywolywane dla KAZDEGO odebranego dekodowania (w _ft8_rx_loop),
-        niezaleznie od tego czy auto_seq_enabled. Bo to ulatwienie namierzania
-        stacji dziala nawet przy calkowicie recznej obsludze.
+        Called for EVERY received decode (in _ft8_rx_loop), regardless of
+        auto_seq_enabled. Because this station-tracking convenience works
+        even under fully manual operation.
         """
         try:
             parsed = qso_engine.parse_message(m["message"])
@@ -6730,12 +6732,12 @@ class App:
                 return
             new_freq = float(m.get("freq_hz", m.get("deltaFreq", self._ft8_rx_freq_hz)))
 
-            # RX zawsze podaza za stacja ktora do nas nadaje
+            # RX always follows the station transmitting to us
             if abs(new_freq - self._ft8_rx_freq_hz) >= 1.0:
                 self._ft8_rx_freq_hz = new_freq
                 await self.hub.broadcast({"type": "ft8_rx_freq", "freqHz": self._ft8_rx_freq_hz})
 
-            # TX podaza tylko jesli nie ma Hold TX (uzytkownik nie zamrozil TX)
+            # TX follows only if there's no Hold TX (user hasn't frozen TX)
             if not self._ft8_tx_frozen:
                 if abs(new_freq - self._ft8_tx_freq_hz) >= 1.0:
                     self._ft8_tx_freq_hz = new_freq
