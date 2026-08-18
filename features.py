@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
 """
-features.py — centralny rejestr funkcji radia widocznych jako przyciski w panelu
-("Panel funkcji" pod oknem PTT, nad waterfallem).
+features.py — the central registry of radio features shown as buttons in
+the panel ("Feature panel" below the PTT window, above the waterfall).
 
-Kazda funkcja ma:
-  - id      : klucz uzywany w API/config (np. "split")
-  - label   : etykieta po polsku do UI
-  - icon    : nazwa ikony (emoji jako fallback, frontend moze zmapowac na svg)
-  - group   : grupowanie w UI ("vfo", "mode", "tx", "scope", "advanced")
-  - backend : "civ" | "rigcat" | "both" — ktory backend musi wspierac te funkcje
+Each feature has:
+  - id      : the key used in the API/config (e.g. "split")
+  - label   : the Polish-language UI label (NOTE: kept in Polish here
+              deliberately — it's data displayed straight to the UI, not
+              a comment; do not translate as part of the backend English
+              translation pass, see backend_english_translation memory)
+  - icon    : icon name (emoji as fallback, the frontend can map it to svg)
+  - group   : UI grouping ("vfo", "mode", "tx", "scope", "advanced")
+  - backend : "civ" | "rigcat" | "both" — which backend must support this feature
 
-Przeplyw:
+Flow:
   1. CivRig/RigCAT.get_capabilities() -> dict {feature_id: bool}
-     "co radio TECHNICZNIE umie" (na podstawie profilu modelu / dump_caps)
+     "what the radio can TECHNICALLY do" (based on the model profile / dump_caps)
   2. config.json["rigs"][i]["enabledFeatures"] -> dict {feature_id: bool}
-     "co admin WLACZYL dla uzytkownikow" (whitelist, edytowana w panelu admina)
-  3. effective_features() laczy oba: funkcja jest aktywna w UI uzytkownika
-     TYLKO gdy capabilities[id]==True ORAZ enabledFeatures[id]==True
-  4. webapp.py sprawdza effective_features() przed wykonaniem akcji
-     (oprocz admina, ktory ma dostep do wszystkiego co radio wspiera)
+     "what the admin ENABLED for users" (a whitelist, edited in the admin panel)
+  3. effective_features() combines both: a feature is active in the user's
+     UI ONLY when capabilities[id]==True AND enabledFeatures[id]==True
+  4. webapp.py checks effective_features() before performing an action
+     (except for the admin, who has access to everything the radio supports)
 """
 
-# Rejestr wszystkich mozliwych funkcji — jedno miejsce prawdy.
-# Domyslna wartosc enabled_default = True oznacza ze nowo wykryta funkcja
-# (wspierana przez radio) jest domyslnie WIDOCZNA dla userow, dopoki admin
-# jej nie wylaczy. Funkcje oznaczone enabled_default=False wymagaja
-# recznej akceptacji admina (np. funkcje "ryzykowne" jak zmiana mocy).
+# Registry of every possible feature — a single source of truth.
+# The default enabled_default = True means a newly detected feature
+# (supported by the radio) is VISIBLE to users by default, until the admin
+# disables it. Features marked enabled_default=False require explicit
+# admin approval (e.g. "risky" features like changing TX power).
 FEATURES = [
-    # ── VFO / czestotliwosc ──────────────────────────────────────────────────
+    # ── VFO / frequency ───────────────────────────────────────────────────
     {"id": "freq_set",  "label": "Zmiana czestotliwosci", "icon": "📻",
      "group": "vfo", "backend": "both", "enabled_default": True},
 
@@ -40,21 +43,21 @@ FEATURES = [
     {"id": "rit",       "label": "RIT / XIT", "icon": "🎯",
      "group": "vfo", "backend": "both", "enabled_default": False},
 
-    # ── TX / PTT ────────────────────────────────────────────────────────────
+    # ── TX / PTT ─────────────────────────────────────────────────────────
     {"id": "ptt",       "label": "PTT (nadawanie)", "icon": "🎙️",
      "group": "tx", "backend": "both", "enabled_default": True},
 
     {"id": "tx_power",  "label": "Regulacja mocy TX", "icon": "⚡",
      "group": "tx", "backend": "both", "enabled_default": False},
 
-    # ── Odbior / S-metr / scope ─────────────────────────────────────────────
+    # ── Receive / S-meter / scope ───────────────────────────────────────────
     {"id": "smeter",    "label": "Wskaznik S-metr", "icon": "📶",
      "group": "scope", "backend": "both", "enabled_default": True},
 
     {"id": "scope",     "label": "Waterfall / Scope", "icon": "🌊",
      "group": "scope", "backend": "civ", "enabled_default": True},
 
-    # ── Inne ────────────────────────────────────────────────────────────────
+    # ── Other ──────────────────────────────────────────────────────────────
     {"id": "memory",    "label": "Kanaly pamieci", "icon": "💾",
      "group": "advanced", "backend": "both", "enabled_default": False},
 
@@ -66,23 +69,24 @@ FEATURES_BY_ID = {f["id"]: f for f in FEATURES}
 
 
 def default_enabled_features() -> dict:
-    """Domyslna whitelista admina — uzywana gdy config.json nie ma jeszcze
-    sekcji enabledFeatures dla danego radia (pierwsze uruchomienie)."""
+    """The default admin whitelist — used when config.json doesn't yet have
+    an enabledFeatures section for a given radio (first run)."""
     return {f["id"]: f["enabled_default"] for f in FEATURES}
 
 
 def effective_features(capabilities: dict, enabled_features: dict | None = None) -> dict:
     """
-    Polacz "co radio umie" (capabilities) z "co admin wlaczyl" (enabled_features).
-    Zwraca dict {feature_id: bool} — True = funkcja widoczna/aktywna dla usera.
+    Combine "what the radio can do" (capabilities) with "what the admin
+    enabled" (enabled_features). Returns dict {feature_id: bool} — True =
+    the feature is visible/active for the user.
 
-    capabilities moze byc:
-    - stary format: {feature_id: bool}  (kompatybilnosc)
-    - nowy format: {"raw_caps": {...}, "actions": [...], "sliders": [...]}
-      — w tym przypadku uzywany jest tylko raw_caps dla statycznych FEATURES
+    capabilities can be:
+    - old format: {feature_id: bool}  (compatibility)
+    - new format: {"raw_caps": {...}, "actions": [...], "sliders": [...]}
+      — in this case only raw_caps is used for the static FEATURES
 
-    Jesli enabled_features is None, uzyj default_enabled_features().
-    Funkcje nieobecne w capabilities sa traktowane jako False (radio nie wspiera).
+    If enabled_features is None, use default_enabled_features().
+    Features absent from capabilities are treated as False (radio doesn't support them).
     """
     if enabled_features is None:
         enabled_features = default_enabled_features()
@@ -100,15 +104,16 @@ def effective_features(capabilities: dict, enabled_features: dict | None = None)
 
 def effective_dynamic(capabilities: dict, enabled_dynamic: dict | None = None) -> dict:
     """
-    Filtruj dynamiczne actions/sliders (z hamlib_caps.discover_capabilities)
-    wedlug whitelisty admina (enabled_dynamic = {dynamic_id: bool}).
+    Filter dynamic actions/sliders (from hamlib_caps.discover_capabilities)
+    against the admin whitelist (enabled_dynamic = {dynamic_id: bool}).
 
-    Domyslnie WSZYSTKIE wykryte dynamiczne elementy sa WLACZONE (enabled_default=True)
-    — admin musi recznie WYLACZYC te ktore nie powinny byc widoczne dla userow.
-    To odwrotna logika niz statyczne FEATURES (tam default zalezy od enabled_default),
-    bo dynamiczne elementy to z reguly bezpieczne regulacje audio/funkcje radia.
+    By default ALL detected dynamic elements are ENABLED (enabled_default=True)
+    — the admin must manually DISABLE the ones that shouldn't be visible to
+    users. This is the opposite logic from the static FEATURES (there the
+    default depends on enabled_default), because dynamic elements are
+    generally safe audio adjustments/radio features.
 
-    Zwraca {"actions": [...], "sliders": [...]} — tylko elementy z
+    Returns {"actions": [...], "sliders": [...]} — only elements with
     enabled_dynamic.get(id, True) == True.
     """
     if enabled_dynamic is None:
@@ -123,16 +128,16 @@ def effective_dynamic(capabilities: dict, enabled_dynamic: dict | None = None) -
 
 def features_for_admin(capabilities: dict, enabled_features: dict | None = None) -> list:
     """
-    Zwroc liste funkcji do panelu admina — kazda z metadanymi + 3 flagami:
-      - supported : czy radio technicznie wspiera (capabilities)
-      - enabled   : czy admin wlaczyl (enabled_features) — TYLKO informacyjnie
-                     gdy supported=False (admin moze i tak przygotowac config
-                     na przyszlosc, np. przed podlaczeniem innego radia)
-      - effective : supported AND enabled — czy faktycznie widoczne dla usera
+    Return the feature list for the admin panel — each with its metadata + 3 flags:
+      - supported : whether the radio technically supports it (capabilities)
+      - enabled   : whether the admin enabled it (enabled_features) — INFORMATIONAL
+                     ONLY when supported=False (the admin can still prepare
+                     the config ahead of time, e.g. before connecting another radio)
+      - effective : supported AND enabled — whether it's actually visible to the user
 
-    Admin moze edytowac 'enabled' nawet dla supported=False (np. przygotowanie
-    konfiguracji dla radia ktore bedzie podlaczone pozniej), ale przelacznik
-    bedzie wizualnie wyszarzony w UI z etykieta "radio nie wspiera".
+    The admin can edit 'enabled' even when supported=False (e.g. preparing
+    the config for a radio that will be connected later), but the toggle
+    will be visually greyed out in the UI with a "radio doesn't support this" label.
     """
     if enabled_features is None:
         enabled_features = default_enabled_features()
@@ -155,9 +160,9 @@ def features_for_admin(capabilities: dict, enabled_features: dict | None = None)
 
 def dynamic_for_admin(capabilities: dict, enabled_dynamic: dict | None = None) -> dict:
     """
-    Zwroc dynamiczne actions/sliders z flaga 'enabled' (dla panelu admina) —
-    kazdy element + {"enabled": bool}. Domyslnie enabled=True dla wszystkich
-    wykrytych elementow (admin moze wylaczyc konkretne).
+    Return dynamic actions/sliders with an 'enabled' flag (for the admin
+    panel) — each element + {"enabled": bool}. Defaults to enabled=True for
+    every detected element (the admin can disable specific ones).
     """
     if enabled_dynamic is None:
         enabled_dynamic = {}

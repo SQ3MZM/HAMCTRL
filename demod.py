@@ -1,26 +1,27 @@
 """
-Etap 2: Demodulacja - z audio + pozycji kandydata (freq_hz, time_offset_s)
-wyciagamy 79 symboli (twarda decyzja, do szybkiej weryfikacji syncu) oraz
-174 miekkie LLR-y (do pelnego LDPC belief-propagation pozniej).
+Stage 2: Demodulation - from audio + a candidate position (freq_hz,
+time_offset_s) we extract 79 symbols (hard decision, for fast sync
+verification) and 174 soft LLRs (for full LDPC belief-propagation later).
 
-Mapowanie bit<->symbol: 79 symboli zawiera 3x7=21 symboli synchronizacji
-Costas (ignorowane przy dekodowaniu danych) + 58 symboli danych. Kazdy
-symbol danych koduje GRAY-mapped 3 bity z 174-bitowego kodu LDPC(174,91).
-Zgodne z naszym enkoderem (ft8_encoder.py): _SYMBOL_GRAY tablica Gray coding
-i ulozenie Costas na pozycjach [0:7], [36:43], [72:79].
+Bit<->symbol mapping: the 79 symbols contain 3x7=21 Costas sync symbols
+(ignored when decoding data) + 58 data symbols. Each data symbol encodes
+3 Gray-mapped bits from the 174-bit LDPC(174,91) code. Matches our encoder
+(ft8_encoder.py): the _SYMBOL_GRAY Gray-coding table and the Costas
+placement at positions [0:7], [36:43], [72:79].
 """
 import numpy as np
 from params import SAMPLE_RATE, SAMPLES_PER_SYMBOL, N_TONES, COSTAS, COSTAS_POS, N_SYM
 
-# DOKLADNIE ta sama tabela co w ft8_encoder.py (_GRAYMAP), zweryfikowana
-# przez odczyt zrodla. idx (3-bit value 0-7) -> tone (symbol nadawany).
+# EXACTLY the same table as in ft8_encoder.py (_GRAYMAP), verified by
+# reading the source. idx (3-bit value 0-7) -> tone (transmitted symbol).
 GRAYMAP = [0, 1, 3, 2, 5, 6, 4, 7]
-# Odwrotnosc: tone -> idx (3-bit value), potrzebna do dekodowania
+# Inverse: tone -> idx (3-bit value), needed for decoding
 GRAYMAP_INV = [0] * 8
 for _idx, _tone in enumerate(GRAYMAP):
     GRAYMAP_INV[_tone] = _idx
 
-# Pozycje symboli danych w 79-symbolowej ramce (po pominieciu 3x7=21 Costas):
+# Positions of data symbols in the 79-symbol frame (after removing the
+# 3x7=21 Costas symbols):
 # symbols79 = Costas[0:7] + data[0:29] + Costas[36:43] + data[29:58] + Costas[72:79]
 DATA_SYM_INDICES = list(range(7, 36)) + list(range(43, 72))
 assert len(DATA_SYM_INDICES) == 58
@@ -28,9 +29,10 @@ assert len(DATA_SYM_INDICES) == 58
 
 def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
     """
-    Dla danej pozycji (freq_hz = czestotliwosc tonu 0, time_offset_s = poczatek
-    pierwszego symbolu), wyciaga macierz mocy [79 symboli x 8 tonow] poprzez
-    korelacje z czystymi tonami (Goertzel-like, przez FFT na każdym oknie symbolu).
+    For a given position (freq_hz = frequency of tone 0, time_offset_s =
+    start of the first symbol), extracts the power matrix [79 symbols x 8
+    tones] via correlation with pure tones (Goertzel-like, via FFT on each
+    symbol window).
     """
     start_sample = int(round(time_offset_s * SAMPLE_RATE))
     n = SAMPLES_PER_SYMBOL
@@ -46,7 +48,7 @@ def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
             power[sym, :] = 0
             continue
         seg = audio[s0:s1] * window
-        spec = np.fft.rfft(seg, n=n * 4)  # zero-padding dla lepszej rozdzielczosci czest.
+        spec = np.fft.rfft(seg, n=n * 4)  # zero-padding for better frequency resolution
         freqs = np.fft.rfftfreq(n * 4, d=1.0 / SAMPLE_RATE)
         for tone in range(N_TONES):
             f_target = freq_hz + tone * tone_spacing
@@ -57,7 +59,7 @@ def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
 
 
 def costas_sync_quality(power):
-    """Mierzy jak dobrze symbole na pozycjach Costas pasuja do wzorca (0..1)."""
+    """Measures how well the symbols at the Costas positions match the pattern (0..1)."""
     correct = 0
     total = 0
     for offset in COSTAS_POS:
@@ -73,14 +75,14 @@ def costas_sync_quality(power):
 
 
 def hard_decode_symbols(power):
-    """Zwraca 79 wartosci tonow (0-7) przez twarda decyzje (argmax)."""
+    """Returns 79 tone values (0-7) via a hard decision (argmax)."""
     return np.argmax(power, axis=1)
 
 
 def extract_bits174(power):
     """
-    Z macierzy mocy [79 x 8] wyciaga 174 twarde bity kodu LDPC, uzywajac
-    DOKLADNIE tej samej tabeli Gray co enkoder (odwroconej).
+    From the power matrix [79 x 8], extracts 174 hard LDPC code bits,
+    using EXACTLY the same Gray table as the encoder (inverted).
     """
     tones = hard_decode_symbols(power)
     bits = []
@@ -96,16 +98,16 @@ def extract_bits174(power):
 
 def extract_llr174(power):
     """
-    Z macierzy mocy [79 x 8] liczy miekkie LLR dla 174 bitow LDPC.
-    LLR dodatni = bit bardziej prawdopodobnie 0, ujemny = bit bardziej
-    prawdopodobnie 1 (konwencja: log(P(bit=0)/P(bit=1))).
+    From the power matrix [79 x 8], computes soft LLRs for the 174 LDPC bits.
+    Positive LLR = bit more likely 0, negative = bit more likely 1
+    (convention: log(P(bit=0)/P(bit=1))).
 
-    Uproszczone podejscie: dla kazdej z 3 pozycji bitowych w symbolu,
-    sumujemy (w dziedzinie log) moc tonow ktore daja bit=0 vs bit=1
-    wedlug odwroconej tabeli Gray, na zasadzie max-log-MAP.
+    Simplified approach: for each of the 3 bit positions within a symbol,
+    we sum (in the log domain) the power of tones that give bit=0 vs bit=1
+    according to the inverted Gray table, on a max-log-MAP basis.
     """
     llrs = []
-    # tone_to_bits[tone] = (b0,b1,b2) odpowiadajace temu tonowi
+    # tone_to_bits[tone] = (b0,b1,b2) corresponding to that tone
     tone_to_bits = {}
     for idx3 in range(8):
         tone = GRAYMAP[idx3]
@@ -132,12 +134,12 @@ def refine_sync(audio, freq_hz, time_offset_s,
                  freq_search_hz=40.0, freq_step_hz=1.0,
                  time_search_s=0.3, time_step_s=0.02):
     """
-    Dopracowuje pozycje kandydata (zgrubna z sync.py, kwantyzowana do
-    siatki nadpróbkowania) przez lokalne przeszukanie wokol niej,
-    maksymalizujac jakosc dopasowania Costas. Niezbedne bo demodulacja
-    jest bardzo czula na dokladnosc pozycji (np. 100% zgodnosc symboli
-    przy idealnej pozycji vs 14% przy przesunieciu o pol kroku siatki).
-    Zwraca (best_freq, best_time, best_power, best_quality).
+    Refines a candidate's position (coarse from sync.py, quantized to the
+    oversampling grid) via a local search around it, maximizing the Costas
+    match quality. Necessary because demodulation is very sensitive to
+    positional accuracy (e.g. 100% symbol agreement at the ideal position
+    vs 14% when shifted by half a grid step).
+    Returns (best_freq, best_time, best_power, best_quality).
     """
     best_quality = -1
     best_freq = freq_hz

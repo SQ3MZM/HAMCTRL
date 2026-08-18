@@ -1,15 +1,15 @@
 """
-Etap 1: Wykrywanie kandydatow sygnalow FT8 (sync search).
+Stage 1: FT8 signal candidate detection (sync search).
 
-Metoda: liczymy spektrogram (STFT) calego okna audio z nadpróbkowaniem
-czasowym (np. co 1/2 symbolu) i czestotliwosciowym (co 1/2 tonu), nastepnie
-przesuwamy 7-symbolowy wzorzec Costas po siatce (czas, czestotliwosc) i
-szukamy lokalnych maksimow korelacji (sumy mocy na oczekiwanych tonach
-Costas minus srednia mocy na pozostalych tonach w danym oknie).
+Method: compute a spectrogram (STFT) of the whole audio window with time
+oversampling (e.g. every 1/2 symbol) and frequency oversampling (every 1/2
+tone), then slide the 7-symbol Costas pattern across the (time, frequency)
+grid and look for local correlation maxima (sum of power on the expected
+Costas tones minus the average power on the other tones in that window).
 
-Sygnal FT8 ma TRZY wystapienia wzorca Costas (na pozycjach symboli 0, 36,
-72), wiec uzywamy sumy korelacji ze wszystkich trzech dla wiekszej
-niezawodnosci wykrywania w szumie.
+An FT8 signal has THREE occurrences of the Costas pattern (at symbol
+positions 0, 36, 72), so we sum the correlation across all three for more
+reliable detection in noise.
 """
 import numpy as np
 from params import (SAMPLE_RATE, SAMPLES_PER_SYMBOL, TONE_SPACING, N_TONES,
@@ -18,19 +18,20 @@ from params import (SAMPLE_RATE, SAMPLES_PER_SYMBOL, TONE_SPACING, N_TONES,
 
 def compute_magnitude_spectrogram(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000):
     """
-    Liczy spektrogram mocy z nadprobkowaniem.
-    freq_osr: nadprobkowanie czestotliwosciowe wzgledem TONE_SPACING (2 = krok 3.125Hz),
-        osiagniete przez ZERO-PADDING (nie wydluzanie okna), zeby kazde okno FFT
-        nadal obejmowalo dokladnie 1 symbol i nie mieszalo energii sasiednich symboli.
-    time_osr: nadprobkowanie czasowe wzgledem SAMPLES_PER_SYMBOL (2 = krok pol-symbolu)
+    Computes an oversampled power spectrogram.
+    freq_osr: frequency oversampling relative to TONE_SPACING (2 = 3.125Hz
+        steps), achieved via ZERO-PADDING (not lengthening the window), so
+        each FFT window still covers exactly 1 symbol and doesn't mix
+        energy from adjacent symbols.
+    time_osr: time oversampling relative to SAMPLES_PER_SYMBOL (2 = half-symbol steps)
 
-    Zwraca: (mag, n_blocks, n_bins, freq_step, time_step_samples, bin_min)
-        mag[time_block, freq_bin] = moc
+    Returns: (mag, n_blocks, n_bins, freq_step, time_step_samples, bin_min)
+        mag[time_block, freq_bin] = power
     """
-    n = SAMPLES_PER_SYMBOL          # dlugosc okna analizy = ZAWSZE 1 symbol
-    nfft = n * freq_osr             # zero-padding do tej dlugosci (rozdzielczosc czest.)
-    freq_step = SAMPLE_RATE / nfft  # Hz na 1 bin FFT
-    time_step = SAMPLES_PER_SYMBOL // time_osr  # probek miedzy kolejnymi oknami STFT
+    n = SAMPLES_PER_SYMBOL          # analysis window length = ALWAYS 1 symbol
+    nfft = n * freq_osr             # zero-pad to this length (frequency resolution)
+    freq_step = SAMPLE_RATE / nfft  # Hz per FFT bin
+    time_step = SAMPLES_PER_SYMBOL // time_osr  # samples between consecutive STFT windows
 
     n_samples = len(audio)
     n_blocks = (n_samples - n) // time_step + 1
@@ -47,7 +48,7 @@ def compute_magnitude_spectrogram(audio, freq_osr=2, time_osr=2, f_min=200, f_ma
         seg = audio[start:start + n]
         if len(seg) < n:
             seg = np.pad(seg, (0, n - len(seg)))
-        spec = np.fft.rfft(seg * window, n=nfft)  # zero-padding tutaj, okno wciaz dlugosci n
+        spec = np.fft.rfft(seg * window, n=nfft)  # zero-padding here, window is still length n
         power = np.abs(spec) ** 2
         mag[i, :] = power[bin_min:bin_max]
 
@@ -57,16 +58,17 @@ def compute_magnitude_spectrogram(audio, freq_osr=2, time_osr=2, f_min=200, f_ma
 def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
                      max_candidates=30, min_score=0.4):
     """
-    Przeszukuje audio w poszukiwaniu kandydatow sygnalow FT8.
-    Zwraca liste dict: {freq_hz, time_offset_s, score, block0, bin0}
+    Searches audio for FT8 signal candidates.
+    Returns a list of dicts: {freq_hz, time_offset_s, score, block0, bin0}
 
-    Scoring odporny na nakladajace sie stacje: dla kazdej pozycji Costas
-    liczymy (moc_wlasciwego_tonu - srednia_8_tonow) / srednia_8_tonow na
-    LINIOWEJ mocy. Stara metoda (log(oczekiwany) - log(max_z_7_innych))
-    karala sasiadow: silny sygnal obok podnosil max i spychal margin ponizej
-    progu, gubiac nawet mocne stacje (np. E20LXN -3dB z sasiadem na 2009Hz).
-    Metoda "wzgledem sredniej" jest odporna na pojedynczego sasiada.
-    Wersja zwektoryzowana: macierze 3D, jedna operacja numpy na skladnik Costas.
+    Scoring robust to overlapping stations: for each Costas position we
+    compute (power_of_correct_tone - average_of_8_tones) / average_of_8_tones
+    on LINEAR power. The old method (log(expected) - log(max_of_the_other_7))
+    penalized neighbors: a strong signal nearby raised the max and pushed the
+    margin below threshold, losing even strong stations (e.g. E20LXN -3dB
+    with a neighbor at 2009Hz). The "relative to the average" method is
+    robust to a single neighbor.
+    Vectorized version: 3D arrays, one numpy operation per Costas term.
     """
     result = compute_magnitude_spectrogram(audio, freq_osr, time_osr, f_min, f_max)
     if result is None:
@@ -100,14 +102,14 @@ def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
             if not np.any(valid_t):
                 continue
 
-            # Dla kazdego f0 (n_f0,) i kazdego tonu (8,) policz bin index
+            # For each f0 (n_f0,) and each tone (8,), compute the bin index
             tone_offsets = np.arange(N_TONES) * bins_per_tone  # (8,)
             fbins = f0_vals[:, None] + tone_offsets[None, :]   # (n_f0, 8)
             valid_f = np.all((fbins >= 0) & (fbins < n_bins), axis=1)  # (n_f0,)
             if not np.any(valid_f):
                 continue
 
-            # Wytnij moc (LINIOWA, nie log) dla (tblock, fbin): (n_t0, n_f0, 8)
+            # Slice out the power (LINEAR, not log) for (tblock, fbin): (n_t0, n_f0, 8)
             tb_idx = np.clip(tblocks, 0, n_blocks - 1)
             fb_idx = np.clip(fbins, 0, n_bins - 1)
             block_rows = mag[tb_idx]               # (n_t0, n_bins)
@@ -115,8 +117,8 @@ def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
 
             expected = powers[:, :, tone]                       # (n_t0, n_f0)
             mean_all = np.mean(powers, axis=2)                  # (n_t0, n_f0)
-            # kontrybucja: o ile wlasciwy ton przewyzsza SREDNIA (znormalizowane).
-            # Odporne na 1 sasiada (sasiad podnosi srednia tylko o ~1/8).
+            # contribution: how much the correct tone exceeds the AVERAGE (normalized).
+            # Robust to 1 neighbor (a neighbor only raises the average by ~1/8).
             with np.errstate(divide='ignore', invalid='ignore'):
                 contrib = np.where(mean_all > 1e-12,
                                    (expected - mean_all) / mean_all, 0.0)
@@ -131,11 +133,11 @@ def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
 
     candidates = []
 
-    # Non-max suppression: znajdz lokalne maksima w score_map
+    # Non-max suppression: find local maxima in score_map
     flat_idx = np.argsort(score_map, axis=None)[::-1]
     taken = np.zeros_like(score_map, dtype=bool)
-    # promien suppresji wyrazony w JEDNOSTKACH INDEKSU score_map (nie t0_step/f0_step
-    # bezposrednio z probek), wiec przeliczamy wzgledem faktycznego kroku siatki
+    # suppression radius expressed in score_map INDEX UNITS (not t0_step/f0_step
+    # directly from samples), so we convert it against the actual grid step
     suppress_t = max(1, (sym_blocks * 2) // t0_step)
     suppress_f = max(1, (bins_per_tone * 2) // f0_step)
 

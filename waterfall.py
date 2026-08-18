@@ -1,46 +1,45 @@
 """
-Generator pojedynczego "slupka" wodospadu (waterfall column) z krotkiego
-kawalka audio RX. Lekka, szybka funkcja przeznaczona do czestego
-strumieniowania do UI (np. co 0.5-1s) — NIE do synchronizacji FT8 (do tego
-sluzy sync.compute_magnitude_spectrogram, ktora ma wyzsza rozdzielczosc
-i jest kosztowniejsza obliczeniowo).
+Generates a single waterfall column from a short chunk of RX audio. A
+lightweight, fast function meant to be streamed to the UI frequently
+(e.g. every 0.5-1s) — NOT for FT8 sync (that's what
+sync.compute_magnitude_spectrogram is for, which has higher resolution
+and is more computationally expensive).
 """
 import numpy as np
 
 SAMPLE_RATE = 12000
 F_MIN = 200
 F_MAX = 3000
-N_BINS = 200  # liczba slupkow czestotliwosci w jednej kolumnie wodospadu (rozdzielczosc ~14Hz/bin)
+N_BINS = 200  # number of frequency bins per waterfall column (~14Hz/bin resolution)
 
-# Stan globalny do WYGLADZONEGO, STABILNEGO W CZASIE skalowania kolorow.
-# KRYTYCZNE: liczenie db_min/db_max od nowa dla KAZDEJ kolumny (np. z jej
-# wlasnych percentyli) sprawia, ze ten sam fizyczny poziom sygnalu dostaje
-# inny kolor w kazdej kolejnej kolumnie czasowej — wyglada to jak losowy
-# szum zamiast stabilnych, poziomych linii tonow. Zamiast tego trzymamy
-# wolno aktualizowany (EMA) zakres, ktory zmienia sie dopiero na przestrzeni
-# wielu sekund.
+# Global state for SMOOTH, TIME-STABLE color scaling.
+# CRITICAL: recomputing db_min/db_max from scratch for EVERY column (e.g.
+# from its own percentiles) makes the same physical signal level get a
+# different color in every successive time column — it looks like random
+# noise instead of stable, horizontal tone lines. Instead we keep a
+# slowly-updated (EMA) range that only shifts over many seconds.
 _ema_db_lo = None
 _ema_db_hi = None
-_EMA_ALPHA = 0.05  # im mniejsze, tym wolniej sie dostosowuje (stabilniejszy obraz)
+_EMA_ALPHA = 0.05  # smaller = slower to adapt (more stable image)
 
-# Wygladzanie CZASOWE samej kolumny (per-bin), oddzielne od wygladzania
-# zakresu kolorow powyzej. KAZDA kolumna to niezalezne, krotkie okno FFT
-# (0.3-0.8s audio) — bez wygladzania sasiednie kolumny czasowe maja duza
-# wariancje (rozny fragment szumu za kazdym razem), co dawalo poszarpany,
-# "schodkowy" wyglad zamiast plynnych pionowych smug jak w prawdziwym
-# WSJT-X (ktory uzywa znacznie gestszego strumienia i/lub dluzszych okien
-# analizy). EMA w domenie MOCY (przed konwersja do dB) jest matematycznie
-# poprawniejsze niz usrednianie samych wartosci dB.
+# TIME smoothing of the column itself (per-bin), separate from the color
+# range smoothing above. EACH column is an independent, short FFT window
+# (0.3-0.8s of audio) — without smoothing, adjacent time columns have high
+# variance (a different noise slice each time), giving a jagged,
+# "staircase" look instead of the smooth vertical streaks seen in real
+# WSJT-X (which uses a much denser stream and/or longer analysis windows).
+# EMA in the POWER domain (before converting to dB) is mathematically more
+# correct than averaging the dB values themselves.
 _ema_power_column = None
-_SMOOTH_ALPHA = 0.35  # wieksze = mniej wygladzania (szybsza reakcja na zmiany)
+_SMOOTH_ALPHA = 0.35  # larger = less smoothing (faster reaction to changes)
 
 
 def smooth_column_power(power_column):
     """
-    Wygladza kolumne mocy (PRZED konwersja do dB) w czasie, EMA per-bin.
-    Wywolywane raz na kazda nowa kolumne w petli backendu, miedzy
-    compute_waterfall_column (ktore liczy SUROWA kolumne) a konwersja do dB.
-    Resetuje sie automatycznie jesli rozmiar (n_bins) sie zmieni.
+    Smooths the power column (BEFORE converting to dB) over time, per-bin
+    EMA. Called once per new column in the backend loop, between
+    compute_waterfall_column (which computes the RAW column) and the
+    conversion to dB. Resets automatically if the size (n_bins) changes.
     """
     global _ema_power_column
     if _ema_power_column is None or len(_ema_power_column) != len(power_column):
@@ -53,14 +52,14 @@ def smooth_column_power(power_column):
 def compute_waterfall_column(audio_chunk, n_bins=N_BINS, f_min=F_MIN, f_max=F_MAX,
                               sample_rate=SAMPLE_RATE, smooth=True):
     """
-    audio_chunk: numpy float array (mono, sample_rate Hz), dowolnej dlugosci
-        >= kilkadziesiat ms (typowo 0.3-0.8s kawalek z bufora RX).
-    smooth: jesli True (domyslnie), stosuje wygladzanie czasowe EMA per-bin
-        (patrz smooth_column_power) przed konwersja do dB — eliminuje
-        poszarpany, "schodkowy" wyglad wynikajacy z duzej wariancji miedzy
-        kolejnymi, niezaleznymi krotkimi oknami FFT.
-    Zwraca: numpy array dlugosci n_bins, wartosci w dB (znormalizowane do
-        sensownego zakresu wyswietlania, NIE do dekodowania FT8).
+    audio_chunk: numpy float array (mono, sample_rate Hz), any length
+        >= a few dozen ms (typically a 0.3-0.8s chunk from the RX buffer).
+    smooth: if True (default), applies per-bin EMA time smoothing (see
+        smooth_column_power) before converting to dB — eliminates the
+        jagged, "staircase" look caused by high variance between
+        consecutive, independent short FFT windows.
+    Returns: a numpy array of length n_bins, values in dB (normalized to a
+        sensible display range, NOT for FT8 decoding).
     """
     if len(audio_chunk) < 64:
         return np.zeros(n_bins, dtype=np.float32)
@@ -70,7 +69,7 @@ def compute_waterfall_column(audio_chunk, n_bins=N_BINS, f_min=F_MIN, f_max=F_MA
     power = np.abs(spec) ** 2
     freqs = np.fft.rfftfreq(len(audio_chunk), d=1.0 / sample_rate)
 
-    # Zbinuj do n_bins rownomiernie rozlozonych binow miedzy f_min i f_max
+    # Bin into n_bins evenly spaced bins between f_min and f_max
     bin_edges = np.linspace(f_min, f_max, n_bins + 1)
     out = np.zeros(n_bins, dtype=np.float64)
     bin_idx = np.digitize(freqs, bin_edges) - 1
@@ -88,45 +87,47 @@ def compute_waterfall_column(audio_chunk, n_bins=N_BINS, f_min=F_MIN, f_max=F_MA
 
 def quantize_for_transport(db_column, db_min=None, db_max=None, threshold=0.28, steepness=4.5, floor=42):
     """
-    Kwantyzuje kolumne dB do listy int 0-255 (1 bajt/bin zamiast float32),
-    zeby zmniejszyc rozmiar payloadu JSON wysylanego co ~0.8s przez WS.
+    Quantizes a dB column to a list of ints 0-255 (1 byte/bin instead of
+    float32), to shrink the JSON payload sent roughly every 0.8s over WS.
 
-    Jesli db_min/db_max nie podane, uzywa WYGLADZONEGO (EMA) globalnego
-    zakresu, aktualizowanego powoli na podstawie percentyli kazdej nowej
-    kolumny — bezwzgledny poziom dB zalezy mocno od sprzetu/wzmocnienia
-    wejscia audio, wiec zakres trzeba dostosowac dynamicznie, ALE musi
-    pozostawac STABILNY miedzy kolejnymi kolumnami (inaczej ten sam
-    fizyczny sygnal dostaje inny kolor co kolumne, co wyglada jak losowy
-    szum zamiast czystych, poziomych linii tonow FT8).
+    If db_min/db_max aren't given, uses the SMOOTHED (EMA) global range,
+    updated slowly from each new column's percentiles — the absolute dB
+    level depends heavily on the audio input hardware/gain, so the range
+    needs to adapt dynamically, BUT must stay STABLE between consecutive
+    columns (otherwise the same physical signal gets a different color
+    every column, which looks like random noise instead of clean,
+    horizontal FT8 tone lines).
 
-    threshold/steepness: krzywa kontrastu typu SIGMOID (S-curve), NIE prosta
-    gamma. Pomiar na realnym nagraniu pokazal, ze ~75% wartosci (typowe tlo/
-    slaby szum, nie sygnal) ladowalo juz w okolicy 0.2-0.3 znormalizowanego
-    zakresu — przy prostej gammie (<1.0) ten przedzial byl rozjasniany razem
-    z prawdziwymi slabymi sygnalami, przez co CALE pasmo wygladalo na
-    "zajete" i nie dalo sie odroznic wolnego miejsca od aktywnej transmisji.
-    Sigmoid wyraznie PRZYCIEMNIA wszystko ponizej threshold (cisza/szum
-    zostaje czarna) i WZMACNIA wszystko powyzej (nawet slabe sygnaly staja
-    sie wyrazne) — daje to ostre, czytelne rozgraniczenie zamiast jednolitego
-    rozjasnienia. steepness kontroluje jak ostre jest przejscie.
+    threshold/steepness: a SIGMOID contrast curve (S-curve), NOT a simple
+    gamma. Measurement on a real recording showed that ~75% of values
+    (typical background/weak noise, not signal) already landed around
+    0.2-0.3 of the normalized range — with a simple gamma (<1.0) that
+    range got brightened along with real weak signals, making the WHOLE
+    band look "busy" and making it impossible to tell empty spectrum from
+    an active transmission. The sigmoid clearly DARKENS everything below
+    threshold (silence/noise stays black) and BOOSTS everything above it
+    (even weak signals become distinct) — giving a sharp, readable
+    separation instead of uniform brightening. steepness controls how
+    sharp the transition is.
 
-    floor: minimalna wartosc (0-255) dla TLA — zmierzone bezposrednio z
-    referencyjnego zrzutu ekranu JTDX, gdzie typowy szum renderuje sie jako
-    nasycony niebieski (nie czarny). Bez tego, w bardzo cichych pasmach caly
-    obraz robil sie czarny (matematycznie poprawne, ale mniej czytelne/znajome
-    wizualnie niz oryginal). floor podnosi minimum tak, zeby "dywan" szumu byl
-    zawsze widoczny, a kontrast wzgledem prawdziwych sygnalow byl zachowany
-    (bo floor jest dodawany PO sigmoidzie, jako podloga, nie przesuniecie
-    calej krzywej).
+    floor: the minimum value (0-255) for the BACKGROUND — measured
+    directly from a reference JTDX screenshot, where typical noise renders
+    as a saturated blue (not black). Without this, in very quiet bands the
+    whole image went black (mathematically correct, but less readable/
+    familiar visually than the original). floor raises the minimum so the
+    noise "carpet" is always visible, while contrast against real signals
+    is preserved (because floor is added AFTER the sigmoid, as a floor,
+    not a shift of the whole curve).
     """
     global _ema_db_lo, _ema_db_hi
     if db_min is None or db_max is None:
-        # Uzywamy p10 (10. percentyl) jako dolnej granicy — szerszy zakres danych
-        # jest rozlozony w palecie, dzieki czemu tlo szumu laduje w kolorowym
-        # niebieskim (~40-80/255) zamiast prawie czarnym (floor=18/255 jak poprzednio).
-        # To daje zywszy, bardziej czytelny waterfall podobny do WSJT-X/JTDX.
-        # EMA wygladza zakres miedzy kolumnami, zeby kolory byly stabilne.
-        p_lo = float(np.percentile(db_column, 10))  # p10 zamiast p50 — szerszy zakres danych w palecie
+        # We use p10 (10th percentile) as the lower bound — spreading the
+        # data range wider in the palette so the noise background lands in
+        # a colored blue (~40-80/255) instead of near-black (floor=18/255
+        # as before). This gives a livelier, more readable waterfall
+        # similar to WSJT-X/JTDX.
+        # EMA smooths the range between columns so colors stay stable.
+        p_lo = float(np.percentile(db_column, 10))  # p10 instead of p50 — wider data range in the palette
         p_hi = float(np.percentile(db_column, 99.5))
         if p_hi - p_lo < 10:
             p_hi = p_lo + 10
@@ -141,8 +142,8 @@ def quantize_for_transport(db_column, db_min=None, db_max=None, threshold=0.28, 
     clipped = np.clip(db_column, db_min, db_max)
     norm = (clipped - db_min) / (db_max - db_min)  # 0..1
 
-    # Sigmoid wysrodkowany na 'threshold', znormalizowany tak zeby norm=0 -> 0
-    # i norm=1 -> 1 (zachowuje pelny zakres czerni/bieli na krancach).
+    # Sigmoid centered on 'threshold', normalized so norm=0 -> 0 and
+    # norm=1 -> 1 (keeps the full black/white range at the extremes).
     s = 1.0 / (1.0 + np.exp(-steepness * (norm - threshold)))
     s0 = 1.0 / (1.0 + np.exp(steepness * threshold))
     s1 = 1.0 / (1.0 + np.exp(-steepness * (1.0 - threshold)))
@@ -150,9 +151,9 @@ def quantize_for_transport(db_column, db_min=None, db_max=None, threshold=0.28, 
     contrast = np.clip(contrast, 0.0, 1.0)
 
     scaled = contrast * 255
-    # Podloga: minimalna widoczna wartosc, zeby tlo nigdy nie bylo calkowicie
-    # czarne (jak w referencyjnym JTDX). Skalujemy reszte zakresu (floor..255)
-    # zeby najsilniejsze sygnaly nadal osiagaly pelne 255.
+    # Floor: the minimum visible value, so the background is never
+    # completely black (as in the reference JTDX). We scale the rest of
+    # the range (floor..255) so the strongest signals still reach a full 255.
     scaled = floor + scaled * (255 - floor) / 255.0
     scaled = np.clip(scaled, 0, 255).astype(np.uint8)
     return scaled.tolist()

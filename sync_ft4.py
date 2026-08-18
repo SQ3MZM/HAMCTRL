@@ -1,15 +1,15 @@
 """
-Etap 1: Wykrywanie kandydatow sygnalow FT4 (sync search).
+Stage 1: FT4 signal candidate detection (sync search).
 
-Identyczna metoda co sync.py (FT8): spektrogram STFT z nadprobkowaniem,
-przesuwanie wzorca Costas po siatce (czas, czestotliwosc), szukanie
-lokalnych maksimow korelacji (margin = moc na oczekiwanym tonie minus
-max mocy na pozostalych tonach).
+Same method as sync.py (FT8): an oversampled STFT spectrogram, sliding the
+Costas pattern across the (time, frequency) grid, looking for local maxima
+of correlation (margin = power on the expected tone minus the max power on
+the other tones).
 
-KLUCZOWA ROZNICA wzgledem FT8: FT4 ma CZTERY ROZNE wzorce Costas (nie jeden
-powtorzony 3x), kazdy na innej pozycji w ramce (symbole 0, 33, 66, 99).
-Wymaga to dopasowania KAZDEGO bloku do JEGO WLASNEGO wzorca, a nie tego
-samego wzorca we wszystkich trzech/czterech miejscach.
+KEY DIFFERENCE from FT8: FT4 has FOUR DIFFERENT Costas patterns (not one
+pattern repeated 3x), each at a different position in the frame (symbols
+0, 33, 66, 99). This requires matching EACH block against ITS OWN pattern,
+rather than the same pattern at all three/four positions.
 """
 import numpy as np
 from params_ft4 import (SAMPLE_RATE, SAMPLES_PER_SYMBOL, TONE_SPACING, N_TONES,
@@ -17,11 +17,11 @@ from params_ft4 import (SAMPLE_RATE, SAMPLES_PER_SYMBOL, TONE_SPACING, N_TONES,
 
 
 def compute_magnitude_spectrogram(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000):
-    """Identyczne jak w sync.py (FT8) — w pelni parametryczne wzgledem
-    SAMPLES_PER_SYMBOL, ktore tutaj jest mniejsze (576 zamiast 1920), wiec
-    okna analizy sa krotsze i bardziej liczne dla tego samego czasu trwania
-    audio. Zaimportowane SAMPLE_RATE/SAMPLES_PER_SYMBOL pochodza z
-    params_ft4, nie z params (FT8)."""
+    """Identical to sync.py (FT8) — fully parametric in SAMPLES_PER_SYMBOL,
+    which here is smaller (576 instead of 1920), so the analysis windows
+    are shorter and more numerous for the same audio duration. The
+    imported SAMPLE_RATE/SAMPLES_PER_SYMBOL come from params_ft4, not
+    params (FT8)."""
     n = SAMPLES_PER_SYMBOL
     nfft = n * freq_osr
     freq_step = SAMPLE_RATE / nfft
@@ -52,13 +52,13 @@ def compute_magnitude_spectrogram(audio, freq_osr=2, time_osr=2, f_min=200, f_ma
 def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
                      max_candidates=30, min_score=0.3):
     """
-    Przeszukuje audio w poszukiwaniu kandydatow sygnalow FT4.
-    Zwraca liste dict: {freq_hz, time_offset_s, score, block0, bin0}
+    Searches audio for FT4 signal candidates.
+    Returns a list of dicts: {freq_hz, time_offset_s, score, block0, bin0}
 
-    Roznica wzgledem FT8: petla po COSTAS_POS jest sparowana z
-    COSTAS_PATTERNS (zip), bo kazda pozycja ma SWOJ WLASNY wzorzec tonow,
-    nie wspolny COSTAS jak w FT8. Reszta algorytmu (wektoryzacja, margin,
-    non-max suppression) identyczna jak w sync.py.
+    Difference from FT8: the loop over COSTAS_POS is zipped with
+    COSTAS_PATTERNS, because each position has its OWN tone pattern,
+    not a shared COSTAS pattern like in FT8. The rest of the algorithm
+    (vectorization, margin, non-max suppression) is identical to sync.py.
     """
     result = compute_magnitude_spectrogram(audio, freq_osr, time_osr, f_min, f_max)
     if result is None:
@@ -86,9 +86,9 @@ def find_candidates(audio, freq_osr=2, time_osr=2, f_min=200, f_max=3000,
     score_accum = np.zeros((n_t0, n_f0), dtype=np.float64)
     n_terms = 0
 
-    # KLUCZOWA ROZNICA wzgledem FT8: zip(COSTAS_POS, COSTAS_PATTERNS) zamiast
-    # zagniezdzonej petli "ten sam wzorzec na kazdej pozycji". Kazdy z 4
-    # blokow Costas ma SWOJ WLASNY wzorzec tonow.
+    # KEY DIFFERENCE from FT8: zip(COSTAS_POS, COSTAS_PATTERNS) instead of
+    # a nested loop with "the same pattern at every position". Each of the
+    # 4 Costas blocks has ITS OWN tone pattern.
     for costas_sym_offset, pattern in zip(COSTAS_POS, COSTAS_PATTERNS):
         for k, tone in enumerate(pattern):
             sym_idx = costas_sym_offset + k
