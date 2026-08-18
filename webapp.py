@@ -4449,19 +4449,19 @@ class App:
 
     async def hamlib_ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         """
-        WebSocket endpoint /hamlib — tunel Hamlib TCP dla zdalnego WSJT-X.
-        Klient (wsjtx_bridge.py) laczy sie tu zamiast bezposrednio na port 4532.
-        Komendy Hamlib przychodza jako tekst WS, odpowiedzi wracaja jako tekst WS.
+        WebSocket endpoint /hamlib — Hamlib TCP tunnel for remote WSJT-X.
+        The client (wsjtx_bridge.py) connects here instead of directly to port 4532.
+        Hamlib commands arrive as WS text, responses go back as WS text.
         """
         ws = web.WebSocketResponse(heartbeat=30, compress=9)
         await ws.prepare(request)
         peer = request.remote
-        print(f"[hamlib-ws] WSJT-X bridge polaczony: {peer}")
+        print(f"[hamlib-ws] WSJT-X bridge connected: {peer}")
 
         from hamlib_server import HamlibSession
 
-        # Tworzymy "wirtualny" reader/writer dla HamlibSession
-        # uzywajac kolejek asyncio zamiast TCP
+        # Build a "virtual" reader/writer for HamlibSession
+        # using asyncio queues instead of TCP
         cmd_queue  = asyncio.Queue()
         resp_queue = asyncio.Queue()
 
@@ -4477,7 +4477,7 @@ class App:
             async def drain(self): pass
             def close(self): pass
 
-        # Uruchom HamlibSession w osobnym tasku
+        # Run HamlibSession in a separate task
         session = HamlibSession(self.rig, self.hub, WSReader(), WSWriter(),
                                 "ws-bridge", app=self)
 
@@ -4488,15 +4488,15 @@ class App:
                         cmd = msg.data.strip()
                         if not cmd:
                             continue
-                        # Przetworz komende i odpowiedz przez WS
+                        # Process the command and reply over WS
                         response = await session._handle(cmd)
                         await ws.send_str(response)
                     elif msg.type in (aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSE):
                         break
             except Exception as e:
-                print(f"[hamlib-ws] Blad: {e}")
+                print(f"[hamlib-ws] Error: {e}")
             finally:
-                print(f"[hamlib-ws] Rozlaczono: {peer}")
+                print(f"[hamlib-ws] Disconnected: {peer}")
         
         await session_loop()
         return ws
@@ -4504,7 +4504,7 @@ class App:
 
 
     def _current_rig_id(self) -> str:
-        """ID aktualnie polaczonego radia w config.json['rigs'] (lub '0' jesli brak)."""
+        """ID of the currently connected radio in config.json['rigs'] (or '0' if none)."""
         rigs = self.cfg.get("rigs") or []
         model = str(getattr(self.rig, "model", ""))
         for r in rigs:
@@ -4513,7 +4513,7 @@ class App:
         return str(rigs[0].get("id", "0")) if rigs else "0"
 
     def _get_enabled_features(self, rig_id: str) -> dict:
-        """Whitelist admina dla danego radia z config.json (lub default)."""
+        """The admin whitelist for the given radio from config.json (or the default)."""
         rigs = self.cfg.get("rigs") or []
         for r in rigs:
             if str(r.get("id", "")) == str(rig_id):
@@ -4523,7 +4523,7 @@ class App:
         return default_enabled_features()
 
     def _get_enabled_dynamic(self, rig_id: str) -> dict:
-        """Whitelist admina dla dynamicznych actions/sliders (per dynamic_id)."""
+        """The admin whitelist for dynamic actions/sliders (per dynamic_id)."""
         rigs = self.cfg.get("rigs") or []
         for r in rigs:
             if str(r.get("id", "")) == str(rig_id):
@@ -4533,17 +4533,17 @@ class App:
     async def _get_rig_features(self, role: str) -> dict:
         """
         GET /api/rig/features
-        - admin: pelna lista (statyczne features + dynamiczne actions/sliders)
-                 z capabilities/enabled/effective (do panelu admina)
-        - viewer/operator: tylko effective (statyczne) + dozwolone dynamiczne
+        - admin: full list (static features + dynamic actions/sliders)
+                 with capabilities/enabled/effective (for the admin panel)
+        - viewer/operator: only effective (static) + allowed dynamic ones
         """
         try:
             capabilities = await self.rig.get_capabilities()
         except Exception as e:
-            print(f"[features] get_capabilities blad: {e}")
+            print(f"[features] get_capabilities error: {e}")
             capabilities = {"actions": [], "sliders": [], "raw_caps": {}}
 
-        # Kompatybilnosc: jesli get_capabilities zwrocilo stary format (plaski dict bool)
+        # Compatibility: if get_capabilities returned the old format (a flat bool dict)
         if "raw_caps" not in capabilities and "actions" not in capabilities:
             capabilities = {"actions": [], "sliders": [], "raw_caps": capabilities}
 
@@ -4575,16 +4575,16 @@ class App:
         POST /api/rig/features
         body: {rigId?: str, enabledFeatures?: {feature_id: bool},
                enabledDynamic?: {dynamic_id: bool}}
-        Admin-only — zapisuje whitelisty do config.json['rigs'][i].
+        Admin-only — saves the whitelists to config.json['rigs'][i].
         """
         rig_id = str(body.get("rigId") or self._current_rig_id())
         new_enabled     = body.get("enabledFeatures") or {}
         new_enabled_dyn = body.get("enabledDynamic") or {}
 
-        # Walidacja statycznych — tylko znane feature_id
+        # Validate the static ones — only known feature_ids
         known_ids = {f["id"] for f in FEATURES}
         new_enabled = {k: bool(v) for k, v in new_enabled.items() if k in known_ids}
-        # Dynamiczne: walidujemy tylko typ (bool), id sa dynamiczne wiec nie filtrujemy
+        # Dynamic: only validate the type (bool), ids are dynamic so we don't filter them
         new_enabled_dyn = {k: bool(v) for k, v in new_enabled_dyn.items()}
 
         if not self.cfg.get("rigs"):
@@ -4613,10 +4613,10 @@ class App:
             rig_id = str(rigs[0].get("id", "0"))
 
         save_json(CFG_F, self.cfg)
-        print(f"[features] admin zapisal enabledFeatures dla rig={rig_id}: "
+        print(f"[features] admin saved enabledFeatures for rig={rig_id}: "
               f"{new_enabled} | enabledDynamic: {new_enabled_dyn}")
 
-        # Rozeslij nowy effective do wszystkich klientow (panel sie odswiezy)
+        # Broadcast the new effective set to all clients (the panel will refresh)
         try:
             capabilities = await self.rig.get_capabilities()
         except Exception:
@@ -4642,12 +4642,12 @@ class App:
 
     async def _cloudlog_push_qso(self, user_id: str, qso: dict):
         """
-        Wyslij QSO do CloudLog/WaveLog jesli uzytkownik ma skonfigurowane API.
+        Push a QSO to CloudLog/WaveLog if the user has the API configured.
 
-        WAZNE: Cloudlog API przyjmuje QSO WYLACZNIE jako ciag ADIF w polu
-        'string' (type='adif'). Wysylanie pol JSON (call, band, mode...) NIE
-        DZIALA - Cloudlog odpowiada 200 ale QSO nie trafia do logu.
-        Nazwa pola profilu to 'station_profile_id' (nie 'station_id').
+        IMPORTANT: the Cloudlog API accepts a QSO ONLY as an ADIF string in
+        the 'string' field (type='adif'). Sending JSON fields (call, band,
+        mode...) does NOT WORK - Cloudlog responds 200 but the QSO never
+        reaches the log. The profile field is named 'station_profile_id' (not 'station_id').
         """
         try:
             u = self.find_user_by_id(user_id)
@@ -4657,7 +4657,7 @@ class App:
             api_key = decrypt_secret(cl.get("apiKeyQso", ""))
             station = cl.get("stationId", 1)
             if not url or not api_key: return
-            # Nie dubluj /index.php jesli user go wpisal
+            # Don't duplicate /index.php if the user already typed it
             base = url[:-10].rstrip("/") if url.endswith("/index.php") else url
 
             import aiohttp as _aiohttp
