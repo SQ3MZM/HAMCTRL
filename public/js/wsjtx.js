@@ -2090,7 +2090,7 @@ function _houndQSOComplete() {
 }
 
 function _houndAutoLog(foxCall) {
-  // Ustaw CALL w quick-log i wywołaj zapis
+  // Set CALL in the quick-log and trigger the save
   const callEl = document.getElementById('qlog-call');
   const rstEl  = document.getElementById('qlog-rst-s');
   const rstREl = document.getElementById('qlog-rst-r');
@@ -2101,12 +2101,12 @@ function _houndAutoLog(foxCall) {
 }
 
 function _houndSendMsg(callTo, callDe, report, rFlag, audioFreqHz) {
-  // Ta sama sciezka WS co zwykle TX FT8 (patrz sendMacro() wyzej) — jedyna
-  // faktycznie dzialajaca. Wczesniej Hound wysylal POST na /api/wsjtx/tx,
-  // ktorego backend nigdy nie mial (0 wynikow w webapp.py) — TX Hounda bylo
-  // wiec cichym no-opem (tylko console.warn), mimo ze panel wygladal na
-  // aktywny. audioFreq nadpisuje freq TX przed enkodowaniem — patrz komentarz
-  // przy "elif t == ft8_tx" w webapp.py, ktory explicite nazywa Hound mode.
+  // The same WS path as regular FT8 TX (see sendMacro() above) — the only
+  // one that actually works. The Hound used to POST to /api/wsjtx/tx,
+  // which the backend never had (0 matches in webapp.py) — so Hound TX
+  // was a silent no-op (just a console.warn), even though the panel
+  // looked active. audioFreq overrides the TX freq before encoding — see
+  // the comment at "elif t == ft8_tx" in webapp.py, which explicitly names Hound mode.
   window.WS?.send({
     type: 'ft8_tx',
     callTo, callDe, report,
@@ -2122,7 +2122,7 @@ function _houndUpdateUI() {
 
   if (toggle) toggle.checked = active;
 
-  // Podswietl checkbox w topbarze gdy aktywny
+  // Highlight the checkbox in the top bar when active
   const label = toggle?.closest('label');
   if (label) {
     label.style.background = active ? 'rgba(255,140,0,0.2)' : '';
@@ -2130,7 +2130,7 @@ function _houndUpdateUI() {
   }
 
   if (!statusEl) return;
-  statusEl.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+  statusEl.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
   if (!active) {
     statusEl.style.color = '';
     statusEl.textContent = I18n.t('wj_status_no_decoding');
@@ -2145,12 +2145,12 @@ function _houndUpdateUI() {
   statusEl.textContent = `🦊 HOUND: ${_hound.foxCall} | ${step} | TX:${freq}Hz${attemptTxt}`;
 }
 
-// ── Pomocnicze ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function _freqToBand(hz) {
   if (!hz) return '';
-  // 160m: wezsza (realna alokacja PL/EU) granica, ta sama co webapp.py/
-  // dxcluster.py/ui.js::getBandName - byla tu rozjechana (1800000 zamiast
-  // 1810000), ten sam blad co juz raz naprawiony gdzie indziej w projekcie.
+  // 160m: the narrower (real PL/EU allocation) bound, the same as
+  // webapp.py/dxcluster.py/ui.js::getBandName - it had drifted here
+  // (1800000 instead of 1810000), the same bug already fixed once elsewhere in the project.
   if (hz >= 1810000  && hz <= 2000000)  return '160m';
   if (hz >= 3500000  && hz <= 3800000)  return '80m';
   if (hz >= 7000000  && hz <= 7200000)  return '40m';
