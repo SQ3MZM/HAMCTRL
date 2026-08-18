@@ -1,23 +1,23 @@
-/* radiofunctions.js — Dynamiczne funkcje radia wykryte przez dump_caps (Hamlib)
+/* radiofunctions.js — Dynamic radio features detected via dump_caps (Hamlib)
  *
- * Renderuje:
- *  - PRZYCISKI (VFO A / VFO B, toggle funkcji NB/VOX/COMP/...)
- *    -> panel #rig-features-panel (miedzy PTT i waterfallem)
- *  - SLIDERY (RFPOWER, AF, MICGAIN, SQL, ...)
- *    -> sekcja #rig-dynamic-sliders w lewej kolumnie (tile-left, ponizej PASMO)
+ * Renders:
+ *  - BUTTONS (VFO A / VFO B, NB/VOX/COMP/... function toggles)
+ *    -> panel #rig-features-panel (between PTT and the waterfall)
+ *  - SLIDERS (RFPOWER, AF, MICGAIN, SQL, ...)
+ *    -> section #rig-dynamic-sliders in the left column (tile-left, below BAND)
  *
- * Dane pochodza z GET /api/rig/features:
+ * Data comes from GET /api/rig/features:
  *   user:  {active:[...], actions:[...], sliders:[...]}
  *   admin: {features:[...], dynamic:{actions:[...], sliders:[...]}}
  *
- * Aktualizacja live przez WS broadcast 'rig_features' (po zapisie w panelu admina).
+ * Live updates via the WS broadcast 'rig_features' (after a save in the admin panel).
  *
- * UKLAD: wszystkie slidery renderowane jako pojedyncze kafelki w jednej
- * kolumnie, jeden pod drugim (ikona + etykieta + wartosc + range).
- * Brak podzialu core/advanced — wszystkie widoczne od razu.
+ * LAYOUT: all sliders are rendered as individual tiles in a single column,
+ * one below the other (icon + label + value + range). No core/advanced
+ * split — everything is visible right away.
  */
 
-// Ikony Tabler dla sliderow (po id). Fallback: ti-adjustments-horizontal
+// Tabler icons for the sliders (by id). Fallback: ti-adjustments-horizontal
 const SLIDER_ICONS = {
   level_af:        'ti-volume',
   level_rf:        'ti-antenna',
@@ -36,21 +36,21 @@ const SLIDER_ICONS = {
 };
 const SLIDER_ICON_FALLBACK = 'ti-adjustments-horizontal';
 
-// Niestandardowe formatowanie wartosci wyswietlanej na sliderze (rf-slider-tile-val)
-// — niezalezne od wartosci CI-V faktycznie wysylanej (input.value, 0-100 dla
-// zakresow float01). 'display(pct)' -> string do pokazania; 'step' nadpisuje
-// domyslny step inputu (np. CWPITCH co 10Hz zamiast co 1).
+// Custom formatting of the value shown on the slider (rf-slider-tile-val)
+// — independent of the CI-V value actually sent (input.value, 0-100 for
+// float01 ranges). 'display(pct)' -> string to show; 'step' overrides the
+// input's default step (e.g. CWPITCH every 10Hz instead of every 1Hz).
 const SLIDER_DISPLAY = {
-  // Kompresja mikrofonu: UI 0-100% -> wyswietlana skala 1.0-10.0 (dziesietne)
+  // Mic compression: UI 0-100% -> displayed scale 1.0-10.0 (decimal)
   level_comp: {
     display: (pct) => (1 + (pct / 100) * 9).toFixed(1),
   },
-  // Redukcja szumow (NR): UI 0-100% -> wyswietlana skala 0-7
-  // (wartosc_pct podzielona przez 100/7, zaokraglona do calej liczby)
+  // Noise reduction (NR): UI 0-100% -> displayed scale 0-7
+  // (pct value divided by 100/7, rounded to a whole number)
   level_nr: {
     display: (pct) => String(Math.round(pct / (100 / 7))),
   },
-  // Ton CW (Pitch, 300-900Hz): krok co 10Hz zamiast co 1Hz
+  // CW tone (Pitch, 300-900Hz): step of 10Hz instead of 1Hz
   level_cwpitch: {
     step: 10,
   },
@@ -60,16 +60,16 @@ const RadioFunctions = (() => {
 
   let _actions = [];
   let _sliders = [];
-  // Mapa id -> {input, val, isFloat01, min, max} dla zywych aktualizacji
-  // wartosci sliderow (WS 'level_value', gdy ktos zmieni nastawe na panelu
-  // radia) bez przerysowywania calej listy.
+  // Map id -> {input, val, isFloat01, min, max} for live slider value
+  // updates (WS 'level_value', when someone changes a setting on the
+  // radio's own panel) without re-rendering the whole list.
   let _sliderEls = {};
-  // Mapa id -> button dla przyciskow toggle funkcji (NB/NR/ANF/.../BKIN) —
-  // pozwala serwerowi (np. auto BK-IN przy wejsciu w CW) zaktualizowac stan
-  // wizualny przycisku bez przerysowywania calego rzedu.
+  // Map id -> button for the function-toggle buttons (NB/NR/ANF/.../BKIN)
+  // — lets the server (e.g. auto BK-IN on entering CW) update a button's
+  // visual state without re-rendering the whole row.
   let _funcBtnEls = {};
 
-  // ── Przyciski (VFO select + func toggle) ────────────────────────────────
+  // ── Buttons (VFO select + func toggle) ───────────────────────────────────
   function renderActions(actions) {
     _actions = actions || [];
     const wrap = document.getElementById('rig-features-buttons');
@@ -83,7 +83,7 @@ const RadioFunctions = (() => {
     }
     wrap.style.display = '';
 
-    // VFO select — przyciski A/B obok siebie, podswietlenie aktywnego
+    // VFO select — A/B buttons side by side, highlight the active one
     const vfoActions = _actions.filter(a => a.group === 'vfo');
     if (vfoActions.length) {
       const vfoGroup = document.createElement('div');
@@ -96,7 +96,7 @@ const RadioFunctions = (() => {
         btn.textContent = a.label;
         btn.onclick = () => {
           WS.send({ type: 'rig_action', id: a.id });
-          // Podswietl wybrany
+          // Highlight the selected one
           vfoGroup.querySelectorAll('.rf-btn').forEach(b =>
             b.classList.toggle('active', b === btn));
         };
@@ -105,48 +105,48 @@ const RadioFunctions = (() => {
       wrap.appendChild(vfoGroup);
     }
 
-    // Power toggle — wyrozniony przycisk (czerwony akcent).
-    // STAN trzymany na btn.dataset.powerOn (NIE lokalna zmienna) - bo musi
-    // synchronizowac sie z serwerem: gdy inny user wylaczy radio, my dostajemy
-    // power_state i aktualizujemy tu, zeby klik wyslal WLASCIWA wartosc.
-    // Wczesniej lokalne 'let state=true' rozjezdzalo sie z rzeczywistoscia -
-    // trzeba bylo klikac kilka razy zeby trafic.
+    // Power toggle — a highlighted button (red accent).
+    // STATE is held on btn.dataset.powerOn (NOT a local variable) - because
+    // it must stay in sync with the server: when another user turns off
+    // the radio, we get power_state and update it here, so a click sends
+    // the CORRECT value. Previously a local 'let state=true' drifted out
+    // of sync with reality - it took several clicks to land right.
     const powerAction = _actions.find(a => a.id === 'power_toggle');
     if (powerAction) {
       const btn = document.createElement('button');
       btn.className = 'rf-btn rf-btn-power';
       btn.dataset.actionId = powerAction.id;
       btn.textContent = '⏻ ' + powerAction.label;
-      // Domyslnie zakladamy ON, ale zaraz nadpisze to stan z serwera
-      // (handlePowerState wywolane po get_status / power_state broadcast).
+      // Assume ON by default, but the server state will override it right
+      // away (handlePowerState called after get_status / power_state broadcast).
       if (btn.dataset.powerOn === undefined) btn.dataset.powerOn = '1';
       btn.onclick = () => {
-        // Negujemy AKTUALNY (rzeczywisty) stan, nie lokalny licznik.
+        // Negate the CURRENT (actual) state, not a local counter.
         const currentlyOn = btn.dataset.powerOn === '1';
         const newState = !currentlyOn;
-        // Optymistycznie zaktualizuj wyglad; serwer potwierdzi przez power_state
+        // Optimistically update the appearance; the server confirms via power_state
         btn.dataset.powerOn = newState ? '1' : '0';
-        btn.classList.toggle('active', !newState); // active = OFF (czerwony)
+        btn.classList.toggle('active', !newState); // active = OFF (red)
         WS.send({ type: 'rig_action', id: powerAction.id, value: newState });
       };
       wrap.appendChild(btn);
       _funcBtnEls['power_toggle'] = btn;
-      // Zastosuj stan jesli juz go znamy (z wczesniejszego get_status)
+      // Apply the state if we already know it (from an earlier get_status)
       if (window.AppState && typeof window.AppState.rigPowerOn === 'boolean') {
         handlePowerState(window.AppState.rigPowerOn);
       }
     }
 
-    // Func toggle — male przyciski z aktywnym stanem (toggle wizualny).
-    // Wszystkie funkcje renderowane w jednym wierszu (pasek przewija sie
-    // horyzontalnie przy przepelnieniu, patrz .rf-buttons-row).
+    // Func toggle — small buttons with an active state (visual toggle).
+    // All functions are rendered in a single row (the bar scrolls
+    // horizontally on overflow, see .rf-buttons-row).
     const funcActions = _actions.filter(a => a.group === 'func');
 
     const makeFuncBtn = (a) => {
       const btn = document.createElement('button');
       btn.className = 'rf-btn';
       btn.dataset.actionId = a.id;
-      btn.textContent = a.label.split('(')[0].trim(); // krotsza etykieta
+      btn.textContent = a.label.split('(')[0].trim(); // shorter label
       btn.title = a.label;
       btn.onclick = () => {
         const state = !btn.classList.contains('active');
@@ -159,19 +159,19 @@ const RadioFunctions = (() => {
 
     for (const a of funcActions) wrap.appendChild(makeFuncBtn(a));
 
-    // Przyciski wlasnie powstaly — podswietl wg AKTUALNEGO stanu radia
-    // (init mogl przyjsc wczesniej; bez tego nowy user widzi wszystko
-    // wygaszone mimo ze np. VFO A aktywne / split wlaczony).
+    // The buttons were just created — highlight them by the ACTUAL radio
+    // state (init may have arrived earlier; without this a new user sees
+    // everything dimmed even though, say, VFO A is active / split is on).
     syncStates({});
   }
 
-  // ── Slidery (Set level) ──────────────────────────────────────────────────
+  // ── Sliders (Set level) ────────────────────────────────────────────────────
   function renderSliders(sliders) {
     _sliders = sliders || [];
     const section = document.getElementById('rig-dynamic-sliders');
     if (!section) return;
 
-    // Usun stare elementy (zachowaj tytul sekcji)
+    // Remove old elements (keep the section title)
     section.querySelectorAll('.rf-slider-tile, .rf-adv-sliders, .rf-adv-toggle').forEach(el => el.remove());
     _sliderEls = {};
 
@@ -181,10 +181,11 @@ const RadioFunctions = (() => {
     }
     section.style.display = '';
 
-    // KEYSPD (szybkosc CW) -> slider WPM w panelu CW KEYER (#cw-wpm-slider),
-    // nie kafelek tutaj. Ustawiamy poczatkowa wartosc (realna nastawa radia)
-    // i rejestrujemy w _sliderEls, zeby handleLevelValue (WS 'level_value')
-    // mogl go zaktualizowac na zywo (zmiana KEYSPD na panelu radia).
+    // KEYSPD (CW speed) -> the WPM slider in the CW KEYER panel
+    // (#cw-wpm-slider), not a tile here. Set the initial value (the
+    // radio's actual setting) and register it in _sliderEls, so
+    // handleLevelValue (WS 'level_value') can update it live (KEYSPD
+    // changed on the radio's own panel).
     const keyspd = _sliders.find(s => s.id === 'level_keyspd');
     if (keyspd) {
       const wpmInput = document.getElementById('cw-wpm-slider');
@@ -229,11 +230,11 @@ const RadioFunctions = (() => {
       const input = document.createElement('input');
       input.type = 'range';
       input.className = 'rf-range';
-      // Hamlib zwraca zakresy float (0.0-1.0) lub int (6-48). Skaluj do 0-100
-      // dla UI jesli zakres jest <=1, inaczej uzyj realnych wartosci.
-      // s.value (jesli obecne) to faktyczna nastawa odczytana z radia
-      // (civ.py _read_all_levels) — uzywamy jej jako pozycji startowej
-      // zamiast zawsze 0/min, zeby slider odzwierciedlal stan radia.
+      // Hamlib returns float ranges (0.0-1.0) or int ranges (6-48). Scale
+      // to 0-100 for the UI if the range is <=1, otherwise use the actual
+      // values. s.value (if present) is the actual setting read from the
+      // radio (civ.py _read_all_levels) — we use it as the starting
+      // position instead of always 0/min, so the slider reflects the radio's state.
       const isFloat01 = s.max <= 1.0 && s.max > 0;
       const initial = (typeof s.value === 'number') ? s.value : s.min;
       const disp = SLIDER_DISPLAY[s.id];
@@ -247,9 +248,9 @@ const RadioFunctions = (() => {
       }
       val.textContent = disp?.display ? disp.display(Number(input.value)) : input.value;
 
-      // Throttling: nie spamuj WS/CI-V przy szybkim przesuwaniu.
-      // Wysylamy nowa wartosc maksymalnie co 100ms, ale zawsze wysylamy
-      // ostatnia wartosc po zakonczeniu ruchu (change event).
+      // Throttling: don't spam WS/CI-V while dragging quickly.
+      // Send a new value at most every 100ms, but always send the final
+      // value once movement stops (change event).
       let _lastSend = 0;
       let _pendingTimer = null;
       const doSend = () => {
@@ -268,15 +269,15 @@ const RadioFunctions = (() => {
           _pendingTimer = setTimeout(doSend, 100 - dt);
         }
       };
-      // Zawsze wyslij ostatnia wartosc po zakonczeniu (release myszki)
+      // Always send the final value on release (mouseup)
       input.onchange = () => {
         if (_pendingTimer) { clearTimeout(_pendingTimer); _pendingTimer = null; }
         doSend();
       };
 
-      // Zapisz referencje + metadane skalowania, zeby handleLevelValue moglo
-      // zaktualizowac slider po WS broadcast 'level_value' (zmiana na panelu
-      // radia) bez przerysowywania calej listy.
+      // Save the reference + scaling metadata, so handleLevelValue can
+      // update the slider after a WS 'level_value' broadcast (changed on
+      // the radio's own panel) without re-rendering the whole list.
       _sliderEls[s.id] = { input, val, isFloat01, min: s.min, max: s.max, display: disp?.display };
 
       tile.appendChild(head);
@@ -284,15 +285,15 @@ const RadioFunctions = (() => {
       return tile;
     };
 
-    // level_keyspd (szybkosc CW, WPM) jest sterowane przez slider WPM w
-    // panelu CW KEYER (ten sam CI-V 14 0C) — pomijamy duplikat tutaj.
+    // level_keyspd (CW speed, WPM) is controlled by the WPM slider in the
+    // CW KEYER panel (the same CI-V 14 0C) — skip the duplicate here.
     for (const s of _sliders) {
       if (s.id === 'level_keyspd') continue;
       section.appendChild(makeTile(s));
     }
   }
 
-  // ── Glowny refresh ────────────────────────────────────────────────────────
+  // ── Main refresh ──────────────────────────────────────────────────────────
   async function refresh() {
     try {
       const token = localStorage.getItem('token');
@@ -307,19 +308,19 @@ const RadioFunctions = (() => {
         renderActions(data.actions || []);
         renderSliders(data.sliders || []);
       } else if (data.dynamic) {
-        // Admin view — pokaz wszystkie wykryte (do testow), nawet wylaczone
+        // Admin view — show all detected ones (for testing), even disabled ones
         renderActions((data.dynamic.actions || []));
         renderSliders((data.dynamic.sliders || []));
       }
 
-      // Statyczne features (badge informacyjne — opcjonalnie uzyte gdzie indziej)
+      // Static features (informational badge — optionally used elsewhere)
       if (data.active) {
         window._activeStaticFeatures = data.active;
-        // Przelicz uprawnienia UI po zaladowaniu features
+        // Recompute UI permissions after loading the features
         window.Auth?.reapplyPermissions?.();
       }
     } catch (e) {
-      console.warn('[radiofunctions] refresh blad:', e);
+      console.warn('[radiofunctions] refresh error:', e);
     }
   }
 
@@ -331,10 +332,11 @@ const RadioFunctions = (() => {
     }
   }
 
-  // ── Live aktualizacja slidera po WS 'level_value' ────────────────────────
-  // (np. uzytkownik zmienil AF/RF/SQL na panelu radia — poller w civ.py
-  // wykryl zmiane i rozeslal nowa wartosc; aktualizujemy slider bez
-  // przerysowywania calej listy, zeby nie przerywac ewentualnego drag'a).
+  // ── Live slider update after WS 'level_value' ────────────────────────────
+  // (e.g. the user changed AF/RF/SQL on the radio's own panel — the
+  // poller in civ.py detected the change and broadcast the new value; we
+  // update the slider without re-rendering the whole list, so as not to
+  // interrupt any in-progress drag).
   function handleLevelValue(msg) {
     const el = _sliderEls[msg.id];
     if (!el) return;
@@ -349,17 +351,17 @@ const RadioFunctions = (() => {
     val.textContent = fmt ? fmt(pct) : pct;
   }
 
-  // Aktualizuje stan wizualny przycisku toggle funkcji (np. po auto BK-IN
-  // przy wejsciu w CW, WS 'func_state': {id:'func_bkin', value:true}).
+  // Updates a function toggle button's visual state (e.g. after auto
+  // BK-IN on entering CW, WS 'func_state': {id:'func_bkin', value:true}).
   function handleFuncState(msg) {
     const btn = _funcBtnEls[msg.id];
     if (btn) btn.classList.toggle('active', !!msg.value);
   }
 
-  // Aktualizuje stan wizualny wg legacy typow: preamp, attenuator, tuner.
-  // Mapuja sie na dynamiczne id: func_preamp, func_attenuator, func_tuner.
+  // Updates the visual state for legacy types: preamp, attenuator, tuner.
+  // Maps to the dynamic ids: func_preamp, func_attenuator, func_tuner.
   function handleLegacyFunc(type, msg) {
-    // preamp: value 0=OFF, 1=P1, 2=P2 — traktuj > 0 jako aktywny
+    // preamp: value 0=OFF, 1=P1, 2=P2 — treat > 0 as active
     const isActive = typeof msg.value === 'boolean' ? msg.value : (msg.value > 0);
     const idMap = {
       preamp: 'func_preamp',
@@ -370,7 +372,7 @@ const RadioFunctions = (() => {
     if (btnId && _funcBtnEls[btnId]) {
       _funcBtnEls[btnId].classList.toggle('active', isActive);
     }
-    // Alternatywne id (moga sie roznic zaleznie od dump_caps)
+    // Alternative ids (can vary depending on dump_caps)
     const altMap = {
       preamp: ['func_pamp', 'func_preamp'],
       attenuator: ['func_att', 'func_attenuator', 'func_atten'],
@@ -383,32 +385,33 @@ const RadioFunctions = (() => {
     }
   }
 
-  // Aktualizuje przycisk POWER (osobny handler bo ma inna semantyke — "aktywny" znaczy OFF).
-  // WAZNE: aktualizuje ZAROWNO wyglad JAK I dataset.powerOn (stan logiczny),
-  // zeby kolejne klikniecie wyslalo poprawna wartosc. Wolane z:
-  //   - power_state broadcast (inny user przelaczyl radio)
-  //   - get_status po zalogowaniu (nowy user poznaje aktualny stan)
+  // Updates the POWER button (a separate handler since it has different
+  // semantics — "active" means OFF).
+  // IMPORTANT: updates BOTH the appearance AND dataset.powerOn (the
+  // logical state), so the next click sends the correct value. Called from:
+  //   - the power_state broadcast (another user toggled the radio)
+  //   - get_status after login (a new user learns the current state)
   function handlePowerState(isOn) {
     if (window.AppState) window.AppState.rigPowerOn = !!isOn;
     const btn = _funcBtnEls['power_toggle'];
     if (btn) {
       btn.dataset.powerOn = isOn ? '1' : '0';
-      btn.classList.toggle('active', !isOn); // active = wylaczony (czerwony)
+      btn.classList.toggle('active', !isOn); // active = off (red)
     }
   }
 
-  // Synchronizacja podswietlenia przyciskow ze STANEM RADIA (nie klikiem).
-  // Wolane po init (nowy user widzi prawde od wejscia), po broadcastach
-  // vfo/split, i po zbudowaniu przyciskow (renderActions).
+  // Syncs button highlighting to the RADIO'S STATE (not a click). Called
+  // after init (a new user sees the truth from the start), after
+  // vfo/split broadcasts, and after building the buttons (renderActions).
   function syncStates(st) {
     st = st || {};
     const vfo = st.vfo || (window.S && window.S.vfo) || 'VFOA';
-    // Przyciski VFO A/B (data-action-id = vfo_a / vfo_b)
+    // VFO A/B buttons (data-action-id = vfo_a / vfo_b)
     document.querySelectorAll('.rf-btn[data-action-id="vfo_a"]').forEach(b =>
       b.classList.toggle('active', vfo === 'VFOA'));
     document.querySelectorAll('.rf-btn[data-action-id="vfo_b"]').forEach(b =>
       b.classList.toggle('active', vfo === 'VFOB'));
-    // Split — jesli istnieje przycisk func o id zawierajacym 'split'
+    // Split — if a func button exists with an id containing 'split'
     const split = (st.split !== undefined) ? !!st.split
                 : !!(window.S && window.S.split);
     for (const id in _funcBtnEls) {
