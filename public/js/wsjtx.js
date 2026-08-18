@@ -1044,10 +1044,10 @@ function toggleCqOnly() {
 function _renderDecodes() {
   const el = document.getElementById('wj-decodes');
   if (!el) return;
-  // Filtr "tylko CQ" dotyczy WYLACZNIE Band Activity — RX Frequency
-  // (_renderRxFreqPanel) przeszukuje _decodes bezposrednio, bez filtra,
-  // bo ma pokazywac wszystko co jest na danej czestotliwosci niezaleznie
-  // od tego czy to wolanie CQ czy odpowiedz w trwajacym QSO.
+  // The "CQ only" filter applies EXCLUSIVELY to Band Activity — RX
+  // Frequency (_renderRxFreqPanel) searches _decodes directly, without
+  // the filter, since it's meant to show everything on that frequency
+  // regardless of whether it's a CQ call or a reply within an ongoing QSO.
   const visible = _cqOnly
     ? _decodes.filter(d => (d.message||'').toUpperCase().startsWith('CQ '))
     : _decodes;
@@ -1060,15 +1060,15 @@ function _renderDecodes() {
   const reversedVisible = [...visible].reverse();
   let prevSlot = null;
   el.innerHTML = reversedVisible.map((d) => {
-    // Indeks w ORYGINALNEJ tablicy _decodes (nie w przefiltrowanej liscie) —
-    // potrzebny zeby klikniecie wiersza (_selectRow) trafialo w poprawny
-    // rekord nawet gdy filtr CQ jest aktywny.
+    // Index in the ORIGINAL _decodes array (not the filtered list) —
+    // needed so clicking a row (_selectRow) lands on the correct record
+    // even when the CQ filter is active.
     const idx = _decodes.indexOf(d);
     const slot = _windowSlot(d.timeStr, d.mode);
     let separator = '';
     if (slot !== null && prevSlot !== null && slot !== prevSlot) {
-      // Granica miedzy okresami dekodowania (np. xx:15 -> xx:30 dla FT8) —
-      // linia przerywana informujaca ze ponizej zaczyna sie NOWE okno.
+      // Boundary between decode periods (e.g. xx:15 -> xx:30 for FT8) —
+      // a dashed line indicating a NEW window starts below.
       separator = '<div class="wj-period-sep"></div>';
     }
     prevSlot = slot;
@@ -1076,18 +1076,19 @@ function _renderDecodes() {
   }).join('');
 }
 
-// Rx Frequency panel: KOLEJKA (nie pojedynczy wiersz) dekodowan ktorych
-// czestotliwosc (deltaFreq) jest blisko aktualnego znacznika RX (tolerancja
-// +/- kilka Hz, zeby uwzglednic naturalny dryf/niedokladnosc dekodowania).
-// Pokazuje jedno pod drugim, chronologicznie, zarowno to co ODEBRALISMY jak
-// i to co SAMI NADALISMY (wpisy is_tx sa oznaczone "▶ TX" i innym tlem w
-// _decodeRowHtml) — bez tego panel nadpisywal sie przy kazdym kolejnym
-// dekodzie i nie dalo sie prosledzic co dokladnie dzieje sie na tej
-// czestotliwosci (dostajemy vs nadajemy). Max RX_FREQ_QUEUE_MAX pozycji,
-// najstarsze znikaja pierwsze (FIFO). Wlasna transmisja pojawia sie w tej
-// kolejce naturalnie — backend broadcastuje ja jako wsjtx_decode (is_tx=true)
-// juz w chwili PTT ON (_addDecode wywoluje ten render przy kazdym dekodzie),
-// wiec nie trzeba osobnego "live preview" wiersza.
+// Rx Frequency panel: a QUEUE (not a single row) of decodes whose
+// frequency (deltaFreq) is close to the current RX marker (tolerance +/-
+// a few Hz, to account for natural drift/decode inaccuracy). Shows them
+// one below another, chronologically, both what we RECEIVED and what we
+// TRANSMITTED ourselves (is_tx entries are marked "▶ TX" and a different
+// background in _decodeRowHtml) — without this, the panel overwrote
+// itself on every new decode and it was impossible to follow what
+// exactly was happening on this frequency (receiving vs transmitting).
+// Max RX_FREQ_QUEUE_MAX entries, the oldest disappear first (FIFO). Our
+// own transmission appears in this queue naturally — the backend
+// broadcasts it as wsjtx_decode (is_tx=true) already at the moment of
+// PTT ON (_addDecode triggers this render on every decode), so no
+// separate "live preview" row is needed.
 const RX_FREQ_TOLERANCE_HZ = 8;
 const RX_FREQ_QUEUE_MAX = 20;
 
@@ -1127,21 +1128,21 @@ function _renderRxFreqPanel() {
 }
 
 function _selectRow(el, idx) {
-  // Klik operatora = dowod obecnosci dla timera bezpieczenstwa (WSJT-X Tx
-  // Watchdog) - patrz komentarz przy 'wsjtx_decode' w handleWS.
+  // An operator click = proof of presence for the safety timer (WSJT-X Tx
+  // Watchdog) - see the comment at 'wsjtx_decode' in handleWS.
   window.FT8Timer?.reset();
   document.querySelectorAll('.wj-decode-row.selected').forEach(r=>r.classList.remove('selected'));
   el.classList.add('selected');
   const d = _decodes[idx];
   if (!d) return;
-  // Klik we WLASNA transmisje (is_tx) — nie rob nic (to nasz komunikat w
-  // historii QSO, nie stacja do wolania). Tylko podswietl.
+  // Clicking OUR OWN transmission (is_tx) — do nothing (it's our own
+  // message in the QSO history, not a station to call). Just highlight it.
   if (d.is_tx) return;
   if (d.deltaFreq !== undefined) {
-    // WOLANIE KOGOS: oba znaczniki (RX i TX) podazaja za korespondentem —
-    // zgodnie ze specyfikacja WSJT-X. Wczesniej ustawialismy TYLKO RX, wiec
-    // znaczniki pracowaly osobno (blad). TX podaza CHYBA ze zamrozony (Hold Tx
-    // Freq) albo Hound — wtedy TX zostaje osobno (tez wg specyfikacji WSJT-X).
+    // CALLING SOMEONE: both markers (RX and TX) follow the correspondent
+    // — per the WSJT-X spec. We used to set ONLY RX, so the markers
+    // worked independently (a bug). TX follows UNLESS it's frozen (Hold
+    // Tx Freq) or Hound — then TX stays separate (also per the WSJT-X spec).
     window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
     const txHeld = window.WSJTXScope?.isTxFrozen?.() || _hound?.active;
     if (!txHeld) {
@@ -1161,55 +1162,58 @@ function _selectRow(el, idx) {
   _setField('wj-log-grid',    grid);
   _setField('wj-log-rst-rcvd', d.snr>=0?'+'+d.snr:String(d.snr));
   _setField('wj-log-mode', d.mode || 'FT8');
-  // _setField() ustawia .value programowo, wiec NIE odpala oninput z HTML -
-  // trzeba jawnie przeliczyc namiar anteny po kliknieciu wiersza.
+  // _setField() sets .value programmatically, so it does NOT fire the
+  // HTML's oninput - the antenna heading has to be explicitly recomputed
+  // after clicking a row.
   updateBeamRow();
-  // Zaktualizuj tekst makr TX
+  // Update the TX macro text
   _updateMacroTexts();
 
-  // Klikniecie na wywolanie CQ LUB na wiadomosc adresowana BEZPOSREDNIO do
-  // nas (ktos juz nas zawolal - Tx1/raport/RRR/RR73/73 z naszym znakiem
-  // jako call_to) przy wlaczonej automatyce startuje PELNE automatyczne
-  // QSO (zamiast tylko wypelniac pola do recznego wyslania). Do 2026-08-15
-  // dzialalo to WYLACZNIE dla "CQ ..." — stacja ktora zawolala nas wprost
-  // (np. "SQ3MZM DL3MIB JN57", wchodzaca do kolejki Call 1st automatycznie
-  // po stronie backendu) nie dawala sie recznie "przeskoczyc" klikniciem,
-  // bo isCq bylo falszywe i klik tylko przestrajal RX/TX, bez wyslania
-  // ft8_start_auto_qso w ogole — backend (handler "ft8_start_auto_qso" w
-  // webapp.py) juz ODDAWNA poprawnie przyjmuje initial_decode DOWOLNEGO
-  // typu wiadomosci, wiec to byla wylacznie blokada front-endu.
-  // Guard call!=='CQ': wiadomosci niekompletne/skrocone (np. samo "CQ" bez
-  // callsignu, blad dekodowania) daja call==='CQ' z _extractCall — to NIE
-  // jest prawdziwy callsign partnera i nie powinno startowac automatyki.
+  // Clicking a CQ call OR a message addressed DIRECTLY to us (someone
+  // already called us - Tx1/report/RRR/RR73/73 with our callsign as
+  // call_to), with automation enabled, starts a FULL automatic QSO
+  // (instead of just filling in the fields for manual sending). This used
+  // to work ONLY for "CQ ..." — a station that called us directly (e.g.
+  // "SQ3MZM DL3MIB JN57", which enters the Call 1st queue automatically
+  // on the backend) couldn't be manually "jumped to" by clicking, because
+  // isCq was false and the click only retuned RX/TX, without sending
+  // ft8_start_auto_qso at all — the backend (the "ft8_start_auto_qso"
+  // handler in webapp.py) had long since correctly accepted an
+  // initial_decode of ANY message type, so this was purely a frontend limitation.
+  // Guard call!=='CQ': incomplete/truncated messages (e.g. just "CQ" with
+  // no callsign, a decode error) give call==='CQ' from _extractCall —
+  // that's NOT a real partner callsign and shouldn't start the automation.
   const upperMsg = (d.message||'').toUpperCase();
   const isCq = upperMsg.startsWith('CQ ');
   const isDirectToMe = _myCall && upperMsg.startsWith(_myCall.toUpperCase() + ' ');
   if ((isCq || isDirectToMe) && _autoSeqEnabled && call && call !== 'CQ') {
-    // recvEpoch (dokladny czas odbioru TEGO dekodu od backendu, nie
-    // "teraz") jest kluczowy — backend liczy z niego nasze okno TX. Bez
-    // tego poprawny wybor okna dzialal tylko gdy klikniesz w ulamek
-    // sekundy po pojawieniu sie dekodu — reczna reakcja czlowieka
-    // (kilka-kilkanascie sekund) ladowala transmisje w zlym oknie
-    // (kolizja z partnerem, QSO "nie startowalo").
+    // recvEpoch (the exact receive timestamp of THIS decode from the
+    // backend, not "now") is crucial — the backend computes our TX window
+    // from it. Without this, correct window selection only worked if you
+    // clicked within a fraction of a second of the decode appearing — a
+    // human's manual reaction (several-odd seconds) landed the
+    // transmission in the wrong window (collision with the partner, the
+    // QSO "wouldn't start").
     window.WS?.send({ type: 'ft8_start_auto_qso', callDe: call,
                        message: d.message, recvEpoch: d.recvEpoch, snr: d.snr });
   }
 }
 
-// Reczne wyszukanie stacji po znaku w polu DX (Enter/utrata fokusu) —
-// odwrotny kierunek niz klik w wiersz: zamiast myszka wskazywac dekod,
-// operator wpisuje znak, a jesli stacja jest AKTUALNIE widoczna w historii
-// dekodow na pasmie, znacznik RX sam przestraja sie na jej czestotliwosc.
-// Grid CELOWO nie jest wymagany do przestrojenia (uzupelniany tylko jesli
-// akurat sie znajdzie w dopasowanym dekodzie) — to czysto informacyjne pole
-// tutaj, nie warunek. TX marker NIE podaza (w odroznieniu od klikniecia
-// wiersza) — wpisanie znaku to "szukam/nasluchuje", nie "zamierzam nadac
-// teraz", te dwie intencje maja byc rozdzielone.
+// Manual station search by callsign in the DX field (Enter/blur) — the
+// opposite direction from clicking a row: instead of the mouse pointing
+// at a decode, the operator types a callsign, and if the station is
+// CURRENTLY visible in the band's decode history, the RX marker retunes
+// to its frequency on its own. The grid is DELIBERATELY not required for
+// retuning (only filled in if it happens to be present in the matched
+// decode) — it's a purely informational field here, not a condition. The
+// TX marker does NOT follow (unlike clicking a row) — typing a callsign
+// means "I'm looking/listening", not "I intend to transmit right now",
+// these two intents are meant to be kept separate.
 function searchDxCall(rawCall) {
   const call = (rawCall || '').trim().toUpperCase();
   if (!call) return;
-  // Szukaj od NAJNOWSZEGO dekodu wstecz — jesli stacja pojawila sie
-  // wielokrotnie, interesuje nas jej OSTATNIA znana czestotliwosc.
+  // Search from the NEWEST decode backward — if the station appeared
+  // multiple times, we care about its MOST RECENT known frequency.
   for (let i = _decodes.length - 1; i >= 0; i--) {
     const d = _decodes[i];
     if (d.is_tx || d.deltaFreq === undefined) continue;
@@ -1224,17 +1228,18 @@ function searchDxCall(rawCall) {
   window.UI?.showToast(I18n.t('wj_toast_station_not_visible').replace('{call}', call), 'error');
 }
 
-// ── Namiar anteny + rotor (wiersz ANTENA pod polem DX w SZYBKI ZAPIS QSO) ─────
-// Naglowek/wiersz byl w HTML od dawna (beamheading.js liczyl azymut), ale
-// nic nigdy nie wywolywalo BeamHeading.headingFor() ani nie laczylo tego z
-// rotorem — czysto martwy fragment UI. Naprawione 2026-08-15: przelicza sie
-// przy kazdej zmianie pola CALLSIGN DX/Grid DX (oninput w index.html + po
-// programowym wypelnieniu przez _selectRow), a SP/LP wysylaja komende
-// BEZPOSREDNIO do tego samego /api/rotator/<id>/position co duzy kompas w
-// RADIO (rotormini.js) — bez osobnego potwierdzenia, klik = jedz. Zywa
-// pozycja rotora aktualizuje sie przez TEN SAM broadcast "rotator_update"
-// co duzy kompas (patrz case w handleWS), niezaleznie od tego czy operator
-// ma akurat otwarta zakladke RADIO.
+// ── Antenna heading + rotator (the ANTENNA row below the DX field in QUICK QSO LOG) ─
+// The header/row had been in the HTML for a while (beamheading.js
+// computed the azimuth), but nothing ever called BeamHeading.headingFor()
+// or connected it to the rotator — a purely dead piece of UI. Fixed:
+// recomputed on every change to the CALLSIGN DX/Grid DX fields (oninput
+// in index.html + after being filled in programmatically by
+// _selectRow), and SP/LP send the command DIRECTLY to the same
+// /api/rotator/<id>/position as the big compass in RADIO (rotormini.js)
+// — no separate confirmation, click = go. The live rotator position
+// updates via the SAME "rotator_update" broadcast as the big compass
+// (see the case in handleWS), regardless of whether the operator
+// currently has the RADIO tab open.
 let _rotorId  = null;
 let _beamSpAz = null;
 let _beamLpAz = null;
@@ -1247,9 +1252,9 @@ function updateBeamRow() {
   const call = document.getElementById('wj-log-call')?.value.trim().toUpperCase() || '';
   const grid = document.getElementById('wj-log-grid')?.value.trim().toUpperCase() || '';
   const h = call ? window.BeamHeading?.headingFor(call, grid) : null;
-  // Wiersz jest STALE WIDOCZNY (patrz index.html) — tu tylko resetujemy do
-  // placeholderow "---°" gdy nie ma jeszcze wybranej stacji, zamiast chowac
-  // caly wiersz. SP/LP zostaja wylaczone naturalnie (_beamSpAz/_beamLpAz=null).
+  // The row is ALWAYS VISIBLE (see index.html) — here we just reset it to
+  // the "---°" placeholders when no station is selected yet, instead of
+  // hiding the whole row. SP/LP end up disabled naturally (_beamSpAz/_beamLpAz=null).
   if (!h) {
     if (azEl)   azEl.textContent   = '---°';
     if (distEl) distEl.textContent = '';
