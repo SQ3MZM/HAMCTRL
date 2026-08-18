@@ -1817,21 +1817,21 @@ window.FT8Timer = (() => {
   }
 
   function _stopTX() {
-    // Zatrzymaj RZECZYWISTE nadawanie (PTT + silnik QSO) - poprzednia
-    // wersja wolala tylko stopTx() (kosmetyczny reset podswietlenia
-    // przycisku, NIE dotyka PTT ani silnika) i houndStop(), wiec dla
-    // glownej automatyki (Call 1st) w ogole nic realnie nie przerywala.
-    // haltTx() to ten sam pelny halt co przycisk HALT TX (PTT off +
-    // abort_qso + uniewaznienie zaplanowanych w locie retransmisji).
+    // Stop ACTUAL transmitting (PTT + QSO engine) - the previous version
+    // only called stopTx() (a cosmetic reset of the button highlight,
+    // doesn't touch PTT or the engine) and houndStop(), so for the main
+    // automation (Call 1st) it didn't actually stop anything at all.
+    // haltTx() is the same full halt as the HALT TX button (PTT off +
+    // abort_qso + invalidating any in-flight scheduled retransmits).
     window.WSJTX?.haltTx();
     if (window.WSJTX?.houndStop) window.WSJTX.houndStop();
-    // Poinformuj backend - dopoki nie przyjdzie ft8_timer_confirm, automat
-    // ma PRZESTAC reagowac na nowych wolajacych mimo wlaczonego Call 1st
-    // (patrz _ft8_operator_present w webapp.py). Samo haltTx() przerywa
-    // TYLKO biezaca transmisje - bez tej dodatkowej blokady automat
-    // złapałby kolejnego wolajacego juz za chwile, co czyni caly timer
-    // bezuzytecznym (dokladnie ten problem zglosil uzytkownik: timer mial
-    // pilnowac max czasu nadawania, a przerywal co najwyzej jedna wysylke).
+    // Notify the backend - until ft8_timer_confirm arrives, the
+    // automation must STOP responding to new callers even with Call 1st
+    // enabled (see _ft8_operator_present in webapp.py). haltTx() alone
+    // only stops the CURRENT transmission - without this extra block the
+    // automation would catch the next caller right away, making the
+    // whole timer useless (exactly the problem reported: the timer was
+    // meant to cap TX time, but it interrupted at most one send).
     window.WS?.send({ type: 'ft8_timer_expired' });
   }
 
@@ -1846,7 +1846,7 @@ window.FT8Timer = (() => {
     const mins = Math.floor(_remaining / 60000);
     const secs = Math.floor((_remaining % 60000) / 1000);
     el.textContent = `${String(mins).padStart(2,'0')}:${String(secs).padStart(2,'0')}`;
-    // Kolor: zielony → żółty (<2min) → czerwony (<1min)
+    // Color: green → yellow (<2min) → red (<1min)
     el.style.color = _remaining < 60000  ? 'var(--red)'
                    : _remaining < 120000 ? 'var(--amber)'
                    : 'var(--green)';
@@ -1856,36 +1856,37 @@ window.FT8Timer = (() => {
 })();
 
 // ── Fox / Hound mode ─────────────────────────────────────────────────────────
-// Zgodne z "FT8 DXpedition Mode User Guide" (K1JT, 2018) i "The FT4 and FT8
-// Communication Protocols" (K9AN/G4WJS/K1JT, QEX Jul/Aug 2020). Fox mode
-// (druga strona: DXpedycja) CELOWO nigdy nie bedzie implementowany w tym
-// projekcie - to dziala wylacznie po stronie Hounda (stacji wolajacej).
+// Compliant with the "FT8 DXpedition Mode User Guide" (K1JT, 2018) and
+// "The FT4 and FT8 Communication Protocols" (K9AN/G4WJS/K1JT, QEX Jul/Aug
+// 2020). Fox mode (the other side: the DXpedition) will DELIBERATELY
+// never be implemented in this project - this only handles the Hound side
+// (the calling station).
 const _hound = {
   active:         false,
   foxCall:        '',
-  step:           0,        // 0=idle 1=wolanie/czekam na Fox 3=wysylam R+rpt 4=czekam na RR73
-  txFreq:         1500,     // Hz — wolanie Foxa (spec: 1000-4000 Hz)
-  reportBaseFreq: 0,        // Hz — freq na ktorej Fox NAS wolal (nominalnie 300-540 Hz)
-  reportFreq:     0,        // Hz — aktualnie uzywana (moze byc przesunieta po retry)
-  attempts:       0,        // ile razy wyslalismy R+rpt w tym QSO (tylko do UI/przesuniecia freq)
-  foxReport:      '',       // raport od Foxa np. "-13"
-  timer:          null,     // timer 2-minutowego potwierdzenia obecnosci operatora
-  cycleTimer:     null,     // timer sprawdzajacy czy trzeba ponowic TX (brak odpowiedzi Foxa)
-  lastConfirm:    0,        // czas ostatniego potwierdzenia operatora
-  lastTxAt:       0,        // czas ostatniej wyslanej wiadomosci Hounda (do retry co cykl)
+  step:           0,        // 0=idle 1=calling/waiting for Fox 3=sending R+rpt 4=waiting for RR73
+  txFreq:         1500,     // Hz — calling the Fox (spec: 1000-4000 Hz)
+  reportBaseFreq: 0,        // Hz — the freq the Fox called US on (nominally 300-540 Hz)
+  reportFreq:     0,        // Hz — currently in use (may be shifted after a retry)
+  attempts:       0,        // how many times we sent R+rpt in this QSO (UI/freq-shift only)
+  foxReport:      '',       // report from the Fox, e.g. "-13"
+  timer:          null,     // 2-minute operator-presence confirmation timer
+  cycleTimer:     null,     // timer checking whether TX needs to be retried (no reply from the Fox)
+  lastConfirm:    0,        // time of the last operator confirmation
+  lastTxAt:       0,        // time of the last Hound message sent (for per-cycle retry)
 };
 
-const HOUND_SHIFT_HZ = 300;   // spec: retry R+rpt przesuwa sie o 300Hz wyzej/nizej
+const HOUND_SHIFT_HZ = 300;   // spec: an R+rpt retry shifts 300Hz higher/lower
 const HOUND_CYCLE_MS = { FT8: 15000, FT4: 7500 };
 
 function _houndCycleMs() {
   return HOUND_CYCLE_MS[_decodeMode] || 15000;
 }
 
-// Retry R+rpt: attempt 1 = base freq (bez przesuniecia), 2,3,4,... naprzemiennie
-// +300/-300/+600/-600... (spec: "subsequent transmissions will be moved 300 Hz
-// higher or lower" - kierunek nie jest narzucony, wiec naprzemiennie zeby
-// pozostac blisko oryginalnego slotu Foxa zamiast uciekac w jedna strone).
+// R+rpt retry: attempt 1 = base freq (no shift), 2,3,4,... alternating
+// +300/-300/+600/-600... (spec: "subsequent transmissions will be moved
+// 300 Hz higher or lower" - the direction isn't mandated, so we alternate
+// to stay close to the Fox's original slot instead of drifting one way).
 function _houndShiftedFreq(base, attemptNum) {
   if (attemptNum <= 1) return base;
   const n = attemptNum - 1;
@@ -1908,20 +1909,21 @@ function toggleHound(enabled) {
     _hound.foxCall    = foxCall;
     _hound.step       = 1;
     _hound.attempts   = 0;
-    _hound.txFreq     = 1500;   // domyslna czestotliwosc wolania (w zakresie 1000-4000)
+    _hound.txFreq     = 1500;   // default calling frequency (within the 1000-4000 range)
     _hound.lastConfirm = Date.now();
     _houndUpdateUI();
     _houndStartCalling();
-    window.FT8Timer?.start();  // Uruchom timer bezpieczenstwa
-    // Wewnetrzny timer Hound — sprawdza potwierdzenie co 30s
+    window.FT8Timer?.start();  // Start the safety timer
+    // Internal Hound timer — checks confirmation every 30s
     clearInterval(_hound.timer);
     _hound.timer = setInterval(_houndCheckConfirm, 30000);
-    // Ponawianie TX co cykl (15s/7.5s) jesli Fox nie odpowiedzial - spec:
-    // Hound "may keep calling until he answers" (wolanie) i "will repeat his
-    // transmission of Tx3" bez limitu prob (R+rpt). Bez tego Hound wolal
-    // DOKLADNIE RAZ i milkl, jesli Fox nie zdazyl odpowiedziec za pierwszym
-    // razem (w ruchliwym pile-upie niemal pewne) - zglosone na zywo jako
-    // "tryb byl dzialajacym TX", wiec to realna regresja funkcjonalna.
+    // Retry TX every cycle (15s/7.5s) if the Fox hasn't replied - spec:
+    // the Hound "may keep calling until he answers" (calling) and "will
+    // repeat his transmission of Tx3" with no attempt limit (R+rpt).
+    // Without this the Hound called EXACTLY ONCE and went silent if the
+    // Fox didn't manage to reply the first time (near-certain in a busy
+    // pile-up) - reported live as "the mode was a working TX", so this
+    // was a real functional regression.
     clearInterval(_hound.cycleTimer);
     _hound.cycleTimer = setInterval(_houndCycleCheck, 3000);
     window.UI?.showToast(I18n.t('wj_toast_hound_searching').replace('{call}', foxCall).replace('{freq}', _hound.txFreq));
@@ -1936,14 +1938,14 @@ function houndStop() {
   _hound.attempts = 0;
   clearInterval(_hound.timer);
   clearInterval(_hound.cycleTimer);
-  window.FT8Timer?.stop();  // Zatrzymaj timer
+  window.FT8Timer?.stop();  // Stop the timer
   const _ht = document.getElementById('wj-hound-toggle');
   if (_ht) _ht.checked = false;
   _houndUpdateUI();
   window.UI?.showToast(I18n.t('wj_toast_hound_off'));
 }
 
-// Potwierdzenie operatora co 2 min (wymóg protokołu)
+// Operator confirmation every 2 min (protocol requirement)
 function houndConfirm() {
   _hound.lastConfirm = Date.now();
 }
@@ -1951,16 +1953,16 @@ function houndConfirm() {
 function _houndCheckConfirm() {
   if (!_hound.active) return;
   const elapsed = Date.now() - _hound.lastConfirm;
-  if (elapsed > 120000) {  // 2 minuty
+  if (elapsed > 120000) {  // 2 minutes
     window.UI?.showToast(I18n.t('wj_toast_hound_confirm'), 'error');
     _hound.step = 0;
     _houndUpdateUI();
   }
 }
 
-// Sprawdzane co 3s: czy minal caly cykl TX (15s FT8 / 7.5s FT4) bez zadnej
-// wyslanej wiadomosci Hounda w biezacym kroku? Jesli tak - ponow (krok 1:
-// ta sama freq, krok 3: R+rpt z przesunieta freq, patrz _houndShiftedFreq).
+// Checked every 3s: has a full TX cycle (15s FT8 / 7.5s FT4) passed
+// without any Hound message sent in the current step? If so - retry
+// (step 1: same freq, step 3: R+rpt with a shifted freq, see _houndShiftedFreq).
 function _houndCycleCheck() {
   if (!_hound.active) return;
   const elapsed = Date.now() - _hound.lastTxAt;
@@ -1972,25 +1974,27 @@ function _houndCycleCheck() {
   }
 }
 
-// Główna logika — wywoływana po każdym odebranym dekodzie w trybie Hound
+// Main logic — called after every decode received in Hound mode
 function _houndOnDecode(decoded) {
   if (!_hound.active || !_hound.foxCall) return;
 
   const fox = _hound.foxCall.toUpperCase();
   const my  = (_myCall || '').toUpperCase();
-  // Hound uzywa BASE call Foxa, nie pelnego zlozonego znaku (spec: "Hounds
-  // use Fox's base call, not his full compound callsign") - np. "KH7Z" w
-  // wiadomosci vs "KH1/KH7Z" wpisane w polu DX. Zwykle zawieranie substringow
-  // wystarcza (dziala w obie strony bez wzgledu ktora forma jest krotsza).
+  // The Hound uses the Fox's BASE call, not the full compound callsign
+  // (spec: "Hounds use Fox's base call, not his full compound callsign")
+  // - e.g. "KH7Z" in the message vs "KH1/KH7Z" typed into the DX field.
+  // A simple substring check is usually enough (works both ways
+  // regardless of which form is shorter).
   const isFoxCall = (call) => call === fox || fox.includes(call) || call.includes(fox);
 
-  // Wiadomosc typu 0.1 (i3=0, n3=1) - Fox JEDNOCZESNIE zamyka QSO jednego
-  // Hounda (RR73) i zaprasza kolejnego z raportem, w JEDNEJ transmisji.
-  // Pole "message" tu NIE jest wiarygodne do parsowania regexem (patrz
-  // unpack_type0_1 w unpack.rs) - uzywamy ustrukturyzowanych pol wprost.
+  // Type 0.1 message (i3=0, n3=1) - the Fox SIMULTANEOUSLY closes one
+  // Hound's QSO (RR73) and invites the next one with a report, in ONE
+  // transmission. The "message" field here is NOT reliable for regex
+  // parsing (see unpack_type0_1 in unpack.rs) - we use the structured
+  // fields directly instead.
   if (decoded.isDxpedition) {
-    const call1 = (decoded.call_to || '').toUpperCase(); // dostaje RR73
-    const call2 = (decoded.call_de || '').toUpperCase(); // dostaje raport
+    const call1 = (decoded.call_to || '').toUpperCase(); // gets RR73
+    const call2 = (decoded.call_de || '').toUpperCase(); // gets a report
     if (call1 === my && (_hound.step === 3 || _hound.step === 4)) {
       _hound.step = 4;
       _houndUpdateUI();
@@ -2008,25 +2012,25 @@ function _houndOnDecode(decoded) {
       _houndSendReport();
       return;
     }
-    return; // dotyczy innego Hounda - nas nie obchodzi
+    return; // concerns a different Hound - not our business
   }
 
-  // Standardowa (i3=1) wiadomosc: "TO DE report" - parsowanie tokenowe,
-  // nie luzny substring-check (ten dawal false-positive gdy inny fragment
-  // tekstu przypadkiem zawieral "73"). Fox->Hound: TO=my call, DE=Fox
-  // (base call) - wczesniejsza wersja tego kodu sprawdzala pozycje
-  // ODWROTNIE (spodziewala sie "FOXCALL MYCALL ..."), przez co nigdy nie
-  // wykrywala prawdziwej odpowiedzi Foxa.
+  // Standard (i3=1) message: "TO DE report" - token-based parsing, not a
+  // loose substring check (that produced a false positive when some
+  // other part of the text happened to contain "73"). Fox->Hound: TO=my
+  // call, DE=Fox (base call) - an earlier version of this code checked
+  // the positions BACKWARDS (expected "FOXCALL MYCALL ..."), so it never
+  // detected a real reply from the Fox.
   const parts = (decoded.message || '').toUpperCase().trim().split(/\s+/);
   if (parts.length < 3) return;
   const [callTo, callDeRaw, tail] = parts;
   const callDe = callDeRaw.replace(/[<>]/g, '');
   if (callTo !== my || !isFoxCall(callDe)) return;
 
-  // Krok 1: Fox odpowiada na nasze CQ z raportem SNR -> wysylamy R+rpt
+  // Step 1: the Fox replies to our CQ with an SNR report -> we send R+rpt
   if (_hound.step === 1 && /^[+-]\d{1,2}$/.test(tail)) {
     _hound.foxReport      = tail;
-    _hound.reportBaseFreq = decoded.deltaFreq || 400; // freq na ktorej Fox NAS wolal
+    _hound.reportBaseFreq = decoded.deltaFreq || 400; // the freq the Fox called US on
     _hound.reportFreq     = _hound.reportBaseFreq;
     _hound.step           = 3;
     _hound.attempts        = 0;
@@ -2037,14 +2041,14 @@ function _houndOnDecode(decoded) {
   }
 
   if (_hound.step === 3 || _hound.step === 4) {
-    // Krok 4: Fox potwierdza RR73/73/RRR (niepolaczona wiadomosc) - QSO zaliczone
+    // Step 4: the Fox confirms with RR73/73/RRR (a non-combined message) - QSO complete
     if (tail === 'RR73' || tail === '73' || tail === 'RRR') {
       _hound.step = 4;
       _houndUpdateUI();
       _houndQSOComplete();
       return;
     }
-    // Fox ponownie daje ten sam raport (nie odebral naszego R+rpt) - powtorz
+    // The Fox gives the same report again (didn't receive our R+rpt) - repeat
     if (_hound.step === 3 && /^[+-]\d{1,2}$/.test(tail)) {
       _hound.lastConfirm = Date.now();
       _houndSendReport();
@@ -2054,9 +2058,9 @@ function _houndOnDecode(decoded) {
 
 function _houndStartCalling() {
   if (!_hound.active || _hound.step !== 1) return;
-  // TX1: "KH1/KH7Z SP3GSK KO02" na freq 1000-4000 Hz. Spec nie nakazuje
-  // zmiany freq przy braku odpowiedzi (to opcjonalna decyzja operatora) -
-  // ponawiamy na TEJ SAMEJ freq co poprzednio.
+  // TX1: "KH1/KH7Z SP3GSK KO02" on freq 1000-4000 Hz. The spec doesn't
+  // mandate changing freq when there's no reply (that's an optional
+  // operator decision) - we retry on the SAME freq as before.
   _hound.lastTxAt = Date.now();
   _houndUpdateUI();
   _houndSendMsg(_hound.foxCall, _myCall, (_myGrid || '').trim(), false, _hound.txFreq);
@@ -2065,12 +2069,12 @@ function _houndStartCalling() {
 function _houndSendReport() {
   if (!_hound.active) return;
   _hound.attempts++;
-  // TX3: "KH1/KH7Z SP3GSK R-13" - pierwsza proba na freq Foxa (nominalnie
-  // 300-540 Hz), kazda kolejna PRZESUNIETA o 300Hz (spec, wymagane -
-  // "will be moved", nie opcjonalne). Ponawiamy BEZ LIMITU az do RR73 -
-  // spec: "WSJT-X will send this message even if... you have not called Fox
-  // for several Tx sequences" - to Fox ma wlasny limit (3 proby + timeout
-  // 3 min), Hound nie poddaje sie sam.
+  // TX3: "KH1/KH7Z SP3GSK R-13" - the first attempt on the Fox's freq
+  // (nominally 300-540 Hz), each subsequent one SHIFTED by 300Hz (spec,
+  // required - "will be moved", not optional). We retry WITHOUT LIMIT
+  // until RR73 - spec: "WSJT-X will send this message even if... you have
+  // not called Fox for several Tx sequences" - the Fox has its own limit
+  // (3 attempts + a 3 min timeout), the Hound doesn't give up on its own.
   _hound.reportFreq = _houndShiftedFreq(_hound.reportBaseFreq, _hound.attempts);
   _hound.lastTxAt = Date.now();
   _houndUpdateUI();
