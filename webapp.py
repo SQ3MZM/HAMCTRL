@@ -5147,14 +5147,14 @@ class App:
                 print(f"[rig] freq WS: BLOKADA _feature_allowed (role={role})")
                 return
             hz = int(msg.get("freq", self.rig.freq))
-            # UWAGA (perf): usunieto per-freq print — przy scrollowaniu VFO
-            # freq zmienia sie ~20x/s, print zapychal event loop.
+            # NOTE (perf): removed the per-freq print — while scrolling
+            # the VFO, freq changes ~20x/s, the print was flooding the event loop.
             self.rig.freq = hz
             if not self.rig.sim:
                 try:
                     await self.rig.set_freq(hz)
                 except Exception as _e:
-                    print(f"[rig] set_freq blad: {_e}")
+                    print(f"[rig] set_freq error: {_e}")
             await self.hub.broadcast({"type": "freq", "freq": hz}, skip=ws)
 
         elif t == "mode":
@@ -5167,9 +5167,9 @@ class App:
             prev_mode = self.rig.mode
             self.rig.mode = msg.get("mode", self.rig.mode)
             self.rig.bw   = int(msg.get("bandwidth", self.rig.bw))
-            # filterNum: 1/2/3 = FIL1/2/3, wybor KTOREGO filtra skonfigurowanego
-            # w menu radia uzyc (CI-V 06 <mode> <fil>) — nie zmienia szerokosci
-            # filtra, tylko ktory z trzech "slotow" jest aktywny.
+            # filterNum: 1/2/3 = FIL1/2/3, selects WHICH filter configured
+            # in the radio's menu to use (CI-V 06 <mode> <fil>) — doesn't
+            # change the filter's width, only which of the three "slots" is active.
             fil = msg.get("filterNum")
             if fil in (1, 2, 3):
                 self.rig.filter_num = fil
@@ -5177,27 +5177,28 @@ class App:
                 try:
                     await self.rig.set_mode(self.rig.mode, self.rig.bw, fil or 0)
                 except Exception as e:
-                    print(f"[rig] set_mode BLAD dla mode={self.rig.mode!r} fil={fil}: {e!r}")
+                    print(f"[rig] set_mode ERROR for mode={self.rig.mode!r} fil={fil}: {e!r}")
 
-            # NIE wlaczamy automatycznie BK-IN przy przejsciu na CW.
-            # BK-IN (CI-V 16 47 01) powoduje ze radio wchodzi w ciagle TX
-            # czekajac na sygnal z fizycznego klucza CW — niepozadane przy
-            # wysylaniu przez CI-V cmd 17. Uzytkownik moze wlaczyc BK-IN
-            # recznie przez przycisk Break-In w panelu funkcji radia.
+            # We do NOT automatically enable BK-IN when switching to CW.
+            # BK-IN (CI-V 16 47 01) makes the radio enter continuous TX
+            # waiting for a signal from a physical CW key — undesired when
+            # sending via CI-V cmd 17. The user can enable BK-IN manually
+            # via the Break-In button in the radio features panel.
 
             await self.hub.broadcast({"type": "mode", "mode": self.rig.mode,
                                        "bandwidth": self.rig.bw,
                                        "filterNum": self.rig.filter_num}, skip=ws)
 
         elif t == "ft8_qsy":
-            # Przestrojenie na pasmo FT8/FT4 z listy w panelu WSJT-X (wj-band-
-            # select -> tuneToBand() w wsjtx.js). NAPRAWA: front od dawna
-            # wysylal ten typ wiadomosci ("jedna atomowa komenda ft8_qsy"),
-            # ale backend nigdy nie mial dla niej handlera — wiec wybor pasma
-            # z listy nic nie robil, czestotliwosc sie nie przelaczala.
-            # Ustawiamy tryb+filtr PRZED czestotliwoscia (sekwencyjnie na tym
-            # samym polaczeniu CI-V), tak jak opisuje komentarz w wsjtx.js —
-            # zapobiega wyscigowi freq/mode wysylanych osobno.
+            # Retune to an FT8/FT4 band from the list in the WSJT-X panel
+            # (wj-band-select -> tuneToBand() in wsjtx.js). FIX: the
+            # frontend had long been sending this message type ("one
+            # atomic ft8_qsy command"), but the backend never had a
+            # handler for it — so picking a band from the list did
+            # nothing, the frequency never switched. Mode+filter are set
+            # BEFORE the frequency (sequentially on the same CI-V
+            # connection), as described in the comment in wsjtx.js — this
+            # prevents a race between freq/mode sent separately.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5206,34 +5207,35 @@ class App:
                     and self._feature_allowed("mode_set", role)):
                 return
             hz = int(msg.get("freq", self.rig.freq))
-            # Pasmo docelowe musi byc dozwolone (jak przy CQ/TX) — sprawdzamy
-            # PRZED zmiana stanu radia, inaczej lista pasm FT8 obchodzilaby
-            # blokade admina, ktora normalny selektor pasm respektuje.
+            # The target band must be allowed (same as for CQ/TX) — checked
+            # BEFORE changing the radio's state, otherwise the FT8 band
+            # list would bypass the admin's block, which the normal band
+            # selector respects.
             enabled = self.cfg.get("enabledBands")
             if enabled and self._get_band_for_freq(hz) not in enabled:
                 await ws.send_json({"type": "toast",
                                      "msg": "⛔ QSY zablokowany — pasmo niedozwolone przez admina",
                                      "level": "error"})
                 return
-            # Tryb cyfrowy FT8/FT4 na IC-7300: zawsze USB-D + FIL1 (konwencja
-            # calego projektu, niezaleznie od tego co przyszlo w wiadomosci).
+            # Digital mode FT8/FT4 on the IC-7300: always USB-D + FIL1
+            # (a project-wide convention, regardless of what came in the message).
             self.rig.mode = msg.get("mode") or "USB-D"
             self.rig.filter_num = 1
             if not self.rig.sim:
                 try:
                     await self.rig.set_mode(self.rig.mode, self.rig.bw, self.rig.filter_num)
                 except Exception as e:
-                    print(f"[ft8] ft8_qsy set_mode blad: {e!r}")
+                    print(f"[ft8] ft8_qsy set_mode error: {e!r}")
             self.rig.freq = hz
             if not self.rig.sim:
                 try:
                     await self.rig.set_freq(hz)
                 except Exception as e:
-                    print(f"[ft8] ft8_qsy set_freq blad: {e!r}")
+                    print(f"[ft8] ft8_qsy set_freq error: {e!r}")
             print(f"[ft8] QSY: {hz/1e6:.6f} MHz {self.rig.mode} FIL{self.rig.filter_num}")
-            # Bez skip=ws: w przeciwienstwie do zwyklych handlerow freq/mode,
-            # tuneToBand() we froncie NIE aktualizuje lokalnie S.freq/S.mode —
-            # klient ktory kliknal pasmo tez polega na tym broadcascie.
+            # Without skip=ws: unlike the regular freq/mode handlers, the
+            # frontend's tuneToBand() does NOT update S.freq/S.mode
+            # locally — the client that clicked the band also relies on this broadcast.
             await self.hub.broadcast({"type": "mode", "mode": self.rig.mode,
                                        "bandwidth": self.rig.bw,
                                        "filterNum": self.rig.filter_num})
@@ -5242,7 +5244,7 @@ class App:
         elif t == "ptt":
             if not self._feature_allowed("ptt", role):
                 return
-            # Sprawdz czy user ma radio — tylko aktywny operator lub admin moze TX
+            # Check whether the user holds the radio — only the active operator or admin may TX
             if bool(msg.get("ptt")) and role != "admin":
                 sender = self.online_users.get(ws, {})
                 sender_uid = sender.get("user_id", "")
@@ -5250,12 +5252,12 @@ class App:
                     holder = self.radio_lock["callsign"] or self.radio_lock["username"] or "?"
                     await self.hub.broadcast({"type": "toast", "msg": f"⛔ PTT zablokowany — radio ma {holder}", "level": "error"})
                     return
-            # Blokada TX na niedozwolonym pasmie
+            # Block TX on a disallowed band
             if bool(msg.get("ptt")) and not self._is_band_allowed():
                 await self.hub.broadcast({"type": "toast", "msg": "⛔ TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})
                 return
-            # Blokada TX w cross-band split — VFO-A i VFO-B w roznych pasmach
-            # (chroni radio/antene przed nadawaniem w niewlasciwym pasmie)
+            # Block TX on a cross-band split — VFO-A and VFO-B on different
+            # bands (protects the radio/antenna from transmitting on the wrong band)
             if bool(msg.get("ptt")):
                 cross, band_a, band_b = self._is_split_cross_band()
                 if cross:
@@ -5265,16 +5267,18 @@ class App:
                     return
             self.rig.ptt = bool(msg.get("ptt"))
             if not self.rig.sim:
-                # Uwaga o audio z USB na IC-7300: audio z USB moduluje TYLKO gdy
-                # radio jest w trybie DATA (USB-D) - to ograniczenie sprzetowe
-                # radia (DATA MOD=USB dziala tylko w data mode; w zwyklym USB
-                # radio bierze z MIC). RCForb "TXd" wchodzi w data mode z tego
-                # powodu. NIE przelaczamy trybu automatycznie, bo USB-D ma inne
-                # filtry (obawa uzytkownika). Zamiast tego: user nadaje swiadomie
-                # w USB-D (z filtrem ustawionym szeroko w radiu), ALBO ustawia
-                # DATA OFF MOD=USB w radiu by zwykly USB tez bral audio z USB.
-                # Auto-przelaczanie mozliwe przez flage audio_tx_force_data_mode
-                # (domyslnie OFF - nie rusza filtrow bez zgody usera).
+                # Note on USB audio on the IC-7300: audio from USB only
+                # modulates when the radio is in DATA mode (USB-D) - this
+                # is a hardware limitation of the radio (DATA MOD=USB only
+                # works in data mode; in plain USB the radio takes audio
+                # from MIC). RCForb's "TXd" enters data mode for this
+                # reason. We do NOT switch mode automatically, since USB-D
+                # has different filters (user's concern). Instead: the user
+                # transmits knowingly in USB-D (with the filter set wide in
+                # the radio), OR sets DATA OFF MOD=USB in the radio so
+                # plain USB also takes audio from USB. Auto-switching is
+                # possible via the audio_tx_force_data_mode flag (OFF by
+                # default - doesn't touch filters without user consent).
                 _audio_tx = bool(getattr(self.audio, "tx_active", False))
                 _force = self.cfg.get("audio_tx_force_data_mode", False)
                 if (self.rig.ptt and _audio_tx and _force
@@ -5282,22 +5286,21 @@ class App:
                     try:
                         base = self.rig.mode.replace("-D", "")
                         await self.rig.set_mode(base + "-D")
-                        print(f"[ptt] Audio TX -> DATA ({base}-D) [flaga force ON]", flush=True)
+                        print(f"[ptt] Audio TX -> DATA ({base}-D) [force flag ON]", flush=True)
                         await self.hub.broadcast({"type": "mode", "mode": self.rig.mode})
                     except Exception as e:
-                        print(f"[ptt] data mode blad: {e}", flush=True)
+                        print(f"[ptt] data mode error: {e}", flush=True)
                 try: await self.rig.set_ptt(self.rig.ptt)
                 except: pass
             await self.hub.broadcast({"type": "ptt", "ptt": self.rig.ptt})
-            # Watchdog TX: uruchom timer max czasu nadawania. Konfigurowalne w
-            # config.json ("tx_watchdog_s" domyslnie 180s = 3 minuty).
-            # Watchdog chroni przed pozostawionym wlaczonym PTT (np. user
-            # zamknal laptop myslac ze wylaczyl TX, albo Chrome zawiesil sie
-            # w trakcie TX).
+            # TX watchdog: start a max-transmit-time timer. Configurable in
+            # config.json ("tx_watchdog_s", default 180s = 3 minutes).
+            # The watchdog protects against a PTT left on (e.g. the user
+            # closed their laptop thinking TX was off, or Chrome froze mid-TX).
             if self.rig.ptt:
                 asyncio.ensure_future(self._start_tx_watchdog())
             else:
-                # Anuluj watchdog gdy PTT OFF (user sam zakonczyl TX na czas)
+                # Cancel the watchdog when PTT goes OFF (the user finished TX in time)
                 if hasattr(self, '_tx_watchdog_task') and self._tx_watchdog_task:
                     self._tx_watchdog_task.cancel()
                     self._tx_watchdog_task = None
@@ -5318,7 +5321,7 @@ class App:
                                        "freqB": self.rig.freq_b})
 
         elif t == "freqB":
-            # Ustawienie czestotliwosci VFO-B bez przelaczania aktywnego VFO
+            # Set the VFO-B frequency without switching the active VFO
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5331,11 +5334,11 @@ class App:
                 try:
                     await self.rig.set_freq_b(hz)
                 except Exception as _e:
-                    print(f"[rig] set_freq_b blad: {_e}")
+                    print(f"[rig] set_freq_b error: {_e}")
             await self.hub.broadcast({"type": "freqB", "freqB": hz}, skip=ws)
 
         elif t == "vfo":
-            # {type:'vfo', vfo:'VFOA'|'VFOB'} -> CI-V 07 00/01 (wybor aktywnego VFO)
+            # {type:'vfo', vfo:'VFOA'|'VFOB'} -> CI-V 07 00/01 (select the active VFO)
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
@@ -5346,15 +5349,15 @@ class App:
             self.rig.vfo = vfo
             if not self.rig.sim:
                 try: await self.rig.set_vfo(vfo)
-                except Exception as e: print(f"[rig] set_vfo blad: {e}")
-            # Do WSZYSTKICH (bez skip): stan vfo synchronizuje przyciski u
-            # kazdego klienta, takze u nadawcy (idempotentne).
+                except Exception as e: print(f"[rig] set_vfo error: {e}")
+            # To EVERYONE (no skip): the vfo state syncs the buttons on
+            # every client, including the sender (idempotent).
             await self.hub.broadcast({"type": "vfo", "vfo": vfo})
 
         elif t == "vfo_op":
             # {type:'vfo_op', op:'swap'|'equalize'}
             #   swap     -> CI-V 07 B0 (A<->B)
-            #   equalize -> CI-V 07 A0 (A->B, kopiuje freq/mode z A do B)
+            #   equalize -> CI-V 07 A0 (A->B, copies freq/mode from A to B)
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
