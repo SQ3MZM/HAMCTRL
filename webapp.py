@@ -2211,11 +2211,11 @@ class App:
                 out.update(await asyncio.to_thread(_gather_psutil))
             except Exception as _pe:
                 out["cpu"] = {"error": str(_pe)}
-            # ── Klienci WS + subskrypcje kanalow ──────────────────────────────
+            # ── WS clients + channel subscriptions ──────────────────────────────
             try:
                 _clients = getattr(self.hub, "_clients", set())
                 _subs = getattr(self.hub, "_subs", {})
-                # Policz ilu klientow subskrybuje kazdy kanal
+                # Count how many clients subscribe to each channel
                 _chan_count = {}
                 for _ws, _chans in _subs.items():
                     for ch in (_chans or []):
@@ -2228,7 +2228,7 @@ class App:
             except Exception as e:
                 out["websocket"] = {"error": str(e)}
 
-            # ── Stan hot-path (co obciaza CPU) ────────────────────────────────
+            # ── Hot-path state (what's loading the CPU) ────────────────────────────────
             out["workload"] = {
                 "ft8_rx_enabled": bool(getattr(self, "_ft8_rx_enabled", False)),
                 "ft8_decode_mode": getattr(self, "_ft8_decode_mode", None),
@@ -2253,8 +2253,8 @@ class App:
             uptime_s = time.time() - self._server_start_time
             # CI-V / rig
             is_civ = isinstance(self.rig, CivRig)
-            # Aktywne radio z listy rigs[] (model/port/speed sa tutaj, nie w
-            # plaskim cfg). Pierwszy wpis = aktywne radio.
+            # Active radio from the rigs[] list (model/port/speed live
+            # here, not in the flat cfg). The first entry = active radio.
             _active_rig = (self.cfg.get("rigs") or [{}])[0]
             rig_connected = False
             rig_sim = True
@@ -2265,13 +2265,13 @@ class App:
                 pass
             # Audio backend
             audio_backend = "rust" if self.rust_audio else ("ffmpeg" if getattr(self.audio, "_ffmpeg", None) else "python")
-            # CPU/RAM przez psutil (jesli dostepny)
+            # CPU/RAM via psutil (if available)
             cpu_pct = None
             ram_pct = None
             ram_used_mb = None
             try:
                 import psutil as _ps
-                cpu_pct = _ps.cpu_percent(interval=None)   # nieblokujace (patrz wyzej)
+                cpu_pct = _ps.cpu_percent(interval=None)   # non-blocking (see above)
                 vm = _ps.virtual_memory()
                 ram_pct = vm.percent
                 ram_used_mb = round(vm.used / (1024*1024))
@@ -2292,10 +2292,10 @@ class App:
                     "backend": "civ" if is_civ else "hamlib",
                     "connected": rig_connected,
                     "sim": rig_sim,
-                    # Model/port sa w cfg["rigs"][0] (lista radiotelefonow),
-                    # nie w plaskim cfg["model"]. Czytamy z aktywnego radia,
-                    # z fallbackiem na stare pola i wartosc realnie uzywana
-                    # przez sterownik (self.rig.port/speed).
+                    # Model/port live in cfg["rigs"][0] (the radio list),
+                    # not in the flat cfg["model"]. Read from the active
+                    # radio, falling back to the old fields and the value
+                    # actually used by the driver (self.rig.port/speed).
                     "model": (_active_rig.get("model")
                               or self.cfg.get("model") or "?"),
                     "port": (getattr(self.rig, "port", None)
@@ -2324,7 +2324,7 @@ class App:
                 },
             }
 
-        # Test polaczenia CI-V — wysyla testowy odczyt freq
+        # CI-V connection test — sends a test freq read
         if p == "/api/status/test_civ" and method == "POST":
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
@@ -2339,12 +2339,12 @@ class App:
             except Exception as e:
                 return 200, {"ok": False, "message": f"Blad CI-V: {e}"}
 
-        # ── Backup / Restore konfiguracji (admin) ────────────────────────────
+        # ── Config backup / restore (admin) ────────────────────────────
         if p == "/api/backup" and method == "GET":
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
-            # Zwroc config.json + users.json jako jeden JSON do pobrania
-            # (hasla userow zostawiamy — to backup, admin ma dostep)
+            # Return config.json + users.json as one downloadable JSON
+            # (user passwords included — this is a backup, the admin has access)
             import datetime as _dt
             return 200, {
                 "ok": True,
@@ -2358,7 +2358,7 @@ class App:
         if p == "/api/restore" and method == "POST":
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
-            data = body.get("backup", body)  # akceptuj {backup:{...}} lub bezposrednio
+            data = body.get("backup", body)  # accept {backup:{...}} or directly
             if not isinstance(data, dict):
                 return 400, {"error": "Nieprawidlowy format backupu"}
             restored = []
@@ -2394,7 +2394,7 @@ class App:
             return 200, {**self._radio_lock_state(), "online": self._online_users_state()}
 
         if p == "/api/radio/lock" and method == "POST":
-            """Przejmij radio (jezeli wolne lub jestes adminem)."""
+            """Take over the radio (if free, or if you're an admin)."""
             u_obj = self.find_user_by_id(uid)
             if not u_obj: return 403, {"error": "Brak konta"}
             if self.radio_lock["user_id"] and self.radio_lock["user_id"] != uid and role != "admin":
@@ -2406,18 +2406,17 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/radio/release" and method == "POST":
-            """Zwolnij radio (tylko aktywny operator lub admin)."""
+            """Release the radio (active operator or admin only)."""
             if self.radio_lock["user_id"] != uid and role != "admin":
                 return 403, {"error": "Nie masz aktywnej blokady radia"}
             released_by = self.radio_lock["username"] or user.get("username", "")
             self._release_radio()
-            # Wyczysc oczekujace prosby (tak samo jak przy force-release nizej) —
-            # gdy radio jest wolne, kazdy i tak widzi "PRZEJMIJ TRX" bezposrednio,
-            # a stare prosby tylko trzymalyby proszacym permanentnie zablokowany
-            # przycisk "POPROS O TRX" (hasReq nigdy by sie nie wyczyscilo, bo
-            # _lock_radio() usuwa wpis TYLKO dla usera ktory faktycznie przejmie
-            # radio, nie dla kazdego kto o nie prosil). Wykryte w audycie
-            # zakladki RADIO 2026-08-15.
+            # Clear pending requests (same as force-release below) — once
+            # the radio is free, everyone sees "TAKE TRX" directly anyway,
+            # and stale requests would only leave the requester's "REQUEST
+            # TRX" button permanently disabled (hasReq would never clear,
+            # since _lock_radio() removes the entry ONLY for the user who
+            # actually takes the radio, not for everyone who requested it).
             self.radio_requests.clear()
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
             await self.hub.broadcast({"type": "toast",
@@ -2425,11 +2424,11 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/radio/request" and method == "POST":
-            """Wyslij prosbe o radio do aktywnego operatora."""
+            """Send a radio request to the active operator."""
             if self._user_has_lock(uid):
                 return 400, {"error": "Juz masz radio"}
             if not self.radio_lock["user_id"]:
-                # Radio wolne — od razu przejmij
+                # Radio free — take it immediately
                 u_obj = self.find_user_by_id(uid) or {}
                 self._lock_radio({"id": uid, "username": user.get("username",""),
                                   "callsign": u_obj.get("callsign", user.get("username",""))})
@@ -2442,7 +2441,7 @@ class App:
                 "callsign":     callsign,
                 "requested_at": time.time(),
             }
-            # Powiadom aktywnego operatora
+            # Notify the active operator
             await self.hub.broadcast({
                 "type":     "radio_request_received",
                 "from_uid": uid,
@@ -2453,21 +2452,21 @@ class App:
             return 200, {"ok": True, "granted": False, "message": "Prosba wyslana"}
 
         if p == "/api/radio/cancel-request" and method == "POST":
-            """Wycofaj prosbe o radio."""
+            """Withdraw a radio request."""
             self.radio_requests.pop(uid, None)
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
             return 200, {"ok": True}
 
         if p == "/api/radio/reject-request" and method == "POST":
-            """Aktywny operator (lub admin) odrzuca cudza prosbe o radio.
+            """The active operator (or admin) rejects someone else's radio request.
 
-            Front (przycisk "ODRZUC" w _showRequestToast, index.html) wczesniej
-            TYLKO usuwal dymek lokalnie i nie wolal zadnego API — prosba
-            zostawala w self.radio_requests NA ZAWSZE (nic jej stamtad nie
-            usuwalo poza przejeciem/zwolnieniem radia albo admin force-release),
-            wiec przycisk "POPROS O TRX" proszacego blokowal sie na stale
-            (_renderOpPanel: hasReq==True -> disabled). Wykryte w audycie
-            zakladki RADIO 2026-08-15."""
+            The frontend (the "REJECT" button in _showRequestToast,
+            index.html) used to ONLY remove the toast locally and never
+            call any API — the request stayed in self.radio_requests
+            FOREVER (nothing removed it except taking/releasing the radio
+            or an admin force-release), so the requester's "REQUEST TRX"
+            button stayed permanently disabled (_renderOpPanel:
+            hasReq==True -> disabled)."""
             target_uid = str(body.get("uid", ""))
             if not target_uid:
                 return 400, {"error": "Brak uid"}
@@ -2475,7 +2474,7 @@ class App:
                 return 403, {"error": "Tylko aktywny operator lub admin moze odrzucic prosbe"}
             req = self.radio_requests.pop(target_uid, None)
             if req is None:
-                return 200, {"ok": True}  # juz nieaktualna (np. wycofana w miedzyczasie)
+                return 200, {"ok": True}  # already stale (e.g. withdrawn in the meantime)
             u_obj = self.find_user_by_id(uid) or {}
             by_callsign = u_obj.get("callsign", user.get("username", ""))
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
@@ -2487,7 +2486,7 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/radio/force-release" and method == "POST":
-            """Admin: wymuś zwolnienie radia."""
+            """Admin: force-release the radio."""
             if role != "admin": return 403, {"error": "Tylko admin"}
             holder = self.radio_lock["username"] or "?"
             self._release_radio()
@@ -2498,7 +2497,7 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/radio/timeout" and method == "POST":
-            """Admin: zmien timeout bezczynnosci."""
+            """Admin: change the idle timeout."""
             if role != "admin": return 403, {"error": "Tylko admin"}
             minutes = int(body.get("minutes", 20))
             if not 1 <= minutes <= 480: return 400, {"error": "Zakres: 1-480 min"}
@@ -2512,7 +2511,7 @@ class App:
         if p == "/api/smtp/config" and method == "GET":
             if role != "admin": return 403, {"error": "Tylko admin"}
             smtp = self.cfg.get("smtp", {})
-            # Nie wysylaj hasla SMTP do frontendu — tylko **** jesli ustawione
+            # Don't send the SMTP password to the frontend — just **** if it's set
             return 200, {"host": smtp.get("host",""), "port": smtp.get("port", 587),
                          "user": smtp.get("user",""), "from": smtp.get("from",""),
                          "use_tls": smtp.get("use_tls", True),
@@ -2528,7 +2527,7 @@ class App:
                 "from":    body.get("from", smtp.get("from","")),
                 "use_tls": bool(body.get("use_tls", smtp.get("use_tls", True))),
             })
-            if body.get("password"):  # Nadpisuj haslo tylko jesli podano nowe
+            if body.get("password"):  # Only overwrite the password if a new one was given
                 smtp["password"] = body["password"]
             save_json(CFG_F, self.cfg)
             return 200, {"ok": True}
@@ -2578,10 +2577,11 @@ class App:
                          "enabledModes": self.cfg.get("enabledModes", [])}
 
         if p == "/api/config/bands" and method == "GET":
-            # Pasma pochodza z PROFILU podlaczonego radia, nie ze wspolnej listy.
-            # Dzieki temu IC-9700 pokaze tylko 2m/70cm/23cm (bez HF), a IC-7300
-            # HF+6m+4m (bez 2m). Profil wybiera admin przez model radia; gdy
-            # brak profilu, get_civ_profile daje bezpieczny fallback.
+            # Bands come from the connected radio's PROFILE, not a shared
+            # list. This way an IC-9700 shows only 2m/70cm/23cm (no HF),
+            # while an IC-7300 shows HF+6m+4m (no 2m). The admin picks the
+            # profile via the radio model; when there's no profile,
+            # get_civ_profile gives a safe fallback.
             try:
                 from rigs import get_civ_profile
                 _model = str(self.cfg.get("model") or self.cfg.get("rig_model") or "3073")
@@ -2590,11 +2590,11 @@ class App:
             except Exception:
                 _pbands = {}
             if _pbands:
-                # format profilu: nazwa -> (min, max, def); UI chce dict min/max/def
+                # profile format: name -> (min, max, def); the UI wants a min/max/def dict
                 all_bands = {name: {'min': lo, 'max': hi, 'def': df}
                              for name, (lo, hi, df) in _pbands.items()}
             else:
-                # Fallback (gdyby profil nie mial pasm) — pelna lista jak dotad
+                # Fallback (in case the profile has no bands) — the full list as before
                 all_bands = {
                     '160m': {'min':1810000,  'max':2000000,  'def':1850000},
                     '80m':  {'min':3500000,  'max':3800000,  'def':3650000},
@@ -2612,14 +2612,15 @@ class App:
                     '70cm': {'min':430000000,'max':440000000,'def':432100000},
                 }
             enabled = self.cfg.get("enabledBands", list(all_bands.keys()))
-            # odsiej pasma spoza profilu (gdyby config pamietal starsze)
+            # filter out bands outside the profile (in case the config remembers older ones)
             enabled = [b for b in enabled if b in all_bands]
             return 200, {"allBands": all_bands, "enabledBands": enabled}
 
         if p == "/api/config/station" and method == "GET":
-            # Lokator STACJI — miejsce gdzie fizycznie stoi antena. Sluzy do
-            # liczenia azymutu rotora na korespondenta (ten sam dla wszystkich
-            # userow, bo antena jest jedna). Domyslnie z .env STATION_LOCATOR.
+            # STATION locator — where the antenna is physically located.
+            # Used to compute the rotor azimuth toward a correspondent (the
+            # same for every user, since there's only one antenna). Defaults
+            # from .env STATION_LOCATOR.
             return 200, {
                 "stationLocator": (self.cfg.get("stationLocator")
                                    or LOCATOR or "").strip().upper(),
@@ -2635,14 +2636,14 @@ class App:
             save_json(CFG_F, self.cfg)
             await self.hub.broadcast({"type": "init_patch",
                                        "stationLocator": _loc})
-            print(f"[config] Lokator stacji ustawiony: {_loc}", flush=True)
+            print(f"[config] Station locator set: {_loc}", flush=True)
             return 200, {"ok": True, "stationLocator": _loc}
 
         if p == "/api/config/bands" and method == "POST":
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             self.cfg["enabledBands"] = body.get("enabledBands", [])
             save_json(CFG_F, self.cfg)
-            # Broadcast do klientow zeby odswiezyli siatkę pasm
+            # Broadcast to clients so they refresh the band grid
             await self.hub.broadcast({
                 "type": "config_update",
                 "enabledBands": self.cfg["enabledBands"],
@@ -2654,7 +2655,7 @@ class App:
                          "USB-D","LSB-D","PSK","PSK-R","PKTUSB","PKTLSB",
                          "WFM","DV"]
             enabled = self.cfg.get("enabledModes", ["USB","LSB","AM","FM","CW","RTTY","PKTUSB","PKTLSB"])
-            # Tryby z filtrami — admin może przypisać preferowany filtr
+            # Modes with filters — the admin can assign a preferred filter
             mode_filters = self.cfg.get("modeFilters", {})
             return 200, {"allModes": all_modes, "enabledModes": enabled, "modeFilters": mode_filters}
 
@@ -2676,7 +2677,7 @@ class App:
             mgr = getattr(self, 'hamlib', None)
             if mgr:
                 return 200, {"servers": mgr.status()}
-            # Fallback — zwróć konfigurację bez stanu (serwer jeszcze nie wystartował)
+            # Fallback — return the config without state (the server hasn't started yet)
             cfg_servers = self.cfg.get('hamlibServers', [
                 {"port":4532,"enabled":True, "label":"Radio 1 — główne (WSJT-X)"},
                 {"port":4533,"enabled":False,"label":"Radio 2 — log/skimmer"},
@@ -2690,7 +2691,7 @@ class App:
         if p == "/api/hamlib/config" and method == "POST":
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             servers = body.get("servers", [])
-            # Waliduj porty
+            # Validate ports
             ports = [s.get("port", 4532+i) for i,s in enumerate(servers)]
             if len(set(ports)) != len(ports):
                 return 400, {"error": "Porty muszą być unikalne"}
@@ -2699,7 +2700,7 @@ class App:
                     return 400, {"error": f"Port {port} poza zakresem 1024-65535"}
             self.cfg["hamlibServers"] = servers
             save_json(CFG_F, self.cfg)
-            # Zrestartuj jeśli manager aktywny
+            # Restart if the manager is active
             mgr = getattr(self, 'hamlib', None)
             if mgr:
                 try:
@@ -2721,7 +2722,7 @@ class App:
                 existing.update(body)
             else:
                 rigs.append({**body, "id": rid})
-            # Synchronizuj karty audio z riga do globalnego audio config
+            # Sync audio devices from the rig into the global audio config
             if "audio" not in self.cfg:
                 self.cfg["audio"] = {}
             if body.get("audioRx") is not None:
@@ -2740,33 +2741,33 @@ class App:
 
         if p == "/api/rig/connect" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            # Wybierz backend wg modelu: scope-capable → bezpośredni CI-V (CivRig),
-            # pozostałe → rigctld (RigCAT). Podmień app.rig w locie jeśli trzeba.
+            # Pick the backend by model: scope-capable -> direct CI-V (CivRig),
+            # others -> rigctld (RigCAT). Swaps app.rig on the fly if needed.
             sel_model = str((body or {}).get("model") or "").strip()
             want_civ  = sel_model in SCOPE_MODELS
             is_civ    = isinstance(self.rig, CivRig)
             if want_civ != is_civ and sel_model:
                 try: self.rig.close()
-                except Exception as _ce: print(f"[rig] close starego backendu: {_ce}")
-                # Daj Windows chwile na faktyczne zwolnienie portu szeregowego
-                # (terminate() procesu rigctld nie jest natychmiastowy)
+                except Exception as _ce: print(f"[rig] closing the old backend: {_ce}")
+                # Give Windows a moment to actually release the serial port
+                # (terminating the rigctld process isn't instant)
                 await asyncio.sleep(0.5)
                 self.rig = CivRig(self.cfg, self._rig_bcast, log=print) if want_civ else RigCAT()
-                print(f"[rig] backend -> {'CI-V bezposredni' if want_civ else 'rigctld'} (model {sel_model})")
-                # WAZNE: ComBridgeWs trzymal referencje do STAREGO CivRig.
-                # Po utworzeniu nowego trzeba przepiac listener, inaczej
-                # klienci COM Bridge (CW Skimmer/HRD) nie dostaja odpowiedzi
-                # radia (fix 2026-07-05).
+                print(f"[rig] backend -> {'direct CI-V' if want_civ else 'rigctld'} (model {sel_model})")
+                # IMPORTANT: ComBridgeWs held a reference to the OLD CivRig.
+                # After creating the new one, the listener has to be
+                # rewired, otherwise COM Bridge clients (CW Skimmer/HRD)
+                # get no radio responses.
                 if hasattr(self, 'com_bridge_ws') and self.com_bridge_ws:
                     new_civ = self.rig if isinstance(self.rig, CivRig) else None
                     self.com_bridge_ws.attach_civ_rig(new_civ)
-                    print(f"[rig] com_bridge_ws przepiety na nowy CivRig={new_civ is not None}")
-            # Użyj wartości z formularza (model/port/speed/civ) jeśli przekazane
+                    print(f"[rig] com_bridge_ws rewired to new CivRig={new_civ is not None}")
+            # Use values from the form (model/port/speed/civ) if given
             ok = await self.rig.connect(self.cfg, override=body or None)
 
-            # Zapisz parametry polaczenia do config.json — zeby po restarcie
-            # serwera App.__init__ wybral wlasciwy backend (CivRig/RigCAT)
-            # i connect() na starcie polaczyl sie z tym samym radiem/portem.
+            # Save the connection parameters to config.json — so after a
+            # server restart, App.__init__ picks the right backend
+            # (CivRig/RigCAT) and connect() connects to the same radio/port at startup.
             if body:
                 rig_id = str(body.get("rigId") or body.get("id") or "1")
                 if not self.cfg.get("rigs"):
@@ -2780,10 +2781,10 @@ class App:
                 else:
                     rigs.append({"id": rig_id, **persist})
                 save_json(CFG_F, self.cfg)
-                print(f"[rig] zapisano config dla rig={rig_id}: {persist}")
+                print(f"[rig] saved config for rig={rig_id}: {persist}")
 
-            # Po połączeniu rozeslij pełny stan radia, żeby panel od razu pokazał
-            # aktualną częstotliwość/mode/S-meter (rig_poll wysyła tylko zmiany).
+            # After connecting, broadcast the full radio state so the panel
+            # immediately shows the current freq/mode/S-meter (rig_poll only sends deltas).
             try:
                 if ok:
                     self.rig.s_meter = await self.rig.get_smeter()
@@ -2800,7 +2801,7 @@ class App:
                     "connected": self.rig.connected, "sim": self.rig.sim,
                 })
             except Exception as _be:
-                print(f"[rig] broadcast po connect: {_be}")
+                print(f"[rig] broadcast after connect: {_be}")
             await self._refresh_caps_cache()
             return 200, {"ok": ok, "sim": self.rig.sim,
                          "message": self.rig.last_msg,
@@ -2810,7 +2811,7 @@ class App:
                          "freq": self.rig.freq, "mode": self.rig.mode,
                          "bandwidth": self.rig.bw}
 
-        # ── Panel funkcji radia (capabilities + admin whitelist) ──────────────
+        # ── Radio features panel (capabilities + admin whitelist) ──────────────
         if p == "/api/rig/features" and method == "GET":
             _admin_view = "admin" if self._has_perm(uid, role, "settings") else role
             return 200, await self._get_rig_features(_admin_view)
@@ -2819,17 +2820,17 @@ class App:
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, await self._set_rig_features(body or {})
 
-        # ── CW Keyer (wysylanie makr CW przez CI-V cmd 17) ────────────────────
-        # Frontend (cw.js) woła:
-        #   POST /api/cw/send   {text, vars}  -> wysyla tekst jako CW
-        #   POST /api/cw/stop                 -> przerywa wysylke (17 FF)
+        # ── CW Keyer (sending CW macros via CI-V cmd 17) ────────────────────
+        # Frontend (cw.js) calls:
+        #   POST /api/cw/send   {text, vars}  -> sends text as CW
+        #   POST /api/cw/stop                 -> aborts sending (17 FF)
         #   GET  /api/cw/status                -> {method, capabilities}
-        #   POST /api/cw/method {method}       -> ustawia metode (auto/cat/dtr/rts)
-        #   POST /api/cw/dtr-port {port}       -> (placeholder, DTR niezaimplementowane)
-        # Aktualnie zaimplementowana jest tylko metoda CAT (CI-V cmd 17) — dziala
-        # dla IC-7300/746 bez dodatkowego sprzetu. DTR/RTS keying wymaga
-        # bezposredniego sterowania liniami portu serial (poza CI-V) i nie jest
-        # jeszcze obslugiwane — metoda 'dtr'/'rts' zwraca blad.
+        #   POST /api/cw/method {method}       -> sets the method (auto/cat/dtr/rts)
+        #   POST /api/cw/dtr-port {port}       -> (placeholder, DTR not implemented)
+        # Only the CAT method (CI-V cmd 17) is currently implemented - works
+        # for the IC-7300/746 with no extra hardware. DTR/RTS keying needs
+        # direct control of serial port lines (outside CI-V) and isn't
+        # supported yet - the 'dtr'/'rts' method returns an error.
         if p == "/api/cw/macros" and method == "GET":
             u_obj = self.find_user_by_id(uid) or {}
             macros = u_obj.get("cwMacros") or self.cfg.get("cwMacros", DEFAULT_MACROS)
