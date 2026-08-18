@@ -1,17 +1,17 @@
 /**
- * wsjtx_scope.js — wodospad (waterfall) dla zakladki WSJT-X / wlasnego dekodera FT8.
- * Wersja WebGL: dane widmowe trzymane jako tekstura GPU (LUMINANCE, nBins x MAX_ROWS),
- * aktualizowana co nowa kolumne przez texSubImage2D (bez przesylania calej
- * tekstury na nowo). Paleta kolorow to osobna 1D lookup-texture, mapowanie
- * wartosc->kolor odbywa sie w fragment shaderze. Sprzetowa interpolacja
- * biliniowa (gl.LINEAR) daje plynne przejscia bez dodatkowego kosztu CPU —
- * w przeciwienstwie do poprzedniej wersji (canvas 2D + offscreen + drawImage),
- * cala praca skalowania/interpolacji dzieje sie na GPU.
+ * wsjtx_scope.js — waterfall for the WSJT-X tab / our own FT8 decoder.
+ * WebGL version: spectral data held as a GPU texture (LUMINANCE, nBins x
+ * MAX_ROWS), updated for every new column via texSubImage2D (without
+ * re-uploading the whole texture). The color palette is a separate 1D
+ * lookup texture, and value->color mapping happens in the fragment
+ * shader. Hardware bilinear interpolation (gl.LINEAR) gives smooth
+ * transitions at no extra CPU cost — unlike the previous version (canvas
+ * 2D + offscreen + drawImage), all the scaling/interpolation work happens on the GPU.
  *
- * Odrebny od js/waterfall.js (ktory obsluguje szeroki scope CI-V calego radia).
+ * Separate from js/waterfall.js (which handles the whole radio's wide CI-V scope).
  *
- * Funkcje (API identyczne jak wersja canvas 2D, zeby wsjtx.js/index.html
- * nie wymagaly zmian):
+ * Functions (API identical to the canvas 2D version, so wsjtx.js/index.html
+ * don't need changes):
  *   init, onWaterfallData, onTxFreqUpdate, onSplitStatus, setRxFreq,
  *   toggleTxFreeze
  */
@@ -22,44 +22,45 @@ let canvas = null, gl = null;
 let fMin = 200, fMax = 3000, nBins = 200;
 const MAX_ROWS = 300;
 
-// Tekstura danych: LUMINANCE, szerokosc=nBins, wysokosc=MAX_ROWS. Kazdy nowy
-// wiersz nadpisuje kolejna linie w buforze CPU-side, a writeRow wskazuje na
-// ktora linie tekstury (cyklicznie) zapisac nastepna kolumne — dzieki temu
-// NIE musimy przesuwac calej historii w pamieci ani re-uploadowac calej
-// tekstury przy kazdej nowej kolumnie.
+// Data texture: LUMINANCE, width=nBins, height=MAX_ROWS. Every new row
+// overwrites the next line in the CPU-side buffer, and writeRow points at
+// which texture line (cyclically) to write the next column into — this
+// way we DON'T need to shift the whole history in memory or re-upload
+// the whole texture on every new column.
 let dataTex = null;
 let dataBuf = null;        // Uint8Array(nBins * MAX_ROWS), CPU-side mirror
-let writeRow = 0;           // ktory wiersz (0..MAX_ROWS-1) zapisac nastepny
-// Pozycja (writeRow) w ktorej zaczela sie OSTATNIA granica okresu dekodowania
-// (xx:00/15/30/45 dla FT8, co 7.5s dla FT4) — uzywana do narysowania cienkiej
-// linii separatora na wodospadzie, w tym samym miejscu co linia w Band
-// Activity. null dopoki nie wykryto pierwszej granicy po starcie.
+let writeRow = 0;           // which row (0..MAX_ROWS-1) to write next
+// Position (writeRow) where the LATEST decode-period boundary started
+// (xx:00/15/30/45 for FT8, every 7.5s for FT4) — used to draw a thin
+// separator line on the waterfall, at the same place as the line in Band
+// Activity. null until the first boundary is detected after start.
 let periodBoundaryRow = null;
-let _lastWindowSlot = null;   // do wykrywania PRZEJSCIA miedzy oknami (nie tylko stanu)
-let _scopeDecodeMode = 'FT8'; // synchronizowane z WSJTX._decodeMode przez setDecodeMode poniżej
-let rowsFilled = 0;         // ile wierszy ma juz prawdziwe dane (rosnie do MAX_ROWS)
+let _lastWindowSlot = null;   // to detect a TRANSITION between windows (not just state)
+let _scopeDecodeMode = 'FT8'; // synced with WSJTX._decodeMode via setDecodeMode below
+let rowsFilled = 0;         // how many rows already have real data (grows up to MAX_ROWS)
 
 let paletteTex = null;
 
-let txFreqHz = 1000; // domyslna wartosc poczatkowa, nadpisana realnym stanem z backendu;
-                      // NIE 1500Hz — patrz komentarz w webapp.py o notchu IC-7300 USB-D
+let txFreqHz = 1000; // default initial value, overwritten by the real
+                      // state from the backend; NOT 1500Hz — see the
+                      // comment in webapp.py about the IC-7300 USB-D notch
 let txFrozen = false;
-let rxFreqHz = 1000; // znacznik RX, NIEZALEZNY od TX — startuje na tej samej
-                      // wartosci, ale moze byc przesuwany osobno (przeciagniecie
-                      // lub recznie wpisana wartosc)
+let rxFreqHz = 1000; // RX marker, INDEPENDENT of TX — starts at the same
+                      // value, but can be moved separately (dragging or a
+                      // manually typed value)
 
-// Stan przeciagania: ktory znacznik jest aktualnie chwycony ('tx'|'rx'|null).
-// Wykrywane przy mousedown na podstawie odleglosci od kazdego znacznika —
-// jesli klik jest blisko istniejacej linii, przeciagamy TYLKO ten znacznik;
-// w przeciwnym razie traktujemy to jako nowe miejsce i przesuwamy OBA naraz.
+// Drag state: which marker is currently grabbed ('tx'|'rx'|null).
+// Detected on mousedown based on the distance to each marker — if the
+// click is close to an existing line, we drag ONLY that marker;
+// otherwise we treat it as a new spot and move BOTH at once.
 let _dragging = null;
-const DRAG_HIT_PX = 8; // promien (w px logicznych CSS, nie urzadzenia) wykrywania kliku na znaczniku
+const DRAG_HIT_PX = 8; // radius (in logical CSS px, not device px) for detecting a click on a marker
 
 let _needsRender = false;
 let _rafStarted = false;
 
-// Palette Adjust (REF/ZERO/GAIN) — patrz komentarz przy uPaletteRef w
-// fragment shaderze. Wartosci domyslne = no-op wzgledem bazowej palety.
+// Palette Adjust (REF/ZERO/GAIN) — see the comment at uPaletteRef in the
+// fragment shader. Default values = a no-op relative to the base palette.
 let paletteRef  = 0.15;
 let paletteZero = 0.0;
 let paletteGain = 1.0;
@@ -68,13 +69,13 @@ function setPaletteReference(v) { paletteRef  = v; _requestRender(); }
 function setPaletteZero(v)      { paletteZero = v; _requestRender(); }
 function setPaletteGain(v)      { paletteGain = v; _requestRender(); }
 
-// Paleta wodospadu: ciemny granat (cisza/szum) -> niebieski -> cyjan ->
-// zielony -> zolty -> bialy (silne sygnaly). Wieksza czesc zakresu (szum
-// tla) zostaje ciemna i stonowana, tylko silne sygnaly robia sie jasne.
-// Typowe tlo/szum to NASYCONY niebieski [1,12,144], nie prawie-czarny jak
-// w poprzedniej wersji. Krzywa: czern tylko dla absolutnej ciszy, szybko
-// przechodzi w nasycony niebieski (typowy szum), potem cyjan/zielony/
-// zolty/bialy dla coraz silniejszych sygnalow.
+// Waterfall palette: dark navy (silence/noise) -> blue -> cyan -> green ->
+// yellow -> white (strong signals). Most of the range (background noise)
+// stays dark and muted, only strong signals get bright. Typical
+// background/noise is SATURATED blue [1,12,144], not near-black like in
+// the previous version. Curve: black only for absolute silence, quickly
+// transitions to saturated blue (typical noise), then cyan/green/
+// yellow/white for progressively stronger signals.
 const PALETTE_STOPS = [
   [0,   [0,   0,   10]],
   [15,  [0,   5,   60]],
@@ -137,26 +138,26 @@ void main() {
   float rowsFilled = min(uRowsFilled, uMaxRows);
   if (rowsFilled < 1.0) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
 
-  // KRYTYCZNE: skala odwzorowania piksel-ekranu -> wiersz-danych musi byc
-  // STALA (uMaxRows), NIE zmieniac sie wraz z rowsFilled. Wczesniejsza wersja
-  // uzywala rowsVisible=min(rowsFilled,uMaxRows) jako mnoznika — to oznaczalo
-  // ze dopoki bufor sie nie zapelnil (pierwsze ~90s pracy), KAZDY piksel
-  // ekranu byl przemapowywany na inny wiersz danych przy kazdej nowej
-  // kolumnie (bo mnoznik rosl z kazda klatka), co dawalo widoczne "skakanie"/
-  // "duchy" — juz narysowane sygnaly przesuwaly sie wizualnie mimo ze same
-  // dane sie nie zmienialy. Teraz: stala skala (uMaxRows wierszy zawsze
-  // odpowiada calej wysokosci ekranu), a niewypelnione jeszcze wiersze po
-  // prostu pozostaja czarne, dopoki realne dane tam nie dotra.
+  // CRITICAL: the screen-pixel -> data-row mapping scale must be FIXED
+  // (uMaxRows), NOT change along with rowsFilled. An earlier version used
+  // rowsVisible=min(rowsFilled,uMaxRows) as the multiplier — that meant
+  // that until the buffer filled up (the first ~90s of running), EVERY
+  // screen pixel got remapped to a different data row on every new column
+  // (because the multiplier grew every frame), producing visible
+  // "jumping"/"ghosting" — already-drawn signals shifted visually even
+  // though the underlying data hadn't changed. Now: a fixed scale
+  // (uMaxRows rows always corresponds to the full screen height), and
+  // rows not yet filled simply stay black until real data arrives there.
   float rowFromTopF = (1.0 - vUv.y) * uMaxRows;
   rowFromTopF = min(rowFromTopF, uMaxRows - 1.0);
   if (rowFromTopF >= rowsFilled) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
 
-  // Probkowanie RECZNE w przestrzeni LOGICZNEJ (nie bezposrednio w przestrzeni
-  // tekstury), zeby uniknac automatycznej interpolacji GPU na granicy
-  // zawijania bufora cyklicznego (gdzie texRow=writeRow-1 (najnowsze) i
-  // texRow=writeRow (najstarsze) sa fizycznie sasiednie w teksturze, mimo
-  // ze logicznie to przeciwne konce historii — interpolacja miedzy nimi
-  // dawala widoczny "szew"/artefakt raz na pelny cykl bufora).
+  // MANUAL sampling in LOGICAL space (not directly in texture space), to
+  // avoid automatic GPU interpolation at the wrap boundary of the
+  // circular buffer (where texRow=writeRow-1 (newest) and
+  // texRow=writeRow (oldest) are physically adjacent in the texture, even
+  // though logically they're opposite ends of the history — interpolating
+  // between them produced a visible "seam"/artifact once per full buffer cycle).
   float rowFromTop0 = floor(rowFromTopF);
   float rowFromTop1 = min(rowFromTop0 + 1.0, rowsFilled - 1.0);
   float frac = rowFromTopF - rowFromTop0;
@@ -168,13 +169,13 @@ void main() {
   float v1 = texture2D(uData, vec2(vUv.x, (texRow1 + 0.5) / uMaxRows)).r;
   float v = mix(v0, v1, frac);
 
-  // Palette Adjust (REF/ZERO/GAIN). Przy domyslnych
-  // wartosciach (ref=0.15, zero=0, gain=1.0) to no-op — v przechodzi bez
-  // zmian, wiec baseline wyglada dokladnie tak jak przed dodaniem tych
-  // suwakow. REF: przesuniecie jasnosci wzgledem wbudowanego punktu
-  // odniesienia palety (0.15, tam gdzie PALETTE_STOPS ma "typowy szum").
-  // ZERO: odcina dol (przycina slabe sygnaly do czerni). GAIN: kontrast
-  // wzgledem srodka zakresu.
+  // Palette Adjust (REF/ZERO/GAIN). At the default values (ref=0.15,
+  // zero=0, gain=1.0) this is a no-op — v passes through unchanged, so
+  // the baseline looks exactly like before these sliders were added.
+  // REF: shifts brightness relative to the palette's built-in reference
+  // point (0.15, where PALETTE_STOPS has "typical noise"). ZERO: clips
+  // the bottom (crushes weak signals to black). GAIN: contrast relative
+  // to the middle of the range.
   float vAdj = v + (uPaletteRef - 0.15);
   vAdj = max(0.0, vAdj - uPaletteZero);
   vAdj = (vAdj - 0.5) * uPaletteGain + 0.5;
@@ -182,13 +183,14 @@ void main() {
 
   vec3 color = texture2D(uPalette, vec2(vAdj, 0.5)).rgb;
 
-  // Cienka linia pozioma na granicy okresu dekodowania (xx:00/15/30/45 dla
-  // FT8, co 7.5s dla FT4) — informuje ze ponizej tej linii zaczyna sie NOWE
-  // okno. Synchronizowana z analogiczna linia w Band Activity (ta sama
-  // logika wykrywania granic, patrz _windowSlot w wsjtx.js i kod w
-  // onWaterfallData powyzej). Pozycja przeliczana TA SAMA transformacja
-  // (mod z zawijaniem bufora) co odczyt danych tekstury, zeby linia
-  // przewijala sie idealnie razem z danymi, nie "plywala" wzgledem nich.
+  // A thin horizontal line at the decode-period boundary (xx:00/15/30/45
+  // for FT8, every 7.5s for FT4) — indicates that a NEW window starts
+  // below this line. Synchronized with the equivalent line in Band
+  // Activity (the same boundary-detection logic, see _windowSlot in
+  // wsjtx.js and the code in onWaterfallData above). The position is
+  // computed with the SAME transform (mod with buffer wraparound) as the
+  // texture data read, so the line scrolls perfectly together with the
+  // data, without "floating" relative to it.
   if (uHasPeriodBoundary > 0.5) {
     float boundaryRowFromTop = mod(uWriteRow - 1.0 - uPeriodBoundaryRow + uMaxRows * 4.0, uMaxRows);
     if (boundaryRowFromTop < rowsFilled) {
@@ -202,11 +204,11 @@ void main() {
   }
 
   float lineHalfWidth = 1.0 / uAspectPx;
-  // Linia TX: czerwona gdy wolna, pomaranczowa gdy zamrozona w miejscu
+  // TX line: red when free, orange when frozen in place
   if (abs(vUv.x - uTxX) < lineHalfWidth * 1.5) {
     color = uTxFrozen > 0.5 ? vec3(1.0, 0.55, 0.0) : vec3(1.0, 0.27, 0.27);
   }
-  // Linia RX: zielona (tylko gdy rozna od TX)
+  // RX line: green (only when different from TX)
   if (uHasRx > 0.5 && abs(vUv.x - uRxX) < lineHalfWidth * 1.5) {
     color = vec3(0.27, 0.85, 0.33);
   }
@@ -232,7 +234,7 @@ function _initGL() {
   gl = canvas.getContext('webgl', { antialias: true, preserveDrawingBuffer: false })
     || canvas.getContext('experimental-webgl');
   if (!gl) {
-    console.warn('[wsjtx_scope] WebGL niedostepny, scope nie bedzie dzialac');
+    console.warn('[wsjtx_scope] WebGL unavailable, scope will not work');
     return false;
   }
 
@@ -314,9 +316,9 @@ function _reallocDataTextureIfNeeded() {
 
 function init() {
   canvas = document.getElementById('wj-scope-canvas');
-  if (!canvas) { console.warn('[scope] brak canvas'); return; }
+  if (!canvas) { console.warn('[scope] no canvas'); return; }
 
-  // Jesli GL juz zainicjowany — tylko resize i render
+  // If GL is already initialized — just resize and render
   if (gl) { _resizeCanvas(); _renderAxis(); _requestRender(); return; }
 
   canvas.addEventListener('mousedown', _onMouseDown);
@@ -330,38 +332,38 @@ function init() {
     window.addEventListener('resize', () => { _resizeCanvas(); _renderAxis(); _requestRender(); });
   }
 
-  // Poczekaj az canvas bedzie mial wymiary przed inicjalizacja WebGL
+  // Wait until the canvas has dimensions before initializing WebGL
   function _waitAndInit(tries) {
     const rect = canvas.getBoundingClientRect();
     console.log('[scope] init attempt', tries, 'rect:', rect.width, 'x', rect.height);
     if (rect.width < 1 || rect.height < 1) {
       if (tries > 0) setTimeout(() => _waitAndInit(tries - 1), 100);
-      else console.warn('[scope] canvas ma zerowe wymiary po 30 probach');
+      else console.warn('[scope] canvas has zero dimensions after 30 attempts');
       return;
     }
     _resizeCanvas();
-    if (!_initGL()) { console.warn('[scope] _initGL zwrocil false'); return; }
+    if (!_initGL()) { console.warn('[scope] _initGL returned false'); return; }
     _renderAxis();
     _requestRender();
     _updateLabels();
     _startRenderLoop();
-    console.log('[scope] zainicjalizowany, canvas:', canvas.width, 'x', canvas.height);
+    console.log('[scope] initialized, canvas:', canvas.width, 'x', canvas.height);
   }
   _waitAndInit(30);
 }
 
-// Podzialka czestotliwosci nad wodospadem (np. "500", "1000", "1500"...),
-// w stylu referencyjnego JTDX. Renderowana jako lekkie elementy HTML
-// pozycjonowane procentowo wzgledem szerokosci kontenera — prostsze i
-// ostrzejsze (natywny font przegladarki) niz rysowanie tekstu w WebGL/Canvas.
+// Frequency scale above the waterfall (e.g. "500", "1000", "1500"...), in
+// the style of the reference JTDX. Rendered as lightweight HTML elements
+// positioned as a percentage of the container's width — simpler and
+// crisper (native browser font) than drawing text in WebGL/Canvas.
 function _renderAxis() {
   const axisEl = document.getElementById('wj-scope-axis');
   if (!axisEl || !canvas) return;
   const rect = canvas.getBoundingClientRect();
   if (rect.width < 1) return;
 
-  // Krok podzialki dobrany tak, zeby etykiety nie zachodzily na siebie:
-  // ~500Hz przy typowej szerokosci panelu, gesciej gdy panel jest szerszy.
+  // Tick step chosen so labels don't overlap: ~500Hz at a typical panel
+  // width, denser when the panel is wider.
   const range = fMax - fMin;
   let step = 500;
   if (rect.width > 1400) step = 250;
@@ -414,11 +416,11 @@ function onWaterfallData(msg) {
   }
   if (!Array.isArray(msg.data) || !gl) return;
 
-  // Wykryj granice okresu dekodowania (UTC, 15s dla FT8 / 7.5s dla FT4) —
-  // ta sama logika "numeru slotu" co _windowSlot() w wsjtx.js, zeby obie
-  // linie (Band Activity i wodospad) byly spojne. Sprawdzane PRZED zapisem
-  // nowego wiersza, bo periodBoundaryRow ma wskazywac wiersz w ktorym
-  // zaczela sie nowa transmisja.
+  // Detect the decode-period boundary (UTC, 15s for FT8 / 7.5s for FT4) —
+  // the same "slot number" logic as _windowSlot() in wsjtx.js, so both
+  // lines (Band Activity and waterfall) stay consistent. Checked BEFORE
+  // writing the new row, since periodBoundaryRow is meant to point at the
+  // row where the new transmission started.
   const nowUtc = new Date();
   const totalSec = nowUtc.getUTCHours()*3600 + nowUtc.getUTCMinutes()*60 + nowUtc.getUTCSeconds()
                     + nowUtc.getUTCMilliseconds()/1000;
@@ -439,8 +441,8 @@ function onWaterfallData(msg) {
   _requestRender();
 }
 
-// Wywolywane z wsjtx.js::setDecodeMode, zeby wodospad uzywal tej samej
-// dlugosci okna (15s/7.5s) co reszta UI przy wykrywaniu granic periodow.
+// Called from wsjtx.js::setDecodeMode, so the waterfall uses the same
+// window length (15s/7.5s) as the rest of the UI when detecting period boundaries.
 function setScopeDecodeMode(mode) {
   _scopeDecodeMode = mode;
 }
@@ -475,10 +477,10 @@ function _onMouseDown(ev) {
   const distTx = Math.abs(ev.clientX - _freqToPx(txFreqHz));
   const distRx = Math.abs(ev.clientX - _freqToPx(rxFreqHz));
 
-  // Jesli klik jest blisko ISTNIEJACEGO znacznika, chwytamy TYLKO ten jeden
-  // (przeciaganie niezalezne). W przeciwnym razie to "nowe miejsce" — od razu
-  // przesuwamy OBA znaczniki tam (ft8_set_both_freq), a uzytkownik moze
-  // kontynuowac przeciaganie jako nowy punkt startowy dla obu.
+  // If the click is close to an EXISTING marker, we grab ONLY that one
+  // (independent dragging). Otherwise it's a "new spot" — we immediately
+  // move BOTH markers there (ft8_set_both_freq), and the user can
+  // continue dragging as a new starting point for both.
   if (distTx <= DRAG_HIT_PX && distTx <= distRx) {
     if (txFrozen) {
       window.UI?.showToast(I18n.t('wj_toast_tx_frozen'));
@@ -488,10 +490,10 @@ function _onMouseDown(ev) {
   } else if (distRx <= DRAG_HIT_PX) {
     _dragging = 'rx';
   } else {
-    // Klik na pustym miejscu wodospadu: przesun OBA znaczniki tutaj.
+    // Click on an empty spot on the waterfall: move BOTH markers there.
     const freq = _pxToFreq(ev.clientX);
     window.WS?.send({ type: 'ft8_set_both_freq', freqHz: Math.round(freq) });
-    _dragging = 'both'; // pozwala kontynuowac jako przeciaganie obu, jesli user nie puscil przycisku
+    _dragging = 'both'; // allows continuing to drag both if the user hasn't released the button
   }
   ev.preventDefault();
 }
@@ -546,8 +548,8 @@ function getRxFreq() {
   return rxFreqHz;
 }
 
-// Czy TX zamrozony (Hold Tx Freq)? Uzywane przez _selectRow w wsjtx.js
-// zeby zdecydowac czy TX ma podazac za korespondentem przy wolaniu.
+// Is TX frozen (Hold Tx Freq)? Used by _selectRow in wsjtx.js to decide
+// whether TX should follow the correspondent when calling.
 function isTxFrozen() { return txFrozen; }
 
 function getTxFreq() {
@@ -610,7 +612,7 @@ function _render() {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
-function onSplitStatus(msg) { /* split status - obsluzone przez wsjtx.js */ }
+function onSplitStatus(msg) { /* split status - handled by wsjtx.js */ }
 
 window.WSJTXScope = { init, onWaterfallData, onTxFreqUpdate, onRxFreqUpdate, onSplitStatus,
                         setRxFreq, setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx, getRxFreq, getTxFreq, isTxFrozen,
