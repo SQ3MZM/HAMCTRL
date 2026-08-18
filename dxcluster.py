@@ -1,16 +1,22 @@
 """
-dxcluster.py — Klient DX Cluster (Telnet).
+dxcluster.py — DX Cluster client (Telnet).
 
-Nawiazuje polaczenie TCP z serwerem DX Cluster, wysyla login i haslo (jesli
-wymagane), a nastepnie parsuje przychodzace linie w formacie DX de:
+Opens a TCP connection to a DX Cluster server, sends the login and
+password (if required), then parses incoming lines in the DX de format:
   DX de <spotter>:  <freq>  <call>       <comment>  <utc>
 
-Kazdy zalogowany uzytkownik moze miec wlasne polaczenie z wlasnymi
-danymi (adres, port, login, haslo) — zarzadzane per-user w ClusterManager.
+Each logged-in user can have their own connection with their own settings
+(address, port, login, password) — managed per-user in ClusterManager.
 
-Spoty sa broadcastowane przez callback (WS do konkretnego usera) w formacie:
+Spots are broadcast via a callback (WS to the specific user) in this format:
   {"type": "dx_spot", "freq_hz": int, "call": str, "spotter": str,
    "comment": str, "utc": str, "ts": epoch_seconds, "band": str, "mode": str}
+
+NOTE: the "message" field of a dx_status broadcast IS displayed directly
+in the UI for the error/disconnected states (public/js/dxcluster.js's
+updateStatusBadge, not routed through I18n) - keep any text assigned to
+it in Polish; only comments/docstrings/print() in this file are in scope
+for the backend English translation pass.
 """
 
 import asyncio
@@ -19,11 +25,12 @@ import time
 from typing import Callable, Optional
 
 
-# Prefixy pasm z tabeli IARU (do przyporzadkowania spota na waterfall).
-# 160m/60m/6m CELOWO WEZSZE (realna alokacja PL/EU) - te same wartosci co
-# webapp.py::_BAND_RANGES (tabela uzywana m.in. przez blokade TX). Byla to
-# osobna, niezaleznie utrzymywana kopia ktora sie rozjechala - ten SAM
-# blad co ten juz raz naprawiony w webapp.py, tylko w innym pliku.
+# Band prefixes from the IARU table (to place a spot on the waterfall).
+# 160m/60m/6m DELIBERATELY NARROWER (real PL/EU allocation) - the same
+# values as webapp.py::_BAND_RANGES (the table also used by the TX block).
+# This used to be a separate, independently-maintained copy that drifted
+# out of sync - the SAME bug already fixed once in webapp.py, just in a
+# different file.
 _BAND_RANGES = [
     ('160m', 1810000,   2000000),
     ('80m',  3500000,   3800000),
@@ -51,19 +58,20 @@ def _get_band(freq_hz: int) -> str:
 
 def _guess_mode(freq_hz: int, comment: str) -> str:
     """
-    Heurystyka trybu spota: komentarz -> dokladne czestotliwosci cyfrowe ->
-    bandplan IARU R1.
+    Spot mode heuristic: comment -> exact digital mode frequencies ->
+    IARU R1 bandplan.
 
-    Kolejnosc ma znaczenie:
-      1. Komentarz (jako OSOBNE SLOWA \\b...\\b, zeby 'OK1CW' nie dalo CW)
-      2. DOKLADNE czestotliwosci FT8/FT4/MSK144 z tolerancja +-2 kHz.
-         To musi byc PRZED bandplanem, bo np. 2m FT8 (144.174) lezy w
-         segmencie fonii 144.150-144.400 i bandplan zwrocilby bledne SSB.
-      3. Bandplan (segmenty CW/DIGI/SSB/FM) - HF, VHF, UHF, mikrofale.
+    Order matters:
+      1. The comment (as SEPARATE WORDS \\b...\\b, so 'OK1CW' doesn't give CW)
+      2. EXACT FT8/FT4/MSK144 frequencies with +-2 kHz tolerance.
+         This must come BEFORE the bandplan, since e.g. 2m FT8 (144.174)
+         falls within the 144.150-144.400 phone segment and the bandplan
+         would incorrectly return SSB.
+      3. Bandplan (CW/DIGI/SSB/FM segments) - HF, VHF, UHF, microwave.
     """
     c = (comment or '').upper()
 
-    # ── 1. Tryb wprost w komentarzu ─────────────────────────────────────────
+    # ── 1. Mode stated directly in the comment ──────────────────────────────
     for pat, mode in (
         (r'\bFT8\b',                'FT8'),
         (r'\bFT4\b',                'FT4'),
@@ -85,9 +93,10 @@ def _guess_mode(freq_hz: int, comment: str) -> str:
 
     khz = freq_hz / 1000.0
 
-    # ── 2. Dokladne czestotliwosci cyfrowe (tolerancja +-2 kHz) ─────────────
-    # Sygnal FT8 ma ~50 Hz nosnych w pasmie 3 kHz, spotty roznia sie o kilkaset
-    # Hz, stad tolerancja. MUSI byc przed bandplanem (patrz docstring).
+    # ── 2. Exact digital mode frequencies (+-2 kHz tolerance) ────────────────
+    # An FT8 signal has ~50 Hz carriers within a 3 kHz band, spots vary by a
+    # few hundred Hz, hence the tolerance. MUST come before the bandplan
+    # (see the docstring).
     FT8_KHZ = [
         1840, 3573, 5357, 7074, 10136, 14074, 18100, 21074, 24915, 28074,
         50313, 50323,            # 6m (dwie czestotliwosci)
@@ -113,24 +122,24 @@ def _guess_mode(freq_hz: int, comment: str) -> str:
     if _near(FT4_KHZ):    return 'FT4'
     if _near(MSK144_KHZ): return 'MSK144'
 
-    # WSPR (waskie, tolerancja 1 kHz)
+    # WSPR (narrow, 1 kHz tolerance)
     WSPR_KHZ = [1836.6, 3568.6, 7038.6, 10138.7, 14095.6, 18104.6,
                 21094.6, 24924.6, 28124.6, 50293, 144489]
     if _near(WSPR_KHZ, tol=1.0): return 'DIGI'
 
-    # ── 3. Satelity — PRZED bandplanem, bo segmenty FM by je przykryly ──────
-    # 2m: 145.800-146.000, 70cm: 435.000-438.000 (segmenty satelitarne IARU)
+    # ── 3. Satellites — BEFORE the bandplan, since FM segments would mask them ──
+    # 2m: 145.800-146.000, 70cm: 435.000-438.000 (IARU satellite segments)
     if 145800 <= khz <= 146000 or 435000 <= khz <= 438000:
         return 'SAT'
 
-    # ── 4. Bandplan IARU Region 1 (kHz) ─────────────────────────────────────
+    # ── 4. IARU Region 1 bandplan (kHz) ──────────────────────────────────────
     BANDPLAN = [
         # ── HF ──
         (1810, 1838, 'CW'), (1838, 1843, 'DIGI'), (1843, 2000, 'SSB'),
         (3500, 3570, 'CW'), (3570, 3600, 'DIGI'), (3600, 3800, 'SSB'),
-        (5250, 5450, 'SSB'),                       # 60m (kanalowe, USB)
+        (5250, 5450, 'SSB'),                       # 60m (channelized, USB)
         (7000, 7040, 'CW'), (7040, 7060, 'DIGI'), (7060, 7200, 'SSB'),
-        (10100, 10130, 'CW'), (10130, 10150, 'DIGI'),   # 30m - brak fonii
+        (10100, 10130, 'CW'), (10130, 10150, 'DIGI'),   # 30m - no phone
         (14000, 14070, 'CW'), (14070, 14099, 'DIGI'), (14101, 14350, 'SSB'),
         (18068, 18095, 'CW'), (18095, 18109, 'DIGI'), (18111, 18168, 'SSB'),
         (21000, 21070, 'CW'), (21070, 21150, 'DIGI'), (21151, 21450, 'SSB'),
@@ -140,7 +149,7 @@ def _guess_mode(freq_hz: int, comment: str) -> str:
         # ── 6m ──
         (50000, 50100, 'CW'), (50100, 50300, 'SSB'),
         (50300, 50400, 'DIGI'), (50400, 52000, 'SSB'),
-        # ── 4m (70 MHz) — SSB od 70.200, DIGI wezszy ──
+        # ── 4m (70 MHz) — SSB from 70.200, narrower DIGI ──
         (69900, 70100, 'CW'), (70100, 70200, 'DIGI'),
         (70200, 70300, 'SSB'), (70300, 70500, 'FM'),
         # ── 2m ──
@@ -174,8 +183,8 @@ def _guess_mode(freq_hz: int, comment: str) -> str:
     return '?'
 
 
-# Regex dla linii "DX de <spotter>:  <freq_khz>  <call>  <comment>  <utc>"
-# Przyklad: "DX de SP3ABC-#:  14074.0  DX1CALL      FT8 -12 dB               1234Z"
+# Regex for the "DX de <spotter>:  <freq_khz>  <call>  <comment>  <utc>" line
+# Example: "DX de SP3ABC-#:  14074.0  DX1CALL      FT8 -12 dB               1234Z"
 _DX_RE = re.compile(
     r'^DX\s+de\s+([\w\-#/]+):?\s+([\d.]+)\s+([\w/\-]+)\s+(.*?)(\d{4}Z)?\s*$',
     re.IGNORECASE
@@ -183,7 +192,7 @@ _DX_RE = re.compile(
 
 
 class DXClusterClient:
-    """Pojedyncze polaczenie z serwerem DX Cluster dla jednego uzytkownika."""
+    """A single connection to a DX Cluster server for one user."""
 
     def __init__(self, host: str, port: int, login: str, password: str = "",
                  on_spot: Optional[Callable[[dict], None]] = None,
@@ -212,17 +221,17 @@ class DXClusterClient:
                 res = self.on_status(status, msg)
                 if asyncio.iscoroutine(res): await res
             except Exception as e:
-                print(f"[dx] on_status callback blad: {e}")
+                print(f"[dx] on_status callback error: {e}")
 
     async def connect(self):
-        """Rozpocznij polaczenie z auto-reconnect w tle."""
+        """Start the connection with background auto-reconnect."""
         if self._task and not self._task.done():
             return
         self._should_run = True
         self._task = asyncio.create_task(self._run_loop())
 
     async def disconnect(self):
-        """Zatrzymaj polaczenie."""
+        """Stop the connection."""
         self._should_run = False
         if self._writer:
             try:
@@ -243,7 +252,7 @@ class DXClusterClient:
         await self._status("disconnected", "")
 
     async def _run_loop(self):
-        """Petla polaczenia z auto-reconnect w razie utraty."""
+        """Connection loop with auto-reconnect on disconnect."""
         delay = self._reconnect_delay
         while self._should_run:
             try:
@@ -253,13 +262,13 @@ class DXClusterClient:
                     timeout=10.0
                 )
                 self._connected = True
-                delay = self._reconnect_delay  # reset delay po sukcesie
+                delay = self._reconnect_delay  # reset the delay after success
                 await self._status("connected", "")
 
                 # Login sequence
                 await self._do_login()
 
-                # Odbior linii
+                # Receive lines
                 while self._should_run:
                     line = await self._reader.readline()
                     if not line:
@@ -274,11 +283,14 @@ class DXClusterClient:
             except asyncio.CancelledError:
                 raise
             except asyncio.TimeoutError:
+                # NOTE: kept in Polish - this message IS shown directly in
+                # the UI status badge (public/js/dxcluster.js's
+                # updateStatusBadge), not routed through I18n.
                 await self._status("error", "Timeout polaczenia")
             except Exception as e:
                 await self._status("error", str(e))
 
-            # Cleanup i czekaj przed reconnect
+            # Cleanup and wait before reconnecting
             self._connected = False
             if self._writer:
                 try: self._writer.close()
@@ -288,6 +300,7 @@ class DXClusterClient:
             if not self._should_run:
                 break
 
+            # NOTE: kept in Polish - see the note above on the "error" status message.
             await self._status("disconnected", f"reconnect za {delay:.0f}s")
             try:
                 await asyncio.sleep(delay)
@@ -296,31 +309,32 @@ class DXClusterClient:
             delay = min(delay * 1.5, self._max_reconnect_delay)
 
     async def _do_login(self):
-        """Wyslij login i haslo. Serwer moze pytac 'login:', 'Please enter your call:', 'password:' itd.
-        Uzywamy prostej strategii: wysylamy call, potem czekamy 500ms, jesli haslo — wysylamy."""
+        """Send the login and password. The server may prompt with 'login:',
+        'Please enter your call:', 'password:' etc. We use a simple strategy:
+        send the call, wait 500ms, then send the password if there is one."""
         if not self._writer:
             return
-        # Podstawowa strategia — poczekaj na prompt, potem wyslij login
+        # Basic strategy — wait for the prompt, then send the login
         await asyncio.sleep(0.5)
         try:
             self._writer.write((self.login + "\r\n").encode('ascii'))
             await self._writer.drain()
         except Exception as e:
-            print(f"[dx] blad wysylania loginu: {e}")
+            print(f"[dx] error sending login: {e}")
             return
-        # Jesli jest haslo, poczekaj krotko i wyslij
+        # If there's a password, wait briefly and send it
         if self.password:
             await asyncio.sleep(1.0)
             try:
                 self._writer.write((self.password + "\r\n").encode('ascii'))
                 await self._writer.drain()
             except Exception as e:
-                print(f"[dx] blad wysylania hasla: {e}")
+                print(f"[dx] error sending password: {e}")
 
     async def _process_line(self, text: str):
-        """Sparsuj linie i (jesli spot) wywolaj callback."""
-        # Log co wpada do konsoli (przydatne przy diagnostyce nowych serwerow)
-        # Nie logujemy zeby nie spamowac - odkomentuj jesli potrzeba
+        """Parse a line and (if it's a spot) call the callback."""
+        # Log everything coming in (useful for diagnosing new servers)
+        # Not logged by default to avoid spam - uncomment if needed
         # print(f"[dx {self.host}] {text}")
 
         m = _DX_RE.match(text)
@@ -333,7 +347,7 @@ class DXClusterClient:
         comment    = (m.group(4) or '').strip()
         utc        = m.group(5) or ''
 
-        # Freq zwykle w kHz z ulamkiem (14074.0)
+        # Freq is usually in kHz with a fraction (14074.0)
         try:
             freq_hz = int(round(float(freq_str) * 1000))
         except ValueError:
@@ -344,7 +358,7 @@ class DXClusterClient:
             "freq_hz": freq_hz,
             "call":    call.upper(),
             "spotter": spotter.upper(),
-            "comment": comment[:60],  # cap na 60 znakow
+            "comment": comment[:60],  # capped at 60 characters
             "utc":     utc,
             "ts":      time.time(),
             "band":    _get_band(freq_hz),
@@ -356,10 +370,10 @@ class DXClusterClient:
                 res = self.on_spot(spot)
                 if asyncio.iscoroutine(res): await res
             except Exception as e:
-                print(f"[dx] on_spot callback blad: {e}")
+                print(f"[dx] on_spot callback error: {e}")
 
     async def send_command(self, cmd: str):
-        """Wyslij komende do serwera (np. 'sh/dx 20m FT8', 'set/qth', 'q')."""
+        """Send a command to the server (e.g. 'sh/dx 20m FT8', 'set/qth', 'q')."""
         if not self._writer or not self._connected:
             return False
         try:
@@ -367,20 +381,20 @@ class DXClusterClient:
             await self._writer.drain()
             return True
         except Exception as e:
-            print(f"[dx] send_command blad: {e}")
+            print(f"[dx] send_command error: {e}")
             return False
 
 
 class ClusterManager:
-    """Zarzadza polaczeniami DX Cluster dla wszystkich uzytkownikow.
-    Kazdy user ma max 1 polaczenie. Broadcast callback dostarcza wiadomosci
-    do wlasciwego WebSocketa uzytkownika."""
+    """Manages DX Cluster connections for all users.
+    Each user has at most 1 connection. The broadcast callback delivers
+    messages to the right user's WebSocket."""
 
     def __init__(self, on_broadcast: Callable[[str, dict], None]):
-        """on_broadcast(user_id, message) — wysyla WS do konkretnego usera."""
+        """on_broadcast(user_id, message) — sends over WS to a specific user."""
         self.on_broadcast = on_broadcast
         self._clients: dict[str, DXClusterClient] = {}
-        # Cache ostatnich N spotow per user - zwracane przy re-open zakladki
+        # Cache of the last N spots per user - returned when a tab is reopened
         self._spot_history: dict[str, list[dict]] = {}
         self._max_history = 100
 
@@ -392,19 +406,19 @@ class ClusterManager:
 
     async def connect_user(self, user_id: str, host: str, port: int,
                             login: str, password: str = ""):
-        """Utworz/zresetuj polaczenie dla uzytkownika."""
-        # Zamknij poprzednie polaczenie jesli istnieje
+        """Create/reset the connection for a user."""
+        # Close the previous connection if one exists
         old = self._clients.pop(user_id, None)
         if old:
             await old.disconnect()
 
         async def _on_spot(spot):
-            # Cache w historii
+            # Cache in the history
             hist = self._spot_history.setdefault(user_id, [])
             hist.append(spot)
             if len(hist) > self._max_history:
                 del hist[:len(hist) - self._max_history]
-            # Broadcast do usera
+            # Broadcast to the user
             res = self.on_broadcast(user_id, spot)
             if asyncio.iscoroutine(res): await res
 
