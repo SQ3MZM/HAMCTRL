@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-rotator.py — sterowanie rotorem przez port szeregowy (pyserial), dwa protokoly:
-  - Alfaspid RAK/RAS (SPID) — modele "901"/"902"
-  - Yaesu GS-232A — modele "601"/"603" (patrz komentarz w Rotator._yaesu_*)
-Na Replit (brak portow COM) automatyczny fallback do symulacji.
+rotator.py — rotor control over a serial port (pyserial), two protocols:
+  - Alfaspid RAK/RAS (SPID) — models "901"/"902"
+  - Yaesu GS-232A — models "601"/"603" (see docstring in Rotator._yaesu_*)
+Automatic fallback to simulation when no COM port is available (e.g. Replit).
 """
 import re, sys, time, threading
 
@@ -12,32 +12,32 @@ try:
     HAS_SERIAL = True
 except ImportError:
     HAS_SERIAL = False
-    print("[warn] Brak pyserial — pip install pyserial")
+    print("[warn] pyserial missing — pip install pyserial")
 
-YAESU_MODELS = {"601", "603"}  # GS-232A / GS-232B (dropdown w admin.js)
+YAESU_MODELS = {"601", "603"}  # GS-232A / GS-232B (dropdown in admin.js)
 
 
 class Rotator:
     """
-    Dwa wspierane protokoly, wybierane po polu 'model' z konfiguracji
-    (self.protocol = 'yaesu' | 'spid'). Reszta klasy (polaczenie szeregowe,
-    watek ruchu, symulacja, broadcast WS) jest wspolna dla obu.
+    Two supported protocols, selected from the 'model' field in config
+    (self.protocol = 'yaesu' | 'spid'). The rest of the class (serial
+    connection, motion thread, simulation, WS broadcast) is shared by both.
 
-    Alfaspid RAK (Rot1Prog) — protokol SPID, pyserial.
+    Alfaspid RAK (Rot1Prog) — SPID protocol, pyserial.
       STATUS TX (13B): 57 00..00 1F 20  →  RX (5B): 57 H1 H2 H3 20  (az = H1*100+H2*10+H3-360)
-      SET TX:          57 H1 H2 H3 00 01 00 00 00 00 00 2F 20  (H = az+360, cyfry ASCII)
+      SET TX:          57 H1 H2 H3 00 01 00 00 00 00 00 2F 20  (H = az+360, ASCII digits)
       STOP TX (6B):    57 00 00 00 0F 20
 
-    Yaesu GS-232A — ASCII, komendy zakonczone CR (\\r), 8N1.
-      STATUS TX: "C\\r"      →  RX: "+0ddd\\r" (znak + 4 cyfry azymutu, np. "+0180")
-      SET TX:    "Mddd\\r"   (3-cyfrowy azymut 000-360, bez znaku)
+    Yaesu GS-232A — ASCII, commands terminated with CR (\\r), 8N1.
+      STATUS TX: "C\\r"      →  RX: "+0ddd\\r" (sign + 4-digit azimuth, e.g. "+0180")
+      SET TX:    "Mddd\\r"   (3-digit azimuth 000-360, unsigned)
       STOP TX:   "S\\r"
-    UWAGA: oparte na powszechnie udokumentowanym zestawie komend GS-232A
-    (Hamlib, PstRotator, N1MM uzywaja tego samego C/M/S + formatu "+0ddd").
-    NIEZWERYFIKOWANE na fizycznym kontrolerze — przed podlaczeniem realnego
-    Yaesu potwierdz format w instrukcji SWOJEGO modelu (rozne firmware GS-232
-    roznia sie w szczegolach ramki). Do czasu potwierdzenia uzywaj trybu
-    symulacji (sim=True, patrz connect()).
+    NOTE: based on the commonly documented GS-232A command set (Hamlib,
+    PstRotator, N1MM all use the same C/M/S + "+0ddd" format).
+    UNVERIFIED against physical hardware — before connecting a real Yaesu
+    controller, confirm the framing in YOUR model's manual (GS-232 firmware
+    revisions vary in framing details). Use simulation mode (sim=True, see
+    connect()) until confirmed.
     """
 
     STATUS_PKT = bytes([0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, 0x20])  # SPID
@@ -77,7 +77,7 @@ class Rotator:
             "sim":        self.sim,
         }
 
-    # ── Protokół SPID ─────────────────────────────────────────────────────────
+    # ── SPID protocol ────────────────────────────────────────────────────────
     def _spid_set_pkt(self, az: float) -> bytes:
         """SET 13B: 57 H1 H2 H3 00 01 00 00 00 00 00 2F 20 (H = az+360, ASCII)."""
         A = str(int(round(az + 360)) % 1000).zfill(3)
@@ -92,7 +92,7 @@ class Rotator:
         return bytes([0x57, 0, 0, 0, 0x0F, 0x20])
 
     def _spid_decode(self, buf: bytes) -> float | None:
-        """Znajdź i zdekoduj 5B ramkę: 57 H1 H2 H3 20"""
+        """Find and decode the 5B frame: 57 H1 H2 H3 20"""
         for i in range(len(buf) - 4):
             if buf[i] == 0x57 and buf[i + 4] == 0x20:
                 az = buf[i+1] * 100 + buf[i+2] * 10 + buf[i+3] - 360
@@ -100,12 +100,12 @@ class Rotator:
                     return float(az)
         return None
 
-    # ── Protokół Yaesu GS-232A ────────────────────────────────────────────────
+    # ── Yaesu GS-232A protocol ───────────────────────────────────────────────
     def _yaesu_status_pkt(self) -> bytes:
         return b"C\r"
 
     def _yaesu_set_pkt(self, az: float) -> bytes:
-        """SET: "Mddd\\r" — 3-cyfrowy azymut 000-360, bez znaku."""
+        """SET: "Mddd\\r" — 3-digit azimuth 000-360, unsigned."""
         A = str(int(round(az)) % 360).zfill(3)
         return f"M{A}\r".encode("ascii")
 
@@ -113,7 +113,7 @@ class Rotator:
         return b"S\r"
 
     def _yaesu_decode(self, buf: bytes) -> float | None:
-        """Parsuj odpowiedz "+0ddd\\r" (znak + 4 cyfry azymutu)."""
+        """Parse the "+0ddd\\r" reply (sign + 4-digit azimuth)."""
         try:
             txt = buf.decode("ascii", errors="ignore")
         except Exception:
@@ -125,7 +125,7 @@ class Rotator:
                 return float(az)
         return None
 
-    # ── Dyspozytor protokolu (uzywany przez _write/_read_pos/_move_worker) ─────
+    # ── Protocol dispatcher (used by _write/_read_pos/_move_worker) ────────────
     def _set_pkt(self, az: float) -> bytes:
         return self._yaesu_set_pkt(az) if self.protocol == "yaesu" else self._spid_set_pkt(az)
 
@@ -150,8 +150,8 @@ class Rotator:
         return False
 
     def _read_pos(self, timeout: float = 2.5) -> float | None:
-        """Wyślij STATUS, odczytaj odpowiedź (format zalezny od protokolu -
-        patrz _status_pkt/_decode). W symulacji zwraca self.az."""
+        """Send STATUS, read the reply (format depends on protocol - see
+        _status_pkt/_decode). Returns self.az in simulation mode."""
         if self.sim:
             return self.az
         if not self._ser or not self._ser.is_open:
@@ -179,11 +179,11 @@ class Rotator:
     # ── Connect ───────────────────────────────────────────────────────────────
     def connect(self) -> bool:
         if not HAS_SERIAL:
-            print(f"[rotator] {self.name}: pyserial niedostępny → symulacja")
+            print(f"[rotator] {self.name}: pyserial unavailable → simulation")
             self.sim = True
             return False
         try:
-            # Windows: COM1..COM9 normalnie, COM10+ wymaga \\.\COMx
+            # Windows: COM1..COM9 work as-is, COM10+ needs \\.\COMx
             p = ("\\\\.\\"+self.port
                  if sys.platform == "win32" and re.match(r"^COM[0-9]+$", self.port, re.I)
                  else self.port)
@@ -192,7 +192,7 @@ class Rotator:
                 bytesize=8, parity="N", stopbits=1, timeout=0.1)
             az = self._read_pos(3.0)
             if az is None:
-                raise IOError("brak odpowiedzi na STATUS (3s timeout)")
+                raise IOError("no response to STATUS (3s timeout)")
             self.az        = az
             self.connected = True
             self.sim       = False
@@ -200,7 +200,7 @@ class Rotator:
             print(f"[rotator] {self.name} {proto_label} @ {self.port} {self.speed}bd — az={self.az:.0f}°")
             return True
         except Exception as e:
-            print(f"[rotator] {self.name}: {e} → symulacja")
+            print(f"[rotator] {self.name}: {e} → simulation")
             if self._ser:
                 try: self._ser.close()
                 except: pass
@@ -221,25 +221,25 @@ class Rotator:
             threading.Thread(target=self._move_worker, daemon=True).start()
 
     def _move_worker(self):
-        """Pętla obrotu RAK: STOP → SET → poll pozycji co 0.5s (płynny odczyt)
-        → powtórz (max 10 kroków). Zamiast czekać 12s w ślepo, w trakcie ruchu
-        odpytujemy STATUS co ~0.5s i broadcastujemy pozycje, zeby UI plynnie
-        pokazywalo obrot rotora."""
+        """RAK rotation loop: STOP → SET → poll position every 0.5s (smooth
+        readout) → repeat (max 10 steps). Instead of blindly waiting 12s, we
+        poll STATUS roughly every 0.5s during the move and broadcast the
+        position, so the UI shows the rotor turning smoothly."""
         MAX_STEPS = 10
         step      = 0
         while step < MAX_STEPS and not self._stop_ev.is_set():
             diff = abs(self.az - self.taz)
             if diff < 2.0:
-                print(f"[rotator] {self.name} ✓ dotarł {self.taz:.0f}° (az={self.az:.0f}°)")
+                print(f"[rotator] {self.name} ✓ reached {self.taz:.0f}° (az={self.az:.0f}°)")
                 break
             step += 1
-            print(f"[rotator] {self.name} krok {step}/{MAX_STEPS}: "
-                  f"az={self.az:.0f}° → cel={self.taz:.0f}° (Δ={diff:.0f}°)")
+            print(f"[rotator] {self.name} step {step}/{MAX_STEPS}: "
+                  f"az={self.az:.0f}° → target={self.taz:.0f}° (Δ={diff:.0f}°)")
             self._write(self._stop_pkt())
             if self._stop_ev.wait(0.5): break
             self._write(self._set_pkt(self.taz))
-            # Zamiast slepego wait(12s): poll pozycji co 0.5s przez max 12s.
-            # Broadcast po kazdym udanym odczycie -> plynny ruch w UI.
+            # Instead of a blind wait(12s): poll position every 0.5s for up
+            # to 12s, broadcasting after every successful read for smooth UI motion.
             poll_deadline = time.monotonic() + 12.0
             last_az = self.az
             stable_count = 0
@@ -249,8 +249,8 @@ class Rotator:
                 if pos is not None:
                     self.az = pos
                     self.bcast()
-                    # Jesli pozycja przestala sie zmieniac (rotor dotarl/stanal)
-                    # przez 3 kolejne odczyty (~1.5s) — przerwij czekanie.
+                    # If the position stops changing (rotor arrived/stalled)
+                    # for 3 consecutive reads (~1.5s) — stop waiting.
                     if abs(pos - last_az) < 1.0:
                         stable_count += 1
                         if stable_count >= 3:
@@ -258,20 +258,20 @@ class Rotator:
                     else:
                         stable_count = 0
                     last_az = pos
-                    # Jesli osiagnelismy cel — koniec
+                    # Target reached — done.
                     if abs(pos - self.taz) < 2.0:
                         break
         self.moving = False
         self.bcast()
 
     def _sim_worker(self):
-        """Symulacja ruchu ~3°/s, aktualizacja co 100ms dla plynnosci"""
+        """Motion simulation ~3°/s, updated every 100ms for smoothness."""
         while self.moving and not self._stop_ev.is_set():
             diff = self.taz - self.az
             if abs(diff) < 0.5:
                 self.az = self.taz
                 break
-            # 3°/s przy update co 0.1s = 0.3° na krok
+            # 3°/s at a 0.1s update interval = 0.3° per step
             self.az += 3.0 * (1 if diff > 0 else -1) * 0.1
             self.bcast()
             time.sleep(0.1)
@@ -287,7 +287,7 @@ class Rotator:
         print(f"[rotator] {self.name} STOP az={self.az:.0f}°")
 
     def poll_pos(self) -> bool:
-        """Odczyt pozycji gdy rotor stoi. True jeśli się zmieniła."""
+        """Read position while the rotor is stationary. True if it changed."""
         if self.moving or self.sim:
             return False
         pos = self._read_pos(2.0)
