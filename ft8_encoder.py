@@ -1,28 +1,27 @@
 """
-ft8_encoder.py — Wlasny enkoder/nadajnik FT8.
+ft8_encoder.py — Custom FT8 encoder/transmitter.
 
-Pelny pipeline: tekst wiadomosci -> 77-bit pack -> CRC-14 -> LDPC(174,91)
-encode -> Gray mapping -> wstawienie Costas sync -> 79 symboli -> GFSK
-audio @ 12kHz -> resample do 48kHz -> stream przez feed_tx_pcm().
+Full pipeline: message text -> 77-bit pack -> CRC-14 -> LDPC(174,91)
+encode -> Gray mapping -> Costas sync insertion -> 79 symbols -> GFSK
+audio @ 12kHz -> resample to 48kHz -> stream via feed_tx_pcm().
 
-ZWERYFIKOWANE w sesji deweloperskiej (2026-06-20), zgodnosc z oficjalna
-specyfikacja protokolu FT8:
-  - packcall()/packgrid(): roundtrip test przez niezalezny referencyjny
-    dekoder (9/9 callsigns w tym XX0XXX, 6/6 gridow w tym KO02 — wszystkie OK)
-  - LDPC generator matrix (rawg): zgodna 1:1 z DWOMA niezaleznymi publicznymi
-    zrodlami specyfikacji (jedno w formacie hex, drugie binary — identyczne
-    wartosci dla wiersza 0, 41, 82)
-  - CRC-14 polynomial: zgodny miedzy obydwoma niezaleznymi zrodlami (0x2757)
-  - i3=1 (standard message) na POCZATKU 77-bit struktury — zweryfikowane
-    przeciwko publicznie udokumentowanemu przykladowi testowemu
-  - Pelny pipeline: 7/7 testowych wiadomosci (CQ, standard exchange, RRR,
-    73, signal report) przechodzi ldpc_check() z autorytatywna tabela Nm
-  - Audio GFSK: dlugosc dokladnie 151680 probek = 12.64s przy 12000Hz;
-    FFT analiza pierwszych 7 symboli (Costas) potwierdza poprawne
-    czestotliwosci tonow w granicach rozdzielczosci FFT (6.25Hz/bin)
+VERIFIED against the official FT8 protocol specification:
+  - packcall()/packgrid(): round-trip test through an independent reference
+    decoder (9/9 callsigns including XX0XXX, 6/6 grids including KO02 — all OK)
+  - LDPC generator matrix (rawg): matches 1:1 against TWO independent public
+    specification sources (one in hex format, one binary — identical
+    values for row 0, 41, 82)
+  - CRC-14 polynomial: matches between both independent sources (0x2757)
+  - i3=1 (standard message) at the START of the 77-bit structure — verified
+    against a publicly documented test example
+  - Full pipeline: 7/7 test messages (CQ, standard exchange, RRR,
+    73, signal report) pass ldpc_check() against the authoritative Nm table
+  - GFSK audio: length exactly 151680 samples = 12.64s at 12000Hz;
+    FFT analysis of the first 7 symbols (Costas) confirms correct
+    tone frequencies within FFT resolution (6.25Hz/bin)
 
-NIEZWERYFIKOWANE wobec prawdziwego dekodera FT8 na zywym radiu — wymaga
-testu na zywo, patrz CLAUDE.md sekcja FT8 TX.
+NOT VERIFIED against a real FT8 decoder on live radio — needs a live test,
+see the FT8 TX section in CLAUDE.md.
 """
 import re
 import numpy as np
@@ -30,9 +29,9 @@ from scipy.special import erf
 from scipy.signal import resample_poly
 
 # ============================================================
-# CZESC 1: LDPC(174,91) generator matrix
-# Zrodlo: oficjalna specyfikacja protokolu FT8, dwa niezalezne publiczne
-# zrodla uzyte do wzajemnej weryfikacji
+# PART 1: LDPC(174,91) generator matrix
+# Source: official FT8 protocol specification, two independent public
+# sources used for cross-verification
 # ============================================================
 
 _RAWG = [
@@ -67,8 +66,8 @@ _RAWG = [
 ]
 assert len(_RAWG) == 83
 
-# Parity-check matrix Nm (87 wierszy) — uzywana TYLKO do self-testu (ldpc_check),
-# nie do TX, ale przydatna jako wbudowany sanity-check przy starcie.
+# Parity-check matrix Nm (87 rows) — used ONLY for the self-test (ldpc_check),
+# not for TX, but useful as a built-in sanity check at startup.
 _NM = [
 [4,31,59,91,92,96,153],[5,32,60,93,115,146,0],[6,24,61,94,122,151,0],
 [7,33,62,95,96,143,0],[8,25,63,83,93,96,148],[6,32,64,97,126,138,0],
@@ -100,9 +99,9 @@ _NM = [
 [25,38,65,99,122,160,0],[17,42,75,129,170,172,0],
 ]
 
-_COSTAS = [3, 1, 4, 0, 6, 5, 2]   # nowy FT8 (77-bit), rozne od starego [2,5,6,0,4,1,3]
+_COSTAS = [3, 1, 4, 0, 6, 5, 2]   # new FT8 (77-bit), different from the old [2,5,6,0,4,1,3]
 _GRAYMAP = [0, 1, 3, 2, 5, 6, 4, 7]
-_CRC14POLY = [1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1]  # = 0x2757 (14-bit, bez wiodacego 1)
+_CRC14POLY = [1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1]  # = 0x2757 (14-bit, no leading 1)
 
 _hex2 = {hex(i)[2]: i for i in range(16)}
 
@@ -126,10 +125,11 @@ _GEN_SYS = _build_gen_sys()
 
 
 def _ldpc_self_test():
-    """Sprawdza czy generator LDPC dziala poprawnie w TYM srodowisku (wazne dla
-    EXE - roznice numpy/BLAS moga psuc kodowanie). Wypisuje wynik do logu przy
-    imporcie, zeby w produkcji bylo widac czy FT8/FT4 TX beda dekodowaln.
-    Wywolanie odlozone do konca pliku (po zdefiniowaniu _ldpc_encode/_check)."""
+    """Checks whether the LDPC generator works correctly in THIS environment
+    (important for the EXE - numpy/BLAS differences can break the encoding).
+    Prints the result to the log at import time, so production can show
+    whether FT8/FT4 TX will be decodable.
+    Call deferred to the end of the file (after _ldpc_encode/_check are defined)."""
     try:
         import numpy as _np
         _np.random.seed(0)
@@ -139,19 +139,20 @@ def _ldpc_self_test():
             if _ldpc_check(_ldpc_encode(p)):
                 ok += 1
         if ok == 3:
-            print("[ldpc] Self-test OK - generator LDPC poprawny", flush=True)
+            print("[ldpc] Self-test OK - LDPC generator correct", flush=True)
         else:
-            print(f"[ldpc] UWAGA: self-test {ok}/3 - LDPC MOZE BYC ZLE "
-                  f"(FT8/FT4 TX moga nie byc dekodowalne!)", flush=True)
+            print(f"[ldpc] WARNING: self-test {ok}/3 - LDPC MAY BE WRONG "
+                  f"(FT8/FT4 TX may not be decodable!)", flush=True)
     except Exception as _e:
-        print(f"[ldpc] Self-test blad: {_e}", flush=True)
+        print(f"[ldpc] Self-test error: {_e}", flush=True)
 
 
 def _ldpc_encode(plain91):
-    # Uodpornione na roznice numpy/BLAS w PyInstaller EXE: bez np.dot(out=)
-    # ktore w niektorych buildach (inny BLAS, inna wersja numpy) moglo dawac
-    # zly wynik -> ldpc_valid=False w EXE mimo poprawnego kodu w .py.
-    # Jawna arytmetyka int, gwarantowanie deterministyczna niezaleznie od BLAS.
+    # Made resilient to numpy/BLAS differences in the PyInstaller EXE:
+    # avoids np.dot(out=) which in some builds (different BLAS, different
+    # numpy version) could give a wrong result -> ldpc_valid=False in the
+    # EXE despite correct code in the .py.
+    # Explicit int arithmetic, guaranteed deterministic regardless of BLAS.
     plain91 = np.asarray(plain91, dtype=np.int64)
     parity = (_GEN_SYS[91:, :].astype(np.int64) @ plain91) % 2
     ncw = np.zeros(174, dtype=np.int32)
@@ -161,7 +162,7 @@ def _ldpc_encode(plain91):
 
 
 def _ldpc_check(codeword):
-    """Self-test: sprawdza zgodnosc parity. Uzywane tylko przy starcie modulu."""
+    """Self-test: checks parity consistency. Used only at module startup."""
     for e in _NM:
         x = 0
         for i in e:
@@ -172,21 +173,21 @@ def _ldpc_check(codeword):
     return True
 
 
-# Self-test LDPC przy imporcie modulu - wypisze do logu czy generator dziala
-# w tym srodowisku (kluczowe dla wykrycia problemow numpy/BLAS w EXE).
+# LDPC self-test at module import - prints to the log whether the generator
+# works in this environment (key for catching numpy/BLAS issues in the EXE).
 _ldpc_self_test()
 
 
 # ============================================================
-# CZESC 2: Pakowanie wiadomosci (callsign/grid -> 28/15 bit)
-# Algorytm wyprowadzony jako matematyczna odwrotnosc zweryfikowanego
-# unpack()/unpackcall()/unpackgrid() z basicft8.py (rtmrtmrtmrtm)
+# PART 2: Message packing (callsign/grid -> 28/15 bit)
+# Algorithm derived as the mathematical inverse of the verified
+# unpack()/unpackcall()/unpackgrid() from basicft8.py
 # ============================================================
 
 def _charn_inv_pos0(ch):
     """
-    Mapowanie dla pozycji 0 (pierwszy znak prefixu, 37 wartosci):
-    spacja=0, cyfra=1..10, litera=11..36.
+    Mapping for position 0 (first prefix character, 37 values):
+    space=0, digit=1..10, letter=11..36.
     """
     if ch == ' ':
         return 0
@@ -199,8 +200,8 @@ def _charn_inv_pos0(ch):
 
 def _charn_inv_pos1(ch):
     """
-    Mapowanie dla pozycji 1 (drugi znak prefixu, 36 wartosci, BEZ spacji):
-    cyfra=0..9, litera=10..35.
+    Mapping for position 1 (second prefix character, 36 values, NO space):
+    digit=0..9, letter=10..35.
     """
     if '0' <= ch <= '9':
         return ord(ch) - ord('0')
@@ -210,18 +211,18 @@ def _charn_inv_pos1(ch):
 
 
 def _charn_inv_pos2(ch):
-    """Mapowanie dla pozycji 2 (cyfra, 10 wartosci): zawsze cyfra 0-9."""
+    """Mapping for position 2 (digit, 10 values): always digit 0-9."""
     return ord(ch) - ord('0')
 
 
 def _charn_inv_suffix(ch):
     """
-    Mapowanie dla pozycji 3,4,5 (sufiks, max 3 znaki): TYLKO litery + spacja
-    (27 wartosci), BEZ cyfr — nie pelny zestaw cyfry+litery+spacja-10 uzywany
-    dla wczesniejszych pozycji. Zweryfikowane bit-dokladnie wzgledem oficjalnej
-    specyfikacji protokolu dla "G0XYZ K1ABC FN43": referencyjny
-    c28(G0XYZ)=9425373, referencyjny c28(K1ABC)=10214965 — oba dokladnie
-    odtworzone tylko z tym poprawionym mapowaniem.
+    Mapping for positions 3,4,5 (suffix, max 3 characters): letters + space
+    ONLY (27 values), NO digits — not the full digit+letter+space-10 set
+    used for the earlier positions. Verified bit-exact against the official
+    protocol specification for "G0XYZ K1ABC FN43": reference
+    c28(G0XYZ)=9425373, reference c28(K1ABC)=10214965 — both reproduced
+    exactly only with this corrected mapping.
     """
     if ch == ' ':
         return 0
@@ -334,19 +335,19 @@ def _encode_c28(call):
 
 
 def _encode_g15(grid_or_report):
-    """ZWERYFIKOWANE wzgledem oficjalnej specyfikacji protokolu FT8
-    (MAXGRID4=32400). Zwraca tuple (g15, r_flag) — r_flag to OSOBNY bit,
-    NIE zakodowany w g15.
+    """VERIFIED against the official FT8 protocol specification
+    (MAXGRID4=32400). Returns a tuple (g15, r_flag) — r_flag is a SEPARATE
+    bit, NOT encoded in g15.
 
-    Mapowanie:
-      grid 4-znakowy -> _grid_to_ng() (zakres 0..32399)
+    Mapping:
+      4-character grid -> _grid_to_ng() (range 0..32399)
       ""             -> g15=32401, r_flag=False
       "RRR"          -> g15=32402, r_flag=False
       "RR73"         -> g15=32403, r_flag=False
       "73"           -> g15=32404, r_flag=False
-      "+NN" / "-NN"  -> g15 = 32400 + (raport + 35), r_flag=False
-                        zakres raportu: -30..+49 (g15: 32405..32484)
-      "R+NN" / "R-NN" -> g15 = 32400 + (raport + 35), r_flag=True
+      "+NN" / "-NN"  -> g15 = 32400 + (report + 35), r_flag=False
+                        report range: -30..+49 (g15: 32405..32484)
+      "R+NN" / "R-NN" -> g15 = 32400 + (report + 35), r_flag=True
     """
     g = grid_or_report.strip().upper()
     if g == "":
@@ -373,15 +374,15 @@ def _encode_g15(grid_or_report):
 
 def _grid_to_ng(g):
     """
-    Koduje 4-znakowy Maidenhead grid jako liczbe 0..32399 (15 bit).
-    WZÓR ZWERYFIKOWANY: prosty system pozycyjny (NIE przez lat/lng — ta
-    metoda dawala BLEDNE wartosci dla 77-bit protokolu, np. RR73 wychodzilo
-    533 zamiast poprawnych 32373).
+    Encodes a 4-character Maidenhead grid as a number 0..32399 (15 bit).
+    VERIFIED FORMULA: simple positional system (NOT via lat/lng — that
+    method gave WRONG values for the 77-bit protocol, e.g. RR73 came out
+    as 533 instead of the correct 32373).
     ng = ((c0*18 + c1)*10 + c2)*10 + c3
-    gdzie c0,c1 = indeks litery (A=0..R=17), c2,c3 = cyfra (0-9).
-    18*18*10*10 = 32400, dokladnie tyle ile lokatorow Maidenhead istnieje.
-    Zweryfikowane: RR73 -> 32373, zgodne z oficjalna specyfikacja protokolu
-    FT8 (dokladna zgodnosc liczbowa).
+    where c0,c1 = letter index (A=0..R=17), c2,c3 = digit (0-9).
+    18*18*10*10 = 32400, exactly the number of Maidenhead locators that exist.
+    Verified: RR73 -> 32373, matching the official FT8 protocol specification
+    (exact numeric agreement).
     """
     c0 = ord(g[0]) - ord('A')
     c1 = ord(g[1]) - ord('A')
@@ -465,15 +466,15 @@ def pack77_nonstandard(call_to, call_de, report_or_grid):
 
 def pack77(call_to, call_de, report_or_grid, r_flag=False):
     """
-    Standardowa wiadomosc FT8 Type 1/2: c28 r1 c28 r1 R1 g15 i3 = 77 bit.
-    UWAGA: i3 jest na KONCU (ostatnie 3 bity), NIE na poczatku!
-    Zweryfikowane wzgledem oficjalnej specyfikacji protokolu FT8 dla
-    "G0XYZ K1ABC FN43": referencyjne bits[74:77] = i3 = '001' (i3=1,
-    Standard msg), podczas gdy bits[0:3] = '000' (to byly poczatkowe
-    bity c28, nie i3).
-    call_to: callsign odbiorcy (lub 'CQ')
-    call_de: Twoj callsign (np. 'XX0XXX')
-    report_or_grid: grid (np. 'KO02'), raport (-15/R-09), lub RRR/RR73/73
+    Standard FT8 Type 1/2 message: c28 r1 c28 r1 R1 g15 i3 = 77 bit.
+    NOTE: i3 is at the END (last 3 bits), NOT at the start!
+    Verified against the official FT8 protocol specification for
+    "G0XYZ K1ABC FN43": reference bits[74:77] = i3 = '001' (i3=1,
+    Standard msg), while bits[0:3] = '000' (those were the leading
+    c28 bits, not i3).
+    call_to: recipient's callsign (or 'CQ')
+    call_de: your callsign (e.g. 'XX0XXX')
+    report_or_grid: grid (e.g. 'KO02'), report (-15/R-09), or RRR/RR73/73
 
     Non-standard callsigns (compound/prefixed like "WX/XX0XXX", or too long
     for the 6-char field like "XX0XXXXX"): if report_or_grid is something
@@ -489,8 +490,8 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
         if call_to.strip().upper() == "CQ" and rg_check not in ("", "RRR", "RR73", "73"):
             # A CQ from a non-standard callsign has no grid field at all in
             # either message type - drop it rather than blocking the CQ.
-            print(f"[ft8] Ostrzezenie: CQ ze znakiem niestandardowym {call_de!r} "
-                  f"nie moze zawierac gridu — pomijam {report_or_grid!r}")
+            print(f"[ft8] Warning: CQ from non-standard callsign {call_de!r} "
+                  f"cannot carry a grid — dropping {report_or_grid!r}")
             rg_check = ""
         if rg_check in ("", "RRR", "RR73", "73"):
             return pack77_nonstandard(call_to, call_de, rg_check)
@@ -505,9 +506,9 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
     c28_1 = _encode_c28(call_to)
     c28_2 = _encode_c28(call_de)
     g15, r_flag_from_text = _encode_g15(report_or_grid)
-    # r_flag moze byc ustawiony explicite (parametr funkcji) ALBO wykryty
-    # z prefiksu "R" w samym tekscie report_or_grid (np. "R-01") — oba
-    # przypadki musza ustawic bit R1 w wiadomosci.
+    # r_flag may be set explicitly (function parameter) OR detected from
+    # an "R" prefix in the report_or_grid text itself (e.g. "R-01") — both
+    # cases must set the R1 bit in the message.
     r_flag = r_flag or r_flag_from_text
 
     bits = []
@@ -523,7 +524,7 @@ def pack77(call_to, call_de, report_or_grid, r_flag=False):
 
 
 # ============================================================
-# CZESC 3: CRC-14 (polynomial 0x2757, zgodny z oficjalna specyfikacja FT8)
+# PART 3: CRC-14 (polynomial 0x2757, matching the official FT8 specification)
 # ============================================================
 
 def _crc14(msg82):
@@ -539,11 +540,11 @@ def _crc14(msg82):
 
 
 # ============================================================
-# CZESC 4: Pelny pipeline tekst -> 79 symboli
+# PART 4: Full pipeline text -> 79 symbols
 # ============================================================
 
 def encode_message(call_to, call_de, report_or_grid, r_flag=False):
-    """Zwraca (symbols79, debug_dict)."""
+    """Returns (symbols79, debug_dict)."""
     bits77 = pack77(call_to, call_de, report_or_grid, r_flag)
     padded82 = bits77 + [0, 0, 0, 0, 0]
     crc = _crc14(padded82)
@@ -570,16 +571,16 @@ def encode_message(call_to, call_de, report_or_grid, r_flag=False):
 
 
 # ============================================================
-# CZESC 5: Generator audio GFSK
+# PART 5: GFSK audio generator
 # ============================================================
 
 FT8_SAMPLE_RATE = 12000
 FT8_SYMBOL_PERIOD = 0.16
 FT8_SAMPLES_PER_SYMBOL = int(FT8_SAMPLE_RATE * FT8_SYMBOL_PERIOD)  # 1920
 FT8_TONE_SPACING = 6.25
-FT8_BT = 2.0  # FT8 (FT4 uzywa BT=1.0)
+FT8_BT = 2.0  # FT8 (FT4 uses BT=1.0)
 
-TARGET_SAMPLE_RATE = 48000  # wymagane przez feed_tx_pcm (audio_stream.py)
+TARGET_SAMPLE_RATE = 48000  # required by feed_tx_pcm (audio_stream.py)
 
 
 def _gaussian_pulse(t, bt, symbol_period):
@@ -601,7 +602,7 @@ _PULSE_TABLE = _precompute_pulse_table()
 
 
 def synthesize_gfsk(symbols, base_freq_hz=1000.0):
-    """79 symboli (0-7) -> numpy float32 PCM @ 12000Hz, znormalizowany -1..1."""
+    """79 symbols (0-7) -> numpy float32 PCM @ 12000Hz, normalized -1..1."""
     n_sym = len(symbols)
     n = FT8_SAMPLES_PER_SYMBOL
     total_samples = n_sym * n
@@ -625,26 +626,26 @@ def synthesize_gfsk(symbols, base_freq_hz=1000.0):
 def generate_tx_pcm48k(call_to, call_de, report_or_grid, r_flag=False,
                         base_freq_hz=1000.0, amplitude=0.12):
     """
-    Pelny pipeline: tekst -> 79 symboli -> audio 12kHz -> resample 48kHz ->
-    int16 PCM bytes, gotowe do feed_tx_pcm().
+    Full pipeline: text -> 79 symbols -> 12kHz audio -> resample to 48kHz ->
+    int16 PCM bytes, ready for feed_tx_pcm().
 
-    UWAGA o domyslnej czestotliwosci: 1000Hz, NIE 1500Hz — IC-7300 w trybie
-    USB-D ma udokumentowany "sweet spot" na 1500Hz, ktory w praktyce generuje
-    staly notch w odbiorniku dokladnie na tej czestotliwosci (potwierdzone
-    pomiarami na niezaleznych nagraniach, niezalezne od NB/NR/Notch/AGC/PTT).
-    W normalnym uzyciu i tak nadpisywane przez App._ft8_tx_freq_hz.
+    NOTE on the default frequency: 1000Hz, NOT 1500Hz — the IC-7300 in
+    USB-D mode has a documented "sweet spot" at 1500Hz, which in practice
+    produces a fixed notch in the receiver at exactly that frequency
+    (confirmed by measurements on independent recordings, independent of
+    NB/NR/Notch/AGC/PTT). In normal use this is overridden anyway by
+    App._ft8_tx_freq_hz.
 
-    UWAGA o amplitudzie: backend (audio_stream.py _webrtc_playback_loop)
-    DODATKOWO mnozy kazda probke przez cfg['txVolume'] (domyslnie 4.0,
-    max 8.0) przed wyslaniem na karte dzwiekowa. Domyslne amplitude=0.12
-    jest dobrane tak, zeby nawet przy maksymalnym txVolume=8.0 sygnal
-    nie ulegal clippingowi (0.12 * 8.0 = 0.96, bezpieczny margines).
-    Clipping zamienia czysta fale sinusoidalna w fale prostokatna pelna
-    harmonicznych, co niszczy widmo i uniemozliwia poprawne dekodowanie
-    mimo poprawnej tresci bitowej — to byla pierwotna przyczyna bledow
-    dekodowania w testach na zywo (2026-06-20).
+    NOTE on amplitude: the backend (audio_stream.py _webrtc_playback_loop)
+    ADDITIONALLY multiplies every sample by cfg['txVolume'] (default 4.0,
+    max 8.0) before sending it to the sound card. The default amplitude=0.12
+    is chosen so that even at the maximum txVolume=8.0 the signal doesn't
+    clip (0.12 * 8.0 = 0.96, a safe margin). Clipping turns a clean sine
+    wave into a square wave full of harmonics, which destroys the spectrum
+    and prevents correct decoding despite correct bit content — this was
+    the original cause of decode failures in live tests.
 
-    Zwraca (pcm_bytes, debug_dict, duration_seconds).
+    Returns (pcm_bytes, debug_dict, duration_seconds).
     """
     symbols, debug = encode_message(call_to, call_de, report_or_grid, r_flag)
     audio_12k = synthesize_gfsk(symbols, base_freq_hz=base_freq_hz)
@@ -655,27 +656,29 @@ def generate_tx_pcm48k(call_to, call_de, report_or_grid, r_flag=False,
 
 
 def chunk_pcm_bytes(pcm_bytes, chunk_samples=960):
-    """Dzieli PCM bytes (int16 mono) na kawalki po chunk_samples probek
-    (domyslnie 960 = 20ms @ 48kHz, zgodnie z OPUS_FRAMES w audio_stream.py)."""
+    """Splits PCM bytes (int16 mono) into chunks of chunk_samples samples
+    (default 960 = 20ms @ 48kHz, matching OPUS_FRAMES in audio_stream.py)."""
     chunk_bytes = chunk_samples * 2
     for pos in range(0, len(pcm_bytes), chunk_bytes):
         yield pcm_bytes[pos:pos + chunk_bytes]
 
 
 # ============================================================
-# CZESC 6: Synchronizacja czasowa (okna 15s UTC)
+# PART 6: Time synchronization (15s UTC windows)
 # ============================================================
 #
-# FT8 wymaga rozpoczecia transmisji na poczatku okna 15s UTC (xx:00, xx:15,
-# xx:30, xx:45). Sygnal docelowo zaczyna sie 0.5s w cykl (wedlug standardu),
-# ale poniewaz audio idzie przez nasz wlasny audio pipeline (z wlasnym,
-# nieznanym z gory opoznieniem PTT->dzwiek), celujemy w start TUZ NA
-# poczatku okna (offset 0.0s) — to daje margines bezpieczenstwa, bo dekodery
-# akceptuja sygnaly w oknie +/- ok. 2s wzgledem nominalnego startu.
+# FT8 requires starting transmission at the beginning of a 15s UTC window
+# (xx:00, xx:15, xx:30, xx:45). The signal is nominally supposed to start
+# 0.5s into the cycle (per the standard), but since audio goes through our
+# own audio pipeline (with its own, not known in advance PTT->sound delay),
+# we target a start RIGHT AT the beginning of the window (offset 0.0s) —
+# this gives a safety margin, since decoders accept signals within roughly
+# +/- 2s of the nominal start.
 
 def seconds_until_next_window(window=15.0, now=None):
-    """Zwraca liczbe sekund (float) do najblizszej wielokrotnosci `window`
-    sekund w biezacej minucie UTC (np. do najblizszego xx:00/15/30/45)."""
+    """Returns the number of seconds (float) until the nearest multiple of
+    `window` seconds in the current UTC minute (e.g. until the nearest
+    xx:00/15/30/45)."""
     import time as _time
     if now is None:
         now = _time.time()
@@ -684,36 +687,37 @@ def seconds_until_next_window(window=15.0, now=None):
 
 def seconds_until_next_tx_window(period=1, window=15.0, now=None):
     """
-    Jak seconds_until_next_window, ale pozwala wybrac KTORY z dwoch
-    naprzemiennych slotow nadawania uzyc — standardowa praktyka FT8/FT4,
-    gdzie dwie stacje w QSO nadaja na przemian (jedna w "pierwszym", druga
-    w "drugim" okresie), zeby nigdy nie nadawac jednoczesnie.
+    Like seconds_until_next_window, but lets you choose WHICH of the two
+    alternating transmit slots to use — standard FT8/FT4 practice, where
+    two stations in a QSO transmit alternately (one in the "first", the
+    other in the "second" period), so they never transmit at the same time.
 
-    period=1 -> okna zaczynajace sie w PARZYSTYCH wielokrotnosciach window
-                (dla FT8/window=15.0: xx:00, xx:30 — "pierwszy" okres)
-    period=2 -> okna zaczynajace sie w NIEPARZYSTYCH wielokrotnosciach window
-                (dla FT8/window=15.0: xx:15, xx:45 — "drugi" okres)
+    period=1 -> windows starting at EVEN multiples of window
+                (for FT8/window=15.0: xx:00, xx:30 — "first" period)
+    period=2 -> windows starting at ODD multiples of window
+                (for FT8/window=15.0: xx:15, xx:45 — "second" period)
 
-    Dziala identycznie dla FT4 (window=7.5s), tylko w mniejszej skali czasu.
+    Works identically for FT4 (window=7.5s), just on a smaller timescale.
     """
     import time as _time
     if now is None:
         now = _time.time()
-    # Numer biezacego okna od poczatku biezacej minuty UTC (0,1,2,3,... dla
-    # window=15: okno 0 = xx:00-15, okno 1 = xx:15-30, okno 2 = xx:30-45...)
+    # Index of the current window since the start of the current UTC minute
+    # (0,1,2,3,... for window=15: window 0 = xx:00-15, window 1 = xx:15-30,
+    # window 2 = xx:30-45...)
     base_wait = seconds_until_next_window(window, now)
     next_window_idx = int(round((now + base_wait) / window))
-    # period=1 chce okien o indeksie PARZYSTYM, period=2 NIEPARZYSTYM
+    # period=1 wants EVEN-indexed windows, period=2 ODD
     wants_even = (period == 1)
     is_even = (next_window_idx % 2 == 0)
     if wants_even == is_even:
         return base_wait
-    # Najblizsze okno jest "nie nasze" — czekaj jeszcze jedno window dluzej
+    # The nearest window is "not ours" — wait one more window
     return base_wait + window
 
 
 def next_window_start(window=15.0, now=None):
-    """Zwraca unix timestamp (float) najblizszego startu okna."""
+    """Returns the unix timestamp (float) of the nearest window start."""
     import time as _time
     if now is None:
         now = _time.time()
@@ -721,7 +725,7 @@ def next_window_start(window=15.0, now=None):
 
 
 if __name__ == "__main__":
-    # Self-test przy uruchomieniu modulu bezposrednio
+    # Self-test when the module is run directly
     print("=== FT8 Encoder self-test ===")
     tests = [
         ("CQ", "XX0XXX", "KO02"),
