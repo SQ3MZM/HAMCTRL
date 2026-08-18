@@ -1732,11 +1732,11 @@ class App:
                     # Do NOT log the token itself — the log is a place a token
                     # could leak from, and it grants account takeover. Log only
                     # that delivery failed so the admin knows to check SMTP.
-                    print(f"[auth] SMTP blad przy wysylce resetu dla "
-                          f"{u['username']!r}: {err} (token NIE zapisany w logu)")
+                    print(f"[auth] SMTP error sending reset for "
+                          f"{u['username']!r}: {err} (token NOT written to the log)")
             return 200, {"ok": True, "message": "Jesli konto istnieje i ma email — link zostal wyslany"}
 
-        # ── Reset hasla: krok 2 — ustaw nowe haslo na podstawie tokenu ────────
+        # ── Password reset: step 2 — set the new password from the token ────────
         if p == "/api/auth/reset-confirm" and method == "POST":
             token    = body.get("token", "")
             new_pw   = body.get("password", "")
@@ -1750,13 +1750,13 @@ class App:
             if not u:
                 return 400, {"error": "Uzytkownik nie istnieje"}
             u["password"] = hash_pw_secure(new_pw)
-            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # uniewaznij stare tokeny
+            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # invalidate old tokens
             save_json(USR_F, self.users)
-            print(f"[auth] Haslo zresetowane dla: {u['username']} "
-                  f"(pw_ver={u['pw_ver']}, stare sesje uniewaznione)")
+            print(f"[auth] Password reset for: {u['username']} "
+                  f"(pw_ver={u['pw_ver']}, old sessions invalidated)")
             return 200, {"ok": True, "message": "Haslo zostalo zmienione — mozesz sie zalogowac"}
 
-        # ── Reset hasla przez admina (bez emaila) ─────────────────────────────
+        # ── Password reset by an admin (no email) ─────────────────────────────
         if p == "/api/auth/admin-reset" and method == "POST":
             if not user: return 401, {"error": "Wymagane logowanie"}
             if user.get("role") != "admin": return 403, {"error": "Tylko admin"}
@@ -1767,10 +1767,10 @@ class App:
             u = self.find_user_by_id(target_id)
             if not u: return 404, {"error": "Uzytkownik nie istnieje"}
             u["password"] = hash_pw_secure(new_pw)
-            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # uniewaznij stare tokeny usera
+            u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # invalidate the user's old tokens
             save_json(USR_F, self.users)
-            print(f"[auth] Admin zresetowal haslo dla {u['username']!r} "
-                  f"(pw_ver={u['pw_ver']}, stare sesje uniewaznione)", flush=True)
+            print(f"[auth] Admin reset the password for {u['username']!r} "
+                  f"(pw_ver={u['pw_ver']}, old sessions invalidated)", flush=True)
             return 200, {"ok": True}
 
 
@@ -1790,17 +1790,17 @@ class App:
             if len(new_pw) < 8:
                 return 400, {"error": "Hasło min. 8 znaków"}
             u_obj["password"] = hash_pw_secure(new_pw)
-            # Oznacz ze haslo zostalo zmienione z domyslnego - wylacza
-            # wymuszenie zmiany hasla przy logowaniu (must_change_password).
+            # Mark that the password was changed from the default - disables
+            # the forced password-change prompt on login (must_change_password).
             u_obj["pw_changed"] = True
-            # Inkrementuj wersje hasla - uniewaznia WSZYSTKIE stare tokeny JWT
-            # (takze na innych urzadzeniach). Uzytkownik musi zalogowac sie
-            # ponownie wszedzie. Wazne gdy haslo zmieniane bo wyciekło.
+            # Increment the password version - invalidates ALL old JWT
+            # tokens (on other devices too). The user has to log in again
+            # everywhere. Important when the password is changed because it leaked.
             u_obj["pw_ver"] = int(u_obj.get("pw_ver", 0)) + 1
             save_json(USR_F, self.users)
-            print(f"[auth] haslo zmienione dla {u_obj.get('username')!r}, "
-                  f"pw_ver={u_obj['pw_ver']} (stare tokeny uniewaznione)", flush=True)
-            # Wygeneruj nowy token dla biezacej sesji (zeby user nie wylecial)
+            print(f"[auth] password changed for {u_obj.get('username')!r}, "
+                  f"pw_ver={u_obj['pw_ver']} (old tokens invalidated)", flush=True)
+            # Generate a new token for the current session (so the user doesn't get logged out)
             new_token = jwt_sign({"id": u_obj["id"], "role": u_obj["role"],
                                    "username": u_obj["username"],
                                    "pw_ver": u_obj["pw_ver"]})
@@ -1809,8 +1809,8 @@ class App:
         if p == "/api/user/profile" and method == "POST":
             u_obj = self.find_user_by_id(uid)
             if not u_obj: return 404, {"error": "Brak konta"}
-            # Walidacja pol (obrona przed XSS - te dane trafiaja do HTML w
-            # panelu admina, liscie online itd.)
+            # Field validation (defense against XSS - this data ends up in
+            # HTML in the admin panel, the online-users list, etc.)
             if "callsign" in body:
                 _cs = str(body.get("callsign", "")).strip().upper()
                 if _cs and not re.match(r'^[A-Z0-9/]{1,16}$', _cs):
@@ -1837,12 +1837,12 @@ class App:
         if p == "/api/user/tx_eq" and method == "POST":
             u_obj = self.find_user_by_id(uid)
             if not u_obj: return 404, {"error": "Brak konta"}
-            # Waliduj strukture: preset (str) i bands (dict z 5 pasmami)
+            # Validate the structure: preset (str) and bands (dict with 5 bands)
             preset = body.get("preset", "default")
             bands = body.get("bands", {})
             if not isinstance(preset, str) or not isinstance(bands, dict):
                 return 400, {"error": "Nieprawidlowa struktura"}
-            # Waliduj wartosci pasm (int/float, zakres -20..+15)
+            # Validate the band values (int/float, range -20..+15)
             allowed_bands = {"bass", "mud", "clarity", "punch", "air"}
             clean_bands = {}
             for k, v in bands.items():
@@ -1854,11 +1854,11 @@ class App:
 
         # ── Relay controller (Arduino SP5IOU) ─────────────────────────────────
         if p == "/api/relay/config" and method == "GET":
-            # Konfiguracja + lista portow do wyboru (tylko admin)
+            # Config + list of ports to choose from (admin only)
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
             rcfg = self.cfg.get("relay", {})
-            # Cache portow na 30s - list_serial_ports() na Windows bywa wolne
+            # Cache the port list for 30s - list_serial_ports() can be slow on Windows
             now = time.time()
             if not hasattr(self, '_relay_ports_cache') or now - getattr(self, '_relay_ports_cache_time', 0) > 30:
                 self._relay_ports_cache = list_serial_ports() if _RELAY_OK else []
@@ -1881,7 +1881,7 @@ class App:
             relays = body.get("relays", [])
             if not isinstance(relays, list):
                 return 400, {"error": "relays musi byc lista"}
-            # Waliduj kazdy przekaznik
+            # Validate each relay
             clean_relays = []
             for i, r in enumerate(relays[:8]):
                 if not isinstance(r, dict): continue
@@ -1902,17 +1902,17 @@ class App:
                 "relays": clean_relays,
             }
             save_json(CFG_F, self.cfg)
-            # Restart polaczenia z Arduino
+            # Restart the Arduino connection
             asyncio.ensure_future(self._relay_reconnect_task())
             return 200, {"ok": True}
 
         if p == "/api/relay/state" and method == "GET":
-            # Dostepne dla wszystkich zalogowanych - stan + widoczne przekazniki per user
+            # Available to all logged-in users - state + relays visible per user
             rcfg = self.cfg.get("relay", {})
             configured = rcfg.get("relays", [])
             u_obj = self.find_user_by_id(uid) or {}
             u_perms = u_obj.get("permissions", {})
-            # Admin widzi wszystkie, user tylko te ktore ma w permissions[relay_N]
+            # Admin sees all of them, a regular user only the ones granted via permissions[relay_N]
             visible_relays = []
             states = self.relay.get_states() if self.relay else [False] * 8
             for r in configured:
@@ -1931,19 +1931,19 @@ class App:
             }
 
         if p == "/api/relay/action" and method == "POST":
-            # Uzytkownik klika przycisk przekaznika
+            # User clicks a relay button
             if not self.relay or not self.relay.is_connected():
                 return 503, {"error": "Kontroler przekaznikow niepodlaczony"}
             relay_id = int(body.get("id", -1))
             if not 0 <= relay_id < 8:
                 return 400, {"error": "Nieprawidlowy id przekaznika"}
-            # Sprawdz uprawnienia
+            # Check permissions
             u_obj = self.find_user_by_id(uid) or {}
             u_perms = u_obj.get("permissions", {})
             perm_key = f"relay_{relay_id}"
             if role != "admin" and not u_perms.get(perm_key, False):
                 return 403, {"error": "Brak dostepu do tego przekaznika"}
-            # Znajdz konfiguracje tego przekaznika
+            # Find this relay's configuration
             rcfg = self.cfg.get("relay", {})
             relay_conf = None
             for r in rcfg.get("relays", []):
@@ -1957,7 +1957,7 @@ class App:
                 duration = float(relay_conf.get("pulse_s", 1.0))
                 asyncio.ensure_future(self.relay.pulse(relay_id, duration))
                 await self.hub.broadcast({"type": "relay_state", "id": relay_id, "state": True})
-                # Po impulsie broadcast wylaczenia (uproszczone - opoznione)
+                # Broadcast the off state after the pulse (simplified - delayed)
                 async def _notify_off():
                     await asyncio.sleep(duration + 0.1)
                     await self.hub.broadcast({"type": "relay_state", "id": relay_id, "state": False})
@@ -1974,7 +1974,7 @@ class App:
             u_obj = self.find_user_by_id(uid)
             if not u_obj: return 404, {"error": "Brak konta"}
             cfg = u_obj.get("dxcluster", {})
-            # Nie zwracaj hasla w plaintext (tylko flaga czy jest ustawione)
+            # Don't return the password in plaintext (just a flag whether it's set)
             return 200, {
                 "ok": True,
                 "config": {
@@ -2000,8 +2000,8 @@ class App:
             password = body.get("password", None)
             auto_connect = bool(body.get("auto_connect", False))
             existing = u_obj.get("dxcluster", {})
-            # Zachowaj stare (juz zaszyfrowane) haslo jesli nowe nie zostalo
-            # podane (null = brak zmiany); nowe haslo szyfrujemy przed zapisem.
+            # Keep the old (already-encrypted) password if a new one wasn't
+            # given (null = no change); a new password is encrypted before saving.
             if password is None:
                 password = existing.get("password", "")
             else:
@@ -2045,10 +2045,11 @@ class App:
             return 200 if ok else 503, {"ok": ok}
 
         if p == "/api/dxcluster/spot" and method == "POST":
-            # Wyslij spota na klaster DX.
-            # Komenda: DX <freq_khz> <call> <komentarz>
-            # Klaster sam podpisze spota loginem uzytkownika (per-user polaczenie),
-            # wiec spot wychodzi pod znakiem tego kto go wyslal.
+            # Send a spot to the DX cluster.
+            # Command: DX <freq_khz> <call> <comment>
+            # The cluster signs the spot with the user's own login
+            # (per-user connection), so the spot goes out under the
+            # callsign of whoever sent it.
             if not self.dxcluster:
                 return 503, {"ok": False, "error": "DX Cluster niedostępny"}
 
@@ -2056,7 +2057,7 @@ class App:
             freq_hz = body.get("freq_hz", 0)
             comment = str(body.get("comment", "")).strip()
 
-            # ── Walidacja (spot idzie na CALY SWIAT - nie wysylamy smieci) ────
+            # ── Validation (a spot goes out to the WHOLE WORLD - don't send junk) ────
             if not call or not re.match(r'^[A-Z0-9/]{3,16}$', call):
                 return 400, {"ok": False,
                              "error": "Nieprawidłowy znak (litery, cyfry, /)"}
@@ -2064,16 +2065,16 @@ class App:
                 freq_hz = int(float(freq_hz))
             except (ValueError, TypeError):
                 return 400, {"ok": False, "error": "Nieprawidłowa częstotliwość"}
-            # Rozsadny zakres: 1.8 MHz - 1300 MHz
+            # Reasonable range: 1.8 MHz - 1300 MHz
             if not (1_800_000 <= freq_hz <= 1_300_000_000):
                 return 400, {"ok": False,
                              "error": "Częstotliwość poza zakresem (1.8 MHz – 1.3 GHz)"}
-            # Komentarz: max 30 znakow (limit wiekszosci klastrow), bez znakow
-            # sterujacych ktore moglyby zepsuc protokol telnet
+            # Comment: max 30 characters (most clusters' limit), no control
+            # characters that could break the telnet protocol
             comment = re.sub(r'[\r\n\t]', ' ', comment)[:30].strip()
 
-            # Klaster oczekuje czestotliwosci w kHz (np. 14074.0 dla 14.074 MHz).
-            # Podajemy z jedna cyfra po przecinku - taki jest zwyczaj.
+            # The cluster expects the frequency in kHz (e.g. 14074.0 for 14.074 MHz).
+            # Given with one decimal digit - that's the convention.
             freq_khz = freq_hz / 1000.0
             khz_str = f"{freq_khz:.1f}".rstrip("0").rstrip(".")
 
@@ -2084,7 +2085,7 @@ class App:
             ok = await self.dxcluster.send_command(uid, cmd)
             if ok:
                 u = self.find_user_by_id(uid) or {}
-                print(f"[dx] spot wyslany przez {u.get('callsign') or u.get('username')}: "
+                print(f"[dx] spot sent by {u.get('callsign') or u.get('username')}: "
                       f"{cmd}", flush=True)
                 return 200, {"ok": True, "sent": cmd}
             return 503, {"ok": False,
@@ -2095,13 +2096,13 @@ class App:
                 return 200, {"ok": True, "history": []}
             return 200, {"ok": True, "history": self.dxcluster.get_history(uid)}
 
-        # ── Status serwera + diagnostyka (admin) ─────────────────────────────
+        # ── Server status + diagnostics (admin) ─────────────────────────────
         if p == "/api/health" and method == "GET":
-            # Lekki status dla zakladki Ustawienia (panel "Stan systemu").
-            # Publiczny - to tylko podstawowe zdrowie serwera, bez danych
-            # wrazliwych. Pola dopasowane do tego czego oczekuje settings.js
-            # loadStatus(). (Pole 'node' zostaje dla zgodnosci z frontendem -
-            # to zaszlosc po szablonie Node.js, podajemy wersje Pythona.)
+            # Lightweight status for the Settings tab ("System status"
+            # panel). Public - this is just basic server health, no
+            # sensitive data. Fields match what settings.js's loadStatus()
+            # expects. (The 'node' field is kept for frontend compatibility
+            # - a leftover from a Node.js template, we report the Python version.)
             import platform as _plat
             try:
                 _clients = len(getattr(self.hub, "_clients", set()))
@@ -2118,8 +2119,8 @@ class App:
             }
 
         if p == "/api/status/perf" and method == "GET":
-            # Szczegolowa diagnostyka wydajnosci - CPU, watki, petle, klienci.
-            # Pomaga ocenic czy serwer wyrabia przy wielu userach.
+            # Detailed performance diagnostics - CPU, threads, loops, clients.
+            # Helps assess whether the server keeps up with many users.
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
             import threading as _th
@@ -2138,9 +2139,9 @@ class App:
                 _tasks = [t for t in asyncio.all_tasks(_loop) if not t.done()]
                 out["event_loop"] = {
                     "backend": _JSON_BACKEND,  # orjson / stdlib
-                    "impl": type(_loop).__name__,  # uvloop/winloop = szybszy
+                    "impl": type(_loop).__name__,  # uvloop/winloop = faster
                     "active_tasks": len(_tasks),
-                    # Nazwy petli tla (do diagnostyki co dziala)
+                    # Names of the background loops (for diagnosing what's running)
                     "task_names": sorted({
                         (t.get_coro().__qualname__.split('.')[-1]
                          if hasattr(t, 'get_coro') and t.get_coro() else '?')
@@ -2150,7 +2151,7 @@ class App:
             except Exception as e:
                 out["event_loop"] = {"error": str(e)}
 
-            # ── Watki Pythona ─────────────────────────────────────────────────
+            # ── Python threads ─────────────────────────────────────────────────
             try:
                 threads = _th.enumerate()
                 out["threads"] = {
@@ -2160,7 +2161,7 @@ class App:
             except Exception as e:
                 out["threads"] = {"error": str(e)}
 
-            # ── CPU / RAM / procesy (psutil) ──────────────────────────────────
+            # ── CPU / RAM / processes (psutil) ──────────────────────────────────
             # psutil on Windows blocks even with interval=None: cpu_times /
             # process_iter read per-process info from the OS synchronously
             # (looplag stack: cpu_percent -> _proc_info, and process_iter over
