@@ -1,20 +1,20 @@
 """
-relay_controller.py — Kontroler przekaznikow Arduino (SP5IOU SDR220 emulator).
+relay_controller.py — Arduino relay controller (SP5IOU SDR220 emulator).
 
-Komunikuje sie z Arduino przez port szeregowy protokolem tekstowym:
-  SKn  - zalacz przekaznik n (n=0..7)
-  RKn  - wylacz przekaznik n
-  RPK  - status wszystkich przekaznikow (binary)
-  IDN? - identyfikacja
+Talks to the Arduino over a serial port using a text protocol:
+  SKn  - turn relay n on (n=0..7)
+  RKn  - turn relay n off
+  RPK  - status of all relays (binary)
+  IDN? - identification
 
-Obsluguje dwa tryby pracy per przekaznik (skonfigurowane w webapp.py):
-  - "manual"    - toggle on/off (uzytkownik klika, stan sie zmienia)
-  - "momentary" - impuls: zalacz -> czekaj T sekund -> wylacz automatycznie
+Supports two operating modes per relay (configured in webapp.py):
+  - "manual"    - toggle on/off (the user clicks, the state changes)
+  - "momentary" - pulse: turn on -> wait T seconds -> turn off automatically
 
-Bezpieczenstwo:
-  - Max czas impulsu: 10.0s (hardcoded MAX_PULSE_S)
-  - Jesli serwer padnie w trakcie impulsu, timer nie dokonczy - przekaznik
-    zostanie w pozycji ON. Zalecany fail-safe hardware'owy albo watchdog Arduino.
+Safety:
+  - Max pulse duration: 10.0s (hardcoded MAX_PULSE_S)
+  - If the server crashes mid-pulse, the timer won't complete — the relay
+    stays ON. A hardware fail-safe or an Arduino watchdog is recommended.
 """
 
 import asyncio
@@ -27,7 +27,7 @@ RELAY_COUNT = 8
 
 
 class RelayController:
-    """Kontroler przekaznikow przez Arduino UART."""
+    """Relay controller over Arduino UART."""
 
     def __init__(self, port: str, baudrate: int = 9600):
         self.port = port
@@ -39,7 +39,7 @@ class RelayController:
         self._connected = False
 
     async def connect(self) -> bool:
-        """Otwiera port szeregowy. Zwraca True jesli OK."""
+        """Opens the serial port. Returns True on success."""
         try:
             self._serial = serial.Serial(
                 port=self.port,
@@ -47,16 +47,16 @@ class RelayController:
                 timeout=1.0,
                 write_timeout=1.0,
             )
-            # Arduino resetuje sie przy otwarciu portu - poczekaj na boot
+            # The Arduino resets when the port is opened - wait for it to boot
             await asyncio.sleep(2.0)
             self._serial.reset_input_buffer()
             self._connected = True
-            print(f"[relay] Polaczono z Arduino na {self.port} @ {self.baudrate} bps")
-            # Odczytaj poczatkowy stan
+            print(f"[relay] Connected to Arduino on {self.port} @ {self.baudrate} bps")
+            # Read the initial state
             await self.read_all_states()
             return True
         except Exception as e:
-            print(f"[relay] Blad polaczenia z {self.port}: {e}")
+            print(f"[relay] Connection error on {self.port}: {e}")
             self._connected = False
             return False
 
@@ -64,7 +64,7 @@ class RelayController:
         return self._connected and self._serial is not None and self._serial.is_open
 
     async def disconnect(self):
-        # Zatrzymaj wszystkie aktywne pulse taski
+        # Stop all active pulse tasks
         for task in list(self._pulse_tasks.values()):
             task.cancel()
         self._pulse_tasks.clear()
@@ -76,27 +76,27 @@ class RelayController:
         self._connected = False
 
     async def _send_command(self, cmd: str) -> str:
-        """Wysyla komende i odczytuje odpowiedz. Zwraca odpowiedz lub pusty string."""
+        """Sends a command and reads the reply. Returns the reply or an empty string."""
         if not self.is_connected():
             return ""
         async with self._lock:
             try:
-                # Wyslij komende (Arduino oczekuje CR/LF)
+                # Send the command (the Arduino expects CR/LF)
                 self._serial.write((cmd + "\r\n").encode("ascii"))
                 self._serial.flush()
-                # Krotkie czekanie na odpowiedz
+                # Brief wait for the reply
                 await asyncio.sleep(0.05)
                 if self._serial.in_waiting > 0:
                     data = self._serial.read(self._serial.in_waiting)
                     return data.decode("ascii", errors="ignore").strip()
                 return ""
             except Exception as e:
-                print(f"[relay] Blad wysylania '{cmd}': {e}")
+                print(f"[relay] Error sending '{cmd}': {e}")
                 self._connected = False
                 return ""
 
     async def set_on(self, relay_num: int) -> bool:
-        """Zalacz przekaznik (SKn)."""
+        """Turn a relay on (SKn)."""
         if not 0 <= relay_num < RELAY_COUNT:
             return False
         await self._send_command(f"SK{relay_num}")
@@ -104,7 +104,7 @@ class RelayController:
         return True
 
     async def set_off(self, relay_num: int) -> bool:
-        """Wylacz przekaznik (RKn)."""
+        """Turn a relay off (RKn)."""
         if not 0 <= relay_num < RELAY_COUNT:
             return False
         await self._send_command(f"RK{relay_num}")
@@ -112,7 +112,7 @@ class RelayController:
         return True
 
     async def toggle(self, relay_num: int) -> bool:
-        """Zmien stan przekaznika na przeciwny."""
+        """Flip a relay's state."""
         if not 0 <= relay_num < RELAY_COUNT:
             return False
         if self._states[relay_num]:
@@ -121,12 +121,12 @@ class RelayController:
             return await self.set_on(relay_num)
 
     async def pulse(self, relay_num: int, duration_s: float) -> bool:
-        """Impuls: zalacz, poczekaj, wylacz. Anuluje poprzedni pulse jesli istnieje.
-        Zabezpieczenie: duration_s clampowane do <0, MAX_PULSE_S>."""
+        """Pulse: turn on, wait, turn off. Cancels a previous pulse if one exists.
+        Safety: duration_s is clamped to <0, MAX_PULSE_S>."""
         if not 0 <= relay_num < RELAY_COUNT:
             return False
         duration_s = max(0.0, min(MAX_PULSE_S, float(duration_s)))
-        # Anuluj poprzedni pulse task dla tego przekaznika
+        # Cancel any previous pulse task for this relay
         prev = self._pulse_tasks.pop(relay_num, None)
         if prev and not prev.done():
             prev.cancel()
@@ -137,7 +137,7 @@ class RelayController:
                 await asyncio.sleep(duration_s)
                 await self.set_off(relay_num)
             except asyncio.CancelledError:
-                # W przypadku anulowania - wylacz na wszelki wypadek
+                # If cancelled - turn off just in case
                 await self.set_off(relay_num)
                 raise
 
@@ -146,23 +146,23 @@ class RelayController:
         return True
 
     async def read_all_states(self) -> list[bool]:
-        """Odczytaj stan wszystkich przekaznikow z Arduino (RPK)."""
+        """Read the state of all relays from the Arduino (RPK)."""
         resp = await self._send_command("RPK")
-        # Arduino zwraca binarny string np. "10110000" (bit 0 = REL0)
-        # Format moze zawierac dodatkowe znaki "String: RPK\r\n10110000"
+        # The Arduino returns a binary string, e.g. "10110000" (bit 0 = REL0)
+        # The format may include extra characters: "String: RPK\r\n10110000"
         if resp:
-            # Znajdz ciag 8 znakow 0/1
+            # Find a run of 8 '0'/'1' characters
             for line in resp.split("\n"):
                 line = line.strip()
                 if len(line) >= 8 and all(c in "01" for c in line[-8:]):
                     bits = line[-8:]
-                    # LSB first w SDR220: bit 0 = REL0
+                    # LSB first in the SDR220: bit 0 = REL0
                     self._states = [bits[7 - i] == "1" for i in range(RELAY_COUNT)]
                     break
         return list(self._states)
 
     def get_states(self) -> list[bool]:
-        """Zwroc aktualny cache stanow (bez zapytania Arduino)."""
+        """Return the current cached states (without querying the Arduino)."""
         return list(self._states)
 
     def get_state(self, relay_num: int) -> bool:
@@ -172,7 +172,7 @@ class RelayController:
 
 
 def list_serial_ports() -> list[dict]:
-    """Zwroc liste dostepnych portow szeregowych (do UI konfiguracji)."""
+    """Return the list of available serial ports (for the config UI)."""
     ports = []
     for p in serial.tools.list_ports.comports():
         ports.append({

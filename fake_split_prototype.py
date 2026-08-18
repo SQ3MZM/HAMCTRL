@@ -1,71 +1,74 @@
 #!/usr/bin/env python3
 """
-fake_split_prototype.py — PROTOTYP Fake Split (Rig Split) dla FT8/FT4.
+fake_split_prototype.py — Fake Split (Rig Split) PROTOTYPE for FT8/FT4.
 
-⚠ TO JEST PROTOTYP Z SYMULACJA — NIE dotyka radia. Sluzy do WERYFIKACJI
-logiki (czy czestotliwosc w eterze sie zgadza) ZANIM wepniemy to w tor TX.
+⚠ THIS IS A SIMULATION PROTOTYPE — it does NOT touch the radio. It exists
+to VERIFY the logic (does the resulting on-air frequency check out)
+BEFORE wiring this into the TX chain.
 
-═══ PROBLEM (obserwacja Toma: moc < ustawiona, ALC skacze) ═══
-Filtr SSB radia przepuszcza ~0-3000 Hz audio, ale ma SLABE zbocza przy
-krawedziach (blisko 0 Hz i 3000 Hz). Jesli nadajesz FT8 z offsetem audio
-blisko krawedzi (np. 300 Hz albo 2700 Hz), filtr TLUMI sygnal -> moc spada,
-pojawiaja sie splattery/harmoniczne. Najczystsze jest ~1500 Hz (srodek filtra).
+═══ PROBLEM (transmit power below the set value, ALC fluctuates) ═══
+The radio's SSB filter passes roughly 0-3000 Hz of audio, but rolls off
+weakly near the edges (close to 0 Hz and 3000 Hz). If FT8 is transmitted
+with an audio offset near the edge (e.g. 300 Hz or 2700 Hz), the filter
+ATTENUATES the signal -> power drops, splatter/harmonics appear. The
+cleanest point is ~1500 Hz (the center of the filter).
 
-═══ ROZWIAZANIE (Fake Split) ═══
-Zamiast nadawac audio blisko krawedzi, PRZESUWAMY VFO radia tak, zeby audio
-bylo ~1500 Hz, a suma (VFO + audio) dawala DOKLADNIE te sama czestotliwosc
-w eterze. Po nadaniu VFO wraca na pozycje bazowa (dla RX).
+═══ SOLUTION (Fake Split) ═══
+Instead of transmitting audio near the edge, we SHIFT the radio's VFO so
+the audio ends up at ~1500 Hz, while the sum (VFO + audio) still lands on
+EXACTLY the same on-air frequency. After transmitting, the VFO returns to
+its base position (for RX).
 
-KLUCZOWA ZASADA (niezmiennik):
-    freq_eteru = VFO_dial + audio_offset   (musi byc STALA przed i po split)
+KEY INVARIANT:
+    on_air_freq = VFO_dial + audio_offset   (must stay CONSTANT before and after the split)
 
-Przyklad: chcesz nadac na 14074000 + 2700 Hz audio = 14076700 Hz w eterze.
-  Bez split: VFO=14074000, audio=2700 (blisko krawedzi -> tlumienie, mala moc)
-  Ze split:  VFO=14075200, audio=1500 (srodek filtra -> pelna moc)
-             sprawdzenie: 14075200 + 1500 = 14076700 ✓ ta sama czestotliwosc
+Example: you want to transmit at 14074000 + 2700 Hz audio = 14076700 Hz on air.
+  Without split: VFO=14074000, audio=2700 (near the edge -> attenuation, low power)
+  With split:    VFO=14075200, audio=1500 (center of the filter -> full power)
+                 check: 14075200 + 1500 = 14076700 ✓ same frequency
 
-WAZNE (bezpieczenstwo): audio MUSI zostac w pasmie filtra (klamrujemy do
-bezpiecznego zakresu), a VFO nie moze wyjsc poza pasmo amatorskie (to
-sprawdza wyzsza warstwa — tu tylko liczymy offsety).
+IMPORTANT (safety): audio MUST stay within the filter passband (clamped to
+a safe range), and the VFO must not go outside the amateur band (checked
+by a higher layer — this module only computes the offsets).
 """
 
-# Docelowy srodek filtra SSB (najczystszy punkt)
+# Target center of the SSB filter (the cleanest point)
 TARGET_AUDIO_HZ = 1500.0
 
-# Bezpieczny zakres audio (w pasmie filtra, z dala od krawedzi)
+# Safe audio range (within the filter passband, away from the edges)
 AUDIO_MIN_HZ = 300.0
 AUDIO_MAX_HZ = 2700.0
 
-# VFO przesuwamy blokami (jak oryginal — 500 Hz), zeby uniknac ciaglego
-# strojenia CI-V (radio nie nadaza na plynne zmiany). Blokowe = kilka
-# dyskretnych krokow.
+# The VFO is shifted in blocks (as in the original — 500 Hz), to avoid
+# continuous CI-V tuning (the radio can't keep up with smooth changes).
+# Block-wise = a handful of discrete steps.
 VFO_STEP_HZ = 500.0
 
 
 def compute_fake_split(dial_hz, desired_audio_hz):
     """
-    Oblicza Fake Split dla zadanej czestotliwosci audio.
+    Computes the Fake Split for a given audio frequency.
 
-    Wejscie:
-      dial_hz          — aktualna czestotliwosc VFO (dial) radia, Hz
-      desired_audio_hz — offset audio ktory user chce (gdzie w pasmie nadac)
+    Input:
+      dial_hz          — the radio's current VFO (dial) frequency, Hz
+      desired_audio_hz — the audio offset the user wants (where in the band to transmit)
 
-    Zwraca dict:
-      on_air_hz     — czestotliwosc w eterze (niezmiennik, ma byc zachowana)
-      split_needed  — czy split jest potrzebny (audio blisko krawedzi?)
-      new_dial_hz   — na jaka czestotliwosc ustawic VFO (blokowo)
-      new_audio_hz  — jaki offset audio uzyc (blizej 1500 Hz)
-      restore_dial_hz — na co przywrocic VFO po nadaniu (= dial_hz)
+    Returns a dict:
+      on_air_hz     — the on-air frequency (invariant, must be preserved)
+      split_needed  — whether a split is needed (audio near the edge?)
+      new_dial_hz   — what frequency to set the VFO to (block-wise)
+      new_audio_hz  — what audio offset to use (closer to 1500 Hz)
+      restore_dial_hz — what to restore the VFO to after transmitting (= dial_hz)
 
-    Niezmiennik: new_dial_hz + new_audio_hz == on_air_hz (dokladnie).
+    Invariant: new_dial_hz + new_audio_hz == on_air_hz (exactly).
     """
     on_air_hz = dial_hz + desired_audio_hz
 
-    # Czy audio jest w bezpiecznej strefie? Jesli tak — split zbedny.
+    # Is the audio already in a safe zone? If so — no split needed.
     if AUDIO_MIN_HZ <= desired_audio_hz <= AUDIO_MAX_HZ:
-        # Audio juz w dobrym miejscu, ale sprawdzmy czy warto przyblizyc do 1500.
-        # Robimy split tylko gdy audio jest blisko krawedzi (ponizej ~600 lub
-        # powyzej ~2400) — w srodku pasma nie ma sensu ruszac VFO.
+        # Audio is already fine, but check whether it's worth nudging closer
+        # to 1500. We only split when audio is near an edge (below ~600 or
+        # above ~2400) — no point moving the VFO in the middle of the band.
         if 600.0 <= desired_audio_hz <= 2400.0:
             return {
                 "on_air_hz": on_air_hz,
@@ -75,13 +78,13 @@ def compute_fake_split(dial_hz, desired_audio_hz):
                 "restore_dial_hz": dial_hz,
             }
 
-    # Split potrzebny: chcemy audio ~1500 Hz. Przesuwamy VFO o roznice,
-    # ale BLOKOWO (wielokrotnosc VFO_STEP_HZ), zeby CI-V nadazyl.
-    raw_shift = desired_audio_hz - TARGET_AUDIO_HZ  # ile audio jest od 1500
-    # Zaokraglij przesuniecie VFO do bloku 500 Hz:
+    # Split needed: we want audio at ~1500 Hz. Shift the VFO by the
+    # difference, but BLOCK-WISE (a multiple of VFO_STEP_HZ) so CI-V can keep up.
+    raw_shift = desired_audio_hz - TARGET_AUDIO_HZ  # how far audio is from 1500
+    # Round the VFO shift to a 500 Hz block:
     vfo_shift = round(raw_shift / VFO_STEP_HZ) * VFO_STEP_HZ
     new_dial_hz = dial_hz + vfo_shift
-    # audio = to co zostaje, zeby suma dala niezmiennik:
+    # audio = whatever's left so the sum preserves the invariant:
     new_audio_hz = on_air_hz - new_dial_hz
 
     return {
@@ -94,7 +97,7 @@ def compute_fake_split(dial_hz, desired_audio_hz):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# SYMULACJA / TESTY — udowadniamy ze niezmiennik jest zachowany
+# SIMULATION / TESTS — proving the invariant holds
 # ════════════════════════════════════════════════════════════════════════════
 def _run_tests():
     passed = failed = 0
@@ -107,61 +110,61 @@ def _run_tests():
             failed += 1
             print(f"  FAIL: {name}")
 
-    print("═══ Symulacja Fake Split ═══\n")
+    print("═══ Fake Split Simulation ═══\n")
 
     scenarios = [
-        # (dial, desired_audio, opis)
-        (14074000, 2700, "FT8 20m, audio przy GORNEJ krawedzi (2700)"),
-        (14074000, 300,  "FT8 20m, audio przy DOLNEJ krawedzi (300)"),
-        (14074000, 1500, "FT8 20m, audio juz w srodku (1500) — split zbedny"),
-        (7074000,  2900, "FT8 40m, audio bardzo blisko krawedzi (2900)"),
-        (14074000, 1000, "FT8 20m, audio 1000 (w strefie, split zbedny)"),
-        (3573000,  200,  "FT8 80m, audio bardzo nisko (200)"),
+        # (dial, desired_audio, description)
+        (14074000, 2700, "FT8 20m, audio at the UPPER edge (2700)"),
+        (14074000, 300,  "FT8 20m, audio at the LOWER edge (300)"),
+        (14074000, 1500, "FT8 20m, audio already centered (1500) — split unnecessary"),
+        (7074000,  2900, "FT8 40m, audio very close to the edge (2900)"),
+        (14074000, 1000, "FT8 20m, audio 1000 (in-zone, split unnecessary)"),
+        (3573000,  200,  "FT8 80m, audio very low (200)"),
     ]
 
     for dial, audio, desc in scenarios:
         r = compute_fake_split(dial, audio)
-        # NIEZMIENNIK: suma musi rownac sie czestotliwosci w eterze
+        # INVARIANT: the sum must equal the on-air frequency
         recomputed = r["new_dial_hz"] + r["new_audio_hz"]
         invariant_ok = abs(recomputed - r["on_air_hz"]) < 0.001
-        check(invariant_ok, f"Niezmiennik freq: {desc}")
+        check(invariant_ok, f"Frequency invariant: {desc}")
 
         print(f"  {desc}")
-        print(f"    eter:      {r['on_air_hz']:.0f} Hz (dial {dial} + audio {audio})")
+        print(f"    on air:    {r['on_air_hz']:.0f} Hz (dial {dial} + audio {audio})")
         if r["split_needed"]:
             print(f"    SPLIT:     VFO {dial} -> {r['new_dial_hz']:.0f}, "
                   f"audio {audio} -> {r['new_audio_hz']:.0f} Hz")
-            print(f"    sprawdzam: {r['new_dial_hz']:.0f} + {r['new_audio_hz']:.0f} "
-                  f"= {recomputed:.0f} Hz {'✓' if invariant_ok else '✗ BLAD!'}")
-            print(f"    po TX VFO wraca na: {r['restore_dial_hz']:.0f}")
-            # audio po splicie powinno byc blizej 1500 niz oryginal
+            print(f"    check:     {r['new_dial_hz']:.0f} + {r['new_audio_hz']:.0f} "
+                  f"= {recomputed:.0f} Hz {'✓' if invariant_ok else '✗ ERROR!'}")
+            print(f"    after TX, VFO returns to: {r['restore_dial_hz']:.0f}")
+            # audio after the split should be closer to 1500 than the original
             closer = abs(r["new_audio_hz"] - 1500) <= abs(audio - 1500)
-            check(closer, f"Audio blizej srodka: {desc}")
-            print(f"    audio blizej srodka 1500: {'TAK' if closer else 'NIE'}")
+            check(closer, f"Audio closer to center: {desc}")
+            print(f"    audio closer to center 1500: {'YES' if closer else 'NO'}")
         else:
-            print(f"    split zbedny (audio {audio} juz w dobrej strefie)")
+            print(f"    split unnecessary (audio {audio} already in a good zone)")
         print()
 
-    # Test brzegowy: audio dokladnie 1500 -> split zbedny, nic sie nie zmienia
+    # Edge case: audio exactly 1500 -> split unnecessary, nothing changes
     r = compute_fake_split(14074000, 1500)
-    check(not r["split_needed"], "Audio=1500 -> split zbedny")
-    check(r["new_dial_hz"] == 14074000, "Audio=1500 -> VFO bez zmian")
+    check(not r["split_needed"], "Audio=1500 -> split unnecessary")
+    check(r["new_dial_hz"] == 14074000, "Audio=1500 -> VFO unchanged")
 
-    # Test: po splicie audio ZAWSZE w bezpiecznym pasmie filtra
+    # Test: after the split, audio is ALWAYS within the filter's safe passband
     for dial, audio, _ in scenarios:
         r = compute_fake_split(dial, audio)
         if r["split_needed"]:
             in_band = AUDIO_MIN_HZ <= r["new_audio_hz"] <= AUDIO_MAX_HZ
-            check(in_band, f"Audio po splicie w pasmie ({r['new_audio_hz']:.0f}Hz)")
+            check(in_band, f"Audio in-band after split ({r['new_audio_hz']:.0f}Hz)")
 
     print("═" * 50)
     total = passed + failed
     if failed == 0:
-        print(f"  WYNIK: {passed}/{total} — LOGIKA POPRAWNA ✓")
-        print("  Niezmiennik czestotliwosci zachowany. Audio zawsze w pasmie.")
-        print("  Mozna rozwazyc wpiecie w tor TX (za zgoda Toma).")
+        print(f"  RESULT: {passed}/{total} — LOGIC CORRECT ✓")
+        print("  Frequency invariant holds. Audio always in-band.")
+        print("  Safe to consider wiring into the TX chain.")
     else:
-        print(f"  WYNIK: {passed}/{total} — {failed} BLEDOW ✗")
+        print(f"  RESULT: {passed}/{total} — {failed} FAILURES ✗")
     print("═" * 50)
     return failed == 0
 

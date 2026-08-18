@@ -1,20 +1,21 @@
 """
-Etap 2 (FT4): Demodulacja - z audio + pozycji kandydata (freq_hz,
-time_offset_s) wyciagamy 103 symbole (twarda decyzja) oraz 174 miekkie
-LLR-y (do pelnego LDPC belief-propagation pozniej).
+Stage 2 (FT4): Demodulation - from audio + a candidate position (freq_hz,
+time_offset_s) we extract 103 symbols (hard decision) and 174 soft LLRs
+(for full LDPC belief-propagation later).
 
-Mapowanie bit<->symbol: 103 symbole zawieraja 4x4=16 symboli synchronizacji
-Costas (ignorowane przy dekodowaniu danych) + 87 symboli danych. Kazdy
-symbol danych koduje GRAY-mapped 2 bity z 174-bitowego kodu LDPC(174,91).
-Zgodne z naszym enkoderem (ft4_encoder.py): _GRAYMAP_FT4 i ulozenie 4x
-Costas na pozycjach [0:4], [33:37], [66:70], [99:103].
+Bit<->symbol mapping: the 103 symbols contain 4x4=16 Costas sync symbols
+(ignored when decoding data) + 87 data symbols. Each data symbol encodes 2
+Gray-mapped bits from the 174-bit LDPC(174,91) code. Matches our encoder
+(ft4_encoder.py): _GRAYMAP_FT4 and the 4x Costas placement at positions
+[0:4], [33:37], [66:70], [99:103].
 """
 import numpy as np
 from params_ft4 import (SAMPLE_RATE, SAMPLES_PER_SYMBOL, N_TONES,
                          COSTAS_PATTERNS, COSTAS_POS, N_SYM, TONE_SPACING,
                          GRAYMAP, INV_GRAYMAP)
 
-# Pozycje symboli danych w 103-symbolowej ramce (po pominieciu 4x4=16 Costas):
+# Positions of data symbols in the 103-symbol frame (after removing the
+# 4x4=16 Costas symbols):
 # symbols103 = C1[0:4] + data[0:29] + C2[33:37] + data[29:58] + C3[66:70] +
 #              data[58:87] + C4[99:103]
 DATA_SYM_INDICES = (list(range(4, 33)) + list(range(37, 66)) + list(range(70, 99)))
@@ -23,26 +24,27 @@ assert len(DATA_SYM_INDICES) == 87
 
 def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
     """
-    Dla danej pozycji (freq_hz = czestotliwosc tonu 0, time_offset_s =
-    poczatek pierwszego symbolu), wyciaga macierz mocy [103 symboli x 4 tony]
-    poprzez korelacje z czystymi tonami (FFT na kazdym oknie symbolu).
+    For a given position (freq_hz = frequency of tone 0, time_offset_s =
+    start of the first symbol), extracts the power matrix [103 symbols x 4
+    tones] via correlation with pure tones (FFT on each symbol window).
 
-    ZWEKTORYZOWANE (w odroznieniu od FT8's demod.py, ktore uzywa prostej
-    petli Pythona z osobnym FFT na kazdy symbol): dla FT4 ta funkcja jest
-    wywolywana ~1500x w pojedynczym refine_sync() (siatka freq x time), a
-    sama petla nieZwektoryzowana zajmowala ~8s na wywolanie decode_window —
-    zbyt wolno wzgledem 7.5s okna FT4. Tutaj budujemy macierz wszystkich 103
-    segmentow naraz i robimy JEDNO wsadowe FFT (axis=1), zamiast 103 osobnych
-    wywolan np.fft.rfft. Wynik numerycznie identyczny z wersja petlowa.
+    VECTORIZED (unlike FT8's demod.py, which uses a plain Python loop with
+    a separate FFT per symbol): for FT4 this function is called ~1500x
+    within a single refine_sync() (the freq x time grid), and the
+    non-vectorized loop version took ~8s per decode_window call — too slow
+    relative to FT4's 7.5s window. Here we build the matrix of all 103
+    segments at once and do ONE batched FFT (axis=1), instead of 103
+    separate np.fft.rfft calls. Result is numerically identical to the
+    loop-based version.
     """
     start_sample = int(round(time_offset_s * SAMPLE_RATE))
     n = SAMPLES_PER_SYMBOL
     nfft = n * 4
     window = np.hanning(n)
 
-    # Zbuduj macierz segmentow [N_SYM x n], z zerowym wypelnieniem dla
-    # symboli wykraczajacych poza dostepne audio (identyczne zachowanie co
-    # wersja petlowa: power[sym,:]=0 dla takich pozycji)
+    # Build the matrix of segments [N_SYM x n], zero-filled for symbols
+    # falling outside the available audio (same behavior as the loop
+    # version: power[sym,:]=0 for such positions)
     segs = np.zeros((N_SYM, n), dtype=np.float64)
     valid = np.ones(N_SYM, dtype=bool)
     for sym in range(N_SYM):
@@ -53,14 +55,14 @@ def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
             continue
         segs[sym] = audio[s0:s1]
 
-    segs *= window[None, :]  # okno Hanninga na kazdym wierszu naraz
+    segs *= window[None, :]  # Hann window applied to every row at once
 
-    # JEDNO wsadowe FFT zamiast 103 osobnych wywolan
+    # ONE batched FFT instead of 103 separate calls
     spec = np.fft.rfft(segs, n=nfft, axis=1)  # (N_SYM, nfft//2+1)
     freqs = np.fft.rfftfreq(nfft, d=1.0 / SAMPLE_RATE)
 
-    # Indeksy binow dla 4 tonow sa identyczne dla wszystkich symboli (zalezy
-    # tylko od freq_hz), wiec licz raz, nie w petli
+    # Bin indices for the 4 tones are the same for every symbol (they only
+    # depend on freq_hz), so compute them once, not in the loop
     tone_idx = np.array([np.argmin(np.abs(freqs - (freq_hz + tone * TONE_SPACING)))
                           for tone in range(N_TONES)])
 
@@ -70,9 +72,9 @@ def extract_tone_power(audio, freq_hz, time_offset_s, freq_osr=2):
 
 
 def costas_sync_quality(power):
-    """Mierzy jak dobrze symbole na pozycjach Costas pasuja do WLASCIWEGO
-    wzorca KAZDEGO bloku (rozne wzorce na roznych pozycjach, w odroznieniu
-    od FT8 gdzie to ten sam wzorzec wszedzie)."""
+    """Measures how well the symbols at the Costas positions match EACH
+    block's OWN pattern (different patterns at different positions, unlike
+    FT8 where it's the same pattern everywhere)."""
     correct = 0
     total = 0
     for offset, pattern in zip(COSTAS_POS, COSTAS_PATTERNS):
@@ -88,15 +90,15 @@ def costas_sync_quality(power):
 
 
 def hard_decode_symbols(power):
-    """Zwraca 103 wartosci tonow (0-3) przez twarda decyzje (argmax)."""
+    """Returns 103 tone values (0-3) via a hard decision (argmax)."""
     return np.argmax(power, axis=1)
 
 
 def extract_bits174(power):
     """
-    Z macierzy mocy [103 x 4] wyciaga 174 twarde bity kodu LDPC (PRZED
-    de-scramblingiem), uzywajac DOKLADNIE tej samej tabeli Gray co enkoder
-    (odwroconej, 2 bity/symbol zamiast 3).
+    From the power matrix [103 x 4], extracts 174 hard LDPC code bits
+    (BEFORE de-scrambling), using EXACTLY the same Gray table as the
+    encoder (inverted, 2 bits/symbol instead of 3).
     """
     tones = hard_decode_symbols(power)
     bits = []
@@ -111,13 +113,13 @@ def extract_bits174(power):
 
 def extract_llr174(power):
     """
-    Z macierzy mocy [103 x 4] liczy miekkie LLR dla 174 bitow LDPC (PRZED
-    de-scramblingiem — scrambling odwracamy dopiero PO LDPC decode, na
-    poziomie bitow planiteksu, analogicznie jak w ft4_encoder.py gdzie
-    scrambling jest stosowany PRZED CRC/LDPC encode).
+    From the power matrix [103 x 4], computes soft LLRs for the 174 LDPC
+    bits (BEFORE de-scrambling — the scrambling is only undone AFTER LDPC
+    decode, at the plaintext-bits level, mirroring ft4_encoder.py where
+    scrambling is applied BEFORE the CRC/LDPC encode).
 
-    Identyczna metoda max-log-MAP co FT8, dostosowana do 2 bitow/symbol
-    (4 tony) zamiast 3 bitow/symbol (8 tonow).
+    Same max-log-MAP method as FT8, adapted for 2 bits/symbol (4 tones)
+    instead of 3 bits/symbol (8 tones).
     """
     llrs = []
     tone_to_bits = {}
@@ -145,21 +147,21 @@ def refine_sync(audio, freq_hz, time_offset_s,
                  freq_search_hz=12.0, freq_step_hz=3.0,
                  time_search_s=0.03, time_step_s=0.006):
     """
-    Dopracowuje pozycje kandydata przez lokalne przeszukanie, maksymalizujac
-    jakosc dopasowania 4x Costas.
+    Refines a candidate's position via a local search, maximizing the
+    quality of the 4x Costas match.
 
-    Zakresy domyslne sa CELOWO WASKIE: ograniczone do ok. +-1 kroku siatki
-    nadpróbkowania z find_candidates() (freq_osr=2 -> krok ~10.4Hz,
-    time_osr=2 -> krok ~24ms), bo sync_ft4.find_candidates juz dziala na
-    nadprobkowanej siatce i typowo trafia bardzo blisko prawdziwej pozycji.
-    Testy (sesja 2026-06-21) pokazaly: ta waska siatka (99 iteracji zamiast
-    1558 dla szerszej siatki ~FT8-stylu) nadal daje sync_quality=1.0 i
-    >=100/103 poprawnych symboli nawet z dodanym szumem — pozostale do 3
-    bledy sa i tak korygowane przez LDPC belief propagation. To ~15x
-    przyspieszenie jest KONIECZNE zeby decode_window zmiescilo sie w oknie
-    7.5s FT4 przy wielu jednoczesnych kandydatach w pasmie (w odroznieniu
-    od FT8, gdzie 15s okno daje wiekszy margines czasowy).
-    Zwraca (best_freq, best_time, best_power, best_quality).
+    The default ranges are DELIBERATELY NARROW: limited to roughly +-1
+    oversampling grid step from find_candidates() (freq_osr=2 -> ~10.4Hz
+    step, time_osr=2 -> ~24ms step), because sync_ft4.find_candidates
+    already runs on an oversampled grid and typically lands very close to
+    the true position. Testing showed: this narrow grid (99 iterations
+    instead of 1558 for a wider, FT8-style grid) still gives
+    sync_quality=1.0 and >=100/103 correct symbols even with added noise —
+    the remaining up to 3 errors get corrected by LDPC belief propagation
+    anyway. This ~15x speedup is NECESSARY for decode_window to fit within
+    FT4's 7.5s window with many simultaneous candidates in the band
+    (unlike FT8, where the 15s window gives more time margin).
+    Returns (best_freq, best_time, best_power, best_quality).
     """
     best_quality = -1
     best_freq = freq_hz
