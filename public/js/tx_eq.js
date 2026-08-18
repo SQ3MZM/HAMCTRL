@@ -1,37 +1,37 @@
 /*
- * tx_eq.js — Per-user TX microphone EQ z presetami i lokalnym odsluchem.
+ * tx_eq.js — Per-user TX microphone EQ with presets and local monitoring.
  *
- * Funkcjonalnosc:
- *  - Presety: default/dark/bright/dx/ragchew/flat/custom
- *  - Custom EQ: 5 pasm (bass/mud/clarity/punch/air) z suwakami
- *  - Lokalny odsluch (monitor) — przepuszcza mikrofon przez EQ i odtwarza
- *    w sluchawkach, bez nadawania przez radio
- *  - Zapis ustawien per-user w localStorage (klucz: txEq_<user_id>)
+ * Features:
+ *  - Presets: default/dark/bright/dx/ragchew/flat/custom
+ *  - Custom EQ: 5 bands (bass/mud/clarity/punch/air) with sliders
+ *  - Local monitoring — runs the microphone through the EQ and plays it
+ *    back in headphones, without transmitting via the radio
+ *  - Per-user settings saved in localStorage (key: txEq_<user_id>)
  *
- * Integracja z _txMic w ws.js:
- *  - _txMic uzywa TxEq.getCurrentBands() do skonfigurowania filtrow w peer connection
- *  - Zmiana presetu/suwaka aktualizuje na zywo gain.value wszystkich filtrow
- *    (zarowno w TX peer connection jak i w monitorze)
+ * Integration with _txMic in ws.js:
+ *  - _txMic uses TxEq.getCurrentBands() to configure the filters in the peer connection
+ *  - Changing the preset/slider updates gain.value live on all filters
+ *    (both in the TX peer connection and in the monitor)
  */
 window.TxEq = (() => {
-  // Domyslne presety - oparte na rekomendacjach Heil/Yaesu dla SSB
-  // Wartości celowo mocno zroznicowane zeby uslyszec efekt w odsluchu
+  // Default presets - based on Heil/Yaesu recommendations for SSB
+  // Values are deliberately strongly differentiated so the effect is audible in the monitor
   const PRESETS = {
     default: { bass: -3, mud: -5, clarity: 6, punch: 8, air: 3 },
-    dark:    { bass: -10, mud: -8, clarity: 10, punch: 12, air: 6 }, // dla ciemnego/grubego glosu - MAX klarownosc
-    bright:  { bass: 2,  mud: -1, clarity: 0, punch: 2,  air: -3 }, // dla jasnego glosu - CIEMNIEJ
+    dark:    { bass: -10, mud: -8, clarity: 10, punch: 12, air: 6 }, // for a dark/heavy voice - MAX clarity
+    bright:  { bass: 2,  mud: -1, clarity: 0, punch: 2,  air: -3 }, // for a bright voice - DARKER
     dx:      { bass: -10, mud: -8, clarity: 8, punch: 12, air: 5 }, // DX/contest - hard punch
-    ragchew: { bass: 0,  mud: -2, clarity: 2, punch: 3,  air: 1 }, // naturalny, plaski
-    flat:    { bass: 0,  mud: 0,  clarity: 0, punch: 0,  air: 0 }, // bez EQ - do porownania
+    ragchew: { bass: 0,  mud: -2, clarity: 2, punch: 3,  air: 1 }, // natural, flat
+    flat:    { bass: 0,  mud: 0,  clarity: 0, punch: 0,  air: 0 }, // no EQ - for comparison
     custom:  { bass: -3, mud: -5, clarity: 6, punch: 8, air: 3 },
   };
 
   let currentBands = { ...PRESETS.default };
   let currentPreset = 'default';
 
-  // Filtry uzywane przez TX peer connection (ustawiane przez _txMic)
+  // Filters used by the TX peer connection (set by _txMic)
   let txFilters = null;
-  // Filtry uzywane przez monitor (lokalny odsluch)
+  // Filters used by the monitor (local listening)
   let monitorFilters = null;
   let monitorStream = null;
   let monitorActive = false;
@@ -51,10 +51,10 @@ window.TxEq = (() => {
       const obj = JSON.parse(raw);
       if (obj.preset && PRESETS[obj.preset]) currentPreset = obj.preset;
       if (obj.bands) currentBands = { ...currentBands, ...obj.bands };
-    } catch(e) { console.warn('[txeq] load blad:', e); }
+    } catch(e) { console.warn('[txeq] load error:', e); }
   }
 
-  // Ladowanie z backendu — nadpisuje localStorage jesli serwer ma nowsze dane
+  // Load from the backend — overwrites localStorage if the server has newer data
   async function loadFromServer() {
     try {
       const r = await fetch('/api/user/tx_eq', { credentials: 'include' });
@@ -67,16 +67,16 @@ window.TxEq = (() => {
         if (data.tx_eq.bands) {
           currentBands = { ...currentBands, ...data.tx_eq.bands };
         }
-        // Cache lokalnie po zaladowaniu z serwera
+        // Cache locally after loading from the server
         localStorage.setItem(storageKey(), JSON.stringify({
           preset: currentPreset, bands: currentBands,
         }));
         _applyToFilters(txFilters);
         _applyToFilters(monitorFilters);
         _refreshUiSliders();
-        console.log('[txeq] Zaladowano ustawienia z serwera:', currentPreset);
+        console.log('[txeq] Loaded settings from server:', currentPreset);
       }
-    } catch(e) { console.warn('[txeq] loadFromServer blad:', e); }
+    } catch(e) { console.warn('[txeq] loadFromServer error:', e); }
   }
 
   let _saveTimeout = null;
@@ -84,7 +84,7 @@ window.TxEq = (() => {
     try {
       const payload = { preset: currentPreset, bands: currentBands };
       localStorage.setItem(storageKey(), JSON.stringify(payload));
-      // Debounced save do serwera (nie spamuj przy przesuwaniu suwaka)
+      // Debounced save to the server (don't spam while dragging a slider)
       if (_saveTimeout) clearTimeout(_saveTimeout);
       _saveTimeout = setTimeout(() => {
         fetch('/api/user/tx_eq', {
@@ -92,12 +92,12 @@ window.TxEq = (() => {
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-        }).catch(e => console.warn('[txeq] serwer save blad:', e));
+        }).catch(e => console.warn('[txeq] server save error:', e));
       }, 800);
-    } catch(e) { console.warn('[txeq] save blad:', e); }
+    } catch(e) { console.warn('[txeq] save error:', e); }
   }
 
-  // ── Aktualizacja filtrow (wywolywane przy zmianie ustawien) ──────────────
+  // ── Update filters (called when settings change) ─────────────────────────
   function _applyToFilters(filters) {
     if (!filters) return;
     if (filters.bass)    filters.bass.gain.value    = currentBands.bass;
@@ -137,7 +137,7 @@ window.TxEq = (() => {
   function setBand(band, value) {
     if (!(band in currentBands)) return;
     currentBands[band] = value;
-    currentPreset = 'custom'; // recznie -> przelacz na custom
+    currentPreset = 'custom'; // manual change -> switch to custom
     PRESETS.custom = { ...currentBands };
     _applyToFilters(txFilters);
     _applyToFilters(monitorFilters);
@@ -150,8 +150,8 @@ window.TxEq = (() => {
     save();
   }
 
-  // Tworzy lancuch filtrow (uzywany przez _txMic i monitor)
-  // Zwraca { input, output, filters: {bass, mud, clarity, punch, air} }
+  // Builds the filter chain (used by _txMic and the monitor)
+  // Returns { input, output, filters: {bass, mud, clarity, punch, air} }
   function buildFilterChain(ctx) {
     const rumble = ctx.createBiquadFilter();
     rumble.type = 'highpass';
@@ -215,11 +215,11 @@ window.TxEq = (() => {
     };
   }
 
-  // Wywolywane przez _txMic gdy buduje peer connection
+  // Called by _txMic when it builds the peer connection
   function registerTxFilters(filters) { txFilters = filters; }
   function unregisterTxFilters() { txFilters = null; }
 
-  // ── Monitor (lokalny odsluch) ────────────────────────────────────────────
+  // ── Monitor (local listening) ────────────────────────────────────────────
   async function startMonitor() {
     console.log('[txeq] startMonitor called, monitorActive=', monitorActive);
     if (monitorActive) return;
@@ -227,20 +227,20 @@ window.TxEq = (() => {
       window.UI?.showToast(I18n.t('profile_toast_mic_unavailable'), 'error');
       return;
     }
-    console.log('[txeq] proszę o mikrofon...');
+    console.log('[txeq] requesting microphone...');
     try {
-      // Najpierw pokaż wszystkie dostępne mikrofony
+      // First show all available microphones
       const devs = await navigator.mediaDevices.enumerateDevices();
       const inputs = devs.filter(d => d.kind === 'audioinput');
-      console.log('[txeq] === Dostepne mikrofony ===');
+      console.log('[txeq] === Available microphones ===');
       inputs.forEach(d => {
-        console.log(`[txeq]   ${d.label || '(brak nazwy)'} [${d.deviceId.substring(0,16)}...]`);
+        console.log(`[txeq]   ${d.label || '(no name)'} [${d.deviceId.substring(0,16)}...]`);
       });
 
       const savedMic = localStorage.getItem('ham_monitor_micId');
 
-      // Auto-wybor: unikaj wirtualnych kabli (VB-Cable), preferuj Realtek/USB mic
-      // nad Intel Smart Sound Array (wbudowany bardzo cichy laptop mic)
+      // Auto-select: avoid virtual cables (VB-Cable), prefer a Realtek/USB
+      // mic over an Intel Smart Sound Array (a built-in, very quiet laptop mic)
       let preferredMicId = savedMic;
       if (!preferredMicId) {
         const isBad = (label) => {
@@ -249,7 +249,7 @@ window.TxEq = (() => {
                  l.includes('line ') || l.includes('smart sound') ||
                  l.includes('array') || l.includes('intel');
         };
-        // Najpierw szukaj Realtek/USB (prawdziwe mikrofony)
+        // First look for Realtek/USB (real microphones)
         const isGood = (label) => {
           const l = (label || '').toLowerCase();
           return l.includes('realtek') || l.includes('usb');
@@ -257,14 +257,14 @@ window.TxEq = (() => {
         const realMic = inputs.find(d =>
           d.deviceId !== 'default' && d.deviceId !== 'communications' &&
           isGood(d.label) && !isBad(d.label));
-        // Fallback: cokolwiek nie-wirtualne
+        // Fallback: anything non-virtual
         const anyRealMic = inputs.find(d =>
           d.deviceId !== 'default' && d.deviceId !== 'communications' &&
           !isBad(d.label));
         const chosen = realMic || anyRealMic;
         if (chosen) {
           preferredMicId = chosen.deviceId;
-          console.log('[txeq] Auto-wybrany mikrofon:', chosen.label);
+          console.log('[txeq] Auto-selected microphone:', chosen.label);
         }
       }
 
@@ -279,9 +279,9 @@ window.TxEq = (() => {
       }
       monitorStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
       const track = monitorStream.getAudioTracks()[0];
-      console.log('[txeq] mikrofon OK, label=', track?.label, 'settings=', track?.getSettings());
+      console.log('[txeq] microphone OK, label=', track?.label, 'settings=', track?.getSettings());
     } catch (e) {
-      console.error('[txeq] getUserMedia blad:', e);
+      console.error('[txeq] getUserMedia error:', e);
       window.UI?.showToast(I18n.t('profile_toast_mic_no_access') + e.message, 'error');
       return;
     }
@@ -303,8 +303,8 @@ window.TxEq = (() => {
       await ctx.resume();
     }
 
-    // Utworz DEDYKOWANY AudioContext dla odsluchu (nie mieszaj z RX audio,
-    // bo tamten ma masterGain/compressor chain dla RX radio)
+    // Create a DEDICATED AudioContext for monitoring (don't mix with RX
+    // audio, since that one has a masterGain/compressor chain for RX radio audio)
     let monitorCtx;
     try {
       monitorCtx = new (window.AudioContext || window.webkitAudioContext)({
@@ -312,28 +312,28 @@ window.TxEq = (() => {
         latencyHint: 'interactive',
       });
       if (monitorCtx.state === 'suspended') await monitorCtx.resume();
-      // Ustaw sinkId na to samo urzadzenie co RX audio (tam sluchawki)
+      // Set sinkId to the same device as RX audio (that's where the headphones are)
       if (monitorCtx.setSinkId && ctx.sinkId) {
         try {
           await monitorCtx.setSinkId(ctx.sinkId);
         } catch (e) { console.warn('[txeq] monitor setSinkId:', e.message); }
       }
-      console.log('[txeq] monitorCtx utworzony, state=', monitorCtx.state, 'sinkId=', monitorCtx.sinkId);
+      console.log('[txeq] monitorCtx created, state=', monitorCtx.state, 'sinkId=', monitorCtx.sinkId);
     } catch(e) {
-      console.error('[txeq] blad tworzenia monitorCtx:', e);
+      console.error('[txeq] error creating monitorCtx:', e);
       monitorCtx = ctx; // fallback
     }
     window._monitorCtx = monitorCtx;
 
     const src = monitorCtx.createMediaStreamSource(monitorStream);
 
-    // Odsluch ma pokazywac DOKLADNIE to co leci przy nadawaniu - ten sam
-    // lancuch filtrow co _txMic w ws.js (buildFilterChain + registerTxFilters).
-    // Wczesniej tu bylo "TEST: pomijamy EQ chain calkowicie" (mikrofon prosto
-    // do gain -> destination) - resztka po debugowaniu problemu z wykrywaniem
-    // mikrofonu, nigdy nie przywrocona. Efekt: suwaki EQ nie zmienialy tego
-    // co slychac w odsluchu, mimo ze opis obok mowil "Odsluch przepuszcza
-    // mikrofon przez EQ".
+    // The monitor should show EXACTLY what goes out on TX - the same
+    // filter chain as _txMic in ws.js (buildFilterChain + registerTxFilters).
+    // This used to have "TEST: skip the EQ chain entirely" (mic straight
+    // to gain -> destination) - a leftover from debugging a mic-detection
+    // issue, never restored. Effect: the EQ sliders didn't change what you
+    // heard in the monitor, even though the label next to it said "the
+    // monitor runs the mic through the EQ".
     const chain = buildFilterChain(monitorCtx);
     monitorFilters = chain.filters;
 
@@ -344,7 +344,7 @@ window.TxEq = (() => {
     chain.output.connect(monitorGain);
     monitorGain.connect(monitorCtx.destination);
 
-    // Sprawdz czy analyser widzi jakikolwiek sygnal z mikrofonu
+    // Check whether the analyser sees any signal from the microphone
     const analyser = monitorCtx.createAnalyser();
     analyser.fftSize = 512;
     src.connect(analyser);
@@ -361,29 +361,29 @@ window.TxEq = (() => {
       console.log(`[txeq] mic peak: ${peak}/128 (${(peak/128*100).toFixed(0)}%)`);
     }, 500);
 
-    console.log('[txeq] Monitor: mic -> gain(2.0) -> destination, bez EQ, sinkId=', monitorCtx.sinkId);
+    console.log('[txeq] Monitor: mic -> gain(2.0) -> destination, no EQ, sinkId=', monitorCtx.sinkId);
 
-    // Wybor wyjscia audio - AudioContext juz ma poprawny sinkId, ale
-    // logujemy dla diagnostyki
+    // Audio output selection - the AudioContext already has the correct
+    // sinkId, but we log it for diagnostics
     try {
       const devs = await navigator.mediaDevices.enumerateDevices();
       const outputs = devs.filter(d => d.kind === 'audiooutput');
-      console.log('[txeq] === Dostepne wyjscia audio ===');
+      console.log('[txeq] === Available audio outputs ===');
       outputs.forEach(d => {
         const isSink = d.deviceId === ctx.sinkId;
-        console.log(`[txeq]   ${isSink ? '>>>' : '   '} ${d.label || '(brak nazwy)'} [${d.deviceId.substring(0,16)}...]`);
+        console.log(`[txeq]   ${isSink ? '>>>' : '   '} ${d.label || '(no name)'} [${d.deviceId.substring(0,16)}...]`);
       });
-    } catch(e) { console.warn('[txeq] enumeruj blad:', e); }
+    } catch(e) { console.warn('[txeq] enumerate error:', e); }
 
     monitorActive = true;
     const btn = document.getElementById('eq-monitor-btn');
     if (btn) {
-      btn.removeAttribute('data-i18n');  // patrz uwaga przy rot-status-badge (rotormini.js)
+      btn.removeAttribute('data-i18n');  // see the note at rot-status-badge (rotormini.js)
       btn.textContent = I18n.t('profile_eq_monitor_stop_btn');
       btn.style.background = 'var(--red)';
       btn.style.color = 'white';
     }
-    console.log('[txeq] Monitor aktywny');
+    console.log('[txeq] Monitor active');
   }
 
   function stopMonitor() {
@@ -408,7 +408,7 @@ window.TxEq = (() => {
       btn.style.background = 'var(--panel3)';
       btn.style.color = 'var(--green)';
     }
-    console.log('[txeq] Monitor zatrzymany');
+    console.log('[txeq] Monitor stopped');
   }
 
   function toggleMonitor() {
@@ -425,15 +425,15 @@ window.TxEq = (() => {
 
   function getCurrentBands() { return { ...currentBands }; }
 
-  // Inicjalizacja po zaladowaniu strony
+  // Init after the page loads
   document.addEventListener('DOMContentLoaded', () => {
     load();
     setTimeout(_refreshUiSliders, 200);
   });
 
-  // Po zalogowaniu — pobierz ustawienia z serwera (moga byc nowsze niz lokalny cache)
+  // After login — fetch settings from the server (may be newer than the local cache)
   window.addEventListener('app:ready', () => {
-    load(); // reload localStorage z prawidlowym uid
+    load(); // reload localStorage with the correct uid
     loadFromServer();
   });
 
