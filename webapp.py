@@ -2873,17 +2873,17 @@ class App:
                 return 200, {"ok": False, "error": "Pusty tekst"}
             method_cw = self.cfg.get("cwMethod", "auto")
             wpm = int(self.rig.level_values.get("KEYSPD", 18) or 18)
-            # Fallback: jesli metoda to dtr/rts ale brak osobnego portu → uzyj auto (CI-V)
+            # Fallback: if the method is dtr/rts but there's no separate port -> use auto (CI-V)
             if method_cw in ("dtr", "rts"):
                 keyer_port = self.cfg.get("cwDtrPort", "")
                 civ_port   = self.rig._port if hasattr(self.rig, "_port") else ""
                 if not keyer_port or keyer_port == civ_port:
-                    print(f"[cw] metoda {method_cw!r} bez osobnego portu — fallback na CAT CI-V", flush=True)
+                    print(f"[cw] method {method_cw!r} has no separate port — falling back to CAT CI-V", flush=True)
                     method_cw = "auto"
             if method_cw in ("dtr", "rts"):
-                # Sprawdz czy DTR/RTS ma skonfigurowany OSOBNY port
-                # Uzycie DTR/RTS na tym samym porcie co CI-V powoduje
-                # konflikty — zmiany linii DTR/RTS zakloca komunikacje CI-V
+                # Check whether DTR/RTS has a SEPARATE port configured.
+                # Using DTR/RTS on the same port as CI-V causes conflicts —
+                # toggling the DTR/RTS line disrupts CI-V communication
                 keyer_port = self.cfg.get("cwDtrPort", "")
                 civ_port   = self.rig._port if hasattr(self.rig, "_port") else ""
                 if not keyer_port or keyer_port == civ_port:
@@ -2904,7 +2904,7 @@ class App:
                     else:
                         _cw_err = None
                         try:
-                            # Broadcastuj PTT ON przed nadawaniem
+                            # Broadcast PTT ON before transmitting
                             self.rig.ptt = True
                             await self.hub.broadcast({"type": "ptt", "ptt": True})
                             await self.rig.send_cw_message(text)
@@ -2912,10 +2912,10 @@ class App:
                             _cw_err = str(e)
                             await self.hub.broadcast({"type": "cw_error", "error": str(e)})
                         finally:
-                            # Broadcastuj PTT OFF po nadawaniu
+                            # Broadcast PTT OFF after transmitting
                             self.rig.ptt = False
                             await self.hub.broadcast({"type": "ptt", "ptt": False})
-                        # Zwroc wynik PO finally: blad tylko gdy faktycznie wystapil.
+                        # Return the result AFTER finally: an error only when one actually occurred.
                         if _cw_err is not None:
                             return 200, {"ok": False, "error": _cw_err}
             finally:
@@ -2996,12 +2996,11 @@ class App:
 
         m = re.match(r"^/api/rotator/(\d+)/position$", p)
         if m and method == "POST":
-            # Brak tego sprawdzenia pozwalal KAZDEMU zalogowanemu (nawet
-            # viewerowi) obracac anten poprzez bezposrednie wywolanie API,
-            # niezaleznie od tego czy przyciski START/STOP w UI byly wygaszone
-            # (CSS .radio-readonly) — wykryte 2026-08-15 w audycie zakladki
-            # RADIO. Ten sam wzorzec co /api/cw/send: viewer zawsze blokowany,
-            # pozostali musza trzymac radio_lock (chyba ze admin).
+            # Without this check, ANY logged-in user (even a viewer) could
+            # turn the antenna via a direct API call, regardless of whether
+            # the START/STOP buttons were grayed out in the UI (CSS
+            # .radio-readonly). Same pattern as /api/cw/send: a viewer is
+            # always blocked, everyone else must hold radio_lock (unless admin).
             if role == "viewer":
                 return 403, {"error": "Brak uprawnien (rotator)"}
             if role != "admin" and not self._user_has_lock(uid):
@@ -3015,7 +3014,7 @@ class App:
 
         m = re.match(r"^/api/rotator/(\d+)/stop$", p)
         if m and method == "POST":
-            # Tak samo jak /position powyzej — patrz komentarz tam.
+            # Same as /position above — see the comment there.
             if role == "viewer":
                 return 403, {"error": "Brak uprawnien (rotator)"}
             if role != "admin" and not self._user_has_lock(uid):
@@ -3032,17 +3031,18 @@ class App:
             rot = self.get_rot(int(m.group(1)))
             if not rot:
                 return 200, {"testOk": False, "testMsg": "Rotator nie znaleziony"}
-            # PRAWDZIWY test polaczenia: sprobuj polaczyc i odczytac pozycje z
-            # portu COM. Poprzednia wersja zwracala tylko zapisany stan (i to w
-            # zlych polach — stad 'undefined' w UI). Teraz aktywnie odpytujemy
-            # rotor, zeby potwierdzic, ze port odpowiada.
+            # REAL connection test: try connecting and reading the position
+            # from the COM port. The previous version only returned the
+            # stored state (and in the wrong fields — hence 'undefined' in
+            # the UI). Now we actively poll the rotor to confirm the port responds.
             driver = getattr(rot, "model", "") or getattr(rot, "driver_type", "") or "?"
             _was_sim_before = getattr(rot, "sim", False)
             try:
-                # Sprobuj polaczyc, jesli jeszcze nie polaczony. UWAGA: connect()
-                # rotora NIE rzuca wyjatku przy bledzie — po cichu ustawia sim=True
-                # i zwraca False. Musimy wiec sprawdzic WYNIK, inaczej martwy port
-                # udawalby udana "symulacje".
+                # Try connecting if not already connected. NOTE: the
+                # rotor's connect() does NOT raise on error - it silently
+                # sets sim=True and returns False. So we must check the
+                # RESULT, otherwise a dead port would masquerade as a
+                # successful "simulation".
                 if not getattr(rot, "connected", False) and not _was_sim_before:
                     try:
                         ok = await asyncio.wait_for(
@@ -3053,15 +3053,16 @@ class App:
                     except Exception as _ce:
                         return 200, {"testOk": False, "driverType": driver,
                                      "testMsg": f"Nie moge otworzyc portu: {_ce}"}
-                    # connect() zwrocil False i rotor wpadl w sim => port padl
+                    # connect() returned False and the rotor fell back to sim => the port is dead
                     if not ok and getattr(rot, "sim", False) and not _was_sim_before:
                         _err = getattr(rot, "last_err", "") or \
                                f"Port {getattr(rot, 'port', '?')} nie odpowiada"
                         return 200, {"testOk": False, "driverType": driver,
                                      "testMsg": f"Połączenie nieudane: {_err}"}
-                # Odczytaj pozycje z portu — to potwierdza, ze rotor odpowiada.
-                # _read_pos blokuje na porcie szeregowym, wiec w watku z timeoutem
-                # (jak watchdog), zeby martwy port nie zawiesil serwera.
+                # Read the position from the port — this confirms the
+                # rotor is responding. _read_pos blocks on the serial port,
+                # so it's run in a thread with a timeout (like the
+                # watchdog), so a dead port doesn't hang the server.
                 try:
                     az = await asyncio.wait_for(
                         asyncio.to_thread(rot._read_pos, 3.0), timeout=5.0)
@@ -3073,7 +3074,7 @@ class App:
                                  "testMsg": f"Brak odpowiedzi z portu: {_re}"}
                 if az is None:
                     az = getattr(rot, "az", None)
-                # Prawdziwa symulacja (skonfigurowana od poczatku), nie awaryjny fallback
+                # Real simulation (configured from the start), not an emergency fallback
                 if _was_sim_before and getattr(rot, "sim", False):
                     return 200, {"testOk": True, "driverType": "SYMULACJA",
                                  "testPos": {"az": round(float(az or 0), 1)},
@@ -3094,10 +3095,10 @@ class App:
 
         if p == "/api/users" and method == "GET":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            # Zwracamy pelen zestaw pol edytowalnych z profilu - inaczej admin
-            # nie widzi aktualnych wartosci przy otwarciu edytora usera i
-            # jego zmiany "resetuja" pola do pustych.
-            # Nie zwracamy password (hash) ze wzgledow bezpieczenstwa.
+            # Return the full set of editable profile fields - otherwise
+            # the admin doesn't see the current values when opening the
+            # user editor, and their changes "reset" fields to empty.
+            # The password (hash) isn't returned, for security.
             return 200, [{"id": u["id"], "username": u["username"],
                           "callsign":    u.get("callsign", u["username"]),
                           "name":        u.get("name", ""),
@@ -3112,9 +3113,9 @@ class App:
 
         if p == "/api/users" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            # Walidacja - username i callsign tylko bezpieczne znaki (bez < > "
-            # itp.), zeby nie dalo sie wstrzyknac HTML/JS (obrona przed XSS u
-            # zrodla, niezaleznie od escapowania w UI). Fix 2026-07-05.
+            # Validation - username and callsign only allow safe characters
+            # (no < > " etc.), so HTML/JS can't be injected (defense
+            # against XSS at the source, independent of escaping in the UI).
             _un = body.get("username", "").strip()
             if not _un or len(_un) > 32 or not re.match(r'^[A-Za-z0-9_.\-]+$', _un):
                 return 400, {"error": "Nazwa uzytkownika: 1-32 znakow, tylko litery, cyfry, . _ -"}
@@ -3124,7 +3125,7 @@ class App:
             _loc = body.get("locator", "").strip().upper()
             if _loc and not re.match(r'^[A-Z0-9]{1,8}$', _loc):
                 return 400, {"error": "Lokator: tylko litery i cyfry (max 8)"}
-            # name i email - obetnij dlugosc i usun znaki HTML-niebezpieczne
+            # name and email - truncate length and strip HTML-unsafe characters
             _nm = body.get("name", "").strip()[:64]
             _nm = re.sub(r'[<>"\']', '', _nm)
             _role = body.get("role", "viewer")
@@ -3149,14 +3150,14 @@ class App:
             if role != "admin": return 403, {"error": "Tylko admin"}
             target_uid = m.group(1)
 
-            # Nic dotad nie chronilo przed usunieciem/zdegradowaniem/
-            # dezaktywowaniem OSTATNIEGO aktywnego admina - taki request by
-            # sie powiodl i zostawil caly system bez nikogo kto moglby
-            # cokolwiek zarzadzac (odzyskanie wymagaloby recznej edycji
-            # users.json na dysku serwera). Front chowa przycisk USUN dla
-            # WLASNEGO konta (patrz renderUsers w admin.js), ale to tylko UI -
-            # nic nie stalo na przeszkodzie usunieciu INNEGO admina jesli byl
-            # jedynym, albo zdegradowaniu/wylaczeniu wlasnego konta.
+            # Nothing used to protect against deleting/demoting/
+            # deactivating the LAST active admin - such a request would
+            # succeed and leave the whole system with no one able to
+            # manage anything (recovery would require manually editing
+            # users.json on the server disk). The frontend hides the
+            # DELETE button for your OWN account (see renderUsers in
+            # admin.js), but that's UI only - nothing stopped deleting
+            # ANOTHER admin if it was the only one, or demoting/disabling your own account.
             def _other_active_admins():
                 return sum(1 for _u in self.users
                            if _u["id"] != target_uid and _u.get("role") == "admin"
@@ -3173,9 +3174,9 @@ class App:
             u = self.find_user_by_id(target_uid)
             if not u: return 404, {"error": "Nie znaleziono"}
             _is_last_admin = u.get("role") == "admin" and u.get("active", True) and _other_active_admins() == 0
-            # Pelen zestaw pol edytowalnych - synchronizowane z profil userowy
-            # (user edytuje przez /api/user/profile, admin przez tutaj -
-            #  oba zapisuja na tych samych polach w users.json).
+            # Full set of editable fields - kept in sync with the user
+            # profile (the user edits via /api/user/profile, the admin via
+            # here - both write to the same fields in users.json).
             if "password"    in body and body["password"]:
                 u["password"] = hash_pw_secure(body["password"])
             if "role"        in body:
@@ -3199,7 +3200,7 @@ class App:
             return 200, {"ok": True}
 
         if p.startswith("/api/scope"):
-            # Scope dostępny tylko w trybie bezpośrednim CI-V (radio ze spektroskopem).
+            # Scope only available in direct CI-V mode (a radio with a spectrum scope).
             if not isinstance(self.rig, CivRig):
                 return 200, {"ok": False, "sim": True, "running": False,
                              "message": "Scope dostępny tylko dla radia ze scope (IC-7300/7610/705...) "
@@ -3207,7 +3208,7 @@ class App:
             if p.endswith("/stop"):
                 return 200, self.rig.scope_stop()
             if p.endswith("/span") and method == "POST":
-                # Zmiana spanu waterfallu (IC-7300 wspiera 2.5/5/10/25/50/100/250/500 kHz)
+                # Change the waterfall span (the IC-7300 supports 2.5/5/10/25/50/100/250/500 kHz)
                 try:
                     span_hz = int(body.get("span_hz", 25000))
                 except (TypeError, ValueError):
@@ -3231,16 +3232,17 @@ class App:
             return 200, self.tunnel.get_status()
 
         if p == "/api/tunnel/config" and method == "GET":
-            # get_config() zwraca CALY config, wlacznie z tokenem Cloudflare
-            # Tunnel i tokenem DuckDNS w plaintext (patrz TunnelManager._cfg
-            # / save_config w tunnel_manager.py - brak tu redakcji jak np.
-            # przy /api/dxcluster/config gdzie leci tylko has_password).
-            # Cala zakladka INTERNET jest data-perm="admin" w index.html, ale
-            # to tylko UKRYWA przycisk zakladki w UI - realne wymuszenie MUSI
-            # byc tutaj. Bez tego gate'u dowolny zalogowany viewer/operator
-            # mogl przez fetch('/api/tunnel/config') w konsoli przegladarki
-            # odczytac te tokeny (pelna kontrola nad tunelem Cloudflare /
-            # mozliwosc podmiany rekordu DNS DuckDNS).
+            # get_config() returns the WHOLE config, including the
+            # Cloudflare Tunnel token and the DuckDNS token in plaintext
+            # (see TunnelManager._cfg / save_config in tunnel_manager.py -
+            # no redaction here like e.g. /api/dxcluster/config, which only
+            # sends has_password). The whole INTERNET tab is
+            # data-perm="admin" in index.html, but that only HIDES the tab
+            # button in the UI - the real enforcement MUST be here. Without
+            # this gate, any logged-in viewer/operator could read these
+            # tokens via fetch('/api/tunnel/config') in the browser console
+            # (full control over the Cloudflare tunnel / ability to change
+            # the DuckDNS DNS record).
             if role != "admin": return 403, {"error": "Tylko admin"}
             return 200, self.tunnel.get_config()
 
@@ -3272,7 +3274,7 @@ class App:
 
         if p == "/api/tunnel/install-certbot" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            print("[webapp] install-certbot endpoint wywolany", flush=True)
+            print("[webapp] install-certbot endpoint called", flush=True)
             asyncio.create_task(self.tunnel.install_certbot_task())
             return 200, {"ok": True}
 
@@ -3291,15 +3293,15 @@ class App:
 
         if p == "/api/ft8/halt" and method == "POST":
             self._ft8_tx_abort = True
-            self._stop_cq_calling()  # zatrzymaj cykliczne CQ
-            # Patrz identyczny blok/komentarz w WS "ft8_tx_stop" powyzej —
-            # haltTx() we froncie wysyla OBA (WS + ten REST call) na kazde
-            # klikniecie HALT, wiec musi tu byc ta sama poprawka.
+            self._stop_cq_calling()  # stop periodic CQ
+            # See the identical block/comment in WS "ft8_tx_stop" above —
+            # the frontend's haltTx() sends BOTH (WS + this REST call) on
+            # every HALT click, so the same fix has to be here too.
             if self._qso_engine.is_active():
-                print(f"[autoqso] HALT: przerywam QSO z {self._qso_engine.partner_call}")
+                print(f"[autoqso] HALT: aborting QSO with {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
                 self._qso_period_locked = False
-                # Uniewaznij KAZDA juz zaplanowana (w locie, czekajaca na okno)
+                # Invalidate ANY already-scheduled (in-flight, waiting for its window)
                 # automatyczna transmisje do tego partnera - bez tego stale-TX-
                 # guard w _ft8_tx_sequence_inner nie mial jak wiedziec ze to
                 # PRAWDZIWY abort, nie tylko "zlecono nowsza akcje" (patrz
