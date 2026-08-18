@@ -1,8 +1,8 @@
 /*
- * relay_admin.js - Panel konfiguracji przekaznikow Arduino w zakladce KONFIGURACJA
+ * relay_admin.js - Arduino relay configuration panel in the CONFIGURATION tab
  *
- * Uzywa /api/relay/config GET/POST.
- * Renderuje 8 pol konfiguracji przekaznikow (nazwa, tryb, czas impulsu, widocznosc).
+ * Uses /api/relay/config GET/POST.
+ * Renders 8 relay config fields (name, mode, pulse duration, visibility).
  */
 
 (function() {
@@ -21,7 +21,7 @@
       _ports = data.ports || [];
       _maxPulse = data.max_pulse_s || 10.0;
 
-      // Wypelnij UI
+      // Populate the UI
       document.getElementById('relay-enabled').checked = !!_config.enabled;
       const portSel = document.getElementById('relay-port');
       portSel.innerHTML = `<option value="">${I18n.t('adm_choose_port')}</option>`;
@@ -32,7 +32,7 @@
         if (p.device === _config.port) opt.selected = true;
         portSel.appendChild(opt);
       });
-      // Jesli zapisany port nie ma na liscie, dodaj go
+      // If the saved port isn't in the list, add it
       if (_config.port && !_ports.find(p => p.device === _config.port)) {
         const opt = document.createElement('option');
         opt.value = _config.port;
@@ -42,7 +42,7 @@
       }
       document.getElementById('relay-baudrate').value = String(_config.baudrate || 9600);
 
-      // Badge statusu
+      // Status badge
       const badge = document.getElementById('relay-status-badge');
       if (badge) {
         if (data.connected) {
@@ -61,14 +61,14 @@
 
       renderRelays();
     } catch(e) {
-      console.warn('[relay-admin] load blad:', e);
+      console.warn('[relay-admin] load error:', e);
     }
   }
 
   function renderRelays() {
     const list = document.getElementById('relay-list');
     if (!list) return;
-    // Uzupelnij tablice do 8 elementow domyslnymi wartosciami
+    // Pad the array to 8 elements with default values
     const relays = [];
     for (let i = 0; i < RELAY_COUNT; i++) {
       const existing = (_config.relays || []).find(r => r.id === i);
@@ -104,7 +104,7 @@
       </div>
     `).join('');
 
-    // Podepnij event: zmiana modu wyszarza/wlacza pole pulse_s
+    // Hook up the event: changing the mode disables/enables the pulse_s field
     list.querySelectorAll('select[data-field="mode"]').forEach(sel => {
       sel.addEventListener('change', (e) => {
         const rid = e.target.dataset.relayId;
@@ -124,7 +124,7 @@
     const status = document.getElementById('relay-save-status');
     if (status) { status.textContent = I18n.t('dx_saving'); status.style.color = 'var(--dim)'; }
 
-    // Zbierz dane
+    // Collect the data
     const list = document.getElementById('relay-list');
     const relays = [];
     for (let i = 0; i < RELAY_COUNT; i++) {
@@ -158,7 +158,7 @@
       const data = await r.json();
       if (r.ok && data.ok) {
         if (status) { status.textContent = I18n.t('cfg_saved_capital'); status.style.color = 'var(--green)'; }
-        setTimeout(load, 1500); // odswiez status polaczenia
+        setTimeout(load, 1500); // refresh connection status
       } else {
         if (status) { status.textContent = '✕ ' + (data.error || I18n.t('profile_error_fallback')); status.style.color = 'var(--red)'; }
       }
@@ -167,24 +167,24 @@
     }
   }
 
-  // Podepnij do globalnego Admin objektu
+  // Hook into the global Admin object
   window.Admin = window.Admin || {};
   window.Admin.loadRelayConfig = load;
   window.Admin.renderRelays = renderRelays;
   window.Admin.saveRelayConfig = save;
 
-  // Auto-load przy wejsciu na page-config
+  // Auto-load on entering page-config
   document.addEventListener('DOMContentLoaded', () => {
-    // Wywolaj gdy user przelaczy sie na zakladke konfiguracji
+    // Fire when the user switches to the configuration tab
     document.getElementById('tab-config')?.addEventListener('click', () => {
       setTimeout(load, 300);
     });
-    // Fallback: sprawdzaj co 500ms czy strona config jest widoczna i nie zaladowana
+    // Fallback: check every 500ms whether the config page is visible and not yet loaded
     let lastLoad = 0;
     setInterval(() => {
       const page = document.getElementById('page-config');
       if (page && page.classList.contains('active') && Date.now() - lastLoad > 5000) {
-        // Zaladuj tylko jesli od ostatniego minelo 5s (nie spamuj przy odswiezaniu)
+        // Only load if at least 5s have passed since the last load (don't spam on refresh)
         const list = document.getElementById('relay-list');
         if (list && list.children.length === 0) {
           lastLoad = Date.now();
