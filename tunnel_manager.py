@@ -21,6 +21,15 @@ try:
 except Exception:
     _DATA = pathlib.Path(".")
 
+try:
+    from crypto_secrets import encrypt_secret, decrypt_secret, PREFIX as _ENC_PREFIX
+except Exception:
+    def encrypt_secret(v): return v
+    def decrypt_secret(v): return v
+    _ENC_PREFIX = "enc1:"
+
+_SECRET_KEYS = ("token", "duckToken")
+
 CFG_FILE = _DATA / "tunnel_config.json"
 CF_EXE   = (_DATA / "cloudflared.exe") if sys.platform == "win32" else (_DATA / "cloudflared")
 
@@ -33,15 +42,39 @@ DEFAULT_CFG = {
 
 
 def load_cfg() -> dict:
+    """Wczytaj config i odszyfruj tokeny — w pamieci (self._cfg) trzymamy
+    zawsze plaintext, bo cloudflared/certbot uzywaja ich bezposrednio;
+    tylko plik na dysku jest zaszyfrowany (patrz save_cfg)."""
     try:
-        return {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
+        raw = {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
     except Exception:
         return dict(DEFAULT_CFG)
+    cfg = dict(raw)
+    needs_migration = False
+    for key in _SECRET_KEYS:
+        val = cfg.get(key)
+        if val:
+            if not val.startswith(_ENC_PREFIX):
+                needs_migration = True
+            cfg[key] = decrypt_secret(val)
+    if needs_migration:
+        # Stary plik mial jawne tokeny (sprzed szyfrowania w spoczynku) —
+        # dopisz je zaszyfrowane od razu, bez czekania na kolejny zapis.
+        save_cfg(cfg)
+        print("[tunnel] zaszyfrowano tokeny w tunnel_config.json", flush=True)
+    return cfg
 
 
 def save_cfg(cfg: dict):
+    """Zapisz config na dysk z zaszyfrowanymi tokenami (Cloudflare Tunnel,
+    DuckDNS) — nie mutuje przekazanego dict (to zywy self._cfg uzywany
+    bezposrednio do uruchamiania procesow, musi zostac plaintext)."""
+    on_disk = dict(cfg)
+    for key in _SECRET_KEYS:
+        if on_disk.get(key):
+            on_disk[key] = encrypt_secret(on_disk[key])
     try:
-        CFG_FILE.write_text(json.dumps(cfg, indent=2))
+        CFG_FILE.write_text(json.dumps(on_disk, indent=2))
     except Exception as e:
         print(f"[tunnel] Błąd zapisu konfiguracji: {e}")
 
