@@ -3997,7 +3997,7 @@ class App:
             except Exception as e:
                 import traceback
                 tb = traceback.format_exc()
-                print(f"[export] BLAD 500 fmt={fmt} filtry={f}:\n{tb}", flush=True)
+                print(f"[export] 500 ERROR fmt={fmt} filters={f}:\n{tb}", flush=True)
                 return 500, {"error": str(e)}
 
         # /api/qsolog/<id>
@@ -4022,11 +4022,12 @@ class App:
                 return (200, {"ok": True}) if ok else (404, {"error": "QSO nie znalezione"})
 
         if p == "/api/audio/config" and method == "POST":
-            # Brak sprawdzenia uprawnien tu byl bledem — kazdy zalogowany user
-            # (nawet viewer) mogl zdalnie zmienic karte audio calej wspolnej
-            # stacji i TX Volume (mnoznik uzywany tez przez enkoder FT8/FT4,
-            # czyli wplywajacy na realny sygnal w eterze). Wymagane teraz to
-            # samo uprawnienie "ustawienia serwera" co reszta tej zakladki.
+            # Missing a permission check here was a bug — any logged-in
+            # user (even a viewer) could remotely change the whole shared
+            # station's audio device and TX Volume (a multiplier also used
+            # by the FT8/FT4 encoder, i.e. affecting the real signal on
+            # air). Now requires the same "server settings" permission as
+            # the rest of this tab.
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             rx = body.get("rxDevice")
             tx = body.get("txDevice")
@@ -4044,15 +4045,16 @@ class App:
                 self.cfg["audio"]["txVolumeSsb"] = float(tv_ssb)
                 self.audio.cfg = self.cfg["audio"]
             save_json(CFG_F, self.cfg)
-            # Gdy Rust aktywny — wyslij nowe urzadzenia do ham_audio
+            # When Rust is active — send the new devices to ham_audio
             rust = getattr(self, 'rust_audio', None)
             if rust and rust._connected:
-                # ODPORNOSC NA ROZNE KARTY (produkt dla wielu klubow): sprawdz
-                # czy wybrana karta ISTNIEJE w systemie. Gdy user wybral karte
-                # ktora zniknela (odpieta USB) albo config z innej maszyny
-                # wskazuje nieistniejaca karte - ostrzegamy, ale nie blokujemy
-                # (Rust zrobi fallback do default_input). Bez tego FT8 cichnie
-                # bez wyjasnienia gdy karta z configu nie istnieje.
+                # RESILIENCE TO DIFFERENT CARDS (a product used by many
+                # clubs): check whether the selected card EXISTS on the
+                # system. When the user picked a card that's now gone
+                # (USB unplugged) or a config from a different machine
+                # points at a nonexistent card - warn, but don't block
+                # (Rust falls back to default_input). Without this, FT8
+                # goes silent with no explanation when the configured card doesn't exist.
                 try:
                     _devs = await rust.list_devices()
                     _rx_names = [d.get("name","") for d in _devs
@@ -4060,24 +4062,26 @@ class App:
                     _tx_names = [d.get("name","") for d in _devs
                                  if isinstance(d, dict) and not d.get("is_input")]
                     if rx and not any(rx in n or n in rx for n in _rx_names):
-                        print(f"[audio] UWAGA: karta RX '{rx}' nie istnieje w systemie "
-                              f"(dostepne: {_rx_names}). Rust uzyje domyslnej.", flush=True)
+                        print(f"[audio] WARNING: RX card '{rx}' doesn't exist on the system "
+                              f"(available: {_rx_names}). Rust will use the default.", flush=True)
                         await self.hub.broadcast({"type": "audio_warning",
                             "msg": f"Karta RX '{rx}' niedostepna - uzyto domyslnej"})
                     if tx and not any(tx in n or n in tx for n in _tx_names):
-                        print(f"[audio] UWAGA: karta TX '{tx}' nie istnieje w systemie "
-                              f"(dostepne: {_tx_names}). Rust uzyje domyslnej.", flush=True)
+                        print(f"[audio] WARNING: TX card '{tx}' doesn't exist on the system "
+                              f"(available: {_tx_names}). Rust will use the default.", flush=True)
                 except Exception as _e:
-                    print(f"[audio] Nie moge zweryfikowac kart: {_e}", flush=True)
-                # HOT-SWAP karty BEZ restartu procesu ham_audio (wymaga Rusta z
-                # obsluga hot-swap: audio.rs RX_DEVICE_GEN + main.rs SetRxDevice).
-                # Rust przeladuje sam stream RX w locie (drop starego = czyste
-                # WASAPI, bez fantomow). NIE restartujemy procesu, wiec:
-                # - brak fantomowych kart WASAPI (glowny problem)
-                # - FT8 RX NIE ginie (proces zyje, dekoder dziala dalej)
-                # - dekoder Opus w przegladarce NIE gubi sie (strumien ciagly)
-                # - brak martwego polaczenia kontrolnego (proces ten sam)
-                print(f"[audio] Hot-swap kart RX='{rx}' TX='{tx}' (bez restartu)", flush=True)
+                    print(f"[audio] Can't verify the devices: {_e}", flush=True)
+                # HOT-SWAP the device WITHOUT restarting the ham_audio
+                # process (requires a Rust build with hot-swap support:
+                # audio.rs RX_DEVICE_GEN + main.rs SetRxDevice). Rust
+                # reloads just the RX stream on the fly (dropping the old
+                # one = clean WASAPI, no phantoms). We do NOT restart the
+                # process, so:
+                # - no phantom WASAPI devices (the main problem)
+                # - FT8 RX does NOT die (the process stays alive, the decoder keeps running)
+                # - the browser's Opus decoder does NOT lose sync (continuous stream)
+                # - no dead control connection (same process)
+                print(f"[audio] Hot-swap devices RX='{rx}' TX='{tx}' (no restart)", flush=True)
                 try:
                     if rx is not None:
                         await rust.set_rx_device(rx)
@@ -4085,18 +4089,18 @@ class App:
                         await rust.set_tx_device(tx)
                     if br:
                         await rust._send_ctrl({"cmd": "SetBitrate", "bps": int(br)})
-                    print("[audio] Hot-swap OK - Rust przeladowal stream w locie", flush=True)
+                    print("[audio] Hot-swap OK - Rust reloaded the stream on the fly", flush=True)
                 except Exception as _e:
-                    print(f"[audio] Hot-swap blad: {_e}", flush=True)
+                    print(f"[audio] Hot-swap error: {_e}", flush=True)
                     await self.hub.broadcast({"type": "audio_warning",
                         "msg": "Zmiana karty nie powiodla sie"})
             return 200, {"ok": True, "cfg": self.cfg["audio"]}
 
         if p == "/api/audio/rx/start" and method == "POST":
-            # Bezpieczenstwo: upewnij sie ze PTT jest wylaczone przed uruchomieniem audio
-            # IC-7300 moze wejsc w TX przez DATA VOX gdy PC otworzy kanal USB audio
+            # Safety: make sure PTT is off before starting audio
+            # The IC-7300 can enter TX via DATA VOX when the PC opens the USB audio channel
             if self.rig.ptt:
-                print("[audio] BEZPIECZENSTWO: reset PTT przed uruchomieniem RX audio")
+                print("[audio] SAFETY: resetting PTT before starting RX audio")
                 self.rig.ptt = False
                 try: await self.rig.set_ptt(False)
                 except: pass
@@ -4125,14 +4129,15 @@ class App:
 
     # ── WebSocket handler (aiohttp) ────────────────────────────────────────────
     async def ws_handler(self, request: web.Request) -> web.WebSocketResponse:
-        # WebSocket z permessage-deflate compression - kompresuje JSON na
-        # poziomie ramek WS. Bardzo dobre dla JSON (3-8x mniejsze), koszt: ~5% CPU.
-        # heartbeat=30 - ping/pong co 30s, wykrywa martwe polaczenia.
-        # compress=9 - zlib max level (najlepszy stosunek).
-        # max_msg_size=8MB - default 4MB moze być za malo dla waterfall history.
-        # UWAGA: Opus audio (binary bytes) tez idzie tym samym WS. Kompresja
-        # na juz-skompresowanym Opusie da minimalny zysk (2-5%) ale mala jest
-        # tez cena. Klient sam decyduje czy dekodowac (permessage-deflate spec).
+        # WebSocket with permessage-deflate compression - compresses JSON
+        # at the WS frame level. Very good for JSON (3-8x smaller), cost: ~5% CPU.
+        # heartbeat=30 - ping/pong every 30s, detects dead connections.
+        # compress=9 - zlib max level (best ratio).
+        # max_msg_size=8MB - the 4MB default may be too small for waterfall history.
+        # NOTE: Opus audio (binary bytes) also goes over this same WS.
+        # Compressing already-compressed Opus gives a minimal gain (2-5%)
+        # but the cost is small too. The client decides on its own whether
+        # to decode (per the permessage-deflate spec).
         # compress=False: WebSocket per-message compression runs synchronously
         # on the event loop for EVERY frame (looplag stack: _send_compressed_
         # frame_sync/compress_sync). Scope + audio + deepcw_text push many
@@ -4154,7 +4159,7 @@ class App:
 
         await self.hub.add(ws)
 
-        # Zarejestruj uzytkownika jako online
+        # Register the user as online
         if user:
             u_obj = self.find_user_by_id(uid) or {}
             self.online_users[ws] = {
@@ -4165,20 +4170,20 @@ class App:
                 "role":     role,
                 "joined_at": time.time(),
             }
-            # Powiadom wszystkich o nowym uzytkowniku online
+            # Notify everyone about the new online user
             _lock_state_join = self._radio_lock_state()
-            _lock_state_join.pop("type", None)  # patrz komentarz przy init (ws_handler)
+            _lock_state_join.pop("type", None)  # see the comment at init (ws_handler)
             await self.hub.broadcast({
                 "type":   "online_update",
                 "online": self._online_users_state(),
                 **_lock_state_join,
             })
 
-            # Auto-connect DX Cluster jesli user ma to wlaczone
+            # Auto-connect the DX Cluster if the user has it enabled
             if self.dxcluster:
                 dx_cfg = u_obj.get("dxcluster", {})
                 if dx_cfg.get("auto_connect") and dx_cfg.get("host") and dx_cfg.get("login"):
-                    # Sprawdz czy juz nie jest polaczony
+                    # Check whether it's not already connected
                     existing = self.dxcluster.get_client(uid)
                     if not existing or not existing.is_connected():
                         asyncio.ensure_future(self.dxcluster.connect_user(
@@ -4188,7 +4193,7 @@ class App:
 
         try:
             _lock_state = self._radio_lock_state()
-            _lock_state.pop("type", None)  # patrz komentarz nizej — krytyczny fix
+            _lock_state.pop("type", None)  # see the comment below — critical fix
             await ws.send_str(json.dumps({
                 "type": "init",
                 "freq": self.rig.freq, "mode": self.rig.mode,
@@ -4198,15 +4203,17 @@ class App:
                 "split": self.rig.split, "freqB": self.rig.freq_b,
                 "vfo": getattr(self.rig, "vfo", "VFOA"),
                 "callsign": CALLSIGN, "locator": LOCATOR,
-                # Lokator STACJI (STATION_LOCATOR z konfiguracji admina) —
-                # tu fizycznie stoi antena. NIE lokator zalogowanego operatora:
-                # przy pracy zdalnej kazdy user jest gdzie indziej, a rotor
-                # obraca sie w jednym miejscu. Azymut na korespondenta musi byc
-                # liczony od anteny, inaczej user w innej lokalizacji dostalby kierunek
-                # liczony z lokalizacji usera dla anteny stojacej gdzie indziej.
+                # STATION locator (STATION_LOCATOR from the admin config) —
+                # where the antenna physically stands. NOT the logged-in
+                # operator's locator: in remote operation each user is
+                # somewhere else, but the rotor turns in one place. The
+                # azimuth to a correspondent must be computed from the
+                # antenna, otherwise a user in a different location would
+                # get a bearing computed from the user's own location for
+                # an antenna standing somewhere else.
                 "stationLocator": (self.cfg.get("stationLocator")
                                    or LOCATOR or "").strip().upper(),
-                # Lokator OPERATORA (z jego konta) — do raportow FT8/logu QSO
+                # OPERATOR locator (from their account) — for FT8 reports/the QSO log
                 "operatorLocator": (self.online_users.get(ws, {}).get("locator") or "").strip().upper(),
                 "rotators": [r.state() for r in self.rotators],
                 "sim": self.rig.sim,
