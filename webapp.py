@@ -7752,56 +7752,57 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                                 headers={"Access-Control-Allow-Origin": "*"})
 
         if path == "/download/com-bridge":
-            # Pobierz klienta HAM-RADIO-CTRL.exe (COM Bridge dla CW Skimmer/HRD).
+            # Download the HAM-RADIO-CTRL.exe client (COM Bridge for CW Skimmer/HRD).
             #
-            # UWAGA (2026-07-05): NIE wymagamy logowania! Klik w <a href> w
-            # przegladarce NIE wysyla naglowka Authorization (JWT), wiec wymog
-            # auth blokowal pobieranie (401). EXE nie zawiera sekretow - jest
-            # publicznym plikiem do pobrania, wiec auth jest zbedny.
+            # NOTE: no login required! Clicking an <a href> in the browser
+            # does NOT send an Authorization header (JWT), so requiring
+            # auth blocked the download (401). The EXE contains no
+            # secrets - it's a public file to download, so auth is unnecessary.
             import pathlib as _pl
             import os as _os
 
-            # Katalog 'downloads' szukany w kolejnosci:
-            # 1. Zmienna srodowiskowa HAM_DOWNLOADS_DIR (override dla innych PC)
-            # 2. downloads/ obok webapp.py (standardowo C:\...\ham\downloads)
-            # 3. downloads/ wzgledem katalogu roboczego (fallback)
+            # 'downloads' directory searched in order:
+            # 1. HAM_DOWNLOADS_DIR env var (override for other PCs)
+            # 2. downloads/ next to webapp.py (standard C:\...\ham\downloads)
+            # 3. downloads/ relative to the working directory (fallback)
             _dirs = []
             _env = _os.environ.get("HAM_DOWNLOADS_DIR")
             if _env:
                 _dirs.append(_pl.Path(_env))
             _script_dir = _pl.Path(__file__).resolve().parent
-            # W spakowanym EXE most COM jest w BUNDLE (_MEIPASS), nie obok __file__
+            # In the packaged EXE the COM bridge lives in BUNDLE (_MEIPASS), not next to __file__
             try:
                 from config import BUNDLE as _BUNDLE, DATA as _DATA_DIR
-                _dirs.append(_BUNDLE)                       # spakowany w EXE
-                _dirs.append(_BUNDLE / "bridge")           # podfolder w paczce
-                _dirs.append(_DATA_DIR)                    # obok EXE / APPDATA
+                _dirs.append(_BUNDLE)                       # packaged in the EXE
+                _dirs.append(_BUNDLE / "bridge")           # subfolder in the bundle
+                _dirs.append(_DATA_DIR)                    # next to the EXE / APPDATA
                 _dirs.append(_DATA_DIR / "downloads")
             except Exception:
                 pass
             _dirs.append(_script_dir / "downloads")
-            _dirs.append(_pl.Path("downloads"))          # wzgledny fallback
-            _dirs.append(_script_dir / "bridge_client" / "dist")  # swiezy build
+            _dirs.append(_pl.Path("downloads"))          # relative fallback
+            _dirs.append(_script_dir / "bridge_client" / "dist")  # fresh build
 
-            # KOLIZJA NAZW: serwer produktu TEZ nazywa sie HAM-RADIO-CTRL.exe.
-            # Most COM jest spakowany jako HAM-RADIO-CTRL-bridge.exe (inna nazwa),
-            # zeby endpoint nie serwowal przez pomylke samego serwera. Szukamy
-            # najpierw wersji -bridge, potem (dla dev) oryginalnej nazwy w
-            # miejscach gdzie NIE ma serwera (downloads, bridge_client/dist).
+            # NAME COLLISION: the product's own server is ALSO called
+            # HAM-RADIO-CTRL.exe. The COM bridge is packaged as
+            # HAM-RADIO-CTRL-bridge.exe (a different name), so this
+            # endpoint doesn't accidentally serve the server itself. Look
+            # for the -bridge version first, then (for dev) the original
+            # name in places where there's NO server (downloads, bridge_client/dist).
             _bridge_names = ["HAM-RADIO-CTRL-bridge.exe"]
-            # W trybie dev (nie spakowany) most moze miec oryginalna nazwe w
-            # downloads/ albo bridge_client/dist - tam nie ma serwera-EXE.
+            # In dev mode (not packaged) the bridge may have the original
+            # name in downloads/ or bridge_client/dist - no server-EXE there.
             _dev_dirs = [_script_dir / "downloads", _pl.Path("downloads"),
                          _script_dir / "bridge_client" / "dist"]
 
             _checked = []
-            # 1. Szukaj HAM-RADIO-CTRL-bridge.exe wszedzie (produkt)
+            # 1. Look for HAM-RADIO-CTRL-bridge.exe everywhere (product)
             for _d in _dirs:
                 for _name in _bridge_names:
                     _f = _d / _name
                     _checked.append(str(_f))
                     if _f.exists():
-                        print(f"[download] serwuje most COM: {_f} ({_f.stat().st_size:,} B)", flush=True)
+                        print(f"[download] serving COM bridge: {_f} ({_f.stat().st_size:,} B)", flush=True)
                         return web.Response(
                             body=_f.read_bytes(),
                             content_type="application/octet-stream",
@@ -7810,12 +7811,12 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                                 "Access-Control-Allow-Origin": "*",
                             }
                         )
-            # 2. Dev fallback: oryginalna nazwa, ale TYLKO w katalogach bez serwera
+            # 2. Dev fallback: original name, but ONLY in directories without a server
             for _d in _dev_dirs:
                 _f = _d / "HAM-RADIO-CTRL.exe"
                 _checked.append(str(_f))
                 if _f.exists():
-                    print(f"[download] serwuje most COM (dev): {_f} ({_f.stat().st_size:,} B)", flush=True)
+                    print(f"[download] serving COM bridge (dev): {_f} ({_f.stat().st_size:,} B)", flush=True)
                     return web.Response(
                         body=_f.read_bytes(),
                         content_type="application/octet-stream",
@@ -7824,7 +7825,7 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                             "Access-Control-Allow-Origin": "*",
                         }
                     )
-            print(f"[download] most COM nie znaleziony. Sprawdzono:", flush=True)
+            print(f"[download] COM bridge not found. Checked:", flush=True)
             for _c in _checked:
                 print(f"[download]   - {_c}", flush=True)
             _list = "".join(f"<li><code>{_c}</code></li>" for _c in _checked)
@@ -7867,13 +7868,13 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                         pass
             # For DELETE with path params, rebuild query dict as list-of-values style
             q = {k: [v] for k, v in query.items()}
-            # IP klienta dla rate limitingu. Za reverse proxy / tunelem prawdziwy
-            # adres jest w X-Forwarded-For (pierwszy wpis = oryginalny klient).
+            # Client IP for rate limiting. Behind a reverse proxy / tunnel
+            # the real address is in X-Forwarded-For (first entry = original client).
             _xff = request.headers.get("X-Forwarded-For", "")
             _client_ip = (_xff.split(",")[0].strip() if _xff
                           else (request.remote or ""))
             status, result = await self.api(method, path, body, user, q, _client_ip)
-            # Specjalny typ — odpowiedź binarna (np. model ONNX)
+            # Special type — binary response (e.g. an ONNX model)
             if status == "binary":
                 return web.Response(
                     body=result,
@@ -7883,7 +7884,7 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                         "Cache-Control": "public, max-age=86400",
                     },
                 )
-            # Specjalny typ — eksport pliku (ADIF/CSV/EDI) z naglowkiem pobierania
+            # Special type — file export (ADIF/CSV/EDI) with a download header
             if status == "export":
                 return web.Response(
                     body=result["body"],
