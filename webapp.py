@@ -4225,26 +4225,27 @@ class App:
                 "enabledBands": self.cfg.get("enabledBands", []),
                 "enabledModes": self.cfg.get("enabledModes", []),
                 "modeFilters":  self.cfg.get("modeFilters", {}),
-                # KRYTYCZNE: _radio_lock_state() zwraca WLASNY klucz
-                # "type": "radio_lock_state". Rozpakowanie (**) tego slownika
-                # PO "type": "init" w tym samym dict literale powodowalo ze
-                # PYTHON CICHO NADPISYWAL "type" na "radio_lock_state" —
-                # finalna wiadomosc wysylana do frontu NIGDY nie miala
-                # type=="init"! Stad case 'init' w ws.js nigdy sie nie
-                # wykonywal, msg.modes nigdy nie docieralo, panel TRYB byl
-                # pusty po kazdym swiezym polaczeniu/odswiezeniu. Usuwamy
-                # kolidujacy klucz "type" z lock_state PRZED rozpakowaniem
-                # (patrz _lock_state.pop("type") powyzej).
+                # CRITICAL: _radio_lock_state() returns its OWN key
+                # "type": "radio_lock_state". Unpacking (**) that dict
+                # AFTER "type": "init" in the same dict literal made
+                # PYTHON SILENTLY OVERWRITE "type" with "radio_lock_state"
+                # — the final message sent to the frontend NEVER had
+                # type=="init"! So the 'init' case in ws.js never ran,
+                # msg.modes never arrived, and the MODE panel was empty
+                # after every fresh connection/refresh. We remove the
+                # colliding "type" key from lock_state BEFORE unpacking
+                # (see _lock_state.pop("type") above).
                 **_lock_state,
                 "online": self._online_users_state(),
                 "my_uid": uid,
             }))
-            # Stan automatyki FT8/FT4 (silnik QSO) — bez tego swiezo polaczony
-            # klient (nowa karta, odswiezenie strony, powrot po reconnect) nie
-            # znal aktualnego stanu backendu i pokazywal domyslne "IDLE" mimo
-            # ze automatyka realnie prowadzila juz QSO z kims innym — panel
-            # pokazywal nierealne informacje o tym co i z kim nadajemy, dopoki
-            # nie nadeszlo kolejne dekodowanie i nie wywolalo broadcastu.
+            # FT8/FT4 automation state (QSO engine) — without this a
+            # freshly connected client (new tab, page refresh, reconnect)
+            # didn't know the backend's current state and showed the
+            # default "IDLE" even though the automation was actually
+            # already running a QSO with someone else — the panel showed
+            # unrealistic info about what/who we're transmitting to, until
+            # the next decode arrived and triggered a broadcast.
             await ws.send_str(json.dumps({
                 "type": "auto_seq_status",
                 "enabled": self._auto_seq_enabled,
@@ -4270,8 +4271,9 @@ class App:
                         self.touch_activity(uid)
                     elif data and len(data) > 5 and data[0] == 0xC1:
                         # DeepCW: [0xC1][src_rate 4B LE][PCM float32]
-                        # Dekoder chodzi tylko gdy przegladarka SLE audio
-                        # (panel CW otwarty) — zamkniecie panelu = zero CPU.
+                        # The decoder only runs while the browser is
+                        # SENDING audio (the CW panel is open) — closing
+                        # the panel = zero CPU.
                         try:
                             import struct as _st
                             _sr = _st.unpack_from("<I", data, 1)[0]
@@ -4280,19 +4282,19 @@ class App:
                                 await deepcw_engine.feed(
                                     _pcm, _sr, broadcast_fn=self.hub.broadcast)
                         except Exception as _e:
-                            print(f"[deepcw] feed blad: {_e}", flush=True)
+                            print(f"[deepcw] feed error: {_e}", flush=True)
                 elif msg.type == aiohttp.WSMsgType.TEXT:
                     try:
                         data = json.loads(msg.data)
                         t = data.get("type","")
                         print(f"[ws] TEXT t={t!r}", flush=True)
                         if t == "audio_start":
-                            # Audio przez Rust WSS bezposrednio — Python nie proxy'uje
+                            # Audio goes directly through the Rust WSS — Python doesn't proxy it
                             await ws.send_str(json.dumps({"type":"audio_ready","status":{"running":True,"rust":True}}))
                         elif t == "audio_stop":
-                            pass  # audio idzie bezposrednio Rust WS, nic po stronie Pythona do zwolnienia
+                            pass  # audio goes directly over the Rust WS, nothing for Python to release
                         else:
-                            # Dotknij aktywnosc przy kazdej akcji na radiu
+                            # Touch activity on every radio action
                             if t in ("freq","freqB","mode","ptt","rig_slider","rig_action","vfo","vfo_op",
                                      "split","preamp","attenuator","tuner","tuner_autotune"):
                                 self.touch_activity(uid)
@@ -4305,17 +4307,17 @@ class App:
             print(f"[ws] connection error: {e}", flush=True)
         finally:
             await self.hub.remove(ws)
-            # Usun z listy online i powiadom pozostalych
+            # Remove from the online list and notify the others
             self.online_users.pop(ws, None)
             self.radio_requests.pop(uid, None)
-            # Sprawdz czy uzytkownik ma inne aktywne WS (np. otwarty w innej
-            # zakladce/laptop+telefon). Jesli TAK - nie zatrzymuj WSJT-X ani
-            # nie zwalniaj radia (bo dalej jest online).
+            # Check whether the user has another active WS (e.g. open in
+            # another tab/laptop+phone). If YES - don't stop WSJT-X or
+            # release the radio (since they're still online).
             still_online = any(u.get("user_id") == uid for u in self.online_users.values())
-            # Jesli user trzymal radio i to jego OSTATNIE polaczenie — zwolnij
+            # If the user held the radio and this was their LAST connection — release it
             if uid and self.radio_lock["user_id"] == uid and not still_online:
-                self._release_radio()  # zatrzymuje tez WSJT-X jesli owner
-            # Jesli user byl ownerem WSJT-X i to jego OSTATNIE polaczenie — stop
+                self._release_radio()  # also stops WSJT-X if they were the owner
+            # If the user was the WSJT-X owner and this was their LAST connection — stop it
             elif uid and uid == self._ft8_rx_owner_uid and not still_online:
                 await self._stop_wsjtx_auto("rozłączenie sesji")
             # CW decoder viewer cleanup: a disconnect (logout, closed tab) must
@@ -4334,11 +4336,11 @@ class App:
                         self.audio.cw_rx_enabled = False
                     if deepcw_engine is not None:
                         deepcw_engine.reset()
-                    print("[deepcw] dekoder wylaczony (ostatni widz rozlaczony)",
+                    print("[deepcw] decoder disabled (last viewer disconnected)",
                           flush=True)
 
             _lock_state_disconnect = self._radio_lock_state()
-            _lock_state_disconnect.pop("type", None)  # patrz komentarz przy init (ws_handler)
+            _lock_state_disconnect.pop("type", None)  # see the comment at init (ws_handler)
             await self.hub.broadcast({
                 "type":   "online_update",
                 "online": self._online_users_state(),
@@ -4349,19 +4351,19 @@ class App:
 
     async def com_bridge_ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         """
-        WebSocket endpoint /ws/com-bridge - dla klientow EXE Windows.
+        WebSocket endpoint /ws/com-bridge - for Windows EXE clients.
 
-        Autoryzacja: Bearer token w query string (?token=...) LUB w naglowku
-        Sec-WebSocket-Protocol jako 'bearer,<token>' (WS niepozwala Authorization
-        header standardowo).
+        Authorization: Bearer token in the query string (?token=...) OR in
+        the Sec-WebSocket-Protocol header as 'bearer,<token>' (WS doesn't
+        allow a standard Authorization header).
 
-        Po autoryzacji przekazuje kontrole do ComBridgeWs.handle_client() ktore
-        obsluguje protokol (hello/data/ping/etc).
+        After authorization, control is handed to ComBridgeWs.handle_client(),
+        which handles the protocol (hello/data/ping/etc).
         """
-        # Autoryzacja - token z query string
+        # Authorization - token from the query string
         token = request.query.get('token', '')
         if not token:
-            # Alternatywa: Sec-WebSocket-Protocol 'bearer,<token>'
+            # Alternative: Sec-WebSocket-Protocol 'bearer,<token>'
             protos = request.headers.get('Sec-WebSocket-Protocol', '').split(',')
             protos = [p.strip() for p in protos]
             if len(protos) >= 2 and protos[0] == 'bearer':
@@ -4369,50 +4371,50 @@ class App:
 
         user = self._verify_token(token) if token else None
         if not user:
-            return web.Response(status=403, text="Unauthorized - brak lub zly token")
+            return web.Response(status=403, text="Unauthorized - missing or invalid token")
 
-        # ── VIEWER NIE MA DOSTEPU DO MOSTOW (2026-07-05 operator) ─────────────
-        # Viewer korzysta WYLACZNIE z web UI (gdzie moze zmieniac freq z lockiem,
-        # ale nie nadawac). Zewnetrzne aplikacje CAT (CW Skimmer, HRD, Logger32)
-        # przez COM Bridge sa zarezerwowane dla operatorow i admina. Viewer
-        # probujacy sie polaczyc dostaje odmowe - nie tworzymy dla niego portow.
+        # ── VIEWER HAS NO ACCESS TO THE BRIDGES ─────────────
+        # A viewer uses ONLY the web UI (where they can change freq with
+        # the lock, but not transmit). External CAT apps (CW Skimmer, HRD,
+        # Logger32) via the COM Bridge are reserved for operators and the
+        # admin. A viewer trying to connect gets refused - no ports are created for them.
         _role = user.get('role', 'viewer')
         if _role == 'viewer':
-            print(f"[com_bridge_ws] ODMOWA dla viewera "
+            print(f"[com_bridge_ws] REFUSED viewer "
                   f"{user.get('username','?')} (id={user.get('id','?')}) - "
-                  f"mosty tylko dla operatorow/admina", flush=True)
+                  f"bridges are for operators/admin only", flush=True)
             return web.Response(
                 status=403,
-                text="Dostep przez COM Bridge tylko dla operatorow. "
-                     "Jako obserwator (viewer) korzystaj z panelu web."
+                text="COM Bridge access is for operators only. "
+                     "As a viewer, use the web panel."
             )
 
-        # Pobierz config portow tego usera z users.json
-        # JWT payload uzywa 'id' (kompatybilnosc z reszta kodu)
+        # Get this user's port config from users.json
+        # The JWT payload uses 'id' (consistent with the rest of the code)
         user_id = user.get('id') or user.get('user_id', '')
         user_full = next((u for u in self.users if u.get('id') == user_id), {})
-        # STALE 2 PORTY CI-V DLA WSZYSTKICH USEROW (2026-07-05).
-        # Kazdy user dostaje identycznie 2 porty CI-V (dla CW Skimmer + HRD
-        # albo dwoch dowolnych aplikacji CAT). Nie ma per-user konfiguracji -
-        # sekcja w web UI jest tylko informacyjna. Adresy CI-V (E1, E2)
-        # przydzielane automatycznie w build_assignments.
+        # FIXED 2 CI-V PORTS FOR ALL USERS.
+        # Every user gets exactly 2 CI-V ports (for CW Skimmer + HRD, or
+        # any two CAT apps). There's no per-user configuration - the
+        # section in the web UI is informational only. CI-V addresses
+        # (E1, E2) are assigned automatically in build_assignments.
         com_config = [
             {'service': 'civ', 'baud': 19200},
             {'service': 'civ', 'baud': 19200},
         ]
 
-        # compress=False bo permessage-deflate psuje male wiadomosci CI-V
-        # (10 bajtowych ramek). Ruch jest maly (~kilkaset B/s), kompresja
-        # niepotrzebna a moze psuc komunikacje.
+        # compress=False because permessage-deflate corrupts small CI-V
+        # messages (10-byte frames). Traffic is small (~a few hundred
+        # B/s), compression is unnecessary and could break communication.
         ws = web.WebSocketResponse(heartbeat=30, compress=False)
         await ws.prepare(request)
 
-        # Deleguj do ComBridgeWs - on trzyma stan klientow, protokol,
-        # rate limiting, walidacje.
+        # Delegate to ComBridgeWs - it holds the client state, protocol,
+        # rate limiting, validation.
         try:
             await self.com_bridge_ws.handle_client(ws, user, com_config)
         except Exception as e:
-            print(f"[com_bridge_ws] blad handle_client: {e}")
+            print(f"[com_bridge_ws] handle_client error: {e}")
         finally:
             if not ws.closed:
                 await ws.close()
@@ -4420,9 +4422,9 @@ class App:
 
     def _verify_token(self, token: str) -> dict:
         """
-        Weryfikuje JWT token i zwraca dane usera albo None.
-        Uzywane w com_bridge_ws_handler (bo standardowy WS nie ma Bearer header).
-        Zwraca dict kompatybilny z reszta kodu: {id, callsign, role}.
+        Verifies a JWT token and returns the user data, or None.
+        Used in com_bridge_ws_handler (since a plain WS has no Bearer header).
+        Returns a dict compatible with the rest of the code: {id, callsign, role}.
         """
         if not token:
             return None
@@ -4430,19 +4432,19 @@ class App:
             payload = self._check_pw_ver(jwt_verify(token))
             if not payload:
                 return None
-            # JWT payload uzywa 'id' (patrz webapp:1300 - jwt_sign({"id": u["id"], ...}))
+            # The JWT payload uses 'id' (see webapp:1300 - jwt_sign({"id": u["id"], ...}))
             uid = payload.get('id') or payload.get('user_id') or payload.get('sub')
             u = next((x for x in self.users if x.get('id') == uid), None)
             if not u:
                 return None
             return {
                 'id':       u.get('id'),
-                'user_id':  u.get('id'),  # alias dla kompatybilnosci
+                'user_id':  u.get('id'),  # alias for compatibility
                 'callsign': u.get('callsign', ''),
                 'role':     u.get('role', 'user'),
             }
         except Exception as e:
-            print(f"[com_bridge_ws] weryfikacja tokenu blad: {e}")
+            print(f"[com_bridge_ws] token verification error: {e}")
             return None
 
     async def hamlib_ws_handler(self, request: web.Request) -> web.WebSocketResponse:
