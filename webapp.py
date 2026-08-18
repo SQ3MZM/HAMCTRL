@@ -3762,7 +3762,7 @@ class App:
             return 200, timer
 
         if p == "/api/ft8timer/config" and method == "POST":
-            # User ustawia swoj timer (jesli admin dal mu prawo)
+            # The user sets their own timer (if the admin granted them permission)
             u = self.find_user_by_id(uid)
             if not u: return 404, {"error": "Brak usera"}
             timer = u.get("ft8_timer", {"duration_min": 6, "user_can_edit": False})
@@ -3775,7 +3775,7 @@ class App:
             return 200, {"ok": True, "duration_min": mins}
 
         if p == "/api/ft8timer/admin" and method == "POST":
-            # Admin ustawia timer dla wybranego usera
+            # Admin sets the timer for a chosen user
             if role != "admin": return 403, {"error": "Tylko admin"}
             target_id     = body.get("user_id", "")
             duration_min  = int(body.get("duration_min", 6))
@@ -3794,7 +3794,7 @@ class App:
         is_admin_user = (role == "admin")
 
         if p == "/api/qsolog/worked_before" and method == "GET":
-            # Sprawdz czy call juz byl worked. Optional: band/mode.
+            # Check whether a call has already been worked. Optional: band/mode.
             call = query.get("call", "")
             band = query.get("band", None)
             mode = query.get("mode", None)
@@ -3807,10 +3807,10 @@ class App:
         if p == "/api/qsolog/all" and method == "DELETE":
             target_uid = query.get("user_id") or uid
             if isinstance(target_uid, list): target_uid = target_uid[0]
-            # Admin moze kasowac log dowolnego usera, zwykly user tylko swoj
+            # Admin can delete any user's log, a regular user only their own
             if target_uid != uid and not is_admin_user:
                 return 403, {"error": "Brak uprawnień"}
-            # Kasowanie tysiecy QSO moze potrwac - nie blokuj event loopa
+            # Deleting thousands of QSOs can take a while - don't block the event loop
             count = await asyncio.to_thread(qso_db.delete_all, target_uid)
             return 200, {"ok": True, "count": count}
 
@@ -3823,11 +3823,11 @@ class App:
 
         if p == "/api/qsolog" and method == "GET":
             try:
-                # MultiDict — pobierz pierwsze wartosci
+                # MultiDict — take the first values
                 filters = {k: (v[0] if isinstance(v, list) else v)
                            for k, v in query.items()}
                 filter_uid = filters.pop("user_id", None) or None
-                # Lista moze zwracac tysiace QSO - do watku, zeby nie blokowac
+                # The list can return thousands of QSOs - offload to a thread so as not to block
                 result = await asyncio.to_thread(
                     qso_db.list_qsos, uid, is_admin=is_admin_user,
                     filter_uid=filter_uid, **filters)
@@ -3837,14 +3837,15 @@ class App:
                 return 500, {"error": str(e)}
 
         if p == "/api/qsolog/bulk" and method == "POST":
-            # Bulk import wielu QSO naraz
+            # Bulk import of many QSOs at once
             qsos_list = body.get("qsos", [])
             if not qsos_list:
                 return 400, {"ok": False, "error": "Brak QSO"}
             try:
-                # STABILNOSC: import ADIF z tysiacami QSO trwa sekundy. Wolany
-                # synchronicznie ZAMROZILBY event loop - wszyscy userzy by
-                # zamarli, WebSockety by timeoutowaly. Wykonujemy w watku.
+                # STABILITY: an ADIF import with thousands of QSOs takes
+                # seconds. Calling it synchronously would FREEZE the event
+                # loop - every user would stall, WebSockets would time out.
+                # Run it in a thread.
                 result = await asyncio.to_thread(
                     qso_db.add_qsos_bulk, uid, qsos_list)
                 return 200, {"ok": True, "inserted": result["inserted"],
@@ -3855,16 +3856,16 @@ class App:
                 return 500, {"ok": False, "error": str(e)}
 
         if p == "/api/qsolog" and method == "POST":
-            # Dodaj nowe QSO
+            # Add a new QSO
             try:
                 body["source"] = body.get("source", "manual")
                 qso = qso_db.add_qso(uid, body)
-                # Wyslij do CloudLog jesli skonfigurowany
+                # Push to CloudLog if configured
                 asyncio.ensure_future(self._cloudlog_push_qso(uid, qso))
-                # Live-update mini-logu pod automatyka (WSJT-X page) - ten
-                # sam broadcast co przy auto-zapisie QSO z automatyki (patrz
-                # "QSO ZAPISANE do logu" w _process_auto_qso) - jeden typ
-                # wiadomosci dla obu sciezek zapisu (recznej i automatycznej).
+                # Live-update the automation mini-log (WSJT-X page) - the
+                # same broadcast as on auto-save from the automation (see
+                # "QSO SAVED to the log" in _process_auto_qso) - one
+                # message type for both save paths (manual and automatic).
                 await self.hub.broadcast({"type": "qso_logged", "qso": qso})
                 return 200, {"ok": True, "id": qso["id"]}
             except ValueError as e:
@@ -3874,8 +3875,8 @@ class App:
                 return 500, {"ok": False, "error": str(e)}
 
         if p.startswith("/api/deepcw/capture") and method == "POST":
-            # Diagnostyka: nagraj kilkanascie sekund audio dokladnie w takiej
-            # postaci, w jakiej trafia do modelu (po resamplingu i filtrze).
+            # Diagnostics: record a dozen or so seconds of audio exactly as
+            # it's fed to the model (after resampling and the filter).
             if deepcw_engine is None:
                 return 503, {"error": "Silnik DeepCW niedostepny"}
             _sec = float(body.get("seconds", 15))
@@ -3883,7 +3884,7 @@ class App:
             return 200, {"ok": True, "path": _path, "seconds": _sec}
 
         if p.startswith("/api/deepcw/capture_file") and method == "GET":
-            # Pobranie nagranego pliku do odsluchu
+            # Download the recorded file for listening back
             try:
                 import pathlib as _pl
                 _f = _pl.Path(deepcw_engine._cap_path)
@@ -3898,9 +3899,9 @@ class App:
                 return 500, {"error": str(e)}
 
         if p.startswith("/api/deepcw/download") and method == "POST":
-            # Pobranie modelu ONNX (~15 MB) z repozytorium — operacja sieciowa
-            # zapisujaca do katalogu danych, wiec wymaga uprawnienia "ustawienia
-            # serwera" (nie tylko roli admin).
+            # Download the ONNX model (~15 MB) from the repository — a
+            # network operation that writes to the data directory, so it
+            # requires the "server settings" permission (not just the admin role).
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             if deepcw_engine is None:
                 return 503, {"error": "Silnik DeepCW niedostepny "
@@ -3922,13 +3923,13 @@ class App:
             return 200, _st
 
         if p.startswith("/api/deepcw/known_calls") and method == "GET":
-            # Pula znanych znakow do KOLOROWANIA po stronie przegladarki.
-            # Zasilana z dekodow FT8 + logu QSO; frontend dolacza wlasne spoty
-            # z DX clustera (kazdy user ma swoj) i znaki juz przepracowane.
+            # Pool of known calls for browser-side HIGHLIGHTING. Fed from
+            # FT8 decodes + the QSO log; the frontend adds its own DX
+            # cluster spots (each user has their own) and already-worked calls.
             if deepcw_engine is None:
                 return 200, {"calls": []}
             try:
-                # Dorzuc znaki z logu operatora (jednorazowo, tanio)
+                # Add calls from the operator's log (one-off, cheap)
                 deepcw_engine.add_known_calls(
                     qso_db.worked_calls(uid, is_admin=is_admin_user))
             except Exception:
@@ -3936,15 +3937,16 @@ class App:
             return 200, {"calls": sorted(deepcw_engine._known_calls)}
 
         if p.startswith("/api/qsolog/calls") and method == "GET":
-            # Lekka lista UNIKALNYCH znakow z logu — do oznaczania zrobionych
-            # stacji w Band Activity. Zastepuje pobieranie pelnej listy QSO
-            # (capowanej do 200 wpisow), przez co starsze lacznosci nie byly
-            # oznaczane jako zrobione.
+            # Lightweight list of UNIQUE calls from the log — for marking
+            # worked stations in Band Activity. Replaces fetching the full
+            # QSO list (capped at 200 entries), which meant older contacts
+            # weren't marked as worked.
             try:
-                # worked_calls robi SELECT DISTINCT po calej tabeli QSO —
-                # to blokowalo petle zdarzen na 100-150ms (wykryte detektorem
-                # looplag: stos wskazal qso_db.worked_calls). Wynosimy zapytanie
-                # do watku, zeby SQLite nie zamrazal asyncio (audio, pingi).
+                # worked_calls does a SELECT DISTINCT over the whole QSO
+                # table — this was blocking the event loop for 100-150ms
+                # (found via the looplag detector: the stack pointed at
+                # qso_db.worked_calls). The query is offloaded to a thread
+                # so SQLite doesn't freeze asyncio (audio, pings).
                 calls = await asyncio.to_thread(
                     qso_db.worked_calls, uid, is_admin_user)
                 return 200, {"calls": calls}
@@ -3953,20 +3955,21 @@ class App:
 
         if p.startswith("/api/qsolog/export") and method == "GET":
             # Export ADIF/CSV/EDI
-            # UWAGA: query przychodzi jako {klucz: [wartosc]} (listy). Musimy
-            # wyciagnac pojedyncze wartosci, inaczej fmt=['adi'] != 'adi' i
-            # endpoint zwracal 400 "Nieznany format". Filtry tez musza byc
-            # stringami, nie listami (inaczej export_adif dostaje zle typy).
+            # NOTE: query arrives as {key: [value]} (lists). We must
+            # extract single values, otherwise fmt=['adi'] != 'adi' and the
+            # endpoint returned 400 "Nieznany format". Filters must also be
+            # strings, not lists (otherwise export_adif gets the wrong types).
             def _first(v):
                 return v[0] if isinstance(v, list) else v
             _raw = {k: _first(v) for k, v in query.items()}
             fmt = _raw.pop("format", "adi")
-            # Przekazuj do eksportu TYLKO znane filtry - inaczej nieoczekiwany
-            # parametr z query (token, cache-buster, user_id vs filter_uid itp.)
-            # trafia przez **filters do list_qsos i moze rzucic TypeError -> 500.
+            # Pass only KNOWN filters into the export - otherwise an
+            # unexpected query param (token, cache-buster, user_id vs
+            # filter_uid, etc.) flows through **filters into list_qsos and
+            # can raise a TypeError -> 500.
             _allowed = {"from", "to", "call", "band", "mode", "filter_uid", "ids"}
             f = {k: v for k, v in _raw.items() if k in _allowed and v}
-            # Frontend wysyla 'user_id' - mapuj na 'filter_uid' ktory zna backend
+            # The frontend sends 'user_id' - map it to 'filter_uid' which the backend knows
             if _raw.get("user_id"):
                 f["filter_uid"] = _raw["user_id"]
             try:
@@ -3978,12 +3981,14 @@ class App:
                     ct = "text/csv"
                 else:
                     return 400, {"error": "Nieznany format"}
-                # WAZNE: NIE zwracamy obiektu aiohttp Response tutaj - http_handler
-                # robi `status, result = await self.api(...)` i rozpakowuje zwrotke
-                # jako krotke (status, result). Obiekt Response nie jest krotka
-                # -> ValueError -> 500 (dlatego WSZYSTKIE eksporty dawaly 500, a
-                # import dzialal bo zwracal normalna krotke). Zwracamy specjalny
-                # typ "export" ktory http_handler obsluzy z naglowkami pobierania.
+                # IMPORTANT: we do NOT return an aiohttp Response object
+                # here - http_handler does `status, result = await
+                # self.api(...)` and unpacks the return value as a tuple
+                # (status, result). A Response object isn't a tuple ->
+                # ValueError -> 500 (which is why EVERY export used to give
+                # a 500, while import worked because it returned a normal
+                # tuple). We return a special "export" type that
+                # http_handler handles with download headers.
                 return "export", {
                     "body": content_out.encode("utf-8"),
                     "content_type": ct,
