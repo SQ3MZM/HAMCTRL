@@ -1,13 +1,13 @@
 /**
- * chat.js (frontend) — czat operatorów + lista online
+ * chat.js (frontend) — operator chat + online list
  *
  * Layout:
- *   [Lista online | Okno wiadomości + pole wpisywania]
+ *   [Online list | Message window + input field]
  *
- * Typy wiadomości:
- *   text    → normalna wiadomość użytkownika
- *   system  → info systemowe (dołączył/opuścił)
- *   qso_alert → alert nowej łączności
+ * Message types:
+ *   text    → normal user message
+ *   system  → system info (joined/left)
+ *   qso_alert → new-QSO alert
  */
 (function () {
   'use strict';
@@ -21,7 +21,7 @@
 
   let _rendered = false;
 
-  // ── Init (ładowanie historii) ─────────────────────────────────────────────
+  // ── Init (load history) ───────────────────────────────────────────────────
   async function init() {
     if (!document.getElementById('chat-messages')) return;
     try {
@@ -42,7 +42,7 @@
     } catch (e) {}
   }
 
-  // ── WS handler (wywoływany z ws.js) ──────────────────────────────────────
+  // ── WS handler (called from ws.js) ───────────────────────────────────────
   function handleWS(msg) {
     if (msg.type === 'chat_init') {
       const box = document.getElementById('chat-messages');
@@ -71,7 +71,7 @@
     }
   }
 
-  // ── Render wiadomości ─────────────────────────────────────────────────────
+  // ── Render messages ───────────────────────────────────────────────────────
   function appendMessage(msg, scroll) {
     const box = document.getElementById('chat-messages');
     if (!box) return;
@@ -102,7 +102,7 @@
 
     box.appendChild(el);
 
-    // Ogranicz liczbę wiadomości w DOM
+    // Cap the number of messages in the DOM
     while (box.children.length > 120) box.removeChild(box.firstChild);
 
     if (scroll) scrollBottom();
@@ -142,13 +142,13 @@
     }).join('');
   }
 
-  // ── Wyślij wiadomość ──────────────────────────────────────────────────────
+  // ── Send message ──────────────────────────────────────────────────────────
   function send() {
     const inp  = document.getElementById('chat-input');
     const text = inp?.value.trim();
     if (!text) return;
 
-    // Wyślij przez WS (szybsze)
+    // Send via WS (faster)
     if (window.WS?.isConnected()) {
       WS.send({ type: 'chat_send', text });
     } else {
@@ -166,10 +166,10 @@
     return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── Eksport ───────────────────────────────────────────────────────────────
+  // ── Export ───────────────────────────────────────────────────────────────
   window.Chat = { init, handleWS, send, loadOnline };
 
-  // Podepnij Enter w polu wpisywania
+  // Hook up Enter in the input field
   document.addEventListener('DOMContentLoaded', () => {
     const inp = document.getElementById('chat-input');
     if (inp) {
