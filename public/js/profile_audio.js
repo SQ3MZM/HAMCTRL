@@ -1,17 +1,17 @@
 /*
- * profile_audio.js — Wybor urzadzen audio uzytkownika (przegladarka).
+ * profile_audio.js — User's audio device selection (browser-side).
  *
- * RX output (glosnik/sluchawki gdzie user slyszy odbior) — setSinkId na
- * globalnym audioCtx, zapisywane w localStorage['ham_audio_sinkId'].
- * TX input (mikrofon) — zapisywane w localStorage['ham_audio_micId'],
- * uzywane przez ws.js/_txMic i tx_eq.js monitor.
+ * RX output (speaker/headphones where the user hears the receive audio) —
+ * setSinkId on the global audioCtx, saved in localStorage['ham_audio_sinkId'].
+ * TX input (microphone) — saved in localStorage['ham_audio_micId'],
+ * used by ws.js/_txMic and the tx_eq.js monitor.
  */
 window.ProfileAudio = (function() {
   let _testCtx = null;
   let _meterStream = null;
   let _meterRaf = null;
 
-  // Filtr: odrzuc wirtualne/kablowe urzadzenia z domyslnej sugestii
+  // Filter: exclude virtual/cable devices from the default suggestion
   function _isVirtual(label) {
     const l = (label || '').toLowerCase();
     return l.includes('virtual') || l.includes('cable') ||
@@ -20,12 +20,12 @@ window.ProfileAudio = (function() {
 
   async function load() {
     try {
-      // Poproś o dostep do mikrofonu zeby dostac etykiety urzadzen
-      // (bez permission enumerateDevices zwraca puste labelki)
+      // Request microphone access to get device labels
+      // (without permission, enumerateDevices returns empty labels)
       try {
         const s = await navigator.mediaDevices.getUserMedia({ audio: true });
         s.getTracks().forEach(t => t.stop());
-      } catch(e) { /* user odmowil — pokazemy co sie da */ }
+      } catch(e) { /* user declined — show what we can */ }
 
       const devs = await navigator.mediaDevices.enumerateDevices();
       const outputs = devs.filter(d => d.kind === 'audiooutput');
@@ -52,14 +52,14 @@ window.ProfileAudio = (function() {
         }).join('') || `<option value="">${I18n.t('profile_no_devices')}</option>`;
       }
     } catch(e) {
-      console.warn('[profile-audio] load blad:', e);
+      console.warn('[profile-audio] load error:', e);
     }
   }
 
   function setOutput(deviceId) {
     if (!deviceId) return;
     localStorage.setItem('ham_audio_sinkId', deviceId);
-    // Zastosuj od razu na globalnym audioCtx jesli istnieje
+    // Apply immediately on the global audioCtx if it exists
     const ctx = window.audioCtx || window.AppAudio?.ctx;
     if (ctx && ctx.setSinkId) {
       ctx.setSinkId(deviceId).catch(e => console.warn('[profile-audio] setSinkId:', e));
@@ -73,7 +73,7 @@ window.ProfileAudio = (function() {
     window.UI?.showToast?.(I18n.t('profile_toast_mic_saved'), 'info');
   }
 
-  // Test glosnika — odtworz krotki ton (1 kHz, 0.5s) na wybranym wyjsciu
+  // Speaker test — play a short tone (1 kHz, 0.5s) on the selected output
   async function testOutput() {
     try {
       if (_testCtx) { try { _testCtx.close(); } catch(e){} }
@@ -98,14 +98,14 @@ window.ProfileAudio = (function() {
     }
   }
 
-  // Test mikrofonu — pokaz poziom przez 5s na wybranym wejsciu
+  // Microphone test — show the level for 5s on the selected input
   async function testInput() {
     const meter = document.getElementById('profile-audio-meter');
     const level = document.getElementById('profile-audio-level');
     const hint  = document.getElementById('profile-audio-hint');
     if (!meter || !level) return;
 
-    // Zatrzymaj poprzedni test jesli trwa
+    // Stop the previous test if it's still running
     stopMeter();
 
     const micId = localStorage.getItem('ham_audio_micId');
@@ -125,7 +125,7 @@ window.ProfileAudio = (function() {
 
       function tick() {
         analyser.getByteTimeDomainData(data);
-        // Oblicz RMS
+        // Compute RMS
         let sum = 0;
         for (let i = 0; i < data.length; i++) {
           const v = (data[i] - 128) / 128;
@@ -141,7 +141,7 @@ window.ProfileAudio = (function() {
           if (hint) hint.textContent = I18n.t('profile_mic_hint_speaking').replace('{s}', (5-elapsed).toFixed(0)).replace('{peak}', peak.toFixed(0));
           _meterRaf = requestAnimationFrame(tick);
         } else {
-          // Podsumowanie
+          // Summary
           if (hint) {
             if (peak < 5) {
               hint.textContent = I18n.t('profile_mic_hint_low').replace('{peak}', peak.toFixed(0));
