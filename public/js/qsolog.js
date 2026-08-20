@@ -335,7 +335,7 @@ async function saveQSO() {
     rst_sent: document.getElementById('qso-rst-sent')?.value || '',
     rst_rcvd: document.getElementById('qso-rst-rcvd')?.value || '',
     comment:  document.getElementById('qso-comment')?.value || '',
-    my_call:  S?.callsign || '',
+    my_call:  S?.callsign || window.CurrentUser?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
                    || S?.stationLocator || ''),  // OPERATOR's locator
     name:     document.getElementById('qso-name')?.value?.trim() || '',
@@ -531,7 +531,7 @@ async function quickLog() {
     rst_sent:  document.getElementById('qlog-rst-s')?.value || (String(S?.mode||'').toUpperCase().startsWith('CW') ? _RST_CW : _RST_PHONE),
     rst_rcvd:  document.getElementById('qlog-rst-r')?.value || (String(S?.mode||'').toUpperCase().startsWith('CW') ? _RST_CW : _RST_PHONE),
     gridsquare: document.getElementById('qlog-grid')?.value?.trim().toUpperCase() || '',
-    my_call:   S?.callsign || '',
+    my_call:   S?.callsign || window.CurrentUser?.callsign || '',
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
                    || S?.stationLocator || ''),  // OPERATOR's locator
     comment:   '',

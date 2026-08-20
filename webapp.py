@@ -3859,6 +3859,24 @@ class App:
             # Add a new QSO
             try:
                 body["source"] = body.get("source", "manual")
+                # FIX: my_call (-> ADIF OPERATOR/STATION_CALLSIGN) used to
+                # come ONLY from the frontend (S?.callsign, i.e.
+                # window.AppState.callsign, set async from /api/auth/me).
+                # Reported live: QSOs logged via the quick-log widget
+                # reached CloudLog with NO operator/station callsign at
+                # all, even though the user's profile definitely had one
+                # set — confirmed by exporting the QSO to ADIF and seeing
+                # no STATION_CALLSIGN/OPERATOR tag. Rather than chase the
+                # exact frontend timing (some page/reconnect path left
+                # AppState.callsign empty while window.CurrentUser was
+                # already populated - the two aren't kept in sync the same
+                # way), the backend now falls back to the AUTHENTICATED
+                # user's own profile callsign whenever the request didn't
+                # supply one - this is the actual source of truth anyway.
+                if not (body.get("my_call") or "").strip():
+                    _u_obj = self.find_user_by_id(uid)
+                    body["my_call"] = ((_u_obj or {}).get("callsign")
+                                        or user.get("username", ""))
                 qso = qso_db.add_qso(uid, body)
                 # Push to CloudLog if configured
                 asyncio.ensure_future(self._cloudlog_push_qso(uid, qso))
@@ -4012,6 +4030,15 @@ class App:
 
             if method == "PUT":
                 try:
+                    # Same fallback as POST /api/qsolog above - update_qso()
+                    # unconditionally overwrites my_call with whatever the
+                    # request sends, so an edit from a client with an empty
+                    # AppState.callsign would silently WIPE an already-correct
+                    # operator field instead of just leaving it as-is.
+                    if not (body.get("my_call") or "").strip():
+                        _u_obj = self.find_user_by_id(uid)
+                        body["my_call"] = ((_u_obj or {}).get("callsign")
+                                            or user.get("username", ""))
                     ok = qso_db.update_qso(uid, qso_id, body, is_admin=is_admin_user)
                     return (200, {"ok": True}) if ok else (404, {"error": "QSO nie znalezione"})
                 except ValueError as e:
@@ -6550,7 +6577,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-20-ALC-PWR-PEAKHOLD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-MYCALL-BACKEND-FALLBACK, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

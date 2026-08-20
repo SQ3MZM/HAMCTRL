@@ -679,9 +679,13 @@ function fullRefresh() {
   updateVFOBadges();
   updateFreqB();
   renderMemories();
-  // Callsign in the header
+  // Callsign in the header. Fallback to window.CurrentUser?.callsign
+  // (same pattern already used for my_gridsquare in qsolog.js) - reported
+  // live stuck at "--" while CurrentUser was already populated, so relying
+  // on S.callsign (AppState.callsign, set separately/async in auth.js)
+  // alone isn't reliable enough for this to always show correctly.
   const cs = document.getElementById('callsign-display');
-  if (cs) cs.textContent = S.callsign || '--';
+  if (cs) cs.textContent = S.callsign || window.CurrentUser?.callsign || '--';
   // SIM badge
   const sim = document.getElementById('sim-badge');
   if (sim) sim.style.display = S.sim ? 'inline' : 'none';
