@@ -239,7 +239,7 @@ class WsjtxUdpServer:
             self._transport = transport
             self._running   = True
             print(f"[wsjtx] UDP listening on {host}:{port}")
-            print(f"[wsjtx] WSJT-X: Settings → Reporting → UDP Server: localhost, Port: {port}")
+            print(f"[wsjtx] WSJT-X: Settings -> Reporting -> UDP Server: localhost, Port: {port}")
             return True
 
         except OSError as e:

@@ -202,7 +202,7 @@ class HamlibSession:
                     on = int(raw_val) != 0
                 else:
                     on = raw_val in ('true', 'True', 'on', 'TX')
-                print(f"[hamlib:{self.slot}] PTT SET → {'TX' if on else 'RX'} (sim={self.rig.sim}, ser={self.rig._ser is not None})", flush=True)
+                print(f"[hamlib:{self.slot}] PTT SET -> {'TX' if on else 'RX'} (sim={self.rig.sim}, ser={self.rig._ser is not None})", flush=True)
                 self.rig.ptt = on
                 if not self.rig.sim:
                     if self.rig._ser:

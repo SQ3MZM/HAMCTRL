@@ -204,7 +204,7 @@ def _gen_cert():
                 return 0
             except Exception as e:
                 print(f"Elevation error: {e}", flush=True)
-                print("Right-click the shortcut → Run as administrator.",
+                print("Right-click the shortcut -> Run as administrator.",
                       flush=True)
                 if getattr(sys, "frozen", False):
                     input("\nPress Enter to close...")

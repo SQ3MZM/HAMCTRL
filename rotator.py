@@ -179,7 +179,7 @@ class Rotator:
     # ── Connect ───────────────────────────────────────────────────────────────
     def connect(self) -> bool:
         if not HAS_SERIAL:
-            print(f"[rotator] {self.name}: pyserial unavailable → simulation")
+            print(f"[rotator] {self.name}: pyserial unavailable -> simulation")
             self.sim = True
             return False
         try:
@@ -197,10 +197,10 @@ class Rotator:
             self.connected = True
             self.sim       = False
             proto_label = "Yaesu GS-232A" if self.protocol == "yaesu" else "SPID"
-            print(f"[rotator] {self.name} {proto_label} @ {self.port} {self.speed}bd — az={self.az:.0f}°")
+            print(f"[rotator] {self.name} {proto_label} @ {self.port} {self.speed}bd - az={self.az:.0f}deg")
             return True
         except Exception as e:
-            print(f"[rotator] {self.name}: {e} → simulation")
+            print(f"[rotator] {self.name}: {e} -> simulation")
             if self._ser:
                 try: self._ser.close()
                 except: pass

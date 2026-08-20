@@ -145,7 +145,7 @@ class DeepCWModelManager:
                 self._save_meta(meta)
 
                 await _bcast(f"✓ Model gotowy ({len(model_bytes)/1e6:.1f} MB) → {save_path}", 100, len(model_bytes), len(model_bytes))
-                print(f"[deepcw] Model downloaded: {len(model_bytes)/1e6:.1f} MB → {save_path}", flush=True)
+                print(f"[deepcw] Model downloaded: {len(model_bytes)/1e6:.1f} MB -> {save_path}", flush=True)
                 return {"ok": True, "sizeBytes": len(model_bytes), "sha": sha, "savePath": save_path}
             except Exception as e:
                 print(f"[deepcw] Download error: {e}", flush=True)
