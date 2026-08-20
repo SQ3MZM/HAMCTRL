@@ -1792,6 +1792,16 @@ class App:
 
         role = user.get("role", "viewer")
         uid  = user.get("id", "")
+        # FIX: same promotion as ws_handler (see the comment there) - the
+        # JWT's role is frozen at login time, so granting the "admin"
+        # granular permission afterward only satisfied _has_perm() checks,
+        # not the many plain "role == 'admin'" checks throughout this file.
+        # A user with the Admin-panel permission should BE an admin, not a
+        # partial one.
+        if role != "admin":
+            _u_obj_perm = self.find_user_by_id(uid) or {}
+            if _u_obj_perm.get("permissions", {}).get("admin"):
+                role = "admin"
 
         if p == "/api/auth/change-password" and method == "POST":
             old_pw  = body.get("old_password", "")
@@ -3518,7 +3528,7 @@ class App:
                     "channels": sorted(channels),
                 })
             my_uid = user.get("id", "") if user else ""
-            my_role = user.get("role", "?") if user else "?"
+            my_role = role if user else "?"  # already promoted for the "admin" permission - see the fix near line 1793
             return 200, {
                 "ok": True,
                 "my_uid": my_uid,
@@ -4196,12 +4206,24 @@ class App:
         user = self._check_pw_ver(jwt_verify(token)) if token else None
         role = (user or {}).get("role", "viewer")
         uid  = (user or {}).get("id", "")
+        # FIX: the JWT only ever carries the role from LOGIN time (see the
+        # comment at _has_perm) - granting the "admin" GRANULAR permission
+        # afterward (Admin panel tab, ADMIN.js "admin" key) made _has_perm()
+        # checks pass, but every one of the many plain "role == 'admin'"
+        # checks scattered through this file stayed blind to it, since they
+        # never looked at permissions at all. Reported live: "granting
+        # someone the admin-panel permission should make them a full admin,
+        # not a partial one". Re-reading the live user record here (once,
+        # per connection) and promoting role locally is far safer than
+        # hunting down every "== admin" check in this file individually.
+        u_obj = self.find_user_by_id(uid) or {} if user else {}
+        if role != "admin" and u_obj.get("permissions", {}).get("admin"):
+            role = "admin"
 
         await self.hub.add(ws)
 
         # Register the user as online
         if user:
-            u_obj = self.find_user_by_id(uid) or {}
             self.online_users[ws] = {
                 "user_id":  uid,
                 "username": user.get("username", ""),
@@ -4437,6 +4459,10 @@ class App:
         # Logger32) via the COM Bridge are reserved for operators and the
         # admin. A viewer trying to connect gets refused - no ports are created for them.
         _role = user.get('role', 'viewer')
+        if _role != 'admin':
+            _u_obj_bridge = self.find_user_by_id(user.get('id', '')) or {}
+            if _u_obj_bridge.get('permissions', {}).get('admin'):
+                _role = 'admin'
         if _role == 'viewer':
             print(f"[com_bridge_ws] REFUSED viewer "
                   f"{user.get('username','?')} (id={user.get('id','?')}) - "
@@ -6591,7 +6617,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-20-QUIET-CONSOLE-1WINDOW, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-ADMIN-PERM-PROMOTION, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
