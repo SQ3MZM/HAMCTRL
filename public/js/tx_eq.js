@@ -383,6 +383,9 @@ window.TxEq = (() => {
       btn.style.background = 'var(--red)';
       btn.style.color = 'white';
     }
+    // Keep the RADIO-tab MON button (radiofunctions.js) in sync - it's a
+    // second entry point into this same monitor, not a separate feature.
+    document.getElementById('radio-mon-btn')?.classList.add('active');
     console.log('[txeq] Monitor active');
   }
 
@@ -408,6 +411,7 @@ window.TxEq = (() => {
       btn.style.background = 'var(--panel3)';
       btn.style.color = 'var(--green)';
     }
+    document.getElementById('radio-mon-btn')?.classList.remove('active');
     console.log('[txeq] Monitor stopped');
   }
 
@@ -415,6 +419,8 @@ window.TxEq = (() => {
     if (monitorActive) stopMonitor();
     else startMonitor();
   }
+
+  function isMonitorActive() { return monitorActive; }
 
   function setMonitorVol(val) {
     monitorVol = Math.max(0, Math.min(1, val));
@@ -440,7 +446,7 @@ window.TxEq = (() => {
   return {
     applyPreset, setBand, buildFilterChain,
     registerTxFilters, unregisterTxFilters,
-    toggleMonitor, startMonitor, stopMonitor, setMonitorVol,
+    toggleMonitor, startMonitor, stopMonitor, setMonitorVol, isMonitorActive,
     getCurrentBands,
     load, save, loadFromServer,
   };

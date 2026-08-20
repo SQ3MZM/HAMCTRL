@@ -819,6 +819,9 @@ function handleMessage(msg) {
     case 'tunnel_update':
       if (typeof window.Tunnel?.handleWS === 'function') Tunnel.handleWS(msg);
       break;
+    case 'cw_tx_start':
+      window.CwSidetone?.handleWS(msg);
+      break;
     default:
       // WSJTX and other modules
       if (typeof window.WSJTX?.handleWS  === 'function') WSJTX.handleWS(msg);

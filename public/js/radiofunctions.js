@@ -148,6 +148,25 @@ const RadioFunctions = (() => {
       btn.dataset.actionId = a.id;
       btn.textContent = a.label.split('(')[0].trim(); // shorter label
       btn.title = a.label;
+      // FIX: MON used to send the radio's own CI-V MONI toggle - reported
+      // live as "seems like it doesn't work". Root cause: our own RX duck
+      // (setTxAudioDuck, see ws.js) mutes RX audio for the ENTIRE PTT
+      // period specifically to hide MONI squeal during FT8 - so even a
+      // correctly-toggled MONI could never actually be heard, since the
+      // one moment it would matter (while transmitting) is exactly when
+      // we silence RX. Repurposed: MON now toggles a LOCAL/server-side
+      // monitor of what's actually being sent (SSB mic via TxEq, CW via
+      // CwSidetone below) instead of touching the radio at all - doesn't
+      // depend on MONI or fight the duck.
+      if (a.id === 'func_mon') {
+        btn.id = 'radio-mon-btn';
+        btn.onclick = () => {
+          window.TxEq?.toggleMonitor();
+          window.CwSidetone?.setEnabled(window.TxEq ? window.TxEq.isMonitorActive() : false);
+        };
+        _funcBtnEls[a.id] = btn;
+        return btn;
+      }
       btn.onclick = () => {
         const state = !btn.classList.contains('active');
         btn.classList.toggle('active', state);

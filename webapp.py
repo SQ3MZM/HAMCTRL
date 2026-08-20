@@ -2915,6 +2915,15 @@ class App:
                                  "Skonfiguruj osobny port w Konfiguracja > CW Keyer, "
                                  "lub uzyj metody CAT CI-V (zalecane dla IC-7300/746)."}
             self._cw_tx_busy = True
+            # Fired BEFORE the actual sending starts (unlike the existing
+            # 'cw_sending' broadcast further below, which only fires AFTER
+            # send_cw_message() already finished - too late to drive a
+            # live sidetone). See public/js/cw_sidetone.js: the radio does
+            # its own Morse keying internally from the text we hand it over
+            # CI-V, so the browser can't know the exact dit/dah timing -
+            # this lets it synthesize a same-content, same-WPM tone locally
+            # instead, gated behind the MON toggle.
+            await self.hub.broadcast({"type": "cw_tx_start", "text": text, "wpm": wpm})
             try:
                 if method_cw in ("dtr", "rts"):
                     try:
@@ -6617,7 +6626,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-20-ADMIN-PERM-PROMOTION, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-MON-CW-SIDETONE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
