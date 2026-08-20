@@ -40,6 +40,31 @@ let isPlayingAudio = false;
 let opusWorker = null;   // Web Worker with the opus-decoder WASM decoder
 window._audioEnabled = false;
 
+// Picks the RX output device (saved choice > first non-virtual real
+// device > 'default') and applies it to the shared audioCtx. Called at
+// context creation AND on every 'devicechange' event (see
+// initAudioContext) so a headphone plug/unplug mid-session actually
+// re-routes audio instead of leaving it stuck on whatever was the
+// default at page-load time.
+function _applyOutputSinkId() {
+  if (!audioCtx || !audioCtx.setSinkId) return;
+  navigator.mediaDevices.enumerateDevices().then(devs => {
+    const outputs = devs.filter(d => d.kind === 'audiooutput');
+    const saved = localStorage.getItem('ham_audio_sinkId');
+    const savedStillExists = saved && outputs.some(d => d.deviceId === saved);
+    const nonVB = outputs.find(d =>
+      d.deviceId !== 'default' &&
+      d.deviceId !== 'communications' &&
+      !d.label.toLowerCase().includes('virtual') &&
+      !d.label.toLowerCase().includes('cable')
+    );
+    const target = savedStillExists ? saved : ((nonVB && nonVB.deviceId) || 'default');
+    audioCtx.setSinkId(target).then(() => {
+      console.log('[audio] sinkId set:', target);
+    }).catch(e => console.warn('[audio] setSinkId error:', e));
+  }).catch(() => {});
+}
+
 function initAudioContext() {
   if (audioCtx) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -110,27 +135,25 @@ function initAudioContext() {
 
     if (audioCtx.state === 'suspended') audioCtx.resume();
 
-    // Set the default output device (not VB-Cable)
+    // Set the output device (not VB-Cable)
     // We look for Realtek/Speakers as "default" — not communications/VB
     if (audioCtx.setSinkId) {
-      navigator.mediaDevices.enumerateDevices().then(devs => {
-        const outputs = devs.filter(d => d.kind === 'audiooutput');
-        // Priority: saved in localStorage > 'default' > first non-VB
-        const saved = localStorage.getItem('ham_audio_sinkId');
-        const defaultDev = outputs.find(d => d.deviceId === 'default');
-        const nonVB = outputs.find(d =>
-          d.deviceId !== 'default' &&
-          d.deviceId !== 'communications' &&
-          !d.label.toLowerCase().includes('virtual') &&
-          !d.label.toLowerCase().includes('cable')
-        );
-        const target = saved || (nonVB && nonVB.deviceId) || (defaultDev && 'default');
-        if (target && target !== 'default') {
-          audioCtx.setSinkId(target).then(() => {
-            console.log('[audio] sinkId set:', target);
-          }).catch(e => console.warn('[audio] setSinkId error:', e));
-        }
-      }).catch(() => {});
+      _applyOutputSinkId();
+      // FIX: reported live - RX audio (incl. the SSB MONI echo) kept
+      // playing through the laptop's built-in speakers even with
+      // headphones plugged in and PROFIL's output device left on
+      // "Domyślne" (default). Root cause: an AudioContext's implicit
+      // 'default' sink does NOT automatically follow later OS
+      // default-output changes in Chromium - it stays bound to whatever
+      // was the default at the moment the context was created (page
+      // load), so plugging in headphones AFTER that point doesn't
+      // re-route audio that's already flowing. Re-applying setSinkId
+      // on every 'devicechange' event (headphones plugged/unplugged,
+      // any output added/removed) forces it to pick up the CURRENT
+      // default instead of a stale one from page-load time.
+      if (navigator.mediaDevices?.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', _applyOutputSinkId);
+      }
     }
   } catch(e) {
     console.warn('[audio] AudioContext error:', e);
