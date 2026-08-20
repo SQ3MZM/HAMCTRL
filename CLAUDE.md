@@ -1,19 +1,23 @@
 # HAMCTRL
 
-## Komunikacja
+## Komunikacja / Communication
 
-Odpowiadaj **zawsze wyłącznie po polsku** — cała wypowiedź, żadnych angielskich
-wtrąceń (nagłówki w stylu „Fix:”/„Przyczyna:” po angielsku, luźne słowa typu
-„commit”/„fix” użyte zamiast polskiego odpowiednika w zdaniach do użytkownika
-itp.). Nazwy własne z kodu (funkcje, zmienne, typy wiadomości WS jak
-`wsjtx_decode`, `is_tx`, nazwy plików) zostają w oryginalnej formie — to
-cytowanie kodu, nie wtrącanie angielskiego.
+Odpowiadaj w języku, w którym pisze użytkownik — jeśli pisze po polsku,
+odpowiadaj wyłącznie po polsku (cała wypowiedź, bez angielskich wtrąceń typu
+„Fix:”/„commit” użytych zamiast polskiego odpowiednika); jeśli pisze w innym
+języku, odpowiadaj w tym języku. Nazwy własne z kodu (funkcje, zmienne, typy
+wiadomości WS jak `wsjtx_decode`, `is_tx`, nazwy plików) zawsze zostają w
+oryginalnej formie — to cytowanie kodu, nie wtrącanie obcego języka.
+
+*(This project's own instructions used to hardcode "always respond in
+Polish" — wrong for a public repo where contributors may not read Polish
+at all. Mirror whatever language the user writes in instead.)*
 
 ## Co to za projekt
 
 Webapp do zdalnego sterowania radiostacją amatorską Icom IC-7300 przez CI-V:
-strojenie, tryby, PTT, rotory, DX cluster, log QSO, czat operatorów — oraz
-własny, kompletny tor FT8/FT4 (dekoder + enkoder), **bez WSJT-X/JTDX**.
+strojenie, tryby, PTT, rotory, DX cluster, log QSO — oraz własny, kompletny
+tor FT8/FT4 (dekoder + enkoder), **bez WSJT-X/JTDX**.
 
 - Backend: **Python** (`aiohttp`), jeden duży plik `webapp.py` (~7000 linii) —
   serwer HTTP/WS, silnik automatyki FT8, sterowanie radiem (`civ.py`),
