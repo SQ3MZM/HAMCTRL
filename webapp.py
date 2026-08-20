@@ -5357,19 +5357,41 @@ class App:
                         await self.hub.broadcast({"type": "mode", "mode": self.rig.mode})
                     except Exception as e:
                         print(f"[ptt] data mode error: {e}", flush=True)
-                # DIAGNOSTIC: user reported (confirmed via an independent
-                # SDR in Italy - a real on-air effect, not a local
-                # monitoring artifact) that transmitted SSB audio keeps
-                # going out for ~1-2s after releasing PTT. VOX ruled out
-                # live (toggling the VOX function button caused no TX
-                # reaction at all - not what's keying this radio). This
-                # logs exactly how long the CI-V PTT exchange itself took,
-                # and how much audio was STILL QUEUED (not yet played to
-                # the sound card) at the moment PTT-off was requested - if
-                # the queue is near-empty here, the tail isn't in a queue
-                # we control (points further upstream, e.g. the aiortc
-                # receive-side jitter buffer); if it's large, that's a real,
-                # fixable backlog in our own pipeline.
+                # FIX: releasing PTT used to send "1C 00 00" (PTT off)
+                # THE INSTANT the button/key was released, regardless of
+                # whether the TX audio pipeline still had mic audio queued
+                # (WebRTC/network delivery is not instantaneous — there's
+                # always some audio "in flight" that hasn't reached the
+                # sound card yet). Reported live and confirmed via an
+                # independent SDR in Italy (a real on-air effect, not the
+                # local RX-monitor artifact already fixed separately in
+                # ws.js): the tail end of speech was getting CLIPPED — the
+                # carrier dropped before the last queued audio had actually
+                # played, cutting off the end of a word/callsign
+                # ("SQ3MZM" -> "...MAJ" instead of "...MIKE"). VOX ruled
+                # out live (toggling the VOX function button caused no TX
+                # reaction — it isn't what's keying this radio).
+                # Fix: on PTT-off, wait (briefly, bounded) for the TX audio
+                # queue to actually drain before sending the CI-V PTT-off
+                # command — the same "let the tail finish before dropping
+                # carrier" idea used elsewhere in this project for FT8 TX.
+                if not self.rig.ptt:
+                    _q = getattr(self.audio, "_webrtc_pcm_queue", None)
+                    if _q is not None:
+                        _drain_t0 = time.time()
+                        _stable = 0
+                        while time.time() - _drain_t0 < 1.5:  # safety cap — never hold PTT hostage
+                            if _q.qsize() == 0:
+                                _stable += 1
+                                if _stable >= 2:  # empty on two consecutive checks (debounce)
+                                    break
+                            else:
+                                _stable = 0
+                            await asyncio.sleep(0.05)
+                        _drain_ms = (time.time() - _drain_t0) * 1000.0
+                        if _drain_ms > 20:
+                            print(f"[ptt] OFF: waited {_drain_ms:.0f}ms for the TX audio queue to drain "
+                                  f"before dropping carrier (qsize={_q.qsize()})", flush=True)
                 _ptt_t0 = time.time()
                 _qsize_before = getattr(self.audio, "_webrtc_pcm_queue", None)
                 _qsize_before = _qsize_before.qsize() if _qsize_before is not None else "?"
