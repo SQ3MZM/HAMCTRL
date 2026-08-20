@@ -457,15 +457,20 @@ def worked_before(call: str, band: str = None, mode: str = None) -> dict:
     if not rows:
         return {"worked": False, "worked_band": False, "worked_mode": False,
                 "worked_all": False, "count": 0, "last_qso": None}
+    # "SSB" is a bucket, not a real stored mode value - QSOs made on
+    # voice are saved with the radio's actual CI-V mode (USB/LSB), never
+    # literally "SSB". Callers that want a voice-vs-CW distinction
+    # (regardless of which sideband) pass mode="SSB" and get both matched.
+    mode_set = {"USB", "LSB"} if (mode or "").upper() == "SSB" else ({mode} if mode else set())
     worked_band = False
     worked_mode = False
     worked_all  = False
     if band:
         worked_band = any(r["band"] == band for r in rows)
-    if mode:
-        worked_mode = any(r["mode"] == mode for r in rows)
-    if band and mode:
-        worked_all = any(r["band"] == band and r["mode"] == mode for r in rows)
+    if mode_set:
+        worked_mode = any(r["mode"] in mode_set for r in rows)
+    if band and mode_set:
+        worked_all = any(r["band"] == band and r["mode"] in mode_set for r in rows)
     last = rows[0]
     return {
         "worked":       True,

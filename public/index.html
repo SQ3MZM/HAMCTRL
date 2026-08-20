@@ -265,7 +265,8 @@
           style="font-family:var(--mono);font-size:12px;text-transform:uppercase;
           width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
           border:1px solid var(--border2);border-radius:3px;color:var(--text);"
-          onkeydown="if(event.key==='Enter')QSOLog.quickLog()">
+          onkeydown="if(event.key==='Enter')QSOLog.quickLog()"
+          oninput="QSOLog.checkQuickLogWorkedBefore(this.value)">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" data-i18n-title="sent_title" title="RST wyslane">SENT</span>
         <input type="text" id="qlog-rst-s" placeholder="599" maxlength="3"
           style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
@@ -2659,7 +2660,7 @@
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>
-<script src="js/qsolog.js?v=202608200001"></script>
+<script src="js/qsolog.js?v=202608200002"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

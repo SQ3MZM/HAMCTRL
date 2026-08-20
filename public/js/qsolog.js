@@ -550,9 +550,12 @@ async function quickLog() {
     if (res.ok) {
       _setStatus(`✓ ${call} ${qso.band} ${qso.mode}`, 'green');
       // Clear the CALL field, RST stays at 599
-      document.getElementById('qlog-call').value = '';
+      const callEl = document.getElementById('qlog-call');
+      callEl.value = '';
+      callEl.style.color = '';
+      callEl.style.borderColor = '';
       document.getElementById('qlog-grid').value = '';
-      document.getElementById('qlog-call').focus();
+      callEl.focus();
       // If we're on the LOG page — refresh the table
       if (document.getElementById('page-log')?.classList.contains('active')) load();
     } else {
@@ -790,6 +793,50 @@ async function checkWorkedBefore() {
   }, 500);
 }
 
+// Same idea as checkWorkedBefore() above, but for the always-visible
+// quick-log bar (#qlog-call): highlights the CALL text itself in red
+// instead of a separate badge (there's no room for one in that single
+// row), band comes from the current VFO freq (same as quickLog() uses
+// when it actually saves), and mode is bucketed to SSB (USB+LSB together)
+// vs CW rather than an exact CI-V mode match - the request was
+// specifically "already worked on this band, SSB vs CW", not "on this
+// exact sideband".
+let _qlogWorkedTimer = null;
+async function checkQuickLogWorkedBefore(val) {
+  const el = document.getElementById('qlog-call');
+  if (!el) return;
+  if (_qlogWorkedTimer) clearTimeout(_qlogWorkedTimer);
+  const call = (val || '').toUpperCase().trim();
+  if (!call || call.length < 3) {
+    el.style.color = '';
+    el.style.borderColor = '';
+    return;
+  }
+  _qlogWorkedTimer = setTimeout(async () => {
+    // Stale-response guard: bail if the field changed while we were debouncing/fetching.
+    if (el.value.toUpperCase().trim() !== call) return;
+    const band = _freqToBand(S?.freq || 0);
+    const modeCat = String(S?.mode || '').toUpperCase().startsWith('CW') ? 'CW' : 'SSB';
+    try {
+      const params = new URLSearchParams({ call, band, mode: modeCat });
+      const token = localStorage.getItem('token') || '';
+      const r = await fetch('/api/qsolog/worked_before?' + params, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (el.value.toUpperCase().trim() !== call) return;  // stale by the time the response arrived
+      if (d.ok && d.worked_all) {
+        el.style.color = 'var(--red)';
+        el.style.borderColor = 'var(--red)';
+      } else {
+        el.style.color = '';
+        el.style.borderColor = '';
+      }
+    } catch(e) { console.warn('[qso] quickLog workedBefore error:', e); }
+  }, 300);
+}
+
 window.QSOLog = {
   load, sort, clearFilters, quickLog, updateRstDefaults, importADIF, selectAll, deleteSelected, deleteAll,
   prevPage, nextPage,
@@ -797,6 +844,7 @@ window.QSOLog = {
   exportADI, exportCSV,
   loadAdminUsers: _loadAdminUsers,
   checkWorkedBefore,
+  checkQuickLogWorkedBefore,
 };
 
 })();
