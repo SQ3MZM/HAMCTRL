@@ -22,6 +22,7 @@ import time
 import urllib.request
 
 import numpy as np
+from config import VERBOSE
 
 # The model is kept in the DATA directory (APPDATA), not next to the EXE —
 # otherwise every update would delete the downloaded model (the same
@@ -422,7 +423,7 @@ class DeepCWEngine:
         # state, so it's visible WHETHER audio is arriving and whether the
         # model returns anything at all.
         # Diagnostics every ~10 windows: signal level and consensus state
-        if self._dbg_n % 10 == 1:
+        if VERBOSE and self._dbg_n % 10 == 1:
             print(f"[deepcw] RMS={rms:.5f} (gate {_gate:.5f}) "
                   f"windows={len(self._history)}", flush=True)
         if rms < _gate:
@@ -489,7 +490,7 @@ class DeepCWEngine:
                 print(f"[deepcw] WARNING: inference {_ms:.0f} ms with step "
                       f"{self._hop_sec*1000:.0f} ms — CPU can't keep up, "
                       f"audio may stutter", flush=True)
-        if self._dbg_n % 10 == 1:
+        if VERBOSE and self._dbg_n % 10 == 1:
             print(f"[deepcw] model returned: {text!r} ({_ms:.0f} ms)", flush=True)
         if not text:
             return None

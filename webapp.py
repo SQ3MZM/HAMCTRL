@@ -98,7 +98,7 @@ SERVER_VERSION = "1.0"
 GITHUB_REPO = ""   # TODO: "owner/repo" — fill in after creating the GitHub repo
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
-                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN)
+                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
@@ -5438,10 +5438,11 @@ class App:
                 try: await self.rig.set_ptt(self.rig.ptt)
                 except: pass
                 _ptt_ms = (time.time() - _ptt_t0) * 1000.0
-                print(f"[ptt] {'ON' if self.rig.ptt else 'OFF'}: CI-V exchange took {_ptt_ms:.0f}ms, "
-                      f"TX audio queue at request time={_qsize_before} frames "
-                      f"(~{(_qsize_before*20) if isinstance(_qsize_before, int) else '?'}ms of unplayed audio)",
-                      flush=True)
+                if VERBOSE:
+                    print(f"[ptt] {'ON' if self.rig.ptt else 'OFF'}: CI-V exchange took {_ptt_ms:.0f}ms, "
+                          f"TX audio queue at request time={_qsize_before} frames "
+                          f"(~{(_qsize_before*20) if isinstance(_qsize_before, int) else '?'}ms of unplayed audio)",
+                          flush=True)
             await self.hub.broadcast({"type": "ptt", "ptt": self.rig.ptt})
             # TX watchdog: start a max-transmit-time timer. Configurable in
             # config.json ("tx_watchdog_s", default 180s = 3 minutes).
@@ -6590,7 +6591,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-20-LOGIN-PAGE-I18N, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-QUIET-CONSOLE-1WINDOW, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7384,8 +7385,9 @@ class App:
                     # hypotheses for why decode_elapsed_s/pass_elapsed_s
                     # doesn't respond to further fixes - this line settles
                     # it directly, without guessing.
-                    print(f"[ft8dec] startup: rayon_threads={msg.get('rayon_threads', 0)} "
-                          f"cpus={msg.get('cpus', 0)}", flush=True)
+                    if VERBOSE:
+                        print(f"[ft8dec] startup: rayon_threads={msg.get('rayon_threads', 0)} "
+                              f"cpus={msg.get('cpus', 0)}", flush=True)
                     continue
 
                 if msg.get("type") == "pass_stats":
@@ -7403,13 +7405,14 @@ class App:
                     # pass_elapsed_s on real hardware at all, so guessing
                     # the next cause stopped making sense — this breakdown
                     # shows BY NAME which phase actually eats the time.
-                    print(f"[ft8dec] pass_elapsed_s={msg.get('pass_elapsed_s', 0):.3f} "
-                          f"n={msg.get('n', 0)} spec_ms={msg.get('spec_ms', 0):.1f} "
-                          f"find_cand_ms={msg.get('find_cand_ms', 0):.1f} "
-                          f"par_decode_ms={msg.get('par_decode_ms', 0):.1f} "
-                          f"n_cand={msg.get('n_cand', 0)} "
-                          f"demod_ms_sum={msg.get('demod_ms_sum', 0):.1f} "
-                          f"ldpc_ms_sum={msg.get('ldpc_ms_sum', 0):.1f}", flush=True)
+                    if VERBOSE:
+                        print(f"[ft8dec] pass_elapsed_s={msg.get('pass_elapsed_s', 0):.3f} "
+                              f"n={msg.get('n', 0)} spec_ms={msg.get('spec_ms', 0):.1f} "
+                              f"find_cand_ms={msg.get('find_cand_ms', 0):.1f} "
+                              f"par_decode_ms={msg.get('par_decode_ms', 0):.1f} "
+                              f"n_cand={msg.get('n_cand', 0)} "
+                              f"demod_ms_sum={msg.get('demod_ms_sum', 0):.1f} "
+                              f"ldpc_ms_sum={msg.get('ldpc_ms_sum', 0):.1f}", flush=True)
                     continue
 
                 if msg.get("type") == "decode_stats":
@@ -7424,8 +7427,9 @@ class App:
                     # window (those arrive much earlier, usually right
                     # after pass 0 alone). It's still an upper bound on the
                     # total cost (all passes combined).
-                    print(f"[ft8dec] decode_elapsed_s={msg.get('decode_elapsed_s', 0):.3f} "
-                          f"n_results={msg.get('n_results', 0)}", flush=True)
+                    if VERBOSE:
+                        print(f"[ft8dec] decode_elapsed_s={msg.get('decode_elapsed_s', 0):.3f} "
+                              f"n_results={msg.get('n_results', 0)}", flush=True)
                     continue
 
                 if msg.get("type") != "wsjtx_decode":
@@ -7460,10 +7464,11 @@ class App:
                 # Large pos_in_win (~10s+) = suspiciously late, worth investigating.
                 _win_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
                 _pos_in_win = msg["recvEpoch"] % _win_s
-                print(f"[ft8rx] decode -> UI: {msg.get('message','?')} "
-                      f"(#{self._ft8_dbg_count}, clients={len(self.online_users)}, "
-                      f"pos_in_win={_pos_in_win:.2f}s)",
-                      flush=True)
+                if VERBOSE:
+                    print(f"[ft8rx] decode -> UI: {msg.get('message','?')} "
+                          f"(#{self._ft8_dbg_count}, clients={len(self.online_users)}, "
+                          f"pos_in_win={_pos_in_win:.2f}s)",
+                          flush=True)
 
                 # Broadcast to browsers
                 await self.hub.broadcast(msg)

@@ -2,6 +2,7 @@
 audio_rust_bridge.py — Python ↔ Rust ham_audio bridge
 """
 import asyncio, json, subprocess, pathlib, struct, os
+from config import VERBOSE
 
 CTRL_PORT   = int(os.environ.get("HAM_CTRL_PORT",   9400))
 WS_PORT     = int(os.environ.get("HAM_WS_PORT",     9401))
@@ -104,10 +105,32 @@ class RustAudioBridge:
         except Exception as _e:
             print(f"[audio_bridge] WARNING: could not read the cert for Rust: {_e}", flush=True)
 
+        # FIX: ham_audio.exe used to ALWAYS get its own visible console
+        # (CREATE_NEW_CONSOLE), added at the time to see its own "[build]
+        # ..." version marker separately from the Python log while
+        # debugging the Rust decoder. For a normal release this means TWO
+        # windows pop up (HAM RADIO CTRL's own console + this one) for
+        # every user, most of whom never need Rust's own console at all.
+        # Tied to the same VERBOSE flag as the rest of the reduced-noise
+        # logging: hidden by default (CREATE_NO_WINDOW - the process still
+        # runs exactly the same, just without a visible window), shown
+        # again with HAM_VERBOSE=1 / VERBOSE=1 in .env for anyone who
+        # actually wants to watch ham_audio's own console output live.
+        if os.name == 'nt':
+            _creationflags = subprocess.CREATE_NEW_CONSOLE if VERBOSE else subprocess.CREATE_NO_WINDOW
+        else:
+            _creationflags = 0
+        # CREATE_NO_WINDOW gives the child no console at all, so its
+        # stdio handles are invalid unless explicitly redirected here -
+        # send them to DEVNULL rather than risk ham_audio.exe erroring out
+        # on a print() with nowhere to go. Not needed (and not applied)
+        # in verbose mode, where it gets a real console of its own.
+        _stdio = {} if VERBOSE else {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         self._proc = subprocess.Popen(
             [str(exe)], env=env,
             cwd=str(exe.parent),
-            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0,
+            creationflags=_creationflags,
+            **_stdio,
         )
         # Log the EXE's modification timestamp on the Python side -
         # ham_audio.exe runs as a separate process in its OWN console

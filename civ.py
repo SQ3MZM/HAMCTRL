@@ -36,6 +36,7 @@ except Exception:
     HAS_SERIAL = False
 
 from rigs import get_civ_profile
+from config import VERBOSE
 
 CTRL_ADDR = 0xE0  # adres kontrolera (PC)
 
@@ -1870,7 +1871,7 @@ class CivRig:
                     if rfp and len(rfp) >= 3 and rfp[0] == 0x0A:
                         _dbg_rfpower_raw = bcd2(rfp[1:3])
 
-                    if self.ptt and n % 4 == 0:
+                    if VERBOSE and self.ptt and n % 4 == 0:
                         self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
                                  f"(raw={_dbg_alc_raw}, peak={self._alc_peak:.1f}% raw={self._alc_peak_raw}) "
                                  f"PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}, peak={self._pwr_peak:.1f}% raw={self._pwr_peak_raw}) "

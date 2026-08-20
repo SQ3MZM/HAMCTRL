@@ -6,6 +6,7 @@ TX: browser -> binary WS (WebM) -> ffmpeg -> PyAudio -> sound card
 """
 import asyncio, threading, time, struct, queue
 import numpy as np
+from config import VERBOSE
 
 try:
     import pyaudio
@@ -212,7 +213,8 @@ class AudioStream:
                     # on every log tick).
                     _a = np.frombuffer(mono_native, dtype=np.int16)
                     rms = int(np.sqrt(np.mean(_a.astype(np.float32)**2))) if _a.size else 0
-                    print(f"[audio] RX {self.rx_frames} frames | RMS={rms}")
+                    if VERBOSE:
+                        print(f"[audio] RX {self.rx_frames} frames | RMS={rms}")
             except OSError as e:
                 if self.rx_active: print(f"[audio] RX IO: {e}"); time.sleep(0.1)
             except Exception as e:
@@ -396,7 +398,7 @@ class AudioStream:
                         pcm = arr.tobytes()
                 self._tx_stream.write(pcm, exception_on_underflow=False)
                 self.tx_frames += 1
-                if self.tx_frames % 100 == 0:
+                if VERBOSE and self.tx_frames % 100 == 0:
                     print(f"[audio] TX (WebRTC) played {self.tx_frames} frames "
                           f"(queue={self._webrtc_pcm_queue.qsize()})")
             except OSError as e:
