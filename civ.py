@@ -943,7 +943,7 @@ class CivRig:
         respond. Called synchronously (in the connection/poller thread,
         not in the asyncio loop).
         """
-        p = self._transact(bytes([0x14, lvl["sub"]]), {0x14}, 0.3)
+        p = self._transact(bytes([0x14, lvl["sub"]]), {0x14}, 0.3, sub=lvl["sub"])
         if not p or len(p) < 3 or p[0] != lvl["sub"]:
             return None
         civ_val = bcd2(p[1:3])
@@ -1709,6 +1709,11 @@ class CivRig:
                     _dbg_pwr = None
                     _dbg_alc_raw = None
                     _dbg_pwr_raw = None
+                    _dbg_swr = None
+                    _dbg_swr_raw = None
+                    _dbg_volt = None
+                    _dbg_volt_raw = None
+                    _dbg_rfpower_raw = None
                     # ALC. FIX: command "15 11" used to be used here, which
                     # per the official IC-7300 CI-V documentation is
                     # actually "PO" (output power), NOT ALC — the ALC/PWR
@@ -1752,21 +1757,6 @@ class CivRig:
                                     break
                         _dbg_pwr = pwr_pct
                         _dbg_pwr_raw = pwr_raw
-                        # DIAGNOSTICS: during TX, log readings every ~1.2s
-                        # to settle whether the meters are being read at
-                        # all during FT8 TX (UI "not responding" - backend or frontend?)
-                        # raw= added: the % is post-calibration (piecewise
-                        # table, see above) — with a flat/nonsensical %
-                        # across very different drive levels reported live,
-                        # the raw BCD value is what actually tells us
-                        # whether the RADIO itself is reporting something
-                        # different (real RF chain/hardware limiting, not
-                        # ours to fix) vs whether our calibration/parsing is
-                        # the one that's wrong (ours to fix).
-                        if self.ptt and n % 4 == 0:
-                            self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
-                                     f"(raw={_dbg_alc_raw}) PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}) "
-                                     f"freq={self.freq/1e6:.4f}MHz mode={self.mode} (bcast sent)")
                         self.bcast({"type": "txmeter", "meter": "PWR",
                                     "raw": pwr_raw,
                                     "value": pwr_pct,
@@ -1794,6 +1784,8 @@ class CivRig:
                                 _t = (swr_raw - _x0) / (_x1 - _x0)
                                 swr_val = round(_y0 + _t * (_y1 - _y0), 2)
                                 break
+                        _dbg_swr = swr_val
+                        _dbg_swr_raw = swr_raw
                         self.bcast({"type": "txmeter", "meter": "SWR",
                                     "raw": swr_raw,
                                     "value": swr_val,
@@ -1829,10 +1821,32 @@ class CivRig:
                                     _t = (v_raw - _x0) / (_x1 - _x0)
                                     volt = round(_y0 + _t * (_y1 - _y0), 2)
                                     break
+                        _dbg_volt = volt
+                        _dbg_volt_raw = v_raw
                         self.bcast({"type": "txmeter", "meter": "VOLT",
                                     "raw": v_raw,
                                     "value": volt,
                                     "pct": volt / 16.0})  # scale to nominal 16V
+
+                    # RFPOWER SET level (14 0A) — direct read-back of the
+                    # radio's CONFIGURED power ceiling, independent of the
+                    # UI slider display. DIAGNOSTIC: with PO/PWR staying
+                    # flat around ~25% across a big txVolume sweep
+                    # (0.7x-1.5x) and ALC pinned at 0 the whole time, one
+                    # remaining explanation is that the "100%" the UI shows
+                    # never actually reached raw=255 on the radio itself —
+                    # this confirms or rules that out directly instead of
+                    # guessing again.
+                    rfp = self._transact(bytes([0x14, 0x0A]), {0x14}, 0.25, sub=0x0A)
+                    if rfp and len(rfp) >= 3 and rfp[0] == 0x0A:
+                        _dbg_rfpower_raw = bcd2(rfp[1:3])
+
+                    if self.ptt and n % 4 == 0:
+                        self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
+                                 f"(raw={_dbg_alc_raw}) PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}) "
+                                 f"SWR={_dbg_swr} (raw={_dbg_swr_raw}) VOLT={_dbg_volt} (raw={_dbg_volt_raw}) "
+                                 f"RFPOWER_set_raw={_dbg_rfpower_raw} (0-255, 255=100%) "
+                                 f"freq={self.freq/1e6:.4f}MHz mode={self.mode} (bcast sent)")
                 # Filter width: 1A 03 -> response [03, idx_bcd_2B] (00..49)
                 # DATA mode: 1A 06 -> response [06, data_mode(0/1), filter(1-3)]
                 #   (per doc p.19-10) — affects the interpretation of
