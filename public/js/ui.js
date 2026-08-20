@@ -410,7 +410,15 @@ function _renderTxMeter() {
     scale.innerHTML = ticks.map(t => `<span style="left:${t.at}%">${t.label}</span>`).join('');
   }
   if (value) {
-    value.textContent = data ? `${data.value}${_TXMETER_UNITS[m]}` : '--';
+    // ALC/PWR peak-hold (civ.py resets it on every PTT-on): live SSB
+    // voice makes the instantaneous reading jump around a lot (loud
+    // syllable vs. a gap between words, sampled a few tens of ms apart) -
+    // the PEAK seen across the whole transmission, like a real meter's
+    // needle memory, is what actually tells you whether drive is set
+    // right. Shown only for meters that carry a peak (ALC/PWR).
+    const unit = _TXMETER_UNITS[m];
+    const peakTxt = (data && typeof data.peak === 'number') ? ` (szczyt ${data.peak}${unit})` : '';
+    value.textContent = data ? `${data.value}${unit}${peakTxt}` : '--';
   }
 }
 

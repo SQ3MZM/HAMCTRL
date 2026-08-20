@@ -154,6 +154,17 @@ class CivRig:
         self.bw        = 2400
         self.data_mode = False   # DATA mode (USB-D/LSB-D), from 1A 06 — affects the filter table
         self.ptt       = False
+        # ALC/PWR peak-hold for the CURRENT transmission (reset in
+        # set_ptt() on PTT-on). Live SSB voice makes single instantaneous
+        # readings look "jumpy"/uncorrelated (huge dynamic range between a
+        # loud syllable and a gap between words, sampled a few tens of ms
+        # apart) — the peak seen across the whole TX, like a real ALC
+        # meter's needle memory, is what actually tells you whether you're
+        # driving the radio properly.
+        self._alc_peak     = 0.0
+        self._alc_peak_raw = 0
+        self._pwr_peak     = 0.0
+        self._pwr_peak_raw = 0
         self.split     = False
         self.powered   = True     # radio's power state (CI-V 0x18). After
                                   # power OFF the radio doesn't respond — polling is skipped
@@ -437,7 +448,15 @@ class CivRig:
                         "dataMode": self.data_mode})
 
     async def set_ptt(self, on: bool):
-        self.ptt = bool(on)
+        on = bool(on)
+        if on and not self.ptt:
+            # New transmission starting — reset ALC/PWR peak-hold so it
+            # reflects THIS transmission, not a leftover from the last one.
+            self._alc_peak = 0.0
+            self._alc_peak_raw = 0
+            self._pwr_peak = 0.0
+            self._pwr_peak_raw = 0
+        self.ptt = on
         if self.sim or not self._ser:
             return
         await asyncio.to_thread(self._transact,
@@ -1727,10 +1746,15 @@ class CivRig:
                         alc_pct = min(100.0, max(0.0, alc_raw / 120 * 100))
                         _dbg_alc = alc_pct
                         _dbg_alc_raw = alc_raw
+                        if alc_pct > self._alc_peak:
+                            self._alc_peak = alc_pct
+                            self._alc_peak_raw = alc_raw
                         self.bcast({"type": "txmeter", "meter": "ALC",
                                     "raw": alc_raw,
                                     "value": round(alc_pct, 1),
-                                    "pct": min(1.0, alc_raw / 120)})
+                                    "pct": min(1.0, alc_raw / 120),
+                                    "peak": round(self._alc_peak, 1),
+                                    "peakRaw": self._alc_peak_raw})
                     # PWR output. FIX: command "15 14" used to be used here
                     # (that's actually COMP — the speech compressor in dB,
                     # NOT power). The correct command for PO (output power)
@@ -1757,10 +1781,15 @@ class CivRig:
                                     break
                         _dbg_pwr = pwr_pct
                         _dbg_pwr_raw = pwr_raw
+                        if pwr_pct > self._pwr_peak:
+                            self._pwr_peak = pwr_pct
+                            self._pwr_peak_raw = pwr_raw
                         self.bcast({"type": "txmeter", "meter": "PWR",
                                     "raw": pwr_raw,
                                     "value": pwr_pct,
-                                    "pct": pwr_pct / 100})
+                                    "pct": pwr_pct / 100,
+                                    "peak": round(self._pwr_peak, 1),
+                                    "peakRaw": self._pwr_peak_raw})
                     # SWR
                     sp = self._transact(bytes([0x15, 0x12]), {0x15}, 0.25, sub=0x12)
                     if sp and len(sp) >= 3 and sp[0] == 0x12:
@@ -1843,7 +1872,8 @@ class CivRig:
 
                     if self.ptt and n % 4 == 0:
                         self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
-                                 f"(raw={_dbg_alc_raw}) PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}) "
+                                 f"(raw={_dbg_alc_raw}, peak={self._alc_peak:.1f}% raw={self._alc_peak_raw}) "
+                                 f"PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}, peak={self._pwr_peak:.1f}% raw={self._pwr_peak_raw}) "
                                  f"SWR={_dbg_swr} (raw={_dbg_swr_raw}) VOLT={_dbg_volt} (raw={_dbg_volt_raw}) "
                                  f"RFPOWER_set_raw={_dbg_rfpower_raw} (0-255, 255=100%) "
                                  f"freq={self.freq/1e6:.4f}MHz mode={self.mode} (bcast sent)")
