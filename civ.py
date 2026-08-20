@@ -428,7 +428,7 @@ class CivRig:
         if is_data != self.data_mode:
             await asyncio.to_thread(self._transact,
                                     bytes([0x1A, 0x06, 0x01 if is_data else 0x00]),
-                                    {0x1A}, 0.4)
+                                    {0x1A}, 0.4, sub=0x06)
             self.data_mode = is_data
             self._data_filter_initialized = True
             self._filter_width_hz = filter_width_hz(self.mode, getattr(self, "_filter_idx", 0), self.data_mode)
@@ -1840,7 +1840,21 @@ class CivRig:
                 #   DATA mode only).
                 # Polled less often (every ~1.2s) — both values rarely change
                 if n % 4 == 1:
-                    dp = self._transact(bytes([0x1A, 0x06]), {0x1A}, 0.3)
+                    # FIX: same "shared response cmd, no sub-command check"
+                    # bug as the 15-xx meter family (see _transact's
+                    # docstring) — data mode (1A 06) and filter width
+                    # (1A 03) BOTH reply with cmd 0x1A. A late/crossed
+                    # response here is worse than a stale meter reading: if
+                    # a stale "1A 06" answer (e.g. from BEFORE the radio was
+                    # ever switched into DATA mode) gets consumed here, the
+                    # code below actively WRITES data_mode=False back and
+                    # strips "-D" from self.mode — silently kicking a radio
+                    # that IS in USB-D back to being TRACKED as plain USB
+                    # (symptom reported live: mode=USB in the FT8 TX log,
+                    # PWR stuck low regardless of drive level, because plain
+                    # USB takes modulation from the physical MIC input, not
+                    # from our USB audio at all).
+                    dp = self._transact(bytes([0x1A, 0x06]), {0x1A}, 0.3, sub=0x06)
                     if dp and len(dp) >= 2 and dp[0] == 0x06:
                         new_dm = bool(dp[1])
                         if new_dm != self.data_mode:
@@ -1862,7 +1876,7 @@ class CivRig:
                                         "idx": self._filter_idx, "mode": self.mode,
                                         "dataMode": self.data_mode})
 
-                    fp = self._transact(bytes([0x1A, 0x03]), {0x1A}, 0.3)
+                    fp = self._transact(bytes([0x1A, 0x03]), {0x1A}, 0.3, sub=0x03)
                     if fp and len(fp) >= 3 and fp[0] == 0x03:
                         idx = bcd2(fp[1:3])
                         if idx != self._filter_idx:
