@@ -114,6 +114,32 @@ DEFAULT_MACROS = [
 
 def get_cfg() -> dict:
     c = load_json(CFG_F, {})
+    if "lang" not in c:
+        # Seed the server-wide default UI language from the marker the
+        # installer wrote (see HAMCTRL-installer.iss) before config.json
+        # existed at all. FIX: this plumbing was half-built before -
+        # i18n.js already had a window.__HAM_INITIAL_LANG__ fallback with
+        # a comment describing exactly this design, but nothing ever
+        # actually wrote the marker or read it into config.json, so the
+        # installer's language choice was silently discarded and the app
+        # always started in Polish regardless of what was picked during
+        # setup. Read once — a per-browser choice (localStorage) always
+        # takes priority over this once a user picks a language explicitly,
+        # so this is just the install-time default for a fresh browser.
+        lang = "pl"
+        try:
+            marker = CFG_F.parent / "install_lang.txt"
+            if marker.exists():
+                val = marker.read_text(encoding="utf-8").strip().lower()
+                if val in ("pl", "en"):
+                    lang = val
+        except Exception:
+            pass
+        c["lang"] = lang
+        try:
+            save_json(CFG_F, c)  # persist immediately - don't depend on the marker file surviving
+        except Exception:
+            pass
     if "rigs" not in c:
         c["rigs"] = [{"id": "1", "name": "IC-7300",
                       "model": ENV.get("RIG1_MODEL", "3073"),

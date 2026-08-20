@@ -118,13 +118,50 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 
 [Messages]
 ; Komunikat koncowy - kieruje usera do skrotu (auto-uruchomienie usuniete).
+; FIX: this used to be ONE unscoped block, so it stayed in Polish even when
+; the user picked "english" as the installer language - the [Languages]
+; picker only translated Inno Setup's OWN stock wizard text, never this
+; custom message. Split into [Messages.polish]/[Messages.english] sections
+; so it actually follows the chosen language, same fix as the app's own
+; startup language below.
+[Messages.polish]
 FinishedLabelNoIcons=Instalacja HAM RADIO CTRL zakonczona.%n%nUruchom aplikacje ze skrotu "HAM RADIO CTRL" w menu Start. Przy pierwszym uruchomieniu ustawisz haslo administratora, a nastepnie otworzy sie przegladarka z panelem.
 FinishedLabel=Instalacja HAM RADIO CTRL zakonczona.%n%nUruchom aplikacje ze skrotu "HAM RADIO CTRL" w menu Start lub na pulpicie. Przy pierwszym uruchomieniu ustawisz haslo administratora, a nastepnie otworzy sie przegladarka z panelem.
+
+[Messages.english]
+FinishedLabelNoIcons=HAM RADIO CTRL installation complete.%n%nLaunch the app from the "HAM RADIO CTRL" shortcut in the Start menu. On first run you'll set the admin password, then a browser window with the panel will open.
+FinishedLabel=HAM RADIO CTRL installation complete.%n%nLaunch the app from the "HAM RADIO CTRL" shortcut in the Start menu or on the desktop. On first run you'll set the admin password, then a browser window with the panel will open.
 
 [Code]
 function InitializeSetup(): Boolean;
 begin
   Result := True;
+end;
+
+// FIX: the app's UI always started in Polish regardless of which language
+// was picked in this installer's own [Languages] picker - the picker only
+// ever controlled the INSTALLER's wizard text, nothing carried the choice
+// through to the app itself. This writes a small marker file that
+// data.py::get_cfg() reads ONCE, on the app's very first start (before
+// config.json exists), to seed the server-wide default UI language - see
+// the matching comment there and in index.html's inline bootstrap script.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  LangCode: String;
+  MarkerDir: String;
+  MarkerFile: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if ActiveLanguage() = 'polish' then
+      LangCode := 'pl'
+    else
+      LangCode := 'en';
+    MarkerDir := ExpandConstant('{userappdata}\HAMCTRL');
+    ForceDirectories(MarkerDir);
+    MarkerFile := MarkerDir + '\install_lang.txt';
+    SaveStringToFile(MarkerFile, LangCode, False);
+  end;
 end;
 
 // Przy DEINSTALACJI pytamy czy usunac dane uzytkownika (konta, konfiguracja,

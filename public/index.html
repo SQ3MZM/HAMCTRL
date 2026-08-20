@@ -2560,7 +2560,29 @@
 <div class="toast" id="toast"></div>
 
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
-<script src="js/i18n.js?v=202608180006"></script>
+<script>
+  // Sets window.__HAM_INITIAL_LANG__ from the server-wide default language
+  // (chosen in the installer at setup time - see HAMCTRL-installer.iss and
+  // data.py::get_cfg) BEFORE i18n.js runs, so the app renders in the right
+  // language on the very first paint instead of flashing Polish and then
+  // switching. Synchronous XHR is deliberate: this is a same-origin call to
+  // the local server (resolves in single-digit ms) and i18n.js needs the
+  // value available synchronously at load time, not after an async fetch
+  // resolves later (i18n.js's own module-load-time init() would already
+  // have run and picked the fallback by then). A per-browser choice saved
+  // in localStorage always takes priority over this once someone actually
+  // toggles the language - see the priority order in i18n.js.
+  try {
+    var _xhr = new XMLHttpRequest();
+    _xhr.open('GET', '/api/config/lang', false);
+    _xhr.send(null);
+    if (_xhr.status === 200) {
+      var _langResp = JSON.parse(_xhr.responseText);
+      if (_langResp && _langResp.lang) window.__HAM_INITIAL_LANG__ = _langResp.lang;
+    }
+  } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
+</script>
+<script src="js/i18n.js?v=202608200001"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608200002"></script>

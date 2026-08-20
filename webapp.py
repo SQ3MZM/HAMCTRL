@@ -1773,6 +1773,19 @@ class App:
                   f"(pw_ver={u['pw_ver']}, old sessions invalidated)", flush=True)
             return 200, {"ok": True}
 
+        if p == "/api/config/lang" and method == "GET":
+            # Public (no auth) - deliberately placed BEFORE the "if not
+            # user" gate right below. Read by an inline script at the very
+            # top of index.html, which runs for EVERY visitor including a
+            # fresh browser that has never logged in yet (before the
+            # client-side redirect to login.html even happens) - so this
+            # can't require a token the visitor doesn't have. Lets i18n.js
+            # pick the server-wide default language (set at install time -
+            # see HAMCTRL-installer.iss / data.py::get_cfg) instead of
+            # always starting in Polish. A per-browser choice saved in
+            # localStorage always overrides this once someone actually
+            # toggles the language via the UI.
+            return 200, {"lang": self.cfg.get("lang", "pl")}
 
         if not user:
             return 401, {"error": "Wymagane logowanie"}
@@ -6577,7 +6590,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-20-QUICKLOG-WORKED-BEFORE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-INSTALLER-LANG-CHOICE, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
