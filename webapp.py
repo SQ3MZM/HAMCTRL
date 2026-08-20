@@ -5357,8 +5357,29 @@ class App:
                         await self.hub.broadcast({"type": "mode", "mode": self.rig.mode})
                     except Exception as e:
                         print(f"[ptt] data mode error: {e}", flush=True)
+                # DIAGNOSTIC: user reported (confirmed via an independent
+                # SDR in Italy - a real on-air effect, not a local
+                # monitoring artifact) that transmitted SSB audio keeps
+                # going out for ~1-2s after releasing PTT. VOX ruled out
+                # live (toggling the VOX function button caused no TX
+                # reaction at all - not what's keying this radio). This
+                # logs exactly how long the CI-V PTT exchange itself took,
+                # and how much audio was STILL QUEUED (not yet played to
+                # the sound card) at the moment PTT-off was requested - if
+                # the queue is near-empty here, the tail isn't in a queue
+                # we control (points further upstream, e.g. the aiortc
+                # receive-side jitter buffer); if it's large, that's a real,
+                # fixable backlog in our own pipeline.
+                _ptt_t0 = time.time()
+                _qsize_before = getattr(self.audio, "_webrtc_pcm_queue", None)
+                _qsize_before = _qsize_before.qsize() if _qsize_before is not None else "?"
                 try: await self.rig.set_ptt(self.rig.ptt)
                 except: pass
+                _ptt_ms = (time.time() - _ptt_t0) * 1000.0
+                print(f"[ptt] {'ON' if self.rig.ptt else 'OFF'}: CI-V exchange took {_ptt_ms:.0f}ms, "
+                      f"TX audio queue at request time={_qsize_before} frames "
+                      f"(~{(_qsize_before*20) if isinstance(_qsize_before, int) else '?'}ms of unplayed audio)",
+                      flush=True)
             await self.hub.broadcast({"type": "ptt", "ptt": self.rig.ptt})
             # TX watchdog: start a max-transmit-time timer. Configurable in
             # config.json ("tx_watchdog_s", default 180s = 3 minutes).
@@ -6507,7 +6528,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-19-TXMETER-FULL-DIAGNOSTICS-RFPOWER, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-20-PTT-QUEUE-DIAGNOSTICS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
