@@ -8,10 +8,9 @@
 ## English
 
 A free, self-hosted web application for remote control of an amateur
-radio transceiver — tuning, modes, PTT, rotator, DX cluster, QSO log,
-operator chat — **plus a complete, independent FT8/FT4 digital-mode
-engine (decoder and encoder) built from scratch, with no dependency on
-WSJT-X or JTDX.**
+radio transceiver — tuning, modes, PTT, rotator, DX cluster, QSO log —
+**plus a complete, independent FT8/FT4 digital-mode engine (decoder and
+encoder) built from scratch, with no dependency on WSJT-X or JTDX.**
 
 Runs on a Windows PC connected to the radio (reference/tested model:
 **Icom IC-7300**) and serves a web UI to any browser on the local network
@@ -35,7 +34,7 @@ person transmits at a time.
 
 - CI-V radio control: VFO A/B, mode, filters, sliders, band scope + waterfall
 - Own FT8/FT4 decoder (Rust, real-time) and encoder (Python) — no WSJT-X/JTDX
-- Full auto-QSO engine: Call 1st queue, Fox/Hound DXpedition mode, MSHV multistream support
+- Full auto-QSO engine: Call 1st queue, Hound mode (for working Fox/DXpedition stations), MSHV multistream support
 - CW keyer with a DeepCW audio-to-text assist layer
 - Rotator control (Yaesu GS-232A / SPID protocol)
 - DX cluster client
@@ -70,18 +69,25 @@ which is exactly what this is.) See [LICENSE](LICENSE).
 ### Credits & thanks
 
 - **The FT8/FT4 protocol** was designed by Joe Taylor, K1JT, and the
-  WSJT-X development team, and published openly. HAMCTRL's decoder and
-  encoder are an independent implementation from that published
-  specification — no WSJT-X/JTDX source code is used anywhere in this
-  project.
+  [WSJT-X](https://wsjt.sourceforge.io/wsjtx.html) development team, and
+  published openly. HAMCTRL's decoder and encoder are an independent
+  implementation from that published specification — no WSJT-X/JTDX
+  source code is used anywhere in this project.
 - **Icom** for the publicly documented CI-V protocol this project
   controls the radio through.
+- **CW decoding** uses the ONNX model from
+  [e04/web-deep-cw-decoder](https://github.com/e04/web-deep-cw-decoder) —
+  downloaded on demand, not bundled in this repo.
 - Built on: [aiohttp](https://github.com/aio-libs/aiohttp),
   [aiortc](https://github.com/aiortc/aiortc) (WebRTC),
   [PyInstaller](https://pyinstaller.org/),
   [Inno Setup](https://jrsoftware.org/isinfo.php),
-  and, on the real-time audio side (Rust), `cpal`, `tokio`,
-  `rustfft`, `rayon`, and the `opus` codec.
+  and, on the real-time audio side (Rust):
+  [cpal](https://github.com/RustAudio/cpal),
+  [tokio](https://github.com/tokio-rs/tokio),
+  [RustFFT](https://github.com/ejmahler/RustFFT),
+  [rayon](https://github.com/rayon-rs/rayon), and the
+  [opus](https://crates.io/crates/opus) codec crate.
 - **Written entirely by AI.** Every line of code in this repository —
   backend, frontend, the Rust audio engine, this documentation — was
   written by Claude (Anthropic), working directly with SQ3MZM, who
@@ -95,9 +101,9 @@ which is exactly what this is.) See [LICENSE](LICENSE).
 ## Polski
 
 Darmowa aplikacja webowa do zdalnego sterowania radiostacją
-amatorską — strojenie, tryby pracy, PTT, rotor, DX cluster, log QSO,
-czat operatorów — **oraz kompletny, własny tor FT8/FT4 (dekoder i
-enkoder) napisany od zera, bez żadnej zależności od WSJT-X czy JTDX.**
+amatorską — strojenie, tryby pracy, PTT, rotor, DX cluster, log QSO —
+**oraz kompletny, własny tor FT8/FT4 (dekoder i enkoder) napisany od
+zera, bez żadnej zależności od WSJT-X czy JTDX.**
 
 Działa na komputerze z Windows podłączonym do radia (referencyjny,
 przetestowany model: **Icom IC-7300**) i udostępnia panel WWW dowolnej
@@ -121,7 +127,7 @@ systemowi blokady/przejęcia TRX, tak że nadaje zawsze tylko jedna osoba.
 
 - Sterowanie radiem po CI-V: VFO A/B, tryb, filtry, suwaki, scope + wodospad
 - Własny dekoder FT8/FT4 (Rust, czas rzeczywisty) i enkoder (Python) — bez WSJT-X/JTDX
-- Pełna automatyka QSO: kolejka Call 1st, tryb Fox/Hound (DXpedycje), obsługa multistream MSHV
+- Pełna automatyka QSO: kolejka Call 1st, tryb Hound (do pracy ze stacjami Fox/DXpedycjami), obsługa multistream MSHV
 - Klucz CW z warstwą DeepCW (rozpoznawanie CW na tekst wspomagane audio)
 - Sterowanie rotorem (protokół Yaesu GS-232A / SPID)
 - Klient DX cluster
@@ -155,17 +161,25 @@ HAMCTRL). Zobacz [LICENSE](LICENSE).
 ### Podziękowania
 
 - **Protokół FT8/FT4** zaprojektował Joe Taylor, K1JT, wraz z zespołem
-  WSJT-X, i opublikował go otwarcie. Dekoder i enkoder w HAMCTRL to
-  niezależna implementacja na podstawie tej opublikowanej specyfikacji —
-  w tym projekcie nie ma ani linijki kodu z WSJT-X/JTDX.
+  [WSJT-X](https://wsjt.sourceforge.io/wsjtx.html), i opublikował go
+  otwarcie. Dekoder i enkoder w HAMCTRL to niezależna implementacja na
+  podstawie tej opublikowanej specyfikacji — w tym projekcie nie ma ani
+  linijki kodu z WSJT-X/JTDX.
 - **Icom** za publicznie udokumentowany protokół CI-V, przez który ten
   projekt steruje radiem.
+- **Dekodowanie CW** korzysta z modelu ONNX z
+  [e04/web-deep-cw-decoder](https://github.com/e04/web-deep-cw-decoder) —
+  pobieranego na żądanie, nie dołączonego do tego repozytorium.
 - Zbudowane na: [aiohttp](https://github.com/aio-libs/aiohttp),
   [aiortc](https://github.com/aiortc/aiortc) (WebRTC),
   [PyInstaller](https://pyinstaller.org/),
   [Inno Setup](https://jrsoftware.org/isinfo.php),
-  a po stronie audio czasu rzeczywistego (Rust) — `cpal`, `tokio`,
-  `rustfft`, `rayon` oraz kodek `opus`.
+  a po stronie audio czasu rzeczywistego (Rust):
+  [cpal](https://github.com/RustAudio/cpal),
+  [tokio](https://github.com/tokio-rs/tokio),
+  [RustFFT](https://github.com/ejmahler/RustFFT),
+  [rayon](https://github.com/rayon-rs/rayon) oraz kodek
+  [opus](https://crates.io/crates/opus).
 - **Napisane w całości przez AI.** Każda linijka kodu w tym repozytorium —
   backend, frontend, silnik audio w Rust, ta dokumentacja — została
   napisana przez Claude (Anthropic), pracującego bezpośrednio z SQ3MZM,
