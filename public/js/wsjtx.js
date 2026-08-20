@@ -375,6 +375,7 @@ const BAND_FREQUENCIES = [
   { band: '12m',  ft8: 24915000,  ft4: 24919000 },
   { band: '10m',  ft8: 28074000,  ft4: 28180000 },
   { band: '6m',   ft8: 50313000,  ft4: 50318000 },
+  { band: '4m',   ft8: 70100000,  ft4: null     },
   { band: '2m',   ft8: 144174000, ft4: null     },
 ];
 
@@ -2161,6 +2162,7 @@ function _freqToBand(hz) {
   if (hz >= 24890000 && hz <= 24990000) return '12m';
   if (hz >= 28000000 && hz <= 29700000) return '10m';
   if (hz >= 50000000 && hz <= 52000000) return '6m';
+  if (hz >= 70000000 && hz <= 70500000) return '4m';
   return '';
 }
 

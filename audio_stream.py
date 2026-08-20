@@ -367,7 +367,21 @@ class AudioStream:
                 # between two such different signals, making it hard to
                 # hit the right ALC.
                 _vol_key = "txVolume" if self.bulk_tx else "txVolumeSsb"
-                vol_scale = min(float(self.cfg.get(_vol_key, 1.0)), 8.0)
+                # FIX: fallback defaults must match the UI slider defaults
+                # (index.html #cfg-tx-volume value="4", #cfg-tx-volume-ssb
+                # value="1") when the key was never actually saved to
+                # config.json (fresh install, or the settings page was
+                # never opened/saved). This used to fall back to 1.0 for
+                # BOTH — harmless for SSB (a real mic is already close to
+                # full scale) but for FT8 it left the encoder's
+                # deliberately quiet base tone (amplitude=0.12, see
+                # ft8_encoder.py) at only 0.12x1.0 = 12% of full scale:
+                # too weak to reach the radio's ALC threshold at all.
+                # Reported live: ALC pinned at 0%, PO/PWR reading capped
+                # around 30% even with RF POWER set to 100% on the radio —
+                # not a meter bug, just under-driven audio.
+                _vol_default = 4.0 if self.bulk_tx else 1.0
+                vol_scale = min(float(self.cfg.get(_vol_key, _vol_default)), 8.0)
                 if vol_scale != 1.0:
                     try:
                         import numpy as np

@@ -3351,7 +3351,7 @@ class App:
             # else"). So we ALWAYS inject txVolume (and the devices) from
             # the Python config into the returned status.
             _py_audio = self.cfg.get("audio", {})
-            _py_txvol = float(_py_audio.get("txVolume", 1.0))
+            _py_txvol = float(_py_audio.get("txVolume", 4.0))
             _py_txvol_ssb = float(_py_audio.get("txVolumeSsb", 1.0))
             # Devices ALWAYS come from the Python config (not from Rust/not
             # from self.audio) — Python is the source of truth for saved
@@ -4294,9 +4294,27 @@ class App:
                         elif t == "audio_stop":
                             pass  # audio goes directly over the Rust WS, nothing for Python to release
                         else:
-                            # Touch activity on every radio action
-                            if t in ("freq","freqB","mode","ptt","rig_slider","rig_action","vfo","vfo_op",
-                                     "split","preamp","attenuator","tuner","tuner_autotune"):
+                            # Touch activity on any real operator action — an
+                            # EXCLUDE list, not an include list. FIX: this
+                            # used to be a hand-picked whitelist of ~12
+                            # message types (freq/mode/ptt/rig_slider/...)
+                            # that only covered plain radio-control actions.
+                            # It never got extended when the FT8 panel grew
+                            # its own message types (ft8_qsy, ft8_tx,
+                            # ft8_start_auto_qso, ft8_toggle_auto_seq, chat_send,
+                            # ...) — so a user actively running the FT8
+                            # automation (CQ, answering callers, clicking
+                            # bands) never touched last_activity at all.
+                            # last_activity then stayed frozen at whatever
+                            # _lock_radio() set it to on acquisition, so the
+                            # idle watchdog (_radio_lock_watchdog) effectively
+                            # measured "time since PRZEJMIJ TRX", not real
+                            # idleness — exactly the reported symptom. Only
+                            # exclude messages that fire on their own
+                            # (automatic, not user-driven): 'ping' (client
+                            # heartbeat, every 30s) and 'subscribe' (sent
+                            # once on connect/reconnect).
+                            if t not in ("ping", "subscribe"):
                                 self.touch_activity(uid)
                             await self._ws_msg(data, ws, role)
                     except Exception as e:
@@ -5206,6 +5224,26 @@ class App:
             if not (self._feature_allowed("freq_set", role)
                     and self._feature_allowed("mode_set", role)):
                 return
+            # FIX: if an FT8 TX is in flight (PTT keyed) when the band is
+            # clicked, the set_freq() write below used to race straight into
+            # an actively-transmitting radio. The IC-7300 silently ignores a
+            # frequency-set CI-V command while modulating (set_freq() is
+            # fire-and-forget, no ACK is even checked) — this is why QSY
+            # "sometimes worked, sometimes didn't", correlating exactly with
+            # whether the automation happened to be mid-TX at click time, and
+            # why stopping the automation first always fixed it. Same abort
+            # signal already used for CQ/auto-QSO-start (see ~line 5580/5983)
+            # cuts the in-flight TX short; then we wait briefly (bounded, NOT
+            # the full _ft8_tx_lock/end-of-period hold in the TX finally: a
+            # QSY is leaving this band, so there's no correspondent window
+            # left to protect) for PTT to actually drop before retuning.
+            if self._ft8_tx_lock.locked():
+                self._ft8_tx_abort = True
+                for _ in range(20):  # up to ~1s
+                    if not self.rig.ptt:
+                        break
+                    await asyncio.sleep(0.05)
+                print(f"[ft8] QSY: aborted in-flight TX, ptt={self.rig.ptt} before retune")
             hz = int(msg.get("freq", self.rig.freq))
             # The target band must be allowed (same as for CQ/TX) — checked
             # BEFORE changing the radio's state, otherwise the FT8 band
@@ -5228,10 +5266,39 @@ class App:
                     print(f"[ft8] ft8_qsy set_mode error: {e!r}")
             self.rig.freq = hz
             if not self.rig.sim:
-                try:
-                    await self.rig.set_freq(hz)
-                except Exception as e:
-                    print(f"[ft8] ft8_qsy set_freq error: {e!r}")
+                # FIX: set_freq() is fire-and-forget (no ACK check, by
+                # design — see the comment in civ.py, needed for a snappy
+                # click-to-tune) AND it sets self.rig.freq optimistically
+                # BEFORE even attempting the write. That means nothing in
+                # the normal path ever notices when the write silently
+                # doesn't land on the radio (seen live: USB CI-V + USB
+                # audio share the IC-7300's single USB port, so a busy
+                # moment on one can stall the other) — the UI/log looked
+                # "successful" while the radio itself stayed on the old
+                # freq. A band-select click is a deliberate, infrequent
+                # action (unlike drag-tuning), so it can afford a live
+                # read-back + a couple of retries to actually confirm the
+                # radio moved, instead of firing blind.
+                ok = False
+                for attempt in range(3):
+                    try:
+                        await self.rig.set_freq(hz)
+                    except Exception as e:
+                        print(f"[ft8] ft8_qsy set_freq error (attempt {attempt+1}): {e!r}")
+                        continue
+                    live = await self.rig.get_freq_live()
+                    if live is not None and abs(live - hz) < 10:
+                        ok = True
+                        break
+                    print(f"[ft8] QSY: verify failed (attempt {attempt+1}), "
+                          f"wanted {hz}Hz, radio reports {live!r}Hz — retrying")
+                    await asyncio.sleep(0.15)
+                if not ok:
+                    print(f"[ft8] QSY: FAILED to confirm retune to {hz}Hz after 3 attempts")
+                    await ws.send_json({"type": "toast",
+                                         "msg": f"⛔ QSY nieudany — radio nie potwierdzilo zmiany na {hz/1e6:.3f} MHz (sprobuj ponownie)",
+                                         "level": "error"})
+                    return
             print(f"[ft8] QSY: {hz/1e6:.6f} MHz {self.rig.mode} FIL{self.rig.filter_num}")
             # Without skip=ws: unlike the regular freq/mode handlers, the
             # frontend's tuneToBand() does NOT update S.freq/S.mode
@@ -6407,7 +6474,7 @@ class App:
             # to use the current txVolume from config.json right before transmitting.
             if "audio" in self.cfg:
                 self.audio.cfg = self.cfg["audio"]
-                _tv_now = self.cfg["audio"].get("txVolume", 1.0)
+                _tv_now = self.cfg["audio"].get("txVolume", 4.0)
                 print(f"[audio] txVolume synced before TX = {_tv_now}x", flush=True)
             # Truncate the grid to 4 characters (FT8/FT4 doesn't support a 6-char locator)
             if len(report) == 6 and report[:2].isalpha() and report[2:4].isdigit():
@@ -6440,7 +6507,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-18-TLUMACZENIE-BACKEND-FRONTEND-KOMPLET, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-19-TXMETER-RAW-DIAGNOSTICS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -6996,6 +7063,13 @@ class App:
                                   f"{self._ft8_decode_mode}")
                             await self.hub.broadcast({"type": "qso_logged",
                                                        "qso": _saved})
+                            # FIX: push to CloudLog. Manual "+ LOG QSO"
+                            # (POST /api/qsolog, ~line 3864) has always done
+                            # this, but this auto-save path (the automation
+                            # writing the QSO itself on "73") never did —
+                            # QSOs made via Call 1st / auto-answer never
+                            # reached CloudLog, only ones added by hand.
+                            asyncio.ensure_future(self._cloudlog_push_qso(_uid, _saved))
                         else:
                             print("[autoqso] WARNING: no operator uid - "
                                   "QSO NOT auto-saved", flush=True)

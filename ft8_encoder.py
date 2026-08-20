@@ -637,13 +637,23 @@ def generate_tx_pcm48k(call_to, call_de, report_or_grid, r_flag=False,
     App._ft8_tx_freq_hz.
 
     NOTE on amplitude: the backend (audio_stream.py _webrtc_playback_loop)
-    ADDITIONALLY multiplies every sample by cfg['txVolume'] (default 4.0,
-    max 8.0) before sending it to the sound card. The default amplitude=0.12
-    is chosen so that even at the maximum txVolume=8.0 the signal doesn't
+    ADDITIONALLY multiplies every sample by cfg['txVolume'] (fallback 1.0
+    if unset, max 8.0 — see the min(..., 8.0) clamp in audio_stream.py)
+    before sending it to the sound card. The default amplitude=0.12 is
+    chosen so that even at the maximum txVolume=8.0 the signal doesn't
     clip (0.12 * 8.0 = 0.96, a safe margin). Clipping turns a clean sine
     wave into a square wave full of harmonics, which destroys the spectrum
     and prevents correct decoding despite correct bit content — this was
     the original cause of decode failures in live tests.
+
+    CONSEQUENCE if txVolume is left at its 1.0 fallback (never set via the
+    UI slider): effective drive is only 0.12 * 1.0 = 12% of full scale —
+    too weak to reach the radio's ALC threshold at all. Symptom reported
+    live: ALC pinned at 0% and PO/PWR reading capped around 30% even with
+    the radio's own RF POWER set to 100%. That's not a meter bug — with no
+    ALC activity, the radio isn't being driven hard enough to reach its
+    set power. Raise txVolume (Ustawienia > FT8 TX Volume) until ALC just
+    starts to show some activity, the standard way to reach full FT8 power.
 
     Returns (pcm_bytes, debug_dict, duration_seconds).
     """

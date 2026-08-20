@@ -70,12 +70,31 @@ function initAudioContext() {
     window.setTxAudioDuck = function(on) {
       const g = window._masterGain;
       if (!g) return;
+      if (window._duckUnmuteTimer) {
+        clearTimeout(window._duckUnmuteTimer);
+        window._duckUnmuteTimer = null;
+      }
       if (on) {
         if (window._duckPrevGain == null) window._duckPrevGain = g.gain.value;
         g.gain.value = 0.0;
       } else if (window._duckPrevGain != null) {
-        g.gain.value = window._duckPrevGain;
-        window._duckPrevGain = null;
+        // FIX: un-muting used to happen the INSTANT PTT went off. With MONI
+        // enabled the radio's own TX audio rides the RX stream, which sits
+        // behind the RX jitter buffer (_audioTarget, ~180-400ms, below) —
+        // so what's about to play right after PTT-off isn't "now", it's
+        // whatever was captured _audioTarget ago, i.e. still the tail end
+        // of what we just said. Restoring gain instantly surfaced that
+        // queued tail as "hearing myself with a delay right after I
+        // stopped talking" (reported live). Hold the mute for one more
+        // buffer-length so that stale audio drains silently first.
+        const delayMs = Math.round((_audioTarget || 0.18) * 1000);
+        window._duckUnmuteTimer = setTimeout(() => {
+          window._duckUnmuteTimer = null;
+          if (window._duckPrevGain != null) {
+            g.gain.value = window._duckPrevGain;
+            window._duckPrevGain = null;
+          }
+        }, delayMs);
       }
     };
 

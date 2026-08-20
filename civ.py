@@ -209,6 +209,7 @@ class CivRig:
         self._wlock  = threading.Lock()
         self._resp_ev = threading.Event()
         self._resp_cmd = None
+        self._resp_sub = None
         self._resp_payload = None
 
         # CI-V TCP Bridge — subscribers to raw bytes from the radio.
@@ -295,6 +296,22 @@ class CivRig:
 
     async def get_freq(self) -> int:
         return self.freq
+
+    async def get_freq_live(self, timeout: float = 0.3):
+        """Fresh CI-V frequency read straight from the radio (cmd 03),
+        bypassing self.freq — set_freq() sets self.freq OPTIMISTICALLY,
+        before the write is even attempted, so self.freq/get_freq() being
+        "correct" proves nothing about whether the write actually reached
+        the radio. Used by webapp.py's ft8_qsy handler to verify+retry a
+        band-select retune instead of firing the set_freq() write blind.
+        Returns None on timeout/no response (sim mode returns self.freq)."""
+        if self.sim or not self._ser:
+            return self.freq
+        bp = await asyncio.to_thread(self._transact, bytes([0x03]), {0x03, 0x00}, timeout)
+        if not bp:
+            return None
+        f = bcd_to_freq(bp[:5])
+        return f if f and f > 0 else None
 
     async def get_mode(self):
         return self.mode, self.bw
@@ -1314,14 +1331,36 @@ class CivRig:
             if callback in self._bridge_listeners:
                 self._bridge_listeners.remove(callback)
 
-    def _transact(self, payload: bytes, expect, timeout: float):
-        """Send a command and wait for a response (a cmd code in 'expect' or ACK 0xFB/0xFA)."""
+    def _transact(self, payload: bytes, expect, timeout: float, sub: int = None):
+        """Send a command and wait for a response (a cmd code in 'expect' or ACK 0xFB/0xFA).
+
+        sub: FIX — the whole "15 xx" meter family (S-meter=02, ALC=13,
+        PWR/PO=11, SWR=12, VOLT=15) replies with the SAME top-level cmd
+        0x15, differentiated only by the first payload byte. The poller
+        fires these back-to-back (all 5 during active PTT), each with its
+        own short 0.25s timeout. Without 'sub', the dispatch in
+        _handle_frame matched on cmd alone — so a LATE reply to one 15-xx
+        query (e.g. ALC, delayed under heavy CI-V+audio load) could get
+        consumed by whichever 15-xx transact happened to be waiting at
+        that moment. The "stolen" transact got a payload with the wrong
+        first byte (its own caller-side check, e.g. pp[0]==0x11, catches
+        THAT and discards it) — but the reply that should have satisfied
+        it is now gone too, so it also times out. Net effect live: ALC and
+        PWR readings went stale/missing independently of each other,
+        making them look completely uncorrelated when compared side by
+        side (reported: "ALC 58%/PWR 0%" back to back with "ALC 3%/PWR
+        40%" — each half was a stale leftover from a DIFFERENT instant,
+        not a real simultaneous pair). When 'sub' is given, only a frame
+        whose payload[0] == sub can satisfy this wait; a mismatched 15-xx
+        frame is left for whichever OTHER transact is actually waiting for it.
+        """
         if not self._ser:
             return None
         if isinstance(expect, int):
             expect = {expect}
         with self._txlock:
             self._resp_cmd = expect
+            self._resp_sub = sub
             self._resp_payload = None
             self._resp_ev.clear()
             try:
@@ -1329,9 +1368,11 @@ class CivRig:
             except Exception as e:
                 self.log(f"[civ] write error: {e}")
                 self._resp_cmd = None
+                self._resp_sub = None
                 return None
             got = self._resp_ev.wait(timeout)
             self._resp_cmd = None
+            self._resp_sub = None
             return self._resp_payload if got else None
 
     def _reader_loop(self):
@@ -1466,11 +1507,23 @@ class CivRig:
         # forward to a waiting transaction — ONLY when the cmd code is
         # expected (set commands explicitly give {0xFB,0xFA}, so an
         # ACK/NAK won't falsely complete a freq/mode/S-meter read under
-        # mixed CI-V traffic).
+        # mixed CI-V traffic). When the waiter also gave 'sub' (the 15-xx
+        # meter family — see _transact's docstring), the first payload
+        # byte must match too, otherwise this frame belongs to a DIFFERENT
+        # 15-xx query that's still in flight — leave it unconsumed so the
+        # transact actually waiting for it can still catch it.
         ec = self._resp_cmd
         if ec and cmd in ec:
-            self._resp_payload = payload
-            self._resp_ev.set()
+            es = self._resp_sub
+            if es is None or (payload and payload[0] == es):
+                self._resp_payload = payload
+                self._resp_ev.set()
+            elif getattr(self, "_crosstalk_logged", 0) < 20:
+                # DIAGNOSTIC: proves live whether 15-xx cross-talk actually
+                # happens (see _transact docstring) — first 20 occurrences only.
+                self._crosstalk_logged = getattr(self, "_crosstalk_logged", 0) + 1
+                self.log(f"[civ] 15-xx cross-talk avoided: waiting for sub=0x{es:02X}, "
+                         f"got 0x{payload[0]:02X} (belongs to another in-flight query)")
 
     def _handle_scope(self, d: bytes):
         if self._scope_logged < 4:
@@ -1629,7 +1682,7 @@ class CivRig:
                             self.freq_b = fb
                             self.bcast({"type": "freqB", "freqB": fb})
                 # S-meter: 0x15 0x02 -> response 0x15 ...
-                p = self._transact(bytes([0x15, 0x02]), {0x15}, 0.3)
+                p = self._transact(bytes([0x15, 0x02]), {0x15}, 0.3, sub=0x02)
                 if p and len(p) >= 3 and p[0] == 0x02:
                     raw = bcd2(p[1:3])
                     lvl = smeter_to_sunit(raw)
@@ -1654,6 +1707,8 @@ class CivRig:
                 if self.ptt or n % 8 == 0:
                     _dbg_alc = None
                     _dbg_pwr = None
+                    _dbg_alc_raw = None
+                    _dbg_pwr_raw = None
                     # ALC. FIX: command "15 11" used to be used here, which
                     # per the official IC-7300 CI-V documentation is
                     # actually "PO" (output power), NOT ALC — the ALC/PWR
@@ -1661,11 +1716,12 @@ class CivRig:
                     # actual commands. The correct command for ALC is
                     # "15 13", with a documented range of 0000=Min to
                     # 0120=Max (NOT 0-241).
-                    ap = self._transact(bytes([0x15, 0x13]), {0x15}, 0.25)
+                    ap = self._transact(bytes([0x15, 0x13]), {0x15}, 0.25, sub=0x13)
                     if ap and len(ap) >= 3 and ap[0] == 0x13:
                         alc_raw = bcd2(ap[1:3])
                         alc_pct = min(100.0, max(0.0, alc_raw / 120 * 100))
                         _dbg_alc = alc_pct
+                        _dbg_alc_raw = alc_raw
                         self.bcast({"type": "txmeter", "meter": "ALC",
                                     "raw": alc_raw,
                                     "value": round(alc_pct, 1),
@@ -1677,7 +1733,7 @@ class CivRig:
                     # 0000=0%, 0143=50%, 0213=100% (full scale reached
                     # already at raw=213, not 241) — piecewise
                     # interpolation between these points.
-                    pp = self._transact(bytes([0x15, 0x11]), {0x15}, 0.25)
+                    pp = self._transact(bytes([0x15, 0x11]), {0x15}, 0.25, sub=0x11)
                     if pp and len(pp) >= 3 and pp[0] == 0x11:
                         pwr_raw = bcd2(pp[1:3])
                         _po_points = [(0, 0.0), (143, 50.0), (213, 100.0)]
@@ -1695,18 +1751,28 @@ class CivRig:
                                     pwr_pct = round(_y0 + _t * (_y1 - _y0), 1)
                                     break
                         _dbg_pwr = pwr_pct
+                        _dbg_pwr_raw = pwr_raw
                         # DIAGNOSTICS: during TX, log readings every ~1.2s
                         # to settle whether the meters are being read at
                         # all during FT8 TX (UI "not responding" - backend or frontend?)
+                        # raw= added: the % is post-calibration (piecewise
+                        # table, see above) — with a flat/nonsensical %
+                        # across very different drive levels reported live,
+                        # the raw BCD value is what actually tells us
+                        # whether the RADIO itself is reporting something
+                        # different (real RF chain/hardware limiting, not
+                        # ours to fix) vs whether our calibration/parsing is
+                        # the one that's wrong (ours to fix).
                         if self.ptt and n % 4 == 0:
                             self.log(f"[txmeter] TX read: ALC={_dbg_alc if _dbg_alc is not None else '?'}% "
-                                     f"PWR={_dbg_pwr}% (bcast sent)")
+                                     f"(raw={_dbg_alc_raw}) PWR={_dbg_pwr}% (raw={_dbg_pwr_raw}) "
+                                     f"freq={self.freq/1e6:.4f}MHz mode={self.mode} (bcast sent)")
                         self.bcast({"type": "txmeter", "meter": "PWR",
                                     "raw": pwr_raw,
                                     "value": pwr_pct,
                                     "pct": pwr_pct / 100})
                     # SWR
-                    sp = self._transact(bytes([0x15, 0x12]), {0x15}, 0.25)
+                    sp = self._transact(bytes([0x15, 0x12]), {0x15}, 0.25, sub=0x12)
                     if sp and len(sp) >= 3 and sp[0] == 0x12:
                         swr_raw = bcd2(sp[1:3])
                         # IC-7300 SWR: 0=1.0, 48=1.5, 80=2.0, 120=3.0, 241=50
@@ -1746,7 +1812,7 @@ class CivRig:
                     # operates). The wrong points gave, e.g. for a real
                     # 13.8V (raw~157), a reading of ~10.6V — exactly the
                     # kind of low reading that was reported live.
-                    vp = self._transact(bytes([0x15, 0x15]), {0x15}, 0.25)
+                    vp = self._transact(bytes([0x15, 0x15]), {0x15}, 0.25, sub=0x15)
                     if vp and len(vp) >= 3 and vp[0] == 0x15:
                         v_raw = bcd2(vp[1:3])
                         _vd_points = [(0, 0.0), (13, 10.0), (241, 16.0)]
