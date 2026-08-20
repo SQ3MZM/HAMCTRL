@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="pl" id="html-root">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ham Radio Control — Logowanie</title>
+<title id="page-title">Ham Radio Control — Logowanie</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500&display=swap');
 
@@ -249,16 +249,34 @@ body::after {
   letter-spacing: 1px;
   opacity: 0.4;
 }
+
+.lang-switch {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--dim);
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  z-index: 2;
+}
+.lang-switch:hover { color: var(--green); border-color: var(--green); }
 </style>
 </head>
 <body>
+<button type="button" class="lang-switch" id="lang-switch" onclick="toggleLoginLang()">EN</button>
 <div class="container">
   <div class="logo-area">
     <img src="/logo.png" alt="HAMCTRL" class="logo-img">
     <span class="logo">HAM RADIO <span>CTRL</span></span>
-    <span class="logo-sub">REMOTE CONTROL SYSTEM</span>
+    <span class="logo-sub" id="logo-sub">REMOTE CONTROL SYSTEM</span>
     <div>
-      <span class="on-air"><span class="on-air-dot"></span>SYSTEM ONLINE</span>
+      <span class="on-air"><span class="on-air-dot"></span><span id="on-air-label">SYSTEM ONLINE</span></span>
     </div>
   </div>
 
@@ -267,12 +285,12 @@ body::after {
 
     <form id="login-form" onsubmit="doLogin(event)">
       <div class="field">
-        <label>Login</label>
+        <label id="label-username">Login</label>
         <input type="text" id="username" autocomplete="username"
                placeholder="admin" required autofocus>
       </div>
       <div class="field">
-        <label>Hasło</label>
+        <label id="label-password">Hasło</label>
         <input type="password" id="password" autocomplete="current-password"
                placeholder="••••••••" required
                onkeydown="if(event.key==='Enter'){event.preventDefault();doLogin(event)}">
@@ -286,17 +304,17 @@ body::after {
          techniczne - nie wymaga znaku ani locatora; operatorzy zakladaja
          wlasne konta ze swoimi znakami pozniej. -->
     <form id="setup-form" onsubmit="doChangePassword(event)" style="display:none;">
-      <div style="font-size:12px;color:var(--dim,#888);margin-bottom:14px;line-height:1.5;">
+      <div style="font-size:12px;color:var(--dim,#888);margin-bottom:14px;line-height:1.5;" id="setup-desc">
         Pierwsze uruchomienie. Ustaw własne hasło administratora —
         domyślne <code>Admin1234!</code> nie może zostać.
       </div>
       <div class="field">
-        <label>Nowe hasło (min. 8 znaków)</label>
+        <label id="label-new-password">Nowe hasło (min. 8 znaków)</label>
         <input type="password" id="new-password" autocomplete="new-password"
                placeholder="••••••••" minlength="8">
       </div>
       <div class="field">
-        <label>Powtórz nowe hasło</label>
+        <label id="label-new-password2">Powtórz nowe hasło</label>
         <input type="password" id="new-password2" autocomplete="new-password"
                placeholder="••••••••" minlength="8"
                onkeydown="if(event.key==='Enter'){event.preventDefault();doChangePassword(event)}">
@@ -313,6 +331,141 @@ body::after {
 </div>
 
 <script>
+  // Ustawia window.__HAM_INITIAL_LANG__ z jezyka domyslnego instalacji
+  // (wybranego w instalatorze - patrz HAMCTRL-installer.iss), zanim
+  // wykona sie ponizszy skrypt. Ten sam mechanizm co w index.html -
+  // synchroniczne XHR celowo, potrzebna wartosc dostepna natychmiast,
+  // nie po async fetch.
+  try {
+    var _xhr = new XMLHttpRequest();
+    _xhr.open('GET', '/api/config/lang', false);
+    _xhr.send(null);
+    if (_xhr.status === 200) {
+      var _langResp = JSON.parse(_xhr.responseText);
+      if (_langResp && _langResp.lang) window.__HAM_INITIAL_LANG__ = _langResp.lang;
+    }
+  } catch (e) { /* fallback do 'pl' ponizej */ }
+</script>
+<script>
+// UWAGA: auth.js/i18n.js NIE sa ladowane na tej stronie - celowo (patrz
+// komentarz przy fetch /api/auth/me ponizej). To osobna, mala warstwa PL/EN
+// - ten sam mechanizm/priorytet co i18n.js w index.html (localStorage
+// 'ham_lang' > jezyk domyslny instalacji > 'pl'), ale samodzielna, zeby nie
+// wciagac tu calego i18n.js z jego slownikiem dla reszty aplikacji.
+const LOGIN_STRINGS = {
+  pl: {
+    pageTitle:    'Ham Radio Control — Logowanie',
+    logoSub:      'REMOTE CONTROL SYSTEM',
+    onAir:        'SYSTEM ONLINE',
+    cardTitleLogin: 'Autoryzacja dostępu',
+    cardTitleSetup: 'Konfiguracja — zmiana hasła',
+    labelUsername: 'Login',
+    labelPassword: 'Hasło',
+    submitBtn:    'ZALOGUJ',
+    setupDesc:    'Pierwsze uruchomienie. Ustaw własne hasło administratora — domyślne <code>Admin1234!</code> nie może zostać.',
+    labelNewPw:   'Nowe hasło (min. 8 znaków)',
+    labelNewPw2:  'Powtórz nowe hasło',
+    setupBtn:     'USTAW HASŁO I PRZEJDŹ DALEJ',
+    resetLink:    'Zapomniałem hasła',
+    errBadLoginFallback: 'Błędny login lub hasło',
+    errConnPrefix:       'Błąd połączenia z serwerem (',
+    errPwTooShort:       'Hasło musi mieć minimum 8 znaków',
+    errPwMismatch:       'Hasła nie są identyczne',
+    errPwDefault:        'Nowe hasło nie może być domyślnym',
+    errChangeFallback:   'Nie udało się zmienić hasła',
+    // Znane komunikaty z backendu (zawsze po polsku - serwer nie zna
+    // jezyka klienta) - tlumaczone tu po stronie klienta dla spojnosci.
+    // Nierozpoznany komunikat wyswietla sie tak jak przyszedl z serwera.
+    srv_badLogin: 'Błędne dane logowania',
+    srv_noAccount: 'Brak konta',
+    srv_badOldPw: 'Złe stare hasło',
+    srv_pwMin8:   'Hasło min. 8 znaków',
+  },
+  en: {
+    pageTitle:    'Ham Radio Control — Login',
+    logoSub:      'REMOTE CONTROL SYSTEM',
+    onAir:        'SYSTEM ONLINE',
+    cardTitleLogin: 'Access Authorization',
+    cardTitleSetup: 'Setup — Change Password',
+    labelUsername: 'Username',
+    labelPassword: 'Password',
+    submitBtn:    'LOG IN',
+    setupDesc:    'First run. Set your own administrator password — the default <code>Admin1234!</code> cannot stay active.',
+    labelNewPw:   'New password (min. 8 characters)',
+    labelNewPw2:  'Repeat new password',
+    setupBtn:     'SET PASSWORD AND CONTINUE',
+    resetLink:    'Forgot password',
+    errBadLoginFallback: 'Incorrect username or password',
+    errConnPrefix:       'Server connection error (',
+    errPwTooShort:       'Password must be at least 8 characters',
+    errPwMismatch:       'Passwords do not match',
+    errPwDefault:        'The new password cannot be the default one',
+    errChangeFallback:   'Could not change the password',
+    srv_badLogin: 'Incorrect username or password',
+    srv_noAccount: 'No such account',
+    srv_badOldPw: 'Incorrect current password',
+    srv_pwMin8:   'Password must be at least 8 characters',
+  },
+};
+
+let _loginLang = 'pl';
+
+function L(key) {
+  return (LOGIN_STRINGS[_loginLang] || LOGIN_STRINGS.pl)[key] ?? key;
+}
+
+// Known backend error strings (always Polish - the server doesn't know the
+// client's language) get swapped for the matching client-side translation.
+// Anything unrecognized (e.g. the rate-limit message, which carries a
+// dynamic minute count) passes through unchanged rather than being hidden.
+function translateServerError(msg) {
+  if (!msg) return msg;
+  const d = LOGIN_STRINGS.pl;
+  const map = {
+    [d.srv_badLogin]:  'srv_badLogin',
+    [d.srv_noAccount]: 'srv_noAccount',
+    [d.srv_badOldPw]:  'srv_badOldPw',
+    [d.srv_pwMin8]:    'srv_pwMin8',
+  };
+  const key = map[msg];
+  return key ? L(key) : msg;
+}
+
+function applyLoginLang() {
+  document.getElementById('page-title').textContent = L('pageTitle');
+  document.getElementById('html-root').lang = _loginLang;
+  document.getElementById('logo-sub').textContent = L('logoSub');
+  document.getElementById('on-air-label').textContent = L('onAir');
+  const setupVisible = document.getElementById('setup-form').style.display !== 'none';
+  document.getElementById('card-title').textContent = setupVisible ? L('cardTitleSetup') : L('cardTitleLogin');
+  document.getElementById('label-username').textContent = L('labelUsername');
+  document.getElementById('label-password').textContent = L('labelPassword');
+  document.getElementById('submit-btn').textContent = L('submitBtn');
+  document.getElementById('setup-desc').innerHTML = L('setupDesc');
+  document.getElementById('label-new-password').textContent = L('labelNewPw');
+  document.getElementById('label-new-password2').textContent = L('labelNewPw2');
+  document.getElementById('setup-btn').textContent = L('setupBtn');
+  document.getElementById('reset-link').textContent = L('resetLink');
+  document.getElementById('lang-switch').textContent = _loginLang.toUpperCase();
+}
+
+function toggleLoginLang() {
+  _loginLang = (_loginLang === 'pl') ? 'en' : 'pl';
+  localStorage.setItem('ham_lang', _loginLang);
+  applyLoginLang();
+}
+
+(function initLoginLang() {
+  const SUPPORTED = ['pl', 'en'];
+  const saved = localStorage.getItem('ham_lang');
+  if (saved && SUPPORTED.includes(saved)) {
+    _loginLang = saved;
+  } else if (window.__HAM_INITIAL_LANG__ && SUPPORTED.includes(window.__HAM_INITIAL_LANG__)) {
+    _loginLang = window.__HAM_INITIAL_LANG__;
+  }
+  applyLoginLang();
+})();
+
 // UWAGA: auth.js NIE jest ładowany na tej stronie — celowo.
 // Sprawdzenie istniejącej sesji jest minimalne i nie przekierowuje pętlowo.
 (function() {
@@ -360,10 +513,10 @@ async function doLogin(e) {
         location.replace('/');
       }
     } else {
-      showError(res.error || 'Błędny login lub hasło');
+      showError(res.error ? translateServerError(res.error) : L('errBadLoginFallback'));
     }
   } catch(ex) {
-    showError('Błąd połączenia z serwerem (' + ex.message + ')');
+    showError(L('errConnPrefix') + ex.message + ')');
   } finally {
     btn.disabled = false;
     btn.classList.remove('loading');
@@ -375,7 +528,7 @@ function showSetupForm() {
   document.getElementById('login-form').style.display = 'none';
   document.getElementById('reset-link').style.display = 'none';
   document.getElementById('setup-form').style.display = 'block';
-  document.getElementById('card-title').textContent = 'Konfiguracja — zmiana hasła';
+  document.getElementById('card-title').textContent = L('cardTitleSetup');
   document.getElementById('error-msg').classList.remove('show');
   document.getElementById('new-password').focus();
 }
@@ -388,9 +541,9 @@ async function doChangePassword(ev) {
   const p2 = document.getElementById('new-password2').value;
   const btn = document.getElementById('setup-btn');
 
-  if (p1.length < 8) { showError('Hasło musi mieć minimum 8 znaków'); return; }
-  if (p1 !== p2)     { showError('Hasła nie są identyczne'); return; }
-  if (p1 === 'Admin1234!') { showError('Nowe hasło nie może być domyślnym'); return; }
+  if (p1.length < 8) { showError(L('errPwTooShort')); return; }
+  if (p1 !== p2)     { showError(L('errPwMismatch')); return; }
+  if (p1 === 'Admin1234!') { showError(L('errPwDefault')); return; }
 
   btn.disabled = true;
   btn.classList.add('loading');
@@ -409,10 +562,10 @@ async function doChangePassword(ev) {
       sessionStorage.setItem('ham_token', res.token);
       location.replace('/');
     } else {
-      showError(res.error || 'Nie udało się zmienić hasła');
+      showError(res.error ? translateServerError(res.error) : L('errChangeFallback'));
     }
   } catch(ex) {
-    showError('Błąd połączenia z serwerem (' + ex.message + ')');
+    showError(L('errConnPrefix') + ex.message + ')');
   } finally {
     btn.disabled = false;
     btn.classList.remove('loading');
