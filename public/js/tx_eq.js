@@ -328,6 +328,17 @@ window.TxEq = (() => {
           await window.applyOutputSinkId?.(monitorCtx);
         } catch (e) { console.warn('[txeq] monitor setSinkId:', e.message); }
       }
+      // FIX: setSinkId() can silently re-suspend the context as a side
+      // effect of switching the audio output device - reported live as
+      // "SSB monitor totally silent" even with mic input confirmed
+      // working (analyser peak rising) and the correct sinkId logged.
+      // The resume() above happens BEFORE setSinkId, so it doesn't cover
+      // this. Re-check/resume AFTER setSinkId, right before declaring the
+      // context ready.
+      if (monitorCtx.state === 'suspended') {
+        console.warn('[txeq] monitorCtx still suspended after setSinkId - resuming again');
+        await monitorCtx.resume();
+      }
       console.log('[txeq] monitorCtx created, state=', monitorCtx.state, 'sinkId=', monitorCtx.sinkId);
     } catch(e) {
       console.error('[txeq] error creating monitorCtx:', e);
@@ -385,6 +396,13 @@ window.TxEq = (() => {
       });
     } catch(e) { console.warn('[txeq] enumerate error:', e); }
 
+    // Final safety net - a suspended context produces total silence with
+    // no error anywhere, so this is cheap insurance right before we tell
+    // the operator "monitor active".
+    if (monitorCtx.state === 'suspended') {
+      console.warn('[txeq] monitorCtx STILL suspended right before activation - resuming');
+      await monitorCtx.resume();
+    }
     monitorActive = true;
     const btn = document.getElementById('eq-monitor-btn');
     if (btn) {
