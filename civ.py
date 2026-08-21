@@ -804,9 +804,18 @@ class CivRig:
                     self._ser.write(preamble)
                     time.sleep(0.05)
                     self._ser.write(frame)
+                    self._write_fail_count = 0
             self.log(f"[civ] wakeup+power ON sent (preamble {preamble_len}B)")
         except Exception as e:
             self.log(f"[civ] wakeup_and_power_on error: {e}")
+            # Same dead-port counter as _write() - this is the exact path
+            # that failed to recover live during a simulated power-loss
+            # test (radio came back, but the COM handle didn't) - without
+            # this, a stuck port here just logs forever and never triggers
+            # the close+reconnect self-heal.
+            self._write_fail_count = getattr(self, "_write_fail_count", 0) + 1
+            if self._write_fail_count >= 3:
+                self._handle_dead_port()
 
     async def set_vfo(self, vfo: str):
         """
@@ -1321,7 +1330,40 @@ class CivRig:
         # self.log(f"[civ] TX: {frame.hex()}")
         with self._wlock:
             if self._ser:
-                self._ser.write(frame)
+                try:
+                    self._ser.write(frame)
+                    self._write_fail_count = 0
+                except Exception:
+                    # SELF-HEAL — live-tested simulated power loss: after the
+                    # radio's USB power drops and comes back, Windows leaves
+                    # the COM handle "stuck" (PermissionError/ERROR_BAD_COMMAND,
+                    # "Urzadzenie nie rozpoznaje polecenia" on every write,
+                    # while reads keep timing out silently instead of raising
+                    # — nothing ever noticed the port was dead). The only
+                    # existing recovery path was webapp.py's _device_watchdog,
+                    # which only checks once an HOUR — the radio stayed
+                    # unreachable that whole time. A few consecutive write
+                    # failures in a row means the port itself is dead (not
+                    # one bad command), so close it and hand off to
+                    # _start_sim()/_reconnect_loop (the SAME recovery path
+                    # the watchdog uses) immediately instead of waiting.
+                    self._write_fail_count = getattr(self, "_write_fail_count", 0) + 1
+                    if self._write_fail_count >= 3:
+                        self._handle_dead_port()
+                    raise
+
+    def _handle_dead_port(self):
+        self._write_fail_count = 0
+        self.connected = False
+        self.log("[civ] port unresponsive after repeated write errors — "
+                  "closing and reconnecting")
+        try:
+            if self._ser:
+                self._ser.close()
+        except Exception:
+            pass
+        self._ser = None
+        self._start_sim()
 
     def write_bytes_raw(self, data: bytes):
         """Write raw bytes to the CI-V port without the FE FE addr ctrl ... FD
@@ -1335,8 +1377,15 @@ class CivRig:
         with self._wlock:
             try:
                 self._ser.write(data)
+                self._write_fail_count = 0
             except Exception as e:
                 self.log(f"[civ] write_bytes_raw error: {e}")
+                # Same dead-port counter as _write() - a bridge client
+                # (Logger32/HRD) polling over TCP would otherwise hit this
+                # every time too and never recover on its own either.
+                self._write_fail_count = getattr(self, "_write_fail_count", 0) + 1
+                if self._write_fail_count >= 3:
+                    self._handle_dead_port()
 
     def add_bridge_listener(self, callback):
         """Register a callback called for every chunk of bytes from the radio.

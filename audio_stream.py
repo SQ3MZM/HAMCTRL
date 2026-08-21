@@ -176,6 +176,7 @@ class AudioStream:
         while self.rx_active:
             try:
                 raw = self._rx_stream.read(self._rx_frames, exception_on_overflow=False)
+                self._rx_fail_count = 0
                 mono_native = raw
                 if self._rx_ch == 2:
                     n = len(raw) // 2
@@ -216,7 +217,33 @@ class AudioStream:
                     if VERBOSE:
                         print(f"[audio] RX {self.rx_frames} frames | RMS={rms}")
             except OSError as e:
-                if self.rx_active: print(f"[audio] RX IO: {e}"); time.sleep(0.1)
+                if not self.rx_active:
+                    continue
+                print(f"[audio] RX IO: {e}")
+                # SELF-HEAL — reported alongside the same simulated
+                # power-loss test that broke CI-V recovery: once the
+                # radio's USB audio codec drops, this loop kept calling
+                # .read() on the now-dead PyAudio stream forever, printing
+                # the same error every iteration with no actual recovery
+                # (device never got reopened). After a few consecutive
+                # failures, reopen the stream on the same device instead
+                # of looping against a stream that's never coming back.
+                # This thread's job ends here either way - start_rx()
+                # spawns a NEW _rx_loop thread on success, and looping a
+                # dead stream on failure gains nothing.
+                self._rx_fail_count = getattr(self, "_rx_fail_count", 0) + 1
+                if self._rx_fail_count >= 5:
+                    self._rx_fail_count = 0
+                    dev = self.rx_device
+                    print(f"[audio] RX device unresponsive — reopening '{dev or 'default'}'")
+                    # start_rx() sees rx_active still True and calls
+                    # stop_rx() itself first - that's what actually closes
+                    # THIS (broken) stream before opening the new one, so
+                    # don't clear rx_active here or stop_rx() would skip it
+                    # and leak the old PyAudio stream handle.
+                    self.start_rx(dev)
+                    return
+                time.sleep(0.1)
             except Exception as e:
                 if self.rx_active: print(f"[audio] RX err: {e}")
         print(f"[audio] RX thread ended — {self.rx_frames} frames")
