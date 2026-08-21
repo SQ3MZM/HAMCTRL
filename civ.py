@@ -2016,11 +2016,25 @@ class CivRig:
                     fp = self._transact(bytes([0x1A, 0x03]), {0x1A}, 0.3, sub=0x03)
                     if fp and len(fp) >= 3 and fp[0] == 0x03:
                         idx = bcd2(fp[1:3])
+                        # DIAGNOSTIC: reported live as "filter overlay stuck
+                        # at 2400Hz even after changing the filter on the
+                        # radio" - logging every successful poll (not just
+                        # on change) to see live whether idx is even
+                        # arriving correctly, or whether it's stuck/wrong.
+                        # Remove once confirmed working.
+                        if getattr(self, "_filter_poll_logged", 0) < 30:
+                            self._filter_poll_logged = getattr(self, "_filter_poll_logged", 0) + 1
+                            self.log(f"[civ] filter poll: raw={fp.hex()} idx={idx} "
+                                     f"-> {filter_width_hz(self.mode, idx, self.data_mode)}Hz "
+                                     f"(current _filter_idx={self._filter_idx}, mode={self.mode}, data_mode={self.data_mode})")
                         if idx != self._filter_idx:
                             self._filter_idx = idx
                             self._filter_width_hz = filter_width_hz(self.mode, idx, self.data_mode)
                             self.bcast({"type": "filter_width", "hz": self._filter_width_hz,
                                         "idx": idx, "mode": self.mode, "dataMode": self.data_mode})
+                    elif getattr(self, "_filter_poll_fail_logged", 0) < 10:
+                        self._filter_poll_fail_logged = getattr(self, "_filter_poll_fail_logged", 0) + 1
+                        self.log(f"[civ] filter poll FAILED: fp={fp.hex() if fp else None}")
                 # Round-robin read of the Set Level sliders (CI-V 14 <sub>) —
                 # one level per cycle (~0.3s), a full sweep of 14 levels
                 # takes ~4.2s. Lets the UI notice changes made manually on
