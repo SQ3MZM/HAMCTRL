@@ -330,14 +330,21 @@ async function resetPwdDialog(id, username) {
   const pwd = await UI.textPrompt(I18n.t('adm_new_pwd_for').replace('{username}', username), '');
   if (!pwd) return;
   if (pwd.length < 8) { UI.showToast(I18n.t('profile_pwd_min_len'), 'error'); return; }
-  fetch(`/api/users/${id}/reset-password`, {
+  // Was POSTing to /api/users/<id>/reset-password, a route that only ever
+  // existed on the frontend - the backend's /api/users/<id> route only
+  // handles PUT/PATCH/DELETE, so this 404'd on every click (the button
+  // looked like it did something because the .then() chain never checked
+  // for a network/parse failure). The real endpoint for this - already
+  // implemented server-side, just never wired to any button - is
+  // POST /api/auth/admin-reset with {user_id, password}.
+  fetch(`/api/auth/admin-reset`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newPassword: pwd }),
+    body: JSON.stringify({ user_id: id, password: pwd }),
   }).then(r => r.json()).then(res => {
     if (res.ok) UI.showToast(I18n.t('adm_pwd_reset_done').replace('{username}', username));
-    else UI.showToast('✗ ' + res.error, 'error');
-  });
+    else UI.showToast('✗ ' + (res.error || '?'), 'error');
+  }).catch(e => UI.showToast('✗ ' + e.message, 'error'));
 }
 
 function closeModal() {

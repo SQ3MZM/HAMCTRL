@@ -433,7 +433,20 @@ async function setPos(id) {
 }
 
 async function stop(id)  { await apiPost(`/api/rotator/${id}/stop`); }
-async function park(id)  { await apiPost(`/api/rotator/${id}/park`); }
+
+// Was posting to /api/rotator/<id>/park - a backend route that never
+// existed (only /position, /stop, /test are implemented), so PARK 404'd
+// silently on every click. "Park" is just "go to 0/0" - reuse the real
+// /position endpoint instead of inventing a dedicated backend route for it.
+async function park(id) {
+  const azInp = document.getElementById(`rot-az-input-${id}`);
+  if (azInp) azInp.value = 0;
+  const elInp = document.getElementById(`rot-el-input-${id}`);
+  if (elInp) elInp.value = 0;
+  const targetInp = document.getElementById(`rot-target-${id}`);
+  if (targetInp) { targetInp.value = '0'; previewTarget(id); }
+  await apiPost(`/api/rotator/${id}/position`, {az: 0, el: 0});
+}
 
 function goDir(id, az) {
   const azInp = document.getElementById(`rot-az-input-${id}`);
