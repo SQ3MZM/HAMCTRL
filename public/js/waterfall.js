@@ -501,7 +501,7 @@ async function setSpan(spanHz) {
     });
     const data = await r.json();
     if (data.ok) {
-      window.UI?.showToast?.(`Span waterfall: ±${spanHz/1000}kHz`, 'info');
+      window.UI?.showToast?.(`Span waterfall: ${spanHz/1000}kHz`, 'info');
       // Reset peak-hold on span change (different scale)
       _peakHold = null;
     } else {

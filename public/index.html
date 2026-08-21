@@ -319,14 +319,14 @@
             SPAN:
             <select id="wf-span-select" onchange="Waterfall.setSpan(parseInt(this.value,10))"
               style="font-family:var(--mono);font-size:9px;padding:1px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;cursor:pointer;">
-              <option value="2500">±2.5kHz</option>
-              <option value="5000">±5kHz</option>
-              <option value="10000">±10kHz</option>
-              <option value="25000" selected>±25kHz</option>
-              <option value="50000">±50kHz</option>
-              <option value="100000">±100kHz</option>
-              <option value="250000">±250kHz</option>
-              <option value="500000">±500kHz</option>
+              <option value="2500">2.5kHz</option>
+              <option value="5000">5kHz</option>
+              <option value="10000">10kHz</option>
+              <option value="25000" selected>25kHz</option>
+              <option value="50000">50kHz</option>
+              <option value="100000">100kHz</option>
+              <option value="250000">250kHz</option>
+              <option value="500000">500kHz</option>
             </select>
           </label>
           <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:3px;cursor:pointer;" data-i18n-title="peak_hold_title" title="Peak-hold: pokazuje najwyższą wartość w każdym paśmie">
@@ -2609,7 +2609,7 @@
 <script src="js/wsjtx_scope.js?v=202608210001"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
-<script src="js/waterfall.js?v=202608170002"></script>
+<script src="js/waterfall.js?v=202608210001"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>

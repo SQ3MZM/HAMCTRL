@@ -223,6 +223,7 @@ class CivRig:
         self._resp_cmd = None
         self._resp_sub = None
         self._resp_payload = None
+        self._resp_matched_cmd = None  # which of the 'expect' codes actually matched (e.g. 0xFB vs 0xFA) — see _transact
 
         # CI-V TCP Bridge — subscribers to raw bytes from the radio.
         # Callback called for every chunk of bytes received from the port,
@@ -361,12 +362,25 @@ class CivRig:
 
     def set_scope_span(self, span_hz: int) -> bool:
         """Set the waterfall span (Center mode). CI-V: 27 15 [5B BCD little-endian].
-        Returns True if the span is supported, False otherwise.
+        Returns True only if the radio actually ACKed (0xFB) the command,
+        False on NG (0xFA), timeout, or an unsupported span_hz.
 
         Supported values (Hz): 2500, 5000, 10000, 25000, 50000, 100000,
         250000, 500000 — anything else is rejected. BCD LE format: breaks
         the Hz value into 5 bytes of 2 digits each (10 digits total), where
         byte 0 holds the lowest digits (units + tens).
+
+        FIX: this used to be fire-and-forget (self._write with no response
+        check) - the ONLY CI-V "set" command in the whole file that never
+        looked at the radio's reply, unlike every other set_* method here
+        (mode, filter, PTT, ...), which all wait on _transact for 0xFB/0xFA.
+        Reported live: switching the span in the UI showed the toast AND
+        the "[civ] scope span -> X Hz" log line (proving our own write
+        happened), yet the waterfall's own axis labels never changed for
+        ANY span value - impossible to tell from the old code whether the
+        radio silently rejected the command (wrong data format) or simply
+        never got it. Using _transact now surfaces a real NG/timeout in
+        the log instead of a false "ok": True.
         """
         if span_hz not in SCOPE_SPAN_KHZ:
             return False
@@ -375,22 +389,23 @@ class CivRig:
             return True
         # Break span_hz into 5 BCD little-endian bytes
         digits = f"{span_hz:010d}"  # e.g. 25000 -> "0000025000"
-        # BCD LE: byte 0 = digits[8:10], byte 1 = digits[6:8], ...
-        b = [int(digits[8-i*2:10-i*2], 16) if 8-i*2 >= 0 else 0 for i in range(5)]
-        # Note: we must use BCD (not hex) — each digit 0-9 in a nibble
         b = []
         for i in range(5):
             lo = int(digits[9-i*2])
             hi = int(digits[8-i*2])
             b.append((hi << 4) | lo)
-        try:
-            self._write(bytes([0x27, 0x15]) + bytes(b))
-            self._scope_span_hz = span_hz
-            self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {' '.join(f'{x:02X}' for x in b)})")
-            return True
-        except Exception as e:
-            self.log(f"[civ] set_scope_span error: {e}")
+        hexstr = ' '.join(f'{x:02X}' for x in b)
+        resp = self._transact(bytes([0x27, 0x15]) + bytes(b), {0xFB, 0xFA}, 0.4)
+        matched = self._resp_matched_cmd
+        if resp is None:
+            self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — NO RESPONSE (timeout)")
             return False
+        if matched == 0xFA:
+            self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — radio REJECTED (NG)")
+            return False
+        self._scope_span_hz = span_hz
+        self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — OK")
+        return True
 
     async def set_mode(self, mode: str, bw: int = 0, fil: int = 0):
         """
@@ -1431,6 +1446,7 @@ class CivRig:
             self._resp_cmd = expect
             self._resp_sub = sub
             self._resp_payload = None
+            self._resp_matched_cmd = None
             self._resp_ev.clear()
             try:
                 self._write(payload)
@@ -1442,6 +1458,13 @@ class CivRig:
             got = self._resp_ev.wait(timeout)
             self._resp_cmd = None
             self._resp_sub = None
+            # self._resp_matched_cmd is left set (not cleared here) so a
+            # caller that cares which of 'expect' actually matched (e.g.
+            # 0xFB ok vs 0xFA reject) can read it right after this call
+            # returns - see set_scope_span for why this matters (this was
+            # the ONLY CI-V "set" command in the file that never checked
+            # for a response at all before this fix, so a rejected span
+            # value looked identical to a silently-ignored one).
             return self._resp_payload if got else None
 
     def _reader_loop(self):
@@ -1586,6 +1609,7 @@ class CivRig:
             es = self._resp_sub
             if es is None or (payload and payload[0] == es):
                 self._resp_payload = payload
+                self._resp_matched_cmd = cmd
                 self._resp_ev.set()
             elif getattr(self, "_crosstalk_logged", 0) < 20:
                 # DIAGNOSTIC: proves live whether 15-xx cross-talk actually

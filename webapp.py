@@ -3262,10 +3262,15 @@ class App:
                     return 400, {"ok": False, "error": "Nieprawidlowa wartosc span_hz"}
                 if hasattr(self.rig, 'set_scope_span'):
                     try:
-                        ok = self.rig.set_scope_span(span_hz)
+                        # set_scope_span waits (blocking, up to 0.4s) for
+                        # the radio's own ACK/NG - run off the event loop
+                        # thread, same as every other rig set_* call.
+                        ok = await asyncio.get_running_loop().run_in_executor(
+                            None, self.rig.set_scope_span, span_hz)
                         if ok:
                             return 200, {"ok": True, "span_hz": span_hz}
-                        return 400, {"ok": False, "error": f"Nieobslugiwany span: {span_hz} Hz"}
+                        return 400, {"ok": False, "error": f"Radio nie potwierdzil zmiany spanu na {span_hz} Hz "
+                                                            f"(zobacz log [civ] scope span)"}
                     except Exception as e:
                         return 500, {"ok": False, "error": str(e)}
                 return 500, {"ok": False, "error": "set_scope_span niedostepne w tym profilu"}
@@ -6564,7 +6569,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-EARLY-STALE-TX-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-SCOPE-SPAN-ACK-CHECK, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
