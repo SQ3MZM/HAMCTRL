@@ -13,6 +13,20 @@ let _sortCol  = 'date';
 let _sortDir  = 'desc';
 let _editId   = null;  // null = new QSO, string = editing
 
+// Prefer the flag for the COUNTRY NAME already resolved by QRZ.com/
+// HamQTH (far more complete/accurate than dxcc.js's simplified ~150-
+// entry prefix table, and correct even for special-event prefixes the
+// local table was never going to cover) - fall back to guessing from
+// the callsign prefix only when there's no stored country (e.g. a QSO
+// that was never run through a lookup).
+function _flagFor(call, country) {
+  if (country) {
+    const byName = window.DXCC?.lookupByName?.(country);
+    if (byName?.flag) return byName.flag;
+  }
+  return window.DXCC?.lookup?.(call)?.flag || '';
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 function _getFilters() {
   return {
@@ -111,7 +125,7 @@ function _renderTable(qsos) {
       <td>${date}</td>
       <td>${time}</td>
       <td class="log-call">${q.call || ''}${q.country
-        ? ` <span title="${q.country}${q.name ? ' — ' + q.name : ''}${q.qth ? ', ' + q.qth : ''}">${window.DXCC?.lookup?.(q.call)?.flag || ''}</span>`
+        ? ` <span title="${q.country}${q.name ? ' — ' + q.name : ''}${q.qth ? ', ' + q.qth : ''}">${_flagFor(q.call, q.country)}</span>`
         : ''}</td>
       <td>${q.band || ''}</td>
       <td class="${modeClass}">${q.mode || ''}${q.sat_name
@@ -205,9 +219,11 @@ async function lookupCall() {
       countryEl.dataset.ituz  = res.ituz  || '';
       countryEl.dataset.state = res.state || '';
       countryEl.dataset.iota  = res.iota  || '';
-      countryEl.dataset.cont  = window.DXCC?.lookup?.(call)?.continent || countryEl.dataset.cont || '';
+      countryEl.dataset.cont  = window.DXCC?.lookupByName?.(res.country)?.continent
+                                 || window.DXCC?.lookup?.(call)?.continent
+                                 || countryEl.dataset.cont || '';
     }
-    if (flagEl) flagEl.textContent = window.DXCC?.lookup?.(call)?.flag || '';
+    if (flagEl) flagEl.textContent = _flagFor(call, res.country);
     window.UI?.showToast(I18n.t('log_data_fetched_from').replace('{source}', res.source));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔍'; }
@@ -280,7 +296,7 @@ async function openEdit(id) {
       countryEl.dataset.iota  = q.iota  || '';
     }
     const flagEl = document.getElementById('qso-country-flag');
-    if (flagEl) flagEl.textContent = q.country ? (window.DXCC?.lookup?.(q.call)?.flag || '') : '';
+    if (flagEl) flagEl.textContent = q.country ? _flagFor(q.call, q.country) : '';
     _setField('qso-date', q.qso_date ? `${q.qso_date.slice(0,4)}-${q.qso_date.slice(4,6)}-${q.qso_date.slice(6,8)}` : '');
     _setField('qso-time', q.time_on ? `${q.time_on.slice(0,2)}:${q.time_on.slice(2,4)}` : '');
     _setField('qso-band', q.band || '20m');

@@ -245,10 +245,12 @@ const DXCC_TABLE = {
   'EI': {n:'Ireland', f:'🇮🇪', c:'EU'},
   'EJ': {n:'Ireland', f:'🇮🇪', c:'EU'},
 
-  // Malta, San Marino, Monaco
+  // Malta, San Marino, Monaco, Andorra, Vatican
   '9H': {n:'Malta', f:'🇲🇹', c:'EU'},
   'T7': {n:'San Marino', f:'🇸🇲', c:'EU'},
   '3A': {n:'Monaco', f:'🇲🇨', c:'EU'},
+  'C3': {n:'Andorra', f:'🇦🇩', c:'EU'},
+  'HV': {n:'Vatican', f:'🇻🇦', c:'EU'},
 
   // North America
   'K':  {n:'USA', f:'🇺🇸', c:'NA'},
@@ -504,5 +506,30 @@ function lookup(call) {
   return { name: '', prefix: '', flag: '', continent: '' };
 }
 
-window.DXCC = { lookup };
+// Reverse index (country name -> flag/continent), built from the same
+// table above - one source of truth. Used to render the flag from the
+// COUNTRY NAME that QRZ.com/HamQTH already resolved and saved with the
+// QSO (see qsolog.js), instead of re-guessing from the callsign prefix.
+// That re-guess is what silently dropped the flag for entities missing
+// from - or oddly split across - this deliberately simplified ~150-
+// country table (e.g. Andorra was entirely absent until this list, and
+// many countries' SPECIAL-EVENT callsign prefixes differ from their
+// normal ham-radio prefixes and were never going to be covered here) -
+// QRZ/HamQTH's own lookup already gets this right independent of the
+// prefix, so prefer their answer once we have it.
+const _NAME_TO_INFO = {};
+for (const key of _SORTED_KEYS) {
+  const info = DXCC_TABLE[key];
+  const nameKey = info.n.toLowerCase();
+  if (!(nameKey in _NAME_TO_INFO)) {
+    _NAME_TO_INFO[nameKey] = { flag: info.f, continent: info.c };
+  }
+}
+
+function lookupByName(name) {
+  if (!name) return { flag: '', continent: '' };
+  return _NAME_TO_INFO[name.trim().toLowerCase()] || { flag: '', continent: '' };
+}
+
+window.DXCC = { lookup, lookupByName };
 })();
