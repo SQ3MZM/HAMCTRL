@@ -526,9 +526,118 @@ for (const key of _SORTED_KEYS) {
   }
 }
 
+// There are 340+ current DXCC entities - the table above only spans the
+// ~150 most commonly worked ones, by design (see the file header). Name
+// matching against ONLY that table therefore still misses the flag for
+// anything outside it (reported live: this happened for Andorra before
+// it was added above, and will keep happening for any other DXCC entity
+// not in that list). Flags are mechanically derivable from a plain
+// ISO 3166-1 alpha-2 code (2 "regional indicator" chars) - so instead of
+// hand-typing ~340 more flag emoji (error-prone, hard to review), this
+// maps country names to their 2-letter code and COMPUTES the flag. Covers
+// every standard country name QRZ/HamQTH are likely to return, plus a
+// handful of common DXCC-only territories (Hawaii, Kaliningrad, etc.)
+// that aren't independent ISO countries - those fall back to their
+// parent country's flag, same convention other logging tools use.
+function _flagFromISO2(iso2) {
+  if (!iso2 || iso2.length !== 2) return '';
+  const A = 0x1F1E6, base = 'A'.charCodeAt(0);
+  return String.fromCodePoint(A + (iso2.charCodeAt(0) - base))
+       + String.fromCodePoint(A + (iso2.charCodeAt(1) - base));
+}
+
+const _ISO2_NAMES = {
+  // Europe
+  albania:'AL', andorra:'AD', austria:'AT', belarus:'BY', belgium:'BE',
+  'bosnia and herzegovina':'BA', bosnia:'BA', bulgaria:'BG', croatia:'HR',
+  cyprus:'CY', 'czech republic':'CZ', czechia:'CZ', denmark:'DK',
+  estonia:'EE', finland:'FI', france:'FR', germany:'DE', greece:'GR',
+  hungary:'HU', iceland:'IS', ireland:'IE', italy:'IT', kosovo:'XK',
+  latvia:'LV', liechtenstein:'LI', lithuania:'LT', luxembourg:'LU',
+  malta:'MT', moldova:'MD', monaco:'MC', montenegro:'ME',
+  netherlands:'NL', 'north macedonia':'MK', macedonia:'MK', norway:'NO',
+  poland:'PL', portugal:'PT', romania:'RO', russia:'RU',
+  'russian federation':'RU', 'san marino':'SM', serbia:'RS',
+  slovakia:'SK', slovenia:'SI', spain:'ES', sweden:'SE',
+  switzerland:'CH', ukraine:'UA', 'united kingdom':'GB', england:'GB',
+  scotland:'GB', wales:'GB', 'northern ireland':'GB', vatican:'VA',
+  'vatican city':'VA', 'faroe islands':'FO', greenland:'GL',
+  gibraltar:'GI', guernsey:'GG', jersey:'JE', 'isle of man':'IM',
+  svalbard:'SJ', 'aland islands':'AX', 'kaliningrad':'RU',
+  'asiatic russia':'RU', 'european russia':'RU',
+
+  // Asia
+  afghanistan:'AF', armenia:'AM', azerbaijan:'AZ', bahrain:'BH',
+  bangladesh:'BD', bhutan:'BT', brunei:'BN', cambodia:'KH', china:'CN',
+  georgia:'GE', india:'IN', indonesia:'ID', iran:'IR', iraq:'IQ',
+  israel:'IL', japan:'JP', jordan:'JO', kazakhstan:'KZ', kuwait:'KW',
+  kyrgyzstan:'KG', laos:'LA', lebanon:'LB', malaysia:'MY',
+  maldives:'MV', mongolia:'MN', myanmar:'MM', burma:'MM', nepal:'NP',
+  'north korea':'KP', oman:'OM', pakistan:'PK', philippines:'PH',
+  qatar:'QA', 'saudi arabia':'SA', singapore:'SG', 'south korea':'KR',
+  korea:'KR', 'sri lanka':'LK', syria:'SY', taiwan:'TW',
+  tajikistan:'TJ', thailand:'TH', 'timor-leste':'TL', turkey:'TR',
+  turkmenistan:'TM', 'united arab emirates':'AE', uzbekistan:'UZ',
+  vietnam:'VN', yemen:'YE', 'hong kong':'HK', macao:'MO', macau:'MO',
+
+  // Africa
+  algeria:'DZ', angola:'AO', benin:'BJ', botswana:'BW',
+  'burkina faso':'BF', burundi:'BI', cameroon:'CM', 'cape verde':'CV',
+  'central african republic':'CF', chad:'TD', comoros:'KM', congo:'CG',
+  'democratic republic of the congo':'CD', djibouti:'DJ', egypt:'EG',
+  'equatorial guinea':'GQ', eritrea:'ER', eswatini:'SZ', swaziland:'SZ',
+  ethiopia:'ET', gabon:'GA', gambia:'GM', ghana:'GH', guinea:'GN',
+  'guinea-bissau':'GW', 'ivory coast':'CI', "cote d'ivoire":'CI',
+  kenya:'KE', lesotho:'LS', liberia:'LR', libya:'LY', madagascar:'MG',
+  malawi:'MW', mali:'ML', mauritania:'MR', mauritius:'MU', morocco:'MA',
+  mozambique:'MZ', namibia:'NA', niger:'NE', nigeria:'NG', rwanda:'RW',
+  'sao tome and principe':'ST', senegal:'SN', seychelles:'SC',
+  'sierra leone':'SL', somalia:'SO', 'south africa':'ZA',
+  'south sudan':'SS', sudan:'SD', tanzania:'TZ', togo:'TG',
+  tunisia:'TN', uganda:'UG', zambia:'ZM', zimbabwe:'ZW',
+  'western sahara':'EH',
+
+  // Americas
+  argentina:'AR', bahamas:'BS', barbados:'BB', belize:'BZ',
+  bolivia:'BO', brazil:'BR', canada:'CA', chile:'CL', colombia:'CO',
+  'costa rica':'CR', cuba:'CU', dominica:'DM', 'dominican republic':'DO',
+  ecuador:'EC', 'el salvador':'SV', grenada:'GD', guatemala:'GT',
+  guyana:'GY', haiti:'HT', honduras:'HN', jamaica:'JM', mexico:'MX',
+  nicaragua:'NI', panama:'PA', paraguay:'PY', peru:'PE',
+  'saint kitts and nevis':'KN', 'saint lucia':'LC',
+  'saint vincent and the grenadines':'VC', suriname:'SR',
+  'trinidad and tobago':'TT', 'united states':'US', usa:'US',
+  uruguay:'UY', venezuela:'VE', 'puerto rico':'PR',
+  'us virgin islands':'VI', bermuda:'BM', 'cayman islands':'KY',
+  aruba:'AW', curacao:'CW', 'sint maarten':'SX',
+  'turks and caicos islands':'TC', 'british virgin islands':'VG',
+  anguilla:'AI', 'antigua and barbuda':'AG', montserrat:'MS',
+  'falkland islands':'FK', 'french guiana':'GF', guadeloupe:'GP',
+  martinique:'MQ', 'saint pierre and miquelon':'PM',
+  'saint barthelemy':'BL', 'saint martin':'MF',
+
+  // Oceania
+  australia:'AU', fiji:'FJ', kiribati:'KI', 'marshall islands':'MH',
+  micronesia:'FM', nauru:'NR', 'new zealand':'NZ', palau:'PW',
+  'papua new guinea':'PG', samoa:'WS', 'solomon islands':'SB',
+  tonga:'TO', tuvalu:'TV', vanuatu:'VU', 'cook islands':'CK',
+  'french polynesia':'PF', 'new caledonia':'NC', niue:'NU',
+  'norfolk island':'NF', guam:'GU', 'northern mariana islands':'MP',
+  'american samoa':'AS', 'wallis and futuna':'WF', pitcairn:'PN',
+
+  // Common DXCC-only territories that share a parent ISO country -
+  // no separate ISO2 code, shown with the parent's flag (same as most
+  // other logging software does for these)
+  hawaii:'US', alaska:'US',
+};
+
 function lookupByName(name) {
   if (!name) return { flag: '', continent: '' };
-  return _NAME_TO_INFO[name.trim().toLowerCase()] || { flag: '', continent: '' };
+  const key = name.trim().toLowerCase();
+  if (_NAME_TO_INFO[key]) return _NAME_TO_INFO[key];
+  const iso2 = _ISO2_NAMES[key];
+  if (iso2) return { flag: _flagFromISO2(iso2), continent: '' };
+  return { flag: '', continent: '' };
 }
 
 window.DXCC = { lookup, lookupByName };
