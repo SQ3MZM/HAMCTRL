@@ -110,7 +110,20 @@ window.ProfileAudio = (function() {
 
     const micId = localStorage.getItem('ham_audio_micId');
     try {
-      const constraints = { audio: micId ? { deviceId: { exact: micId } } : true };
+      // Must match _txMic's constraints in ws.js exactly (the REAL TX
+      // capture) - reported live as "test shows a much stronger signal
+      // than what actually reaches the radio". Root cause: this used to
+      // just pass `true`/deviceId with no explicit constraints, so
+      // Chrome's own defaults applied - autoGainControl:true in
+      // particular auto-boosts a quiet mic, showing a level the real
+      // (AGC-off, raw) TX path never produces.
+      const audioConstraint = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl:  false,
+      };
+      if (micId) audioConstraint.deviceId = { exact: micId };
+      const constraints = { audio: audioConstraint };
       _meterStream = await navigator.mediaDevices.getUserMedia(constraints);
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const src = ctx.createMediaStreamSource(_meterStream);
