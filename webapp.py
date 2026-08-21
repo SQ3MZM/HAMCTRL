@@ -6546,7 +6546,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-FT8-OSD-AP, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-AP-MANUAL-QSO-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -6855,21 +6855,37 @@ class App:
             print(f"[ft8] auto-follow ERROR: {e}")
 
     async def _sync_ap_hints(self):
-        """Push the QSO engine's current (own call, partner, queue) to the
-        Rust decoder as AP (a priori) decode hints - see
-        RustAudioBridge.set_ap_hints and ham_audio's decode::ap module.
-        Called once per completed FT8/FT4 decode cycle (_ft8_rx_loop's
-        decode_stats handler) rather than from every individual state-
-        change site - hints only need to be fresh by the next cycle, and
-        this way there's exactly one place to keep in sync, not ~15.
-        my_call is read live from the engine (never the static CALLSIGN/
-        .env default - see the comment on radio_lock ownership elsewhere
-        in this file for why the live per-operator value matters)."""
+        """Push the current (own call, partner, queue) to the Rust decoder
+        as AP (a priori) decode hints - see RustAudioBridge.set_ap_hints
+        and ham_audio's decode::ap module. Called once per completed
+        FT8/FT4 decode cycle (_ft8_rx_loop's decode_stats handler) rather
+        than from every individual state-change site - hints only need to
+        be fresh by the next cycle, and this way there's exactly one place
+        to keep in sync, not ~15.
+
+        own_call comes from radio_lock (whoever currently holds the
+        radio), NOT self._qso_engine.my_call - that engine is the
+        AUTOMATION state machine, and my_call is only ever set from the
+        two places that arm Call 1st / Auto-Sequencing (see the comments
+        at those two assignment sites). A fully manual QSO (macros sent by
+        hand, automation never engaged this session) never touches
+        my_call at all, so it would stay at its startup placeholder
+        forever - meaning AP's highest-value hypothesis ("addressed to MY
+        call") would either never fire or fire against the WRONG
+        callsign. radio_lock["callsign"] is set the moment ANYONE claims
+        the radio (PRZEJMIJ TRX), independent of automation, so AP helps
+        manual QSOs too, not just Call 1st/Auto-Sequencing. partner_call
+        still comes from the QSO engine, since a fully manual QSO has no
+        tracked "partner" concept there at all - the own-call hypothesis
+        (the main value) still applies regardless."""
         if not self.rust_audio:
             return
+        own_call = self.radio_lock.get("callsign") or ""
+        if not own_call:
+            return  # nobody holds the radio - no QSO in progress, nothing for AP to help with
         try:
             await self.rust_audio.set_ap_hints(
-                self._qso_engine.my_call,
+                own_call,
                 self._qso_engine.partner_call,
                 list(self._qso_engine.queue),
             )
