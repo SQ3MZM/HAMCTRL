@@ -18,6 +18,27 @@ import threading
 import webbrowser
 import os
 
+
+def _pause_if_interactive():
+    """input("Press Enter to close...") but only when there's actually a
+    console attached to read it from. FIX: the "--gen-cert" scheduled task
+    (Task Scheduler, /RU SYSTEM, no interactive session - see
+    HAMCTRL-installer.iss) calls this same code path after finishing, and
+    reinstalling (e.g. via update.bat, which re-runs the full installer)
+    recreates that task with no explicit /ST, so Windows' "run as soon as
+    possible after a missed start" behavior fires it almost immediately.
+    With a bare input(), that scheduled run then blocks forever waiting for
+    an Enter keypress nothing will ever send - showing up as an inert,
+    permanently-running HAM-RADIO-CTRL.exe process in Task Manager
+    ("phantom second instance", reported live after several reinstalls in
+    one session). Skipping the pause when stdin isn't a real interactive
+    terminal fixes that without touching the scheduled task itself."""
+    try:
+        if sys.stdin is not None and sys.stdin.isatty():
+            input("\nPress Enter to close...")
+    except Exception:
+        pass
+
 # ── BLAS/numpy thread limit — CRITICAL for audio smoothness ──────────────────
 # numpy/scipy launch BLAS on ALL cores by default. A single FFT operation
 # (CW filter, waterfall, resampling) could briefly pin the whole CPU (100%
@@ -198,7 +219,7 @@ def _gen_cert():
                           "Right-click the shortcut → Run as administrator.",
                           flush=True)
                     if getattr(sys, "frozen", False):
-                        input("\nPress Enter to close...")
+                        _pause_if_interactive()
                     return 1
                 # The elevated instance takes over — this one exits quietly.
                 return 0
@@ -207,7 +228,7 @@ def _gen_cert():
                 print("Right-click the shortcut -> Run as administrator.",
                       flush=True)
                 if getattr(sys, "frozen", False):
-                    input("\nPress Enter to close...")
+                    _pause_if_interactive()
                 return 1
 
     print("Administrator mode OK — generating the certificate.", flush=True)
@@ -236,7 +257,7 @@ def _gen_cert():
         print("DONE. Now start the server NORMALLY (without admin) -", flush=True)
         print("it will automatically use the new certificate.", flush=True)
     if getattr(sys, "frozen", False):
-        input("\nPress Enter to close...")
+        _pause_if_interactive()
     return code
 
 
@@ -245,7 +266,7 @@ def main():
     if "--reset-admin" in sys.argv:
         code = _reset_admin()
         if getattr(sys, "frozen", False):
-            input("\nPress Enter to close...")
+            _pause_if_interactive()
         sys.exit(code)
 
     # Generate a Let's Encrypt cert (as admin): HAM-RADIO-CTRL.exe --gen-cert
@@ -286,7 +307,7 @@ def main():
         traceback.print_exc()
         # In EXE mode the console window would close immediately - let the user see the error
         if getattr(sys, "frozen", False):
-            input("\nPress Enter to close...")
+            _pause_if_interactive()
         sys.exit(1)
 
 
