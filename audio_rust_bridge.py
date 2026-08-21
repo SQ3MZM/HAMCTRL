@@ -14,6 +14,122 @@ EXE_PATHS = [
 ]
 
 
+# ── Windows Job Object: guarantee ham_audio.exe dies with us ────────────────
+# LIVE BUG (2026-08-21): RustAudioBridge.stop() sends {"cmd":"Shutdown"} and
+# terminate()s the child - but nothing in the whole codebase ever calls
+# stop() on app exit (no atexit/signal handler anywhere). Closing HAMCTRL
+# via the console window's X button, Ctrl+C, or a crash all leave
+# ham_audio.exe running as an orphan. After enough restart cycles, orphaned
+# instances pile up - each new launch panics trying to re-bind the ctrl
+# port ("address already in use") because an old orphan still holds it,
+# and the app ends up talking to a STALE ham_audio.exe from a previous
+# session/build instead of the current one - confirmed live: RX audio from
+# a fresh install/rebuild was actually being served (or not served) by an
+# old orphaned process, invisible to the Python-side log entirely (it just
+# connects to whatever's listening on the port, doesn't know it's stale).
+#
+# Fix: a Windows Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE - the
+# OS itself kills every process assigned to the job the moment the job
+# handle closes, which Windows does automatically when THIS process exits
+# for ANY reason (clean shutdown, Ctrl+C, console X button, or a hard
+# crash) - no explicit cleanup code path to forget to call. This is the
+# standard pattern browsers/IDEs use for exactly this problem; a plain
+# atexit handler would only cover the clean-exit case, which isn't the one
+# that actually bit us here.
+_job_handle = None
+
+def _get_or_create_job_object():
+    """Returns a Job Object handle with kill-on-close set, creating it on
+    first use. Windows-only; returns None on any failure (best-effort -
+    if this doesn't work, behavior just falls back to the pre-existing
+    "may orphan on abrupt exit" state, not a functional regression)."""
+    global _job_handle
+    if os.name != 'nt':
+        return None
+    if _job_handle is not None:
+        return _job_handle
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit",     ctypes.c_int64),
+                ("LimitFlags",              wintypes.DWORD),
+                ("MinimumWorkingSetSize",   ctypes.c_size_t),
+                ("MaximumWorkingSetSize",   ctypes.c_size_t),
+                ("ActiveProcessLimit",      wintypes.DWORD),
+                ("Affinity",                ctypes.c_size_t),
+                ("PriorityClass",           wintypes.DWORD),
+                ("SchedulingClass",         wintypes.DWORD),
+            ]
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount",  ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount",   ctypes.c_uint64),
+                ("WriteTransferCount",  ctypes.c_uint64),
+                ("OtherTransferCount",  ctypes.c_uint64),
+            ]
+
+        class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo",                _IO_COUNTERS),
+                ("ProcessMemoryLimit",    ctypes.c_size_t),
+                ("JobMemoryLimit",        ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed",     ctypes.c_size_t),
+            ]
+
+        JobObjectExtendedLimitInformation = 9
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+        kernel32 = ctypes.windll.kernel32
+        h = kernel32.CreateJobObjectW(None, None)
+        if not h:
+            return None
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = kernel32.SetInformationJobObject(
+            h, JobObjectExtendedLimitInformation,
+            ctypes.byref(info), ctypes.sizeof(info)
+        )
+        if not ok:
+            kernel32.CloseHandle(h)
+            return None
+        _job_handle = h
+        return h
+    except Exception as e:
+        print(f"[audio_bridge] Job Object setup failed (non-fatal, "
+              f"ham_audio.exe may orphan on abrupt exit): {e}", flush=True)
+        return None
+
+
+def _assign_to_kill_on_close_job(proc: subprocess.Popen):
+    """Assigns `proc` to the shared kill-on-close Job Object, so Windows
+    kills it automatically when THIS process exits. Best-effort - failure
+    just means the pre-existing orphan risk remains for that process."""
+    job = _get_or_create_job_object()
+    if not job:
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        # subprocess.Popen on Windows exposes the raw process HANDLE via
+        # ._handle (an int) - documented CPython implementation detail on
+        # this platform, stable since it backs Popen.pid/wait() themselves.
+        h_process = int(proc._handle)
+        if not kernel32.AssignProcessToJobObject(job, h_process):
+            print("[audio_bridge] AssignProcessToJobObject failed "
+                  "(non-fatal)", flush=True)
+    except Exception as e:
+        print(f"[audio_bridge] AssignProcessToJobObject error (non-fatal): {e}", flush=True)
+
+
 class RustAudioBridge:
     def __init__(self):
         self._proc      = None
@@ -132,6 +248,10 @@ class RustAudioBridge:
             creationflags=_creationflags,
             **_stdio,
         )
+        # Kill-on-close Job Object - see the big comment above EXE_PATHS.
+        # Guarantees this ham_audio.exe dies with us even if we exit
+        # abruptly (console X button, crash) and never reach stop().
+        _assign_to_kill_on_close_job(self._proc)
         # Log the EXE's modification timestamp on the Python side -
         # ham_audio.exe runs as a separate process in its OWN console
         # (CREATE_NEW_CONSOLE), so its own "[build] ..." print (main.rs)
