@@ -2014,8 +2014,16 @@ class CivRig:
                                         "dataMode": self.data_mode})
 
                     fp = self._transact(bytes([0x1A, 0x03]), {0x1A}, 0.3, sub=0x03)
-                    if fp and len(fp) >= 3 and fp[0] == 0x03:
-                        idx = bcd2(fp[1:3])
+                    # FIX: the response is [0x03, idx_bcd_1B] - ONE byte
+                    # holding a 2-digit BCD index (00..49), not two bytes -
+                    # confirmed live (fp.hex()=='0336', i.e. only 2 bytes
+                    # total). The old code required len(fp)>=3 and read a
+                    # 2-byte BCD via bcd2(fp[1:3]) - always failed the
+                    # length check, so _filter_idx/_filter_width_hz never
+                    # updated past their __init__ defaults (2400Hz) no
+                    # matter what filter was actually selected on the radio.
+                    if fp and len(fp) >= 2 and fp[0] == 0x03:
+                        idx = (fp[1] >> 4) * 10 + (fp[1] & 0x0F)
                         # DIAGNOSTIC: reported live as "filter overlay stuck
                         # at 2400Hz even after changing the filter on the
                         # radio" - logging every successful poll (not just
