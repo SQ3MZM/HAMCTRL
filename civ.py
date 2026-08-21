@@ -361,50 +361,58 @@ class CivRig:
             self.log(f"[civ] set_freq_b write error: {e}")
 
     def set_scope_span(self, span_hz: int) -> bool:
-        """Set the waterfall span (Center mode). CI-V: 27 15 [5B BCD little-endian].
+        """Set the waterfall span (Center mode). CI-V: 27 15 [VFO-select][5B BCD LE].
         Returns True only if the radio actually ACKed (0xFB) the command,
         False on NG (0xFA), timeout, or an unsupported span_hz.
 
         Supported values (Hz): 2500, 5000, 10000, 25000, 50000, 100000,
-        250000, 500000 — anything else is rejected. BCD LE format: breaks
-        the Hz value into 5 bytes of 2 digits each (10 digits total), where
-        byte 0 holds the lowest digits (units + tens).
+        250000, 500000 — anything else is rejected.
 
-        FIX: this used to be fire-and-forget (self._write with no response
-        check) - the ONLY CI-V "set" command in the whole file that never
-        looked at the radio's reply, unlike every other set_* method here
-        (mode, filter, PTT, ...), which all wait on _transact for 0xFB/0xFA.
-        Reported live: switching the span in the UI showed the toast AND
-        the "[civ] scope span -> X Hz" log line (proving our own write
-        happened), yet the waterfall's own axis labels never changed for
-        ANY span value - impossible to tell from the old code whether the
-        radio silently rejected the command (wrong data format) or simply
-        never got it. Using _transact now surfaces a real NG/timeout in
-        the log instead of a false "ok": True.
+        FIX: the radio NGed every span change with the old encoding.
+        Verified against Hamlib's icom.c (rig_set_level,
+        RIG_LEVEL_SPECTRUM_SPAN case) - the real CI-V frame for 27 15 is
+        6 DATA bytes, not 5:
+          byte 0   = spectrum VFO select (icom_get_spectrum_vfo(): 0x00
+                     for a radio without a Sub receiver, which is the
+                     IC-7300 - our old code sent straight into the BCD
+                     span without this byte at all)
+          byte 1-5 = 5-byte BCD-LE of span_hz/2, NOT span_hz - Icom
+                     represents scope span on the wire as a +/- (radius)
+                     value (confirmed symmetric in Hamlib: the SET path
+                     does val/2 before to_bcd, the GET/read-back path
+                     does *2 after from_bcd). Our old code encoded the
+                     full span_hz, which for every value except by pure
+                     coincidence produces a completely different (and
+                     invalid) number on the wire - explains the NG on
+                     every span tested live.
+        Also see _transact's docstring — this was the only CI-V "set"
+        command in this file that used to be fire-and-forget with zero
+        response check, which is why the NG went unnoticed until logged.
         """
         if span_hz not in SCOPE_SPAN_KHZ:
             return False
         if self.sim or not self._ser:
             self._scope_span_hz = span_hz
             return True
-        # Break span_hz into 5 BCD little-endian bytes
-        digits = f"{span_hz:010d}"  # e.g. 25000 -> "0000025000"
+        half = span_hz // 2
+        # Break half into 5 BCD little-endian bytes (byte 0 = lowest 2 digits)
+        digits = f"{half:010d}"  # e.g. 12500 -> "0000012500"
         b = []
         for i in range(5):
             lo = int(digits[9-i*2])
             hi = int(digits[8-i*2])
             b.append((hi << 4) | lo)
         hexstr = ' '.join(f'{x:02X}' for x in b)
-        resp = self._transact(bytes([0x27, 0x15]) + bytes(b), {0xFB, 0xFA}, 0.4)
+        resp = self._transact(bytes([0x27, 0x15, 0x00]) + bytes(b), {0xFB, 0xFA}, 0.4)
         matched = self._resp_matched_cmd
         if resp is None:
-            self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — NO RESPONSE (timeout)")
+            self.log(f"[civ] scope span -> {span_hz} Hz (VFO=00, half={half}, bytes: {hexstr}) — NO RESPONSE (timeout)")
             return False
         if matched == 0xFA:
-            self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — radio REJECTED (NG)")
+            self.log(f"[civ] scope span -> {span_hz} Hz (VFO=00, half={half}, bytes: {hexstr}) — radio REJECTED (NG)")
             return False
         self._scope_span_hz = span_hz
-        self.log(f"[civ] scope span -> {span_hz} Hz (bytes: {hexstr}) — OK")
+        self.log(f"[civ] scope span -> {span_hz} Hz (VFO=00, half={half}, bytes: {hexstr}) — OK")
         return True
 
     async def set_mode(self, mode: str, bw: int = 0, fil: int = 0):
@@ -1306,10 +1314,8 @@ class CivRig:
         VFO). This achieves the "like the original scope screen" behavior
         that's expected.
 
-        We also set the span to 25kHz (27 15 = "0250" per the SPAN table
-        p.19-14: 2500 -> 2.5kHz, value 25000 -> index "2500"*10... see the
-        comment at SCOPE_SPAN_KHZ) — gives a good compromise between
-        preview width and filter-tracking precision.
+        We also set the span to 25kHz (via set_scope_span) — gives a good
+        compromise between preview width and filter-tracking precision.
         """
         try:
             # Baud 115200 is REQUIRED for the scope. At 19200 (CI-V USB =
@@ -1327,9 +1333,13 @@ class CivRig:
                 # Center mode (00) — the scope tracks the VFO
                 self._write(bytes([0x27, 0x14, 0x00, 0x00]))
                 time.sleep(0.05)
-                # 25kHz span: CI-V cmd 27 15, data = 5 bytes (10 BCD digits)
-                self._write(bytes([0x27, 0x15, 0x00, 0x50, 0x02, 0x00, 0x00]))
-                self._scope_span_hz = 25000
+                # 25kHz span - via set_scope_span (was a hand-rolled write
+                # here with the same wrong byte layout set_scope_span used
+                # to have before it got fixed: missing the VFO-select byte
+                # and encoding the full span instead of span/2. Reusing the
+                # now-correct, ACK-checked method instead of duplicating
+                # the fix in two places.)
+                self.set_scope_span(25000)
             self.log(f"[civ] scope output {'ON' if on else 'OFF'} (baud={self.speed})"
                      + (" + Center mode 25kHz" if on else ""))
         except Exception as e:
