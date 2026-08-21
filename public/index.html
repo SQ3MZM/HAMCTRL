@@ -130,7 +130,7 @@
             <option value="1">ATT ON</option>
           </select>
         </div>
-        <button id="tx-mic-btn" class="audio-toggle-btn" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
+        <button id="tx-mic-btn" class="audio-toggle-btn" data-perm="ptt" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
           onclick="this.removeAttribute('data-i18n'); WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
           🎤 Nadawanie TX — mikrofon
         </button>
@@ -2585,7 +2585,7 @@
 <script src="js/i18n.js?v=202608200001"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608210001"></script>
+<script src="js/ws.js?v=202608210002"></script>
 <script src="js/radiofunctions.js?v=202608200001"></script>
 <script src="js/ui.js?v=202608200002"></script>
 <script src="js/settings.js?v=202608180001"></script>

@@ -190,7 +190,33 @@ function initAudioContext() {
 window.addEventListener('app:ready', () => {
   window.AudioControls?.initRxVol?.();
   window.AudioControls?.initTxGain?.();
+  _autoStartTxMic();
 });
+
+// Auto-starts the TX microphone stream (the "Nadawanie TX - mikrofon"
+// button in RADIO) right after login, so the operator no longer has to
+// remember to turn it on before every SSB transmission - PTT alone is
+// then enough. Safe the same way a real analog mic is always physically
+// connected to a rig: RF only actually leaves the antenna while the
+// radio is keyed (PTT/CI-V), so the browser mic stream being "hot" in
+// the background the rest of the time has no transmit effect.
+// applyPermissions() (auth.js) already ran by the time 'app:ready'
+// fires and hid #tx-mic-btn via data-perm="ptt" for anyone without PTT
+// rights - skip auto-start for them so they never get an unsolicited
+// mic-permission prompt for a button they can't use anyway.
+function _autoStartTxMic() {
+  const btn = document.getElementById('tx-mic-btn');
+  if (!btn || btn.style.display === 'none') return;
+  if (window.WS?.isTxActive?.()) return;
+  window.WS?.startTX?.().then(ok => {
+    if (ok) {
+      btn.removeAttribute('data-i18n');
+      btn.textContent = I18n.t('tx_mic_stop');
+      btn.style.color = 'var(--red)';
+      btn.style.borderColor = 'var(--red)';
+    }
+  });
+}
 // (click, touch, key) — the browser's autoplay policy
 function _resumeAudioOnGesture() {
   if (audioCtx) {
