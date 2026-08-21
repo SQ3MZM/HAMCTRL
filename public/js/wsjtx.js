@@ -592,6 +592,37 @@ function _onFakeSplitStatus(msg) {
   if (tgt && msg.targetHz !== undefined) tgt.textContent = `${msg.targetHz|0} Hz`;
 }
 
+// TUNE button (🎵 TUNE, id="wj-tune-btn") - transmits a steady tone for
+// ATU antenna tuning. The backend (_start_tune in webapp.py) has always
+// been fully implemented (real PTT on, timed tone, PTT off, radio_lock +
+// cross-band-split checks, 30s hard cap) - the button just called a
+// WSJTX.startTune() that didn't exist anywhere in this file, so clicking
+// it threw silently and never sent anything. "Click again to interrupt"
+// (per the button's title) - toggles ft8_tune / ft8_tune_stop.
+let _tuneActive = false;
+function startTune() {
+  if (_tuneActive) {
+    window.WS?.send({ type: 'ft8_tune_stop' });
+    return;
+  }
+  // duration is a REQUEST - the backend clamps it to max 30s regardless;
+  // sent at that cap so the tone keeps running until the operator
+  // explicitly clicks again, rather than cutting off mid-adjustment.
+  window.WS?.send({ type: 'ft8_tune', duration: 30, tone: 1500 });
+}
+function _onTuneStatus(msg) {
+  _tuneActive = !!msg.active;
+  const btn = document.getElementById('wj-tune-btn');
+  if (btn) {
+    // .wj-btn has no .active style of its own (unlike .rf-btn) - set the
+    // red highlight inline so "currently transmitting a tone" is visually
+    // obvious, not just a text-label change.
+    btn.textContent = _tuneActive ? '⏹ STOP' : '🎵 TUNE';
+    btn.style.background = _tuneActive ? 'var(--red)' : '';
+    btn.style.color      = _tuneActive ? 'white' : '';
+  }
+}
+
 function toggleAutoSeq() {
   const cb = document.getElementById('wj-auto-seq-toggle');
   const enabled = cb ? cb.checked : !_autoSeqEnabled;
@@ -828,6 +859,7 @@ function handleWS(msg) {
       // (each client has its own independent mini-log).
       _onQsoLogged(msg);
       break;
+    case 'tune_status': _onTuneStatus(msg); break;
     case 'rotator_update':
       // The same broadcast as the big compass in RADIO (rotormini.js) —
       // only feeds the live ROTOR ---° reading and the SP/LP button state
@@ -2194,7 +2226,7 @@ window.WSJTX = {
   _selectRow, addLog, exportAdif,
   toggleHound, houndStop, houndConfirm,
   removeFromQueue, clearAutoQsoQueue, skipAutoQso,
-  resetPaletteAdjust,
+  resetPaletteAdjust, startTune,
 };
 
 })();
