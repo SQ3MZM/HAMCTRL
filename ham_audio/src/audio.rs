@@ -231,11 +231,32 @@ fn run_rx_thread(
     let resample_ratio = OPUS_RATE as f64 / actual_rate as f64;
     let pcm_tx2 = pcm_tx.clone();
 
+    // FIX: reported live — after the IC-7300 loses power (its built-in USB
+    // Audio CODEC vanishes with it) and comes back, CI-V and even the
+    // Python-side audio_stream.py capture both self-heal correctly, but
+    // this WASAPI RX stream stayed permanently silent until the whole
+    // ham_audio.exe process was restarted. Root cause: the keep-alive loop
+    // below only ever broke out (and let run_audio_loop reopen with a
+    // fresh device handle) on a MANUAL device switch (RX_DEVICE_GEN bump)
+    // — a device that silently disappears/reappears underneath an
+    // already-open cpal::Stream was never detected at all, so the stream
+    // sat there technically "running" but dead. stream_ok tracks whether
+    // the WASAPI error callback fired; last_cb_tick tracks whether the
+    // DATA callback is still actually being invoked (some drivers drop a
+    // device without ever calling the error callback at all — silent
+    // stall, not an explicit error). Either signal now breaks the loop the
+    // same way a device-gen change does.
+    let stream_ok     = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stream_ok_cb  = stream_ok.clone();
+    let last_cb_tick   = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let last_cb_tick_cb = last_cb_tick.clone();
+
     let mut resample_buf: Vec<f32> = Vec::new();
     let mut direct_buf:   Vec<f32> = Vec::new();
     let stream = device.build_input_stream(
         &cfg,
         move |data: &[f32], _| {
+            last_cb_tick_cb.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if (resample_ratio - 1.0).abs() < 0.001 {
                 // Brak resamplera — akumuluj do pelnych ramek FRAME_SAMP
                 direct_buf.extend_from_slice(data);
@@ -276,26 +297,56 @@ fn run_rx_thread(
                 }
             }
         },
-        |e| error!("[audio] WASAPI error: {}", e),
+        move |e| {
+            error!("[audio] WASAPI error: {}", e);
+            stream_ok_cb.store(false, std::sync::atomic::Ordering::Relaxed);
+        },
         None,
     )?;
 
     stream.play()?;
     println!("[audio] WASAPI RX stream started, device={}", device.name().unwrap_or_default());
 
-    // Trzymaj wątek przy życiu, ale reaguj na hot-swap karty. Zapamietaj
-    // generacje z momentu startu; gdy user zmieni karte (bump_rx_device_gen),
-    // generacja wzrosnie — konczymy stream (drop na wyjsciu z funkcji zamyka
-    // WASAPI czysto), co konczy encoder loop i pozwala run_audio_loop przeladowac.
+    // Trzymaj wątek przy życiu, ale reaguj na hot-swap karty ORAZ na
+    // device, ktore znika/wraca pod spodem (patrz komentarz przy stream_ok
+    // powyzej). Zapamietaj generacje z momentu startu; gdy user zmieni
+    // karte (bump_rx_device_gen) LUB stream przestanie realnie dostarczac
+    // dane (device zniknal), konczymy stream (drop na wyjsciu z funkcji
+    // zamyka WASAPI czysto), co konczy encoder loop i pozwala
+    // run_audio_loop przeladowac z nowym uchwytem urzadzenia.
     let my_gen = current_rx_device_gen();
     let mut ticks: u64 = 0;
     let mut last_opus: u64 = 0;
     let mut last_ft8:  u64 = 0;
+    let mut last_seen_cb_tick: u64 = 0;
+    let mut stale_ticks: u32 = 0;
+    // Grace period before the staleness check kicks in — device open +
+    // first WASAPI buffer can legitimately take a few hundred ms.
+    const STALE_GRACE_TICKS: u32 = 15;  // 15 * 200ms = 3s
+    const STALE_LIMIT_TICKS: u32 = 10;  // 10 * 200ms = 2s with zero new callbacks
     loop {
         std::thread::sleep(std::time::Duration::from_millis(200));
         if current_rx_device_gen() != my_gen {
             println!("[audio] hot-swap: generacja karty zmieniona, zamykam stream RX");
             break;
+        }
+        if !stream_ok.load(std::sync::atomic::Ordering::Relaxed) {
+            println!("[audio] RX stream WASAPI error signalled — zamykam i przeladowuje");
+            break;
+        }
+        if ticks >= STALE_GRACE_TICKS as u64 {
+            let cur = last_cb_tick.load(std::sync::atomic::Ordering::Relaxed);
+            if cur == last_seen_cb_tick {
+                stale_ticks += 1;
+                if stale_ticks >= STALE_LIMIT_TICKS {
+                    println!("[audio] RX stream STALE — brak danych z urzadzenia od {}ms, zamykam i przeladowuje",
+                             stale_ticks as u64 * 200);
+                    break;
+                }
+            } else {
+                stale_ticks = 0;
+                last_seen_cb_tick = cur;
+            }
         }
         // Raportuj zgubione ramki co ~5s, ale TYLKO gdy cos pada (inaczej cisza).
         // Pozwala Tomowi ZMIERZYC czy buffer skacze przy operacjach I/O.
