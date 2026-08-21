@@ -6505,6 +6505,24 @@ class App:
         # live: the correspondent didn't get 73 in time and repeated RRR.
         ptt_was_on = False
         try:
+            # EARLY stale-tx_seq check — same condition as the one right
+            # before PTT below, but run BEFORE any PCM generation and
+            # BEFORE the "ft8_tx_status: waiting" broadcast. Without this,
+            # a task queued behind the mutex (e.g. a retry like "-15"
+            # scheduled just before the real "73") only discovers it's
+            # stale AFTER waiting out the full TX window — but the
+            # "waiting" broadcast already went out with THIS action's text
+            # moments earlier, so the operator sees a "will transmit -15"
+            # popup for a message that was already superseded and would
+            # never actually go on air. Observed live twice (ON9DC, F4EIK):
+            # the backend correctly skipped the stale retry both times, but
+            # the misleading popup made it look like the automation "went
+            # crazy" and wanted to resend after the QSO was already logged.
+            if auto_respond and call_to != "CQ" and tx_seq is not None:
+                if tx_seq != self._autoqso_tx_seq:
+                    print(f"[autoqso] TX '{call_to} {call_de} {report}' stale "
+                          f"(tx_seq={tx_seq}, current={self._autoqso_tx_seq}) — skipping early")
+                    return
             is_ft4 = (self._ft8_decode_mode == "FT4")
             # SYNC txVolume BEFORE TX: audio.cfg is a reference that can
             # drift apart from the main config (re-login, reload) -> audio
@@ -6546,7 +6564,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-HAM-AUDIO-ORPHAN-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-EARLY-STALE-TX-GUARD, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
