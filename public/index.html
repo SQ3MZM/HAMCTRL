@@ -2611,7 +2611,7 @@
 <script src="js/vfo.js?v=202606250005"></script>
 <script src="js/waterfall.js?v=202608210001"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
-  <div class="modal" style="min-width:280px;max-width:360px;">
+  <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
       <input type="hidden" id="cw-edit-id">
@@ -2634,7 +2634,7 @@
 </div>
 
 <div class="modal-overlay" id="confirm-modal" onclick="if(event.target===this)UI._confirmModalCancel()" style="display:none;">
-  <div class="modal" style="min-width:280px;max-width:400px;">
+  <div class="modal-box" style="min-width:280px;max-width:400px;">
     <div class="modal-header"><span id="confirm-modal-title" data-i18n="common_confirm_title">POTWIERDŹ</span><button class="modal-close" onclick="UI._confirmModalCancel()">✕</button></div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding:16px;">
       <div id="confirm-modal-msg" style="font-family:var(--mono);font-size:13px;color:var(--fg);white-space:pre-line;"></div>
@@ -2647,7 +2647,7 @@
 </div>
 
 <div class="modal-overlay" id="text-prompt-modal" onclick="if(event.target===this)UI._textPromptCancel()" style="display:none;">
-  <div class="modal" style="min-width:280px;max-width:360px;">
+  <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="text-prompt-title">WPISZ WARTOŚĆ</span><button class="modal-close" onclick="UI._textPromptCancel()">✕</button></div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
       <input type="text" id="text-prompt-input"
@@ -2662,7 +2662,7 @@
 </div>
 
 <div class="modal-overlay" id="rotor-manual-modal" onclick="if(event.target===this)WSJTX.rotorManualClose()" style="display:none;">
-  <div class="modal" style="min-width:280px;max-width:360px;">
+  <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span data-i18n="wj_rotor_modal_hdr">ROTOR — RĘCZNA POZYCJA</span><button class="modal-close" onclick="WSJTX.rotorManualClose()">✕</button></div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;padding:16px;">
       <div>
