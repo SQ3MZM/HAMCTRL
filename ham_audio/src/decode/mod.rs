@@ -6,6 +6,7 @@ pub mod crc14;
 pub mod demod;
 pub mod fft_cache;
 pub mod ldpc;
+pub mod osd;
 pub mod params;
 pub mod rx_loop;
 pub mod subtract;
@@ -51,6 +52,11 @@ pub struct PassTiming {
     // itself" so the next live log shows which one is really eating the CPU.
     pub demod_ms_sum:   f64,
     pub ldpc_ms_sum:    f64,
+    // CPU-seconds spent in OSD (osd.rs), summed across rayon threads, same
+    // accounting convention as ldpc_ms_sum. Only non-zero for candidates
+    // where BP itself failed to converge - see the OSD fallback at the
+    // bp_decode call site below.
+    pub osd_ms_sum:     f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -248,6 +254,7 @@ fn decode_and_subtract(
     let t_par = std::time::Instant::now();
     let demod_ns = std::sync::atomic::AtomicU64::new(0);
     let ldpc_ns = std::sync::atomic::AtomicU64::new(0);
+    let osd_ns = std::sync::atomic::AtomicU64::new(0);
     let decoded: Vec<(Candidate, [u8; 174], DecodeResult)> = candidates
         .par_iter()
         .filter_map(|coarse_cand| {
@@ -287,7 +294,25 @@ fn decode_and_subtract(
             // (thread count, CPU affinity and power plan all ruled out).
             let (bits174, success, _iters) = bp_decode(&llr174, 30);
             ldpc_ns.fetch_add(t_ldpc.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-            if !success { return None; }
+            let bits174 = if success {
+                bits174
+            } else {
+                // BP failed to converge - try OSD before giving up on this
+                // candidate. Reuses the SAME llr174 (soft) and bits174 (BP's
+                // last hard-decision guess) already computed above, no extra
+                // demod/LLR work. Gated by the same wall-clock `deadline`
+                // as the rest of this pass - see osd.rs's module doc
+                // comment and FT8_TIME_BUDGET_S above for why this must
+                // never run unbounded.
+                if std::time::Instant::now() >= deadline { return None; }
+                let t_osd = std::time::Instant::now();
+                let osd_result = osd::try_osd(&llr174, &bits174, 1, deadline);
+                osd_ns.fetch_add(t_osd.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                match osd_result {
+                    Some(fixed) => fixed,
+                    None => return None,
+                }
+            };
 
             // bits174[0..91] = [data77/scrambled77 | crc14]
             let data77: Vec<u8> = if is_ft8 {
@@ -327,6 +352,7 @@ fn decode_and_subtract(
     let par_decode_ms = t_par.elapsed().as_secs_f64() * 1000.0;
     let demod_ms_sum = demod_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
     let ldpc_ms_sum = ldpc_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
+    let osd_ms_sum = osd_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
 
     // Dedup phase: cheap (just comparisons), no subtraction yet. par_iter()
     // doesn't preserve candidate order, but that's fine here - dedup is
@@ -346,7 +372,7 @@ fn decode_and_subtract(
     // Hand results to the caller NOW - see this function's doc comment for
     // why this doesn't need to wait for subtraction below.
     let results: Vec<DecodeResult> = new_decoded.iter().map(|(_, _, r)| r.clone()).collect();
-    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand, demod_ms_sum, ldpc_ms_sum };
+    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand, demod_ms_sum, ldpc_ms_sum, osd_ms_sum };
     on_pass_results(&results, &timing);
 
     // Subtract each signal from the residual, so a weaker signal that was

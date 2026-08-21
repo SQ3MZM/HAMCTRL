@@ -162,6 +162,7 @@ async fn run_loop(
                     "n_cand": timing.n_cand,
                     "demod_ms_sum": timing.demod_ms_sum,
                     "ldpc_ms_sum": timing.ldpc_ms_sum,
+                    "osd_ms_sum": timing.osd_ms_sum,
                 });
                 if stream.write_all(format!("{}\n", pstats).as_bytes()).await.is_err() {
                     return;
