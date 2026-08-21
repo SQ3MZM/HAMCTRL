@@ -1120,9 +1120,23 @@ const _txMic = (() => {
   let active = false;
   let vuRaf = null;            // requestAnimationFrame id dla VU meter
   let audioAnalyzer = null;
+  // FOUND live, 2026-08-21: PTT is now tied directly to start()/stop()
+  // (ui.js's setPTT) - a quick PTT tap (press, release again fast, e.g.
+  // testing) calls stop() WHILE start() is still awaiting getUserMedia/
+  // WebRTC negotiation, i.e. before `active` ever became true. stop()'s
+  // old guard ("if (!active) return") silently dropped that request -
+  // the mic stream getUserMedia() had already opened was never released,
+  // and once start() finished moments later and set active=true, nothing
+  // was left watching for a stop it had already missed. The mic (and the
+  // Windows "Communications" audio-ducking that comes with any open mic -
+  // see ws.js's REVERTED auto-start note above) then stayed on for the
+  // rest of the session. This flag lets stop() during an in-flight
+  // start() register the request instead of dropping it.
+  let stopRequested = false;
 
   async function start() {
     if (active) return true;
+    stopRequested = false;
     if (!navigator.mediaDevices?.getUserMedia) {
       window.UI?.showToast('Mikrofon niedostepny (brak getUserMedia w przegladarce)', 'error');
       return false;
@@ -1279,6 +1293,14 @@ const _txMic = (() => {
 
     active = true;
     console.log('[txmic] active (WebRTC to the server)');
+    if (stopRequested) {
+      // A stop() came in while we were still connecting - honor it NOW
+      // that there's actually a stream/pc to clean up, instead of it
+      // having been silently dropped (see the stopRequested comment above).
+      stopRequested = false;
+      stop();
+      return false;
+    }
     return true;
   }
 
@@ -1315,7 +1337,14 @@ const _txMic = (() => {
   }
 
   function stop() {
-    if (!active) return;
+    if (!active) {
+      // Might still be mid-start() (getUserMedia/WebRTC negotiation in
+      // flight, `stream`/`pc` possibly not even assigned yet) - can't
+      // clean up yet, remember the request so start() can honor it the
+      // moment it actually reaches a cleanable state.
+      stopRequested = true;
+      return;
+    }
     active = false;
     window.WS?.send({ type: 'webrtc_stop' });
     cleanup();
