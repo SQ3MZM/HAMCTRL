@@ -19,6 +19,20 @@ let _editId   = null;  // null = new QSO, string = editing
 // local table was never going to cover) - fall back to guessing from
 // the callsign prefix only when there's no stored country (e.g. a QSO
 // that was never run through a lookup).
+// HTML-escapes free-text QSO fields before they go into innerHTML/attribute
+// templates below - operator-typed fields (comment/name/qth/country/call/
+// gridsquare/...) went in RAW, so a comment like <img src=x onerror=...>
+// executed for anyone viewing that log (including an admin browsing
+// another operator's log - a privilege-escalation path), and a stray
+// quote in country/name/qth broke out of the title="..." attribute on the
+// flag span. Covers both cases (also escapes quotes, needed for the
+// attribute context, not just for text content).
+function _esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function _flagFor(call, country) {
   if (country) {
     const byName = window.DXCC?.lookupByName?.(country);
@@ -117,28 +131,28 @@ function _renderTable(qsos) {
     const modeClass = q.mode === 'CW' ? 'log-mode-cw' : q.mode === 'FT8' ? 'log-mode-ft8' : q.mode === 'FT4' ? 'log-mode-ft4' : '';
     const date = q.qso_date ? `${q.qso_date.slice(6,8)}.${q.qso_date.slice(4,6)}.${q.qso_date.slice(0,4)}` : '';
     const time = q.time_on ? `${q.time_on.slice(0,2)}:${q.time_on.slice(2,4)}` : '';
-    return `<tr data-id="${q.id}">
+    return `<tr data-id="${_esc(q.id)}">
       <td style="text-align:center;padding:0 4px;">
-        <input type="checkbox" class="qso-chk" data-id="${q.id}"
+        <input type="checkbox" class="qso-chk" data-id="${_esc(q.id)}"
           style="width:13px;height:13px;cursor:pointer;accent-color:var(--red);">
       </td>
-      <td>${date}</td>
-      <td>${time}</td>
-      <td class="log-call">${q.call || ''}${q.country
-        ? ` <span title="${q.country}${q.name ? ' — ' + q.name : ''}${q.qth ? ', ' + q.qth : ''}">${_flagFor(q.call, q.country)}</span>`
+      <td>${_esc(date)}</td>
+      <td>${_esc(time)}</td>
+      <td class="log-call">${_esc(q.call)}${q.country
+        ? ` <span title="${_esc(q.country)}${q.name ? ' — ' + _esc(q.name) : ''}${q.qth ? ', ' + _esc(q.qth) : ''}">${_flagFor(q.call, q.country)}</span>`
         : ''}</td>
-      <td>${q.band || ''}</td>
-      <td class="${modeClass}">${q.mode || ''}${q.sat_name
-        ? ` <span title="${I18n.t('log_sat_tooltip_prefix')}${q.sat_name}${q.sat_mode ? ' (' + q.sat_mode + ')' : ''}${q.band_rx ? ', downlink ' + q.band_rx : ''}">🛰</span>`
+      <td>${_esc(q.band)}</td>
+      <td class="${modeClass}">${_esc(q.mode)}${q.sat_name
+        ? ` <span title="${_esc(I18n.t('log_sat_tooltip_prefix'))}${_esc(q.sat_name)}${q.sat_mode ? ' (' + _esc(q.sat_mode) + ')' : ''}${q.band_rx ? ', downlink ' + _esc(q.band_rx) : ''}">🛰</span>`
         : ''}</td>
       <td>${q.freq ? parseFloat(q.freq).toFixed(4) : ''}</td>
-      <td>${q.rst_sent || ''}</td>
-      <td>${q.rst_rcvd || ''}</td>
-      <td>${q.gridsquare || ''}</td>
-      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;">${q.comment || ''}</td>
+      <td>${_esc(q.rst_sent)}</td>
+      <td>${_esc(q.rst_rcvd)}</td>
+      <td>${_esc(q.gridsquare)}</td>
+      <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;">${_esc(q.comment)}</td>
       <td style="display:flex;gap:4px;">
-        <button class="log-action-btn" onclick="QSOLog.openEdit('${q.id}')">${I18n.t('log_row_edit_btn')}</button>
-        <button class="log-action-btn del" onclick="QSOLog.deleteQSO('${q.id}')">${I18n.t('common_delete_btn')}</button>
+        <button class="log-action-btn" onclick="QSOLog.openEdit('${_esc(q.id)}')">${I18n.t('log_row_edit_btn')}</button>
+        <button class="log-action-btn del" onclick="QSOLog.deleteQSO('${_esc(q.id)}')">${I18n.t('common_delete_btn')}</button>
       </td>
     </tr>`;
   }).join('');
