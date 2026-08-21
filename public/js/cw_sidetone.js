@@ -39,15 +39,36 @@ window.CwSidetone = (function() {
 
   function setEnabled(on) {
     _enabled = !!on;
-    if (!_enabled) _stopTone();
+    if (_enabled) {
+      // Create (and route) the context up front, on the click that
+      // enables MON, so it's already pointed at the right output device
+      // by the time a CW send actually schedules a tone.
+      _ensureCtx();
+      _applySink();
+    } else {
+      _stopTone();
+    }
   }
 
   function isEnabled() { return _enabled; }
+
+  // Follows the SAME headphones/speaker choice as normal RX audio and
+  // the SSB monitor (tx_eq.js) - reported live as "CW tone doesn't come
+  // out of the speaker" because this used to just take whatever the
+  // browser's own unconfigured 'default' sink was, instead of the
+  // device the rest of the app actually plays through.
+  function _applySink() {
+    if (_ctx && _ctx.setSinkId) window.applyOutputSinkId?.(_ctx);
+  }
+
+  // Called from ws.js on 'devicechange' (headphones plugged/unplugged).
+  function reapplyOutputSink() { _applySink(); }
 
   function _ensureCtx() {
     if (_ctx) return _ctx;
     try {
       _ctx = new (window.AudioContext || window.webkitAudioContext)();
+      _applySink();
     } catch (e) {
       console.warn('[cwsidetone] AudioContext error:', e);
       _ctx = null;
@@ -124,5 +145,5 @@ window.CwSidetone = (function() {
     _schedule(msg.text || '', msg.wpm || 18);
   }
 
-  return { setEnabled, isEnabled, handleWS };
+  return { setEnabled, isEnabled, handleWS, reapplyOutputSink };
 })();

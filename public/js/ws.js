@@ -46,9 +46,8 @@ window._audioEnabled = false;
 // initAudioContext) so a headphone plug/unplug mid-session actually
 // re-routes audio instead of leaving it stuck on whatever was the
 // default at page-load time.
-function _applyOutputSinkId() {
-  if (!audioCtx || !audioCtx.setSinkId) return;
-  navigator.mediaDevices.enumerateDevices().then(devs => {
+function pickOutputSinkId() {
+  return navigator.mediaDevices.enumerateDevices().then(devs => {
     const outputs = devs.filter(d => d.kind === 'audiooutput');
     const saved = localStorage.getItem('ham_audio_sinkId');
     const savedStillExists = saved && outputs.some(d => d.deviceId === saved);
@@ -58,11 +57,38 @@ function _applyOutputSinkId() {
       !d.label.toLowerCase().includes('virtual') &&
       !d.label.toLowerCase().includes('cable')
     );
-    const target = savedStillExists ? saved : ((nonVB && nonVB.deviceId) || 'default');
-    audioCtx.setSinkId(target).then(() => {
-      console.log('[audio] sinkId set:', target);
-    }).catch(e => console.warn('[audio] setSinkId error:', e));
-  }).catch(() => {});
+    return savedStillExists ? saved : ((nonVB && nonVB.deviceId) || 'default');
+  });
+}
+window.pickOutputSinkId = pickOutputSinkId;
+
+// Applies the shared headphones/speaker choice to an arbitrary
+// AudioContext — used here for the main RX context, and externally
+// (tx_eq.js's SSB monitor, cw_sidetone.js) so the MON button's local
+// monitor follows the SAME device as normal RX instead of always
+// landing on whatever the browser considers its own separate "default".
+function applyOutputSinkId(ctx) {
+  if (!ctx || !ctx.setSinkId) return Promise.resolve();
+  return pickOutputSinkId().then(target =>
+    ctx.setSinkId(target).then(() => target)
+  ).catch(e => { console.warn('[audio] setSinkId error:', e); });
+}
+window.applyOutputSinkId = applyOutputSinkId;
+
+function _applyOutputSinkId() {
+  applyOutputSinkId(audioCtx).then(target => {
+    if (target) console.log('[audio] sinkId set:', target);
+  });
+}
+
+// Re-applies the output device to the RX context AND to the SSB/CW
+// local-monitor contexts (if currently active) on the same event, so a
+// headphone plug/unplug mid-session re-routes MON the same way it
+// re-routes normal RX audio, not just the RX path alone.
+function _onOutputDeviceChange() {
+  _applyOutputSinkId();
+  window.TxEq?.reapplyOutputSink?.();
+  window.CwSidetone?.reapplyOutputSink?.();
 }
 
 function initAudioContext() {
@@ -152,7 +178,7 @@ function initAudioContext() {
       // any output added/removed) forces it to pick up the CURRENT
       // default instead of a stale one from page-load time.
       if (navigator.mediaDevices?.addEventListener) {
-        navigator.mediaDevices.addEventListener('devicechange', _applyOutputSinkId);
+        navigator.mediaDevices.addEventListener('devicechange', _onOutputDeviceChange);
       }
     }
   } catch(e) {

@@ -268,8 +268,15 @@ window.TxEq = (() => {
         }
       }
 
+      // echoCancellation ON here (unlike the real TX capture in ws.js's
+      // _txMic, which stays fully raw) - reported live as a feedback
+      // howl when monitoring through speakers: the mic picks the
+      // monitor's own speaker output back up and re-plays it in a loop.
+      // This is a SEPARATE getUserMedia stream from the actual TX audio
+      // sent to the radio, so enabling AEC only for local monitoring
+      // doesn't touch what's really transmitted.
       const audioConstraint = {
-        echoCancellation: false,
+        echoCancellation: true,
         noiseSuppression: false,
         autoGainControl:  false,
         sampleRate: 48000,
@@ -312,10 +319,13 @@ window.TxEq = (() => {
         latencyHint: 'interactive',
       });
       if (monitorCtx.state === 'suspended') await monitorCtx.resume();
-      // Set sinkId to the same device as RX audio (that's where the headphones are)
-      if (monitorCtx.setSinkId && ctx.sinkId) {
+      // Follow the same headphones/speaker choice as RX audio - via the
+      // shared picker (ws.js), not by copying ctx.sinkId directly, so
+      // this resolves correctly even right after a device change the
+      // main RX context hasn't caught up to yet.
+      if (monitorCtx.setSinkId) {
         try {
-          await monitorCtx.setSinkId(ctx.sinkId);
+          await window.applyOutputSinkId?.(monitorCtx);
         } catch (e) { console.warn('[txeq] monitor setSinkId:', e.message); }
       }
       console.log('[txeq] monitorCtx created, state=', monitorCtx.state, 'sinkId=', monitorCtx.sinkId);
@@ -422,6 +432,13 @@ window.TxEq = (() => {
 
   function isMonitorActive() { return monitorActive; }
 
+  // Called from ws.js on 'devicechange' - re-routes the monitor to
+  // whatever the current headphones/speaker choice is if it's running
+  // when the device change happens (not just at monitor-start time).
+  function reapplyOutputSink() {
+    if (window._monitorCtx) window.applyOutputSinkId?.(window._monitorCtx);
+  }
+
   function setMonitorVol(val) {
     monitorVol = Math.max(0, Math.min(1, val));
     if (monitorGain) monitorGain.gain.value = monitorVol;
@@ -447,6 +464,7 @@ window.TxEq = (() => {
     applyPreset, setBand, buildFilterChain,
     registerTxFilters, unregisterTxFilters,
     toggleMonitor, startMonitor, stopMonitor, setMonitorVol, isMonitorActive,
+    reapplyOutputSink,
     getCurrentBands,
     load, save, loadFromServer,
   };
