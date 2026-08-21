@@ -3442,34 +3442,8 @@ class App:
             except Exception as e:
                 return 500, {"error": str(e)}
 
-        if p == "/api/audio/detect/toggle" and method == "POST":
-            # Enable/disable auto-detect (admin can switch to manual)
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            enabled = bool(body.get("enabled", True))
-            self._audio_auto = enabled
-            self.cfg["audio_auto_detect"] = enabled
-            save_json(CFG_F, self.cfg)
-            return 200, {"ok": True, "auto_enabled": enabled}
-
         # ── CI-V TCP Bridge (for legacy software via com0com) ─────────────────
         # ── COM Bridge WS - per-user COM port configuration ────────────────
-        if p == "/api/com/services" and method == "GET":
-            # List of available services (for the admin GUI - dropdown)
-            svc_list = []
-            for key, meta in self.com_bridge_ws.SERVICES.items():
-                svc_list.append({
-                    'key':       key,
-                    'name':      meta['name'],
-                    'available': meta['available'],
-                    'defaults':  {
-                        'baud':   meta['default_baud'],
-                        'parity': meta['default_parity'],
-                        'bits':   meta['default_bits'],
-                        'stop':   meta['default_stop'],
-                    },
-                })
-            return 200, {'ok': True, 'services': svc_list}
-
         if p == "/api/com/config" and method == "GET":
             # Return the current user's port configuration
             # The JWT payload uses 'id' (not 'user_id') - consistent with the rest of the code
@@ -4136,16 +4110,6 @@ class App:
         if p == "/api/audio/rx/stop" and method == "POST":
             self.audio.stop_rx()
             return 200, {"ok":True}
-
-        if p == "/api/audio/tx/start" and method == "POST":
-            dev = body.get("device") or self.cfg.get("audio",{}).get("txDevice")
-            ok  = self.audio.start_tx(device=dev)
-            return 200, {"ok":ok,"status":self.audio.get_status()}
-
-        if p == "/api/audio/tx/stop" and method == "POST":
-            self.audio.stop_tx()
-            return 200, {"ok":True}
-
 
         return 404, {"error": f"Nieznany endpoint: {method} {p}"}
 
@@ -5188,12 +5152,6 @@ class App:
                     await self.hub.set_channels(ws, channels)
             return
 
-        if t == "unsubscribe":
-            channels = msg.get("channels", [])
-            if isinstance(channels, list):
-                await self.hub.unsubscribe(ws, channels)
-            return
-
         if t == "freq":
             can, why = self._can_control_radio(ws, role)
             if not can:
@@ -5623,19 +5581,6 @@ class App:
             # WSJT-X finishes transmitting — stop the TX microphone in the browser
             await self.hub.broadcast({"type": "wsjtx_tx_stop"}, skip=ws)
 
-        elif t == "audio_tx_start":
-            # The browser starts sending TX audio — start playback on the server
-            if not self.audio.tx_active:
-                dev = self.cfg.get("audio", {}).get("txDevice")
-                ok  = self.audio.start_tx(device=dev)
-                print(f"[audio] TX start: {'OK' if ok else 'ERROR'} dev={dev}")
-
-        elif t == "audio_tx_stop":
-            # The browser finishes TX — stop playback
-            if self.audio.tx_active:
-                self.audio.stop_tx()
-                print("[audio] TX stop")
-
         elif t == "ft8_tx":
             # Our own FT8 transmitter: PTT ON -> generate+stream audio -> PTT OFF.
             # msg: {call_to, call_de, report (grid/report/RRR/73/...), rFlag?,
@@ -5767,11 +5712,6 @@ class App:
                                            "partner": None})
                 return
             asyncio.create_task(self._ft8_tx_sequence(call_to, call_de, report, r_flag))
-
-        elif t == "ft8_abort":
-            # Emergency abort of FT8 transmission (e.g. a second button click)
-            self._ft8_tx_abort = True
-            self._stop_cq_calling()  # also stop periodic CQ
 
         elif t == "ft8_tx_stop":
             # Stop TX from the frontend (HALT button, safety timer expiry).
@@ -6260,7 +6200,7 @@ class App:
             if not self.webrtc:
                 await ws.send_json({"type": "webrtc_error", "error": "WebRTC niedostepne na serwerze"})
                 return
-            # Start TX playback (like audio_tx_start) before attaching the track
+            # Start TX playback (self.audio.start_tx) before attaching the track
             if not self.audio.tx_active:
                 dev = self.cfg.get("audio", {}).get("txDevice")
                 self.audio.start_tx(device=dev)
@@ -6589,7 +6529,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-CIV-DEAD-PORT-SELFHEAL, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-PREPUBLISH-AUDIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -6602,9 +6542,10 @@ class App:
             display_report = f"R{report}" if r_flag else report
             display_text = f"{call_to} {call_de} {display_report}"
 
-            # Make sure audio TX playback is running (like in
-            # audio_tx_start) — done BEFORE waiting for the window, so we
-            # don't waste time at the critical moment the transmission starts.
+            # Make sure audio TX playback is running (self.audio.start_tx,
+            # same call as the WebRTC path above) — done BEFORE waiting for
+            # the window, so we don't waste time at the critical moment
+            # the transmission starts.
             if not self.audio.tx_active:
                 dev = self.cfg.get("audio", {}).get("txDevice")
                 ok = self.audio.start_tx(device=dev)
