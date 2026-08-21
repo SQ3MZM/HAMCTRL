@@ -272,10 +272,53 @@ window.addEventListener('app:ready', () => { loadBandsConfig(); loadTheme(); });
 
 
 // ── PTT ───────────────────────────────────────────────────────────────────────
+let _pttOwnsMic = false;
 function setPTT(on) {
   S.ptt = !!on;
   updatePTT();
   WS.send({ type: 'ptt', ptt: on });
+
+  // TX mic tied directly to PTT (SSB/AM/FM only - CW is keyed via CI-V
+  // text in civ.py, never touches the microphone at all). Used to
+  // auto-start once at login instead - live test showed that keeps the
+  // mic (getUserMedia) open for the WHOLE session, and Windows'
+  // "Communications" audio ducking (Control Panel > Sound) then mutes/
+  // reduces ALL other system sound - including our own RX - for as long
+  // as ANY app holds the mic open, not just while actually transmitting.
+  // Opening it only for the PTT window keeps that ducking limited to
+  // exactly when RX is already intentionally muted anyway (setTxAudioDuck,
+  // above in updatePTT) - no NEW loss of RX audio versus today's normal PTT.
+  if (S.mode !== 'CW') {
+    if (on) {
+      // Only start (and remember we own it) if it wasn't already running -
+      // an operator may have manually enabled the "Nadawanie TX -
+      // mikrofon" button in RADIO to keep it on continuously; in that
+      // case leave it alone entirely, don't stop it out from under them
+      // on the next PTT release.
+      if (window.WS?.isTxActive?.()) {
+        _pttOwnsMic = false;
+      } else {
+        _pttOwnsMic = true;
+        window.WS?.startTX?.().then(ok => { if (ok) _syncTxMicBtn(true); });
+      }
+    } else if (_pttOwnsMic) {
+      _pttOwnsMic = false;
+      window.WS?.stopTX?.();
+      _syncTxMicBtn(false);
+    }
+  }
+}
+
+// Keeps the manual "Nadawanie TX - mikrofon" button (RADIO tab) in sync
+// when PTT starts/stops it automatically, so its label/color don't go
+// stale relative to what's actually running.
+function _syncTxMicBtn(active) {
+  const btn = document.getElementById('tx-mic-btn');
+  if (!btn) return;
+  btn.removeAttribute('data-i18n');
+  btn.textContent = I18n.t(active ? 'tx_mic_stop' : 'tx_mic_start');
+  btn.style.color = active ? 'var(--red)' : 'var(--dim)';
+  btn.style.borderColor = active ? 'var(--red)' : 'rgba(217,119,106,0.3)';
 }
 
 function updatePTT() {

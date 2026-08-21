@@ -160,8 +160,12 @@ const RadioFunctions = (() => {
       // depend on MONI or fight the duck.
       if (a.id === 'func_mon') {
         btn.id = 'radio-mon-btn';
-        btn.onclick = () => {
-          window.TxEq?.toggleMonitor();
+        btn.onclick = async () => {
+          // MUST await - toggleMonitor() is async (getUserMedia + AudioContext
+          // setup), and isMonitorActive() right after an un-awaited call
+          // read the state from BEFORE the toggle finished - see the FIX
+          // comment on toggleMonitor() in tx_eq.js.
+          await window.TxEq?.toggleMonitor();
           window.CwSidetone?.setEnabled(window.TxEq ? window.TxEq.isMonitorActive() : false);
         };
         _funcBtnEls[a.id] = btn;

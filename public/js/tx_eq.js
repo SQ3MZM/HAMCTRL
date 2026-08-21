@@ -425,9 +425,18 @@ window.TxEq = (() => {
     console.log('[txeq] Monitor stopped');
   }
 
-  function toggleMonitor() {
-    if (monitorActive) stopMonitor();
-    else startMonitor();
+  // FIX: was NOT awaiting startMonitor() (async - getUserMedia + AudioContext
+  // setup take a beat) - the RADIO-tab MON button (radiofunctions.js) reads
+  // isMonitorActive() immediately after calling this to decide whether to
+  // arm CwSidetone, so it always read the STALE pre-toggle value (false,
+  // right as monitorActive was about to flip true) and CW sidetone never
+  // actually got enabled. SSB itself still worked (startMonitor() doesn't
+  // need this return value), which is exactly the reported split: SSB has
+  // sound, CW doesn't. Now async so the caller can await the real outcome.
+  async function toggleMonitor() {
+    if (monitorActive) { stopMonitor(); return false; }
+    await startMonitor();
+    return monitorActive;
   }
 
   function isMonitorActive() { return monitorActive; }
