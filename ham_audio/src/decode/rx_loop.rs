@@ -8,6 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use super::ap::ApHints;
 use super::buffer::Ft8Buffer;
 use super::{decode_ft8, decode_ft4, DecodeResult, PassTiming};
 use crate::config::Config;
@@ -71,9 +72,14 @@ async fn run_loop(
     let lead_s = 0.5f64;   // let a signal starting slightly early through
 
     loop {
-        let (decode_mode, rx_enabled) = {
+        let (decode_mode, rx_enabled, ap_hints) = {
             let c = cfg.read().await;
-            (c.ft8_decode_mode.clone(), c.ft8_rx_enabled)
+            let hints = ApHints {
+                own_call:     c.ap_own_call.clone(),
+                partner_call: c.ap_partner_call.clone(),
+                queue:        c.ap_queue.clone(),
+            };
+            (c.ft8_decode_mode.clone(), c.ft8_rx_enabled, hints)
         };
         let is_ft4 = decode_mode == "FT4";
         let (window_s, min_s) = if is_ft4 {
@@ -139,7 +145,7 @@ async fn run_loop(
                     let pass_elapsed = t0.elapsed().as_secs_f64();
                     let _ = tx_batch.blocking_send((pass_elapsed, *timing, batch.to_vec()));
                 };
-                if is_ft4 { decode_ft4(&samples, &mut on_pass) } else { decode_ft8(&samples, &mut on_pass) }
+                if is_ft4 { decode_ft4(&samples, &ap_hints, &mut on_pass) } else { decode_ft8(&samples, &ap_hints, &mut on_pass) }
             });
 
             let time_str = utc_time_str();
@@ -163,6 +169,7 @@ async fn run_loop(
                     "demod_ms_sum": timing.demod_ms_sum,
                     "ldpc_ms_sum": timing.ldpc_ms_sum,
                     "osd_ms_sum": timing.osd_ms_sum,
+                    "ap_ms_sum": timing.ap_ms_sum,
                 });
                 if stream.write_all(format!("{}\n", pstats).as_bytes()).await.is_err() {
                     return;

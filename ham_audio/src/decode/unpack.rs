@@ -154,6 +154,111 @@ fn unpack_c28(c28: u32) -> String {
     format!("<unk:{}>", c28)
 }
 
+// ── pack_c28: inverse of unpack_c28, for AP (a priori) decoding ────────
+// AP needs to turn a KNOWN callsign hypothesis (e.g. the operator's own
+// call) into the c28 bit pattern BP would have produced for it, to bias
+// the channel LLR toward that hypothesis before retrying. Port of
+// ft8_encoder.py's _encode_c28/_packcall (the authoritative, self-tested
+// source - see that file's module docstring). v1 scope: standard 6-char
+// callsigns only (covers "own call as TO", which is always a valid
+// standard callsign) - the non-standard/hashed-call branch of
+// _encode_c28 (_ihashcall fallback) is deferred; callers needing that can
+// reuse ihashcall() above once AP grows past the own-call-as-TO case.
+
+fn charn_inv_pos0(ch: char) -> Option<u32> {
+    match ch {
+        ' ' => Some(0),
+        '0'..='9' => Some(ch as u32 - '0' as u32 + 1),
+        'A'..='Z' => Some(ch as u32 - 'A' as u32 + 11),
+        _ => None,
+    }
+}
+
+fn charn_inv_pos1(ch: char) -> Option<u32> {
+    match ch {
+        '0'..='9' => Some(ch as u32 - '0' as u32),
+        'A'..='Z' => Some(ch as u32 - 'A' as u32 + 10),
+        _ => None,
+    }
+}
+
+fn charn_inv_pos2(ch: char) -> Option<u32> {
+    match ch {
+        '0'..='9' => Some(ch as u32 - '0' as u32),
+        _ => None,
+    }
+}
+
+fn charn_inv_suffix(ch: char) -> Option<u32> {
+    match ch {
+        ' ' => Some(0),
+        'A'..='Z' => Some(ch as u32 - 'A' as u32 + 1),
+        _ => None,
+    }
+}
+
+/// Port of ft8_encoder.py::_packcall. Returns the 21-bit standard-callsign
+/// pack value (added to STD_CALL_OFFSET by the caller) or None if `call`
+/// doesn't fit the standard 6-character field.
+fn packcall(call: &str) -> Option<u32> {
+    let mut call = call.trim().to_uppercase();
+    // Historical protocol-mandated substitutions for two DXCC prefixes
+    // whose call-area digit falls outside the two positions this packing
+    // supports - matches the official spec exactly (one-way, not reversed
+    // on decode either).
+    if call.starts_with("3DA0") {
+        call = format!("3D0{}", &call[4..]);
+    } else if call.starts_with("3X") && call.len() > 2 && call.as_bytes()[2].is_ascii_alphabetic() {
+        call = format!("Q{}", &call[2..]);
+    }
+    let bytes: Vec<char> = call.chars().collect();
+    if bytes.len() >= 2 && bytes[1].is_ascii_digit()
+        && !(bytes.len() >= 3 && bytes[2].is_ascii_digit()) {
+        call = format!(" {}", call);
+    }
+    if call.len() > 6 { return None; }
+    let padded: Vec<char> = format!("{:<6}", call).chars().collect();
+
+    let a0 = charn_inv_pos0(padded[0])?;
+    let a1 = charn_inv_pos1(padded[1])?;
+    if !padded[2].is_ascii_digit() { return None; }
+    let a2 = charn_inv_pos2(padded[2])?;
+    let a3 = charn_inv_suffix(padded[3])?;
+    let a4 = charn_inv_suffix(padded[4])?;
+    let a5 = charn_inv_suffix(padded[5])?;
+
+    let mut x = a0;
+    x = x * 36 + a1;
+    x = x * 10 + a2;
+    x = x * 27 + a3;
+    x = x * 27 + a4;
+    x = x * 27 + a5;
+    Some(x)
+}
+
+/// Strips a trailing /P or /R (portable/rover) suffix — only these two
+/// map to FT8's separate r1 bit; any other suffix means a non-standard
+/// callsign (out of scope for pack_c28's v1, see the module note above).
+fn split_pr_suffix(call: &str) -> &str {
+    let call = call.trim();
+    if let Some(base) = call.strip_suffix("/P") { return base; }
+    if let Some(base) = call.strip_suffix("/R") { return base; }
+    call
+}
+
+/// Inverse of unpack_c28, for standard callsigns (+ CQ/DE/QRZ) only.
+/// Returns None for anything that would need the hash-reference branch
+/// (compound/prefixed calls, or one too long for the 6-character field) -
+/// see the module note above.
+pub fn pack_c28(call: &str) -> Option<u32> {
+    let call = call.trim().to_uppercase();
+    if call == "CQ"  { return Some(NBASE_CQ); }
+    if call == "DE"  { return Some(0); }
+    if call == "QRZ" { return Some(1); }
+    let base = split_pr_suffix(&call);
+    packcall(base).map(|v| STD_CALL_OFFSET + v)
+}
+
 fn ng_to_grid(ng: u32) -> String {
     let c3 = (ng % 10) as u8;
     let ng = ng / 10;
@@ -409,7 +514,32 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
 
 #[cfg(test)]
 mod tests {
-    use super::{unpack_c28, unpack77, remember_call};
+    use super::{unpack_c28, unpack77, remember_call, pack_c28};
+
+    #[test]
+    fn pack_c28_roundtrips_through_unpack_c28() {
+        for call in ["K1ABC", "W9XYZ", "G0XYZ", "SP3MZM", "SQ3MZM", "3Z1AC", "CQ", "DE", "QRZ"] {
+            let packed = pack_c28(call).unwrap_or_else(|| panic!("pack_c28 failed for {call}"));
+            assert_eq!(unpack_c28(packed), call, "round-trip mismatch for {call}");
+        }
+    }
+
+    #[test]
+    fn pack_c28_strips_portable_suffix() {
+        // /P and /R map to FT8's separate r1 bit, not into c28 itself -
+        // pack_c28 packs just the base call, same as unpack_c28 would
+        // produce reading back a message that had /P set via that bit.
+        let packed = pack_c28("SQ3MZM/P").expect("pack_c28 should strip /P and pack the base call");
+        assert_eq!(unpack_c28(packed), "SQ3MZM");
+    }
+
+    #[test]
+    fn pack_c28_rejects_compound_call() {
+        // Compound calls (e.g. "F/SQ3MZM") don't fit the 6-char standard
+        // field - v1 scope deliberately returns None here rather than
+        // reaching for the hash-reference branch (see the module note on pack_c28).
+        assert_eq!(pack_c28("F/SQ3MZM"), None);
+    }
 
     // Regression test for a real bug found by comparing decode output
     // against a WSJT-X reference on a captured band recording: c28 values

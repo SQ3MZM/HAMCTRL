@@ -235,6 +235,21 @@ class RustAudioBridge:
             self._ft8_receiver.set_mode(mode)
         print(f"[audio_bridge] FT8 RX enabled={enabled} mode={mode}", flush=True)
 
+    async def set_ap_hints(self, own_call: str, partner_call: str | None, queue: list[str]):
+        """Push AP (a priori) decode hints to Rust ham_audio.exe - operator's
+        own callsign, current QSO partner (if any), and the Call-1st queue.
+        Rust biases the LDPC channel LLR toward these when a normal (blind)
+        decode fails, to recover weak replies addressed to us. Mirrors
+        ft8_enable_rx's fire-and-forget SetXxx pattern - safe to call often
+        (e.g. every time the QSO engine's state changes), Rust just keeps
+        whatever was pushed most recently."""
+        await self._send_ctrl({
+            "cmd": "SetApHints",
+            "own_call": own_call or "",
+            "partner_call": partner_call,
+            "queue": list(queue or []),
+        })
+
     async def ft8_get_decode(self) -> dict | None:
         """Fetch one FT8 decode result from the Rust queue (timeout=0.1s)."""
         if not self._ft8_receiver:

@@ -38,6 +38,9 @@ pub enum CtrlCmd {
     SetVolume    { vol: f32 },
     SetFt8Mode   { mode: String },   // "FT8" or "FT4"
     SetFt8Rx     { enabled: bool },  // enable/disable FT8 decode
+    // AP (a priori) decode hints - operator's own callsign, current QSO
+    // partner (if any), and the Call-1st queue. See decode::ap.
+    SetApHints   { own_call: String, partner_call: Option<String>, queue: Vec<String> },
     GetStatus,
     ListDevices,
     Shutdown,
@@ -317,6 +320,14 @@ async fn handle_ctrl(
             CtrlCmd::SetFt8Rx    { enabled } => {
                 info!("[ft8dec] RX enabled: {}", enabled);
                 cfg.write().await.ft8_rx_enabled = enabled;
+                r#"{"ok":true}"#.into()
+            }
+            CtrlCmd::SetApHints  { own_call, partner_call, queue } => {
+                info!("[ap] hints: own={} partner={:?} queue_len={}", own_call, partner_call, queue.len());
+                let mut c = cfg.write().await;
+                c.ap_own_call = own_call;
+                c.ap_partner_call = partner_call;
+                c.ap_queue = queue;
                 r#"{"ok":true}"#.into()
             }
             CtrlCmd::ListDevices => serde_json::to_string(&audio::list_devices()).unwrap(),

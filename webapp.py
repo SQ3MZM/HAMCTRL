@@ -6546,7 +6546,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-CW-DOUBLE-WAIT-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-FT8-OSD-AP, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -6853,6 +6853,28 @@ class App:
                                                "frozen": False})
         except Exception as e:
             print(f"[ft8] auto-follow ERROR: {e}")
+
+    async def _sync_ap_hints(self):
+        """Push the QSO engine's current (own call, partner, queue) to the
+        Rust decoder as AP (a priori) decode hints - see
+        RustAudioBridge.set_ap_hints and ham_audio's decode::ap module.
+        Called once per completed FT8/FT4 decode cycle (_ft8_rx_loop's
+        decode_stats handler) rather than from every individual state-
+        change site - hints only need to be fresh by the next cycle, and
+        this way there's exactly one place to keep in sync, not ~15.
+        my_call is read live from the engine (never the static CALLSIGN/
+        .env default - see the comment on radio_lock ownership elsewhere
+        in this file for why the live per-operator value matters)."""
+        if not self.rust_audio:
+            return
+        try:
+            await self.rust_audio.set_ap_hints(
+                self._qso_engine.my_call,
+                self._qso_engine.partner_call,
+                list(self._qso_engine.queue),
+            )
+        except Exception as e:
+            print(f"[ap] hint sync error: {e}", flush=True)
 
     async def _advance_auto_qso_queue(self):
         """After a QSO ends or is abandoned: if Call 1st is enabled and
@@ -7386,6 +7408,15 @@ class App:
                     if VERBOSE:
                         print(f"[ft8dec] decode_elapsed_s={msg.get('decode_elapsed_s', 0):.3f} "
                               f"n_results={msg.get('n_results', 0)}", flush=True)
+                    # Refresh AP (a priori) decode hints once per COMPLETED
+                    # window (not per-mutation-site - the QSO engine has
+                    # ~15 call sites that touch partner_call/queue, scattering
+                    # a sync call across all of them is fragile and easy to
+                    # miss one; hints only need to be fresh by the START of
+                    # the NEXT decode cycle anyway, and this fires exactly
+                    # once per cycle regardless of which handler last
+                    # changed the state). See ap.rs/build_hypotheses in Rust.
+                    await self._sync_ap_hints()
                     continue
 
                 if msg.get("type") != "wsjtx_decode":

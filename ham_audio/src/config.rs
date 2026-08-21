@@ -24,6 +24,15 @@ pub struct Config {
     pub ft8_decode_mode: String,
     /// Czy wlaczone dekodowanie FT8/FT4
     pub ft8_rx_enabled: bool,
+    /// AP (a priori) decode hints from the QSO engine (Python) - operator's
+    /// own callsign, current QSO partner (if any), and the Call-1st queue.
+    /// Empty ap_own_call means AP is effectively disabled (no valid
+    /// own-call-as-TO hypothesis to try). Set via ctrl port (SetApHints),
+    /// same pattern as ft8_decode_mode/ft8_rx_enabled - read fresh each
+    /// decode cycle in rx_loop.rs.
+    pub ap_own_call:     String,
+    pub ap_partner_call: Option<String>,
+    pub ap_queue:        Vec<String>,
 }
 
 impl Config {
@@ -51,6 +60,9 @@ impl Config {
             decode_port:     env_u16("HAM_DECODE_PORT", 9444),
             ft8_decode_mode: env("HAM_FT8_MODE", "FT8"),
             ft8_rx_enabled:  false, // wlaczane przez Python przez ctrl port
+            ap_own_call:     String::new(),
+            ap_partner_call: None,
+            ap_queue:        Vec::new(),
         }
     }
     pub fn wss_port(&self) -> u16     { self.wss_port }

@@ -1,6 +1,7 @@
 /// FT8/FT4 full decode pipeline orchestrator.
 /// Integrates sync → demod → LDPC → CRC → unpack → subtract → re-scan.
 
+pub mod ap;
 pub mod buffer;
 pub mod crc14;
 pub mod demod;
@@ -57,6 +58,12 @@ pub struct PassTiming {
     // where BP itself failed to converge - see the OSD fallback at the
     // bp_decode call site below.
     pub osd_ms_sum:     f64,
+    // Same accounting, for AP (ap.rs) - only non-zero when ap_hints is
+    // non-empty AND BP itself failed to converge. AP retries a FULL
+    // bp_decode per hypothesis (much more expensive per-attempt than
+    // OSD's re-encode), so this is worth watching separately if the
+    // budget ever gets tight with AP enabled.
+    pub ap_ms_sum:      f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,7 +148,7 @@ const FT4_TIME_BUDGET_S: f64 = 0.25;
 /// offline), instead of after the full multi-pass+subtraction budget
 /// (~500ms-1s+ measured live) - see FT8_TIME_BUDGET_S's comment for the
 /// full history of why that gap mattered.
-pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
+pub fn decode_ft8(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
     let p = &FT8;
     let min_samples = (12.5 * p.sample_rate as f64) as usize;
     if audio.len() < min_samples { return vec![]; }
@@ -160,7 +167,7 @@ pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
         let candidates = find_candidates_ft8(&spec, p, 60, 0.4);
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, true, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, true, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -171,7 +178,7 @@ pub fn decode_ft8(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
 
 /// Decode one FT4 window (nominally 7.5s, at least 4.5s, 12000 Hz float32).
 /// See decode_ft8 for `on_pass_results`.
-pub fn decode_ft4(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
+pub fn decode_ft4(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming)) -> Vec<DecodeResult> {
     let p = &FT4;
     let min_samples = (4.5 * p.sample_rate as f64) as usize;
     if audio.len() < min_samples { return vec![]; }
@@ -190,7 +197,7 @@ pub fn decode_ft4(audio: &[f32], on_pass_results: &mut dyn FnMut(&[DecodeResult]
         let candidates = find_candidates_ft4(&spec, p, 60, 0.4);
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, false, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, false, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -240,11 +247,17 @@ fn decode_and_subtract(
     deadline: std::time::Instant,
     spec_ms: f64,
     find_cand_ms: f64,
+    ap_hints: &ap::ApHints,
     on_pass_results: &mut dyn FnMut(&[DecodeResult], &PassTiming),
 ) -> Vec<DecodeResult> {
     let mode = if is_ft8 { "FT8" } else { "FT4" };
     let sample_rate = p.sample_rate;
     let n_cand = candidates.len();
+    // Built ONCE per pass (not per candidate) - the hypothesis list
+    // doesn't depend on which candidate is being decoded, only on the
+    // current QSO-engine state Python last pushed. Empty when
+    // ap_hints.own_call is empty (AP effectively disabled).
+    let ap_hypotheses = ap::build_hypotheses(ap_hints);
 
     // Reborrow as shared/immutable for the parallel phase - subtraction
     // (the only mutation) happens later, sequentially, once this borrow
@@ -255,6 +268,7 @@ fn decode_and_subtract(
     let demod_ns = std::sync::atomic::AtomicU64::new(0);
     let ldpc_ns = std::sync::atomic::AtomicU64::new(0);
     let osd_ns = std::sync::atomic::AtomicU64::new(0);
+    let ap_ns = std::sync::atomic::AtomicU64::new(0);
     let decoded: Vec<(Candidate, [u8; 174], DecodeResult)> = candidates
         .par_iter()
         .filter_map(|coarse_cand| {
@@ -297,20 +311,40 @@ fn decode_and_subtract(
             let bits174 = if success {
                 bits174
             } else {
-                // BP failed to converge - try OSD before giving up on this
-                // candidate. Reuses the SAME llr174 (soft) and bits174 (BP's
-                // last hard-decision guess) already computed above, no extra
-                // demod/LLR work. Gated by the same wall-clock `deadline`
-                // as the rest of this pass - see osd.rs's module doc
-                // comment and FT8_TIME_BUDGET_S above for why this must
-                // never run unbounded.
+                // BP failed to converge - try AP then OSD before giving up
+                // on this candidate. Both reuse the SAME llr174 (soft) and
+                // (for OSD) bits174 (BP's last hard-decision guess) already
+                // computed above, no extra demod/LLR work. Gated by the
+                // same wall-clock `deadline` as the rest of this pass.
+                //
+                // AP first: when a hypothesis applies, it's a targeted,
+                // strong prior (real side information - the operator's own
+                // callsign is DEFINITELY present if this is addressed to
+                // them) that resolves in one shot; OSD is a blind
+                // statistical search with no domain knowledge, so it only
+                // gets a turn once AP has nothing to offer (hints empty,
+                // or this candidate isn't addressed per any hypothesis).
                 if std::time::Instant::now() >= deadline { return None; }
-                let t_osd = std::time::Instant::now();
-                let osd_result = osd::try_osd(&llr174, &bits174, 1, deadline);
-                osd_ns.fetch_add(t_osd.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                match osd_result {
+                let ap_result = if ap_hypotheses.is_empty() {
+                    None
+                } else {
+                    let t_ap = std::time::Instant::now();
+                    let r = ap::try_ap(&llr174, &ap_hypotheses, deadline);
+                    ap_ns.fetch_add(t_ap.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                    r
+                };
+                match ap_result {
                     Some(fixed) => fixed,
-                    None => return None,
+                    None => {
+                        if std::time::Instant::now() >= deadline { return None; }
+                        let t_osd = std::time::Instant::now();
+                        let osd_result = osd::try_osd(&llr174, &bits174, 1, deadline);
+                        osd_ns.fetch_add(t_osd.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                        match osd_result {
+                            Some(fixed) => fixed,
+                            None => return None,
+                        }
+                    }
                 }
             };
 
@@ -353,6 +387,7 @@ fn decode_and_subtract(
     let demod_ms_sum = demod_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
     let ldpc_ms_sum = ldpc_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
     let osd_ms_sum = osd_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
+    let ap_ms_sum = ap_ns.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
 
     // Dedup phase: cheap (just comparisons), no subtraction yet. par_iter()
     // doesn't preserve candidate order, but that's fine here - dedup is
@@ -372,7 +407,7 @@ fn decode_and_subtract(
     // Hand results to the caller NOW - see this function's doc comment for
     // why this doesn't need to wait for subtraction below.
     let results: Vec<DecodeResult> = new_decoded.iter().map(|(_, _, r)| r.clone()).collect();
-    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand, demod_ms_sum, ldpc_ms_sum, osd_ms_sum };
+    let timing = PassTiming { spec_ms, find_cand_ms, par_decode_ms, n_cand, demod_ms_sum, ldpc_ms_sum, osd_ms_sum, ap_ms_sum };
     on_pass_results(&results, &timing);
 
     // Subtract each signal from the residual, so a weaker signal that was
