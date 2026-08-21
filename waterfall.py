@@ -8,7 +8,7 @@ and is more computationally expensive).
 import numpy as np
 
 SAMPLE_RATE = 12000
-F_MIN = 200
+F_MIN = 100
 F_MAX = 3000
 N_BINS = 200  # number of frequency bins per waterfall column (~14Hz/bin resolution)
 

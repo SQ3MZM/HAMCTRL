@@ -27,7 +27,7 @@ pub struct Spectrogram {
     pub bin_min:    usize,
 }
 
-const F_MIN: f32 = 200.0;
+const F_MIN: f32 = 100.0;
 const F_MAX: f32 = 3000.0;
 
 pub fn compute_spectrogram(audio: &[f32], p: &Params, freq_osr: usize, time_osr: usize) -> Spectrogram {

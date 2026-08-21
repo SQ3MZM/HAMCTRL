@@ -19,7 +19,7 @@
 'use strict';
 
 let canvas = null, gl = null;
-let fMin = 200, fMax = 3000, nBins = 200;
+let fMin = 100, fMax = 3000, nBins = 200;
 const MAX_ROWS = 300;
 
 // Data texture: LUMINANCE, width=nBins, height=MAX_ROWS. Every new row
