@@ -81,7 +81,34 @@ pub async fn run_audio_loop(
     _mixer: SharedMixer,
     ft8_pcm_tx: std::sync::mpsc::SyncSender<Vec<f32>>,
 ) {
+    // Crash-loop / stuck-recovery guard. Reported live: after the IC-7300's
+    // USB Audio CODEC disappeared and reappeared (radio power loss), the
+    // in-process reopen below (triggered by the staleness/error detection
+    // in run_rx_thread) kept "succeeding" — device opened, frames encoded
+    // and sent (receivers=1, ok=true, counters climbing) — but produced
+    // total silence. A FULL process restart of ham_audio.exe always fixed
+    // it immediately, every time; an in-process reopen never did. Most
+    // likely cause: cpal/WASAPI's underlying COM device-enumerator can
+    // hold a stale view of a hot-plugged endpoint within the SAME process,
+    // even though cpal::default_host() is called fresh each time — only a
+    // brand new process gets a truly fresh COM state. Properly subscribing
+    // to Windows' own device-change notifications would be the "correct"
+    // fix but is a much bigger change; this is the pragmatic one that
+    // matches the evidence: if reopen cycles keep ending quickly
+    // (consecutive_quick_cycles), stop trying in-process and exit the
+    // whole process instead, so the Python-side watchdog
+    // (audio_rust_bridge.py RustAudioBridge._watchdog) restarts it fresh -
+    // exactly what already reliably worked when the user restarted by hand.
+    // Threshold is comfortably above the staleness-detector's own ~5s
+    // (3s grace + 2s no-callback check, see run_rx_thread) plus device-open
+    // overhead, so a cycle that ends via the staleness path reliably counts
+    // as "quick" without false-triggering on a normal long-running session.
+    let mut consecutive_quick_cycles: u32 = 0;
+    const QUICK_CYCLE_SECS: u64 = 8;
+    const QUICK_CYCLE_LIMIT: u32 = 3;
+
     loop {
+        let cycle_start = std::time::Instant::now();
         let (rx_dev, bitrate, bitrate_lo, vol) = {
             let c = cfg.read().await;
             (c.rx_device.clone(), c.bitrate, c.bitrate_lo, c.rx_volume)
@@ -174,7 +201,22 @@ pub async fn run_audio_loop(
         });
 
         let _ = enc_handle.await;
-        info!("[audio] RX loop ended, restarting...");
+        let ran_for = cycle_start.elapsed();
+        if ran_for.as_secs() < QUICK_CYCLE_SECS {
+            consecutive_quick_cycles += 1;
+        } else {
+            consecutive_quick_cycles = 0;
+        }
+        info!("[audio] RX loop ended after {:.1}s, restarting...", ran_for.as_secs_f32());
+        if consecutive_quick_cycles >= QUICK_CYCLE_LIMIT {
+            error!("[audio] RX loop failed {} times in a row within {}s each - giving up on \
+                    in-process recovery, exiting so the Python watchdog restarts the whole \
+                    process fresh (see the comment at the top of run_audio_loop)",
+                   consecutive_quick_cycles, QUICK_CYCLE_SECS);
+            println!("[audio] RX loop failed {} times in a row within {}s each - exiting for a clean process restart",
+                     consecutive_quick_cycles, QUICK_CYCLE_SECS);
+            std::process::exit(1);
+        }
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 }

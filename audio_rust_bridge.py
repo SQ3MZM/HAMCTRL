@@ -1,7 +1,7 @@
 """
 audio_rust_bridge.py — Python ↔ Rust ham_audio bridge
 """
-import asyncio, json, subprocess, pathlib, struct, os
+import asyncio, json, subprocess, pathlib, struct, os, time
 from config import VERBOSE
 
 CTRL_PORT   = int(os.environ.get("HAM_CTRL_PORT",   9400))
@@ -139,6 +139,10 @@ class RustAudioBridge:
         self._hub       = None
         self._cfg       = {}
         self._ft8_receiver = None  # Ft8RustReceiver instance
+        self._stopping     = False   # set by stop() so the watchdog doesn't "helpfully" relaunch a deliberate shutdown
+        self._watchdog_task = None
+        self._restart_count = 0      # consecutive QUICK (<5s) unexpected exits — crash-loop guard
+        self._last_start_at = 0.0
 
     async def start(self, hub=None, cfg: dict = None):
         self._hub = hub
@@ -248,6 +252,8 @@ class RustAudioBridge:
             creationflags=_creationflags,
             **_stdio,
         )
+        self._stopping     = False
+        self._last_start_at = time.time()
         # Kill-on-close Job Object - see the big comment above EXE_PATHS.
         # Guarantees this ham_audio.exe dies with us even if we exit
         # abruptly (console X button, crash) and never reach stop().
@@ -296,9 +302,58 @@ class RustAudioBridge:
         self._ft8_receiver = Ft8RustReceiver(port=9444)
         await self._ft8_receiver.start()
 
+        # Watchdog: restarts ham_audio.exe if it exits on its own (crash, or
+        # a deliberate self-exit — see the Rust-side comment in audio.rs
+        # about giving up on in-process WASAPI recovery after repeated
+        # failed reopen attempts and exiting instead, so a full fresh
+        # process/COM-enumerator state can pick the device up cleanly).
+        # FIX: reported live — a full HAMCTRL restart always restored RX
+        # audio after the radio's USB Audio CODEC disappeared/reappeared
+        # (power loss), but the in-process WASAPI reopen path alone did
+        # not, even though it kept sending frames (silent ones). Nothing
+        # anywhere previously restarted ham_audio.exe if IT exited - one
+        # was needed to make a Rust-side "just exit and let Python redo
+        # it fresh" strategy safe to use at all.
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._watchdog())
+
         return True
 
+    async def _watchdog(self):
+        # NOTE: this loop deliberately never returns after restarting (only
+        # on stop()/crash-loop-giveup) and instead keeps monitoring
+        # self._proc as start() replaces it - see the guard in start()
+        # ("if self._watchdog_task is None or ...done()"): while THIS
+        # coroutine is still suspended inside its own `await self.start(...)`
+        # call below, that guard correctly sees the running task as "not
+        # done" and skips spawning a duplicate - which only works because
+        # this loop keeps going afterward instead of returning. Returning
+        # here would silently leave the freshly-restarted process
+        # unmonitored until some unrelated future start() call happened to
+        # run again.
+        while True:
+            await asyncio.sleep(2.0)
+            if self._stopping:
+                return
+            proc = self._proc
+            if proc is None or proc.poll() is None:
+                continue  # still running (or not started yet)
+            ran_for = time.time() - self._last_start_at
+            if ran_for < 5.0:
+                self._restart_count += 1
+            else:
+                self._restart_count = 0
+            if self._restart_count >= 5:
+                print(f"[audio_bridge] ham_audio.exe exited {self._restart_count} times in a row "
+                      f"within 5s of starting — giving up auto-restart (crash loop guard). "
+                      f"Check the exe/device manually.", flush=True)
+                return
+            print(f"[audio_bridge] ham_audio.exe exited unexpectedly (ran {ran_for:.1f}s) "
+                  f"— restarting automatically", flush=True)
+            await self.start(self._hub, self._cfg)
+
     async def stop(self):
+        self._stopping = True
         try: await self._send_ctrl({"cmd": "Shutdown"})
         except Exception: pass
         if self._proc: self._proc.terminate()
