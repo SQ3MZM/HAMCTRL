@@ -489,7 +489,7 @@ async function startScope(port, civAddr) {
 }
 
 // Change the waterfall span (Hz) — sends it to the server, which sets it on the radio.
-// The IC-7300 supports: 2500, 5000, 10000, 25000, 50000, 100000, 250000, 500000 Hz.
+// The IC-7300 supports: 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000 Hz.
 async function setSpan(spanHz) {
   try {
     const token = localStorage.getItem('token');

@@ -70,10 +70,18 @@ def bcd2(b: bytes) -> int:
 
 
 # Mapping for subcommand 27 15 (Scope span, Center/SCROLL-C mode) -> kHz.
-# The value is 4 BCD digits (0000..0500 per the docs), see CI-V Ref. p.19-14.
+# FIX: this used to be {2500, 5000, 10000, 25000, 50000, 100000, 250000,
+# 500000} - a guessed "1-2.5-5" decade sequence. The IC-7300 actually
+# uses a "1-2-5" sequence instead (confirmed against Hamlib's ic7300.c
+# .spectrum_spans table, reverse-engineered from the real radio) - so
+# 2500/25000/250000 (2.5/25/250 kHz) don't exist on this radio at all
+# and got NGed on every attempt, while 5000/10000/50000/100000/500000
+# happened to coincide with real values and worked. Also adds 20000
+# (20kHz) and 1000000 (1MHz, the widest span) which weren't offered
+# before.
 SCOPE_SPAN_KHZ = {
-    2500: 2.5, 5000: 5, 10000: 10, 25000: 25, 50000: 50,
-    100000: 100, 250000: 250, 500000: 500,
+    5000: 5, 10000: 10, 20000: 20, 50000: 50,
+    100000: 100, 200000: 200, 500000: 500, 1000000: 1000,
 }
 
 # Exact IC-7300 filter width table for SSB/CW/RTTY (CI-V 1A 03,
@@ -245,7 +253,7 @@ class CivRig:
         # scope header (parsed from 0x27 0x00, see _handle_scope)
         self._scope_mode_code = 0       # 00=Center,01=Fixed,02=SCROLL-C,03=SCROLL-F
         self._scope_center = self.freq
-        self._scope_span_hz = 25000     # default 25kHz span (typical for IC-7300 Center mode)
+        self._scope_span_hz = 20000     # default 20kHz span (real IC-7300 value, see SCOPE_SPAN_KHZ)
         self._scope_lo = self.freq - self._scope_span_hz // 2
         self._scope_hi = self.freq + self._scope_span_hz // 2
         self._scope_oor = 0
@@ -365,8 +373,8 @@ class CivRig:
         Returns True only if the radio actually ACKed (0xFB) the command,
         False on NG (0xFA), timeout, or an unsupported span_hz.
 
-        Supported values (Hz): 2500, 5000, 10000, 25000, 50000, 100000,
-        250000, 500000 — anything else is rejected.
+        Supported values (Hz): 5000, 10000, 20000, 50000, 100000, 200000,
+        500000, 1000000 — see SCOPE_SPAN_KHZ; anything else is rejected.
 
         FIX: the radio NGed every span change with the old encoding.
         Verified against Hamlib's icom.c (rig_set_level,
@@ -1333,15 +1341,16 @@ class CivRig:
                 # Center mode (00) — the scope tracks the VFO
                 self._write(bytes([0x27, 0x14, 0x00, 0x00]))
                 time.sleep(0.05)
-                # 25kHz span - via set_scope_span (was a hand-rolled write
-                # here with the same wrong byte layout set_scope_span used
-                # to have before it got fixed: missing the VFO-select byte
-                # and encoding the full span instead of span/2. Reusing the
-                # now-correct, ACK-checked method instead of duplicating
-                # the fix in two places.)
-                self.set_scope_span(25000)
+                # 20kHz span (closest real value to the old, nonexistent
+                # 25kHz default - see SCOPE_SPAN_KHZ) - via set_scope_span
+                # (was a hand-rolled write here with the same wrong byte
+                # layout set_scope_span used to have before it got fixed:
+                # missing the VFO-select byte and encoding the full span
+                # instead of span/2. Reusing the now-correct, ACK-checked
+                # method instead of duplicating the fix in two places.)
+                self.set_scope_span(20000)
             self.log(f"[civ] scope output {'ON' if on else 'OFF'} (baud={self.speed})"
-                     + (" + Center mode 25kHz" if on else ""))
+                     + (" + Center mode 20kHz" if on else ""))
         except Exception as e:
             self.log(f"[civ] _enable_scope error: {e}")
 
