@@ -2914,15 +2914,17 @@ class App:
                                  "Skonfiguruj osobny port w Konfiguracja > CW Keyer, "
                                  "lub uzyj metody CAT CI-V (zalecane dla IC-7300/746)."}
             self._cw_tx_busy = True
-            # Fired BEFORE the actual sending starts (unlike the existing
-            # 'cw_sending' broadcast further below, which only fires AFTER
-            # send_cw_message() already finished - too late to drive a
-            # live sidetone). See public/js/cw_sidetone.js: the radio does
-            # its own Morse keying internally from the text we hand it over
-            # CI-V, so the browser can't know the exact dit/dah timing -
-            # this lets it synthesize a same-content, same-WPM tone locally
-            # instead, gated behind the MON toggle.
+            # Both fired BEFORE the actual sending starts (cw_sending used
+            # to fire AFTER send_cw_message() already finished blocking -
+            # see the FIX note below, the CAT/CI-V path awaits the full
+            # transmission). cw_tx_start additionally drives the live
+            # sidetone (public/js/cw_sidetone.js) - the radio does its own
+            # Morse keying internally from the text we hand it over CI-V,
+            # so the browser can't know the exact dit/dah timing and
+            # instead synthesizes a same-content, same-WPM tone locally.
             await self.hub.broadcast({"type": "cw_tx_start", "text": text, "wpm": wpm})
+            await self.hub.broadcast({"type": "cw_sending", "text": text,
+                                       "method": method_cw, "wpm": wpm})
             try:
                 if method_cw in ("dtr", "rts"):
                     try:
@@ -2951,21 +2953,36 @@ class App:
                             return 200, {"ok": False, "error": _cw_err}
             finally:
                 self._cw_tx_busy = False
-            await self.hub.broadcast({"type": "cw_sending", "text": text,
-                                       "method": method_cw, "wpm": wpm})
-            # Use the SAME exact Morse timing as the rig (civ._cw_text_duration_s)
-            # for the UI "done" signal, instead of the old flat len*10 guess that
-            # disagreed with the actual transmission length.
-            try:
-                duration_s = self.rig._cw_text_duration_s(text, wpm) + 0.15
-            except Exception:
-                dit_ms = 1200.0 / max(5, wpm)
-                duration_s = len(text) * 10 * dit_ms / 1000.0
-            duration_s = min(60.0, max(0.3, duration_s))
-            async def _cw_done_after(delay):
-                await asyncio.sleep(delay)
+
+            if method_cw in ("dtr", "rts"):
+                # send_cw_dtr_rts() is fire-and-forget (spawns a background
+                # keyer thread and returns immediately) - there's no other
+                # signal for when that thread actually finishes keying, so
+                # this timer is the only way to know. Use the SAME exact
+                # Morse timing as the rig (civ._cw_text_duration_s) instead
+                # of the old flat len*10 guess that disagreed with the
+                # actual transmission length.
+                try:
+                    duration_s = self.rig._cw_text_duration_s(text, wpm) + 0.15
+                except Exception:
+                    dit_ms = 1200.0 / max(5, wpm)
+                    duration_s = len(text) * 10 * dit_ms / 1000.0
+                duration_s = min(60.0, max(0.3, duration_s))
+                async def _cw_done_after(delay):
+                    await asyncio.sleep(delay)
+                    await self.hub.broadcast({"type": "cw_done"})
+                asyncio.create_task(_cw_done_after(duration_s))
+            else:
+                # FIX: the CAT/CI-V path above already BLOCKED (awaited)
+                # until send_cw_message() fully finished - PTT on, keying,
+                # PTT off, T/R recovery, all done by the time we're here.
+                # The old code then waited an ADDITIONAL full duration_s
+                # (recomputed with the same formula) before signaling
+                # cw_done - reported live during a fast RST exchange as
+                # having to wait for the "busy" lock to clear roughly
+                # DOUBLE the real keying time before the next macro could
+                # be sent. It's actually already done - say so immediately.
                 await self.hub.broadcast({"type": "cw_done"})
-            asyncio.create_task(_cw_done_after(duration_s))
             return 200, {"ok": True}
 
         if p == "/api/cw/stop" and method == "POST":
@@ -6529,7 +6546,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-21-PREPUBLISH-AUDIT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-21-CW-DOUBLE-WAIT-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
