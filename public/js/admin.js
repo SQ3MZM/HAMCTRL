@@ -783,38 +783,6 @@ async function saveGlobalFt8Timer() {
   } catch(e) { window.UI?.showToast(I18n.t('adm_timer_save_error'), 'error'); }
 }
 
-// NOTE: this used to have a SECOND "function saveFt8Timer(userId)"
-// declaration (a legacy stub redirecting to saveGlobalFt8Timer) ABOVE
-// this one - in JS a second function declaration with the same name in
-// the same scope SILENTLY OVERWRITES the first, so that legacy stub
-// never actually ran. Zero real impact (the per-user timer UI hasn't
-// existed in index.html since simplifying to a single global timer -
-// neither version had any caller), but removed so nobody edits that dead
-// copy thinking it's the one that works.
-async function saveFt8Timer(userId) {
-  const durEl  = document.getElementById(`ft8t-dur-${userId}`);
-  const editEl = document.getElementById(`ft8t-edit-${userId}`);
-  if (!durEl) return;
-  const token = localStorage.getItem('token') || '';
-  try {
-    const r = await fetch('/api/ft8timer/admin', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json',
-        ...(token ? {'Authorization':`Bearer ${token}`} : {})},
-      body: JSON.stringify({
-        user_id:       userId,
-        duration_min:  parseInt(durEl.value) || 6,
-        user_can_edit: editEl?.checked || false,
-      }),
-    });
-    const res = await r.json();
-    if (res.ok) window.UI?.showToast('✓ Timer zapisany');
-    else window.UI?.showToast('✗ ' + (res.error || 'Błąd'), 'error');
-  } catch(e) {
-    window.UI?.showToast('✗ ' + e.message, 'error');
-  }
-}
-
 // ── AdminBands — bands and modes ──────────────────────────────────────────────
 window.AdminBands = (() => {
   const token = () => localStorage.getItem('token') || '';
@@ -1108,7 +1076,7 @@ window.Admin = {
   deepcwStatus, deepcwDownload,
   PERM_DEFS, _updatePermsByRole,
   loadRigFeatures, saveRigFeatures,
-  loadFt8Timers, saveFt8Timer, saveGlobalFt8Timer,
+  loadFt8Timers, saveGlobalFt8Timer,
 };
 
 })();

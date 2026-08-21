@@ -2410,7 +2410,6 @@ class App:
                 "email":       (u_obj or {}).get("email", ""),
                 "active":      (u_obj or {}).get("active", True),
                 "permissions": (u_obj or {}).get("permissions", {}),
-                "ft8_timer":   (u_obj or {}).get("ft8_timer", {"duration_min": 6, "user_can_edit": False}),
             }}
 
         if p == "/api/radio/state" and method == "GET":
@@ -3139,7 +3138,6 @@ class App:
                           "role":        u["role"],
                           "active":      u.get("active", True),
                           "permissions": u.get("permissions", {}),
-                          "ft8_timer":   u.get("ft8_timer", {}),
                           }
                          for u in self.users]
 
@@ -3786,41 +3784,6 @@ class App:
             self.cfg["ft8_safety_timer"] = dur
             save_json(CFG_F, self.cfg)
             return 200, {"ok": True, "duration_min": dur}
-
-        if p == "/api/ft8timer/config" and method == "GET":
-            # Return timer settings for the current user
-            u = self.find_user_by_id(uid) or {}
-            timer = u.get("ft8_timer", {"duration_min": 6, "user_can_edit": False})
-            return 200, timer
-
-        if p == "/api/ft8timer/config" and method == "POST":
-            # The user sets their own timer (if the admin granted them permission)
-            u = self.find_user_by_id(uid)
-            if not u: return 404, {"error": "Brak usera"}
-            timer = u.get("ft8_timer", {"duration_min": 6, "user_can_edit": False})
-            if role != "admin" and not timer.get("user_can_edit", False):
-                return 403, {"error": "Brak uprawnień do zmiany timera"}
-            mins = int(body.get("duration_min", 6))
-            mins = max(1, min(60, mins))  # 1-60 min
-            u.setdefault("ft8_timer", {})["duration_min"] = mins
-            save_json(USR_F, self.users)
-            return 200, {"ok": True, "duration_min": mins}
-
-        if p == "/api/ft8timer/admin" and method == "POST":
-            # Admin sets the timer for a chosen user
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            target_id     = body.get("user_id", "")
-            duration_min  = int(body.get("duration_min", 6))
-            user_can_edit = bool(body.get("user_can_edit", False))
-            duration_min  = max(1, min(60, duration_min))
-            target = self.find_user_by_id(target_id)
-            if not target: return 404, {"error": "Brak usera"}
-            target["ft8_timer"] = {
-                "duration_min":  duration_min,
-                "user_can_edit": user_can_edit,
-            }
-            save_json(USR_F, self.users)
-            return 200, {"ok": True}
 
         # ── QSO Log API ──────────────────────────────────────────────────────────
         is_admin_user = (role == "admin")
