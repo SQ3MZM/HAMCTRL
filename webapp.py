@@ -95,7 +95,7 @@ SERVER_VERSION = "1.0"
 # notice (it never downloads or installs anything — the admin fetches the new
 # installer manually). Set this to your repo once it exists, e.g.
 # "YOURCALL/hamctrl". While empty, the update check is simply skipped.
-GITHUB_REPO = ""   # TODO: "owner/repo" — fill in after creating the GitHub repo
+GITHUB_REPO = "SQ3MZM/HAMCTRL"
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
                     MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE)
