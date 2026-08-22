@@ -26,9 +26,16 @@ function iHaveLock() { return S.lock.locked && S.lock.user_id === myUid(); }
 function isAdmin() { return window.CurrentUser?.role === 'admin'; }
 function canControl() { return iHaveLock() || isAdmin(); }
 
+// Same precision/grouping as desktop's fmtFreq (ui.js) — 5 MHz decimals =
+// 10 Hz resolution, matching the drag strip's own send granularity below.
+// Mobile previously showed only toFixed(3) (1 kHz resolution), so the last
+// two digits desktop shows were invisible on the phone — live-tested finding
+// looked like a www/phone frequency mismatch but was only a display gap.
 function fmtFreq(hz) {
-  if (!hz) return '-.--- MHz';
-  return (hz / 1e6).toFixed(3) + ' MHz';
+  if (!hz) return '-.---.-- MHz';
+  const s = (hz / 1e6).toFixed(5);
+  const [i, d] = s.split('.');
+  return `${i}.${d.slice(0, 3)}.${d.slice(3)} MHz`;
 }
 
 function showToast(msg, level) {
