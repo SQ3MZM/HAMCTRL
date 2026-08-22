@@ -147,6 +147,12 @@ from rigs.features import (FEATURES, effective_features, features_for_admin,
                             dynamic_for_admin)
 
 
+# Phone (not tablet) User-Agent heuristic for the / auto-routing to
+# mobile.html — the same "Mobi" token approach used by most server-side
+# mobile redirects (deliberately excludes iPad/Android tablets, which
+# have enough screen for the desktop UI's scale-to-fit).
+_MOBILE_UA_RE = re.compile(r'Mobi|iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile')
+
 # ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET HUB (aiohttp)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -8092,8 +8098,28 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             )
 
         # Static files
+        _set_ui_cookie = None
         if path in ("/", ""):
-            path = "/index.html"
+            # Same URL for phone and desktop: detect on the server (UA
+            # sniff) instead of making people know about a separate
+            # /mobile.html link. ?ui=mobile / ?ui=desktop overrides the
+            # detection and is remembered in a cookie (for tablets/foldables
+            # the UA heuristic gets wrong, or anyone who just prefers the
+            # other layout) - re-picking is one query param away, no
+            # settings page needed.
+            ui_override = query.get("ui")
+            if ui_override in ("mobile", "desktop"):
+                _set_ui_cookie = ui_override
+                ui_pref = ui_override
+            else:
+                ui_pref = request.cookies.get("ui_pref", "")
+            if ui_pref == "mobile":
+                is_mobile = True
+            elif ui_pref == "desktop":
+                is_mobile = False
+            else:
+                is_mobile = bool(_MOBILE_UA_RE.search(request.headers.get("User-Agent", "")))
+            path = "/mobile.html" if is_mobile else "/index.html"
         elif path == "/login":
             path = "/login.html"
 
@@ -8141,10 +8167,10 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             # If-None-Match — HTTP 304 (client cache hit)
             client_etag = request.headers.get("If-None-Match", "")
             if client_etag == etag:
-                return web.Response(status=304, headers={
-                    "ETag": etag,
-                    "Cache-Control": _cc,
-                })
+                _headers304 = {"ETag": etag, "Cache-Control": _cc}
+                if _set_ui_cookie:
+                    _headers304["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax"
+                return web.Response(status=304, headers=_headers304)
 
             # Choose the body: gzip if the client accepts it and we have a pre-compressed one
             accept_enc = request.headers.get("Accept-Encoding", "")
@@ -8157,6 +8183,8 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             if gz is not None and "gzip" in accept_enc.lower():
                 body = gz
                 headers["Content-Encoding"] = "gzip"
+            if _set_ui_cookie:
+                headers["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax"
 
             return web.Response(
                 body=body,

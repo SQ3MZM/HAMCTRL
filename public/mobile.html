@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1a1c19">
+<title>HAMCTRL Mobile</title>
+<link rel="stylesheet" href="css/mobile.css?v=202608221000">
+</head>
+<body>
+
+<header class="m-topbar">
+  <div class="m-conn"><span id="m-conn-dot" class="m-dot"></span><span id="m-conn-label">łączenie...</span></div>
+  <div class="m-user">
+    <span id="callsign-display">--</span>
+    <span id="user-role" class="m-role"></span>
+    <button class="m-logout" onclick="Auth.logout()">Wyloguj</button>
+  </div>
+</header>
+
+<div id="m-toast" class="m-toast" hidden></div>
+
+<main class="m-main">
+
+  <section class="m-card m-lock">
+    <div id="m-lock-status">sprawdzam blokadę radia...</div>
+    <button id="m-lock-btn" class="m-btn m-btn-amber" onclick="Mobile.toggleLock()">...</button>
+  </section>
+
+  <section class="m-card m-freq-card">
+    <div id="m-freq" class="m-freq">-.--- MHz</div>
+    <div id="m-mode-row" class="m-chip-row"></div>
+
+    <div id="m-freq-strip" class="m-freq-strip" data-perm-disable="freq">
+      <div class="m-freq-strip-track">
+        <span class="m-freq-strip-hint">◄ przeciągnij, żeby stroić ►</span>
+      </div>
+    </div>
+
+    <div id="m-band-row" class="m-chip-row m-band-row"></div>
+  </section>
+
+  <section class="m-card m-meters">
+    <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
+    <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
+    <div class="m-meter"><span class="m-meter-lbl">SWR</span><span id="m-swr" class="m-meter-val">--</span></div>
+  </section>
+
+  <section class="m-card m-ptt-card">
+    <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
+  </section>
+
+  <section class="m-card">
+    <div class="m-card-title">FT8 / CW</div>
+    <div id="m-ft8-status" class="m-ft8-status">brak aktywnego QSO</div>
+    <div id="m-cw-text" class="m-cw-text"></div>
+  </section>
+
+  <section class="m-card m-log-card">
+    <div class="m-card-title">Log QSO</div>
+    <div id="m-log-list" class="m-log-list"><div class="m-log-empty">ładowanie...</div></div>
+  </section>
+
+  <a class="m-desktop-link" href="/?ui=desktop">Pełna wersja (desktop)</a>
+
+</main>
+
+<script src="js/auth.js?v=202608221000"></script>
+<script src="js/mobile.js?v=202608221000"></script>
+</body>
+</html>
