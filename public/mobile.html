@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608231200">
+<link rel="stylesheet" href="css/mobile.css?v=202608231400">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -280,6 +280,31 @@
     </section>
   </section>
 
+  <!-- ── ROTOR — reużywa rotormini.js (RotW) tak jak FT8/CW/RadioFunctions/
+       QSOLog: te same ID (rot-*), własny <details>/<summary> nie jest tu
+       potrzebny bo cała karta i tak chowa się sama (RotW.init/updateUI
+       robi panel.style.display='none' gdy nie ma skonfigurowanego rotora). ── -->
+  <section class="m-tabpanel" id="tab-rotor">
+    <section class="m-card" id="rot-side-panel">
+      <div class="m-rot-header">
+        <span class="m-card-title">Rotor</span>
+        <span id="rot-status-badge" class="m-rot-badge">● brak</span>
+      </div>
+      <div class="m-rot-compass-wrap">
+        <canvas id="rot-compass" width="205" height="205"></canvas>
+        <div class="m-rot-az-overlay"><span id="rot-az-display">---</span>°</div>
+      </div>
+      <div id="rot-name-label" class="m-rot-name"></div>
+      <input id="rot-target-inp" type="text" class="m-text-input" placeholder="272 lub KO02" data-perm-disable="rotor"
+        onkeydown="if(event.key==='Enter')RotW.go()" oninput="RotW.onInput()">
+      <div id="rot-target-preview" class="m-rot-preview"></div>
+      <div class="m-vfo-actions">
+        <button class="m-btn m-btn-amber m-btn-sm" data-perm-disable="rotor" onclick="RotW.go()">▶ START</button>
+        <button class="m-btn m-btn-red m-btn-sm" data-perm-disable="rotor" onclick="RotW.stop()">■ STOP</button>
+      </div>
+    </section>
+  </section>
+
   <a class="m-desktop-link" href="/?ui=desktop">Pełna wersja (desktop)</a>
 
 </main>
@@ -289,6 +314,7 @@
   <button class="m-tab" data-tab="ft8">📡<span>FT8</span></button>
   <button class="m-tab" data-tab="cw">📟<span>CW</span></button>
   <button class="m-tab" data-tab="log">📋<span>Log</span></button>
+  <button class="m-tab" data-tab="rotor">🧭<span>Rotor</span></button>
 </nav>
 
 <!-- Edycja makra CW — te same ID co desktopowy #cw-edit-modal (cw.js:
@@ -313,6 +339,7 @@
 <script src="js/wsjtx.js?v=202608222200"></script>
 <script src="js/radiofunctions.js?v=202608231200"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
-<script src="js/mobile.js?v=202608231200"></script>
+<script src="js/rotormini.js?v=202608231400"></script>
+<script src="js/mobile.js?v=202608231400"></script>
 </body>
 </html>

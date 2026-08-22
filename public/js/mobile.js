@@ -100,6 +100,7 @@ function connect() {
     // of a parallel implementation here.
     try { window.WSJTX?.handleWS?.(msg); } catch (err) { console.warn('[mobile] WSJTX.handleWS error:', err); }
     try { window.CW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] CW.handleWS error:', err); }
+    try { window.RotW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] RotW.handleWS error:', err); }
     try { forwardToRadioFunctions(msg); } catch (err) { console.warn('[mobile] RadioFunctions forward error:', err); }
   };
 }
