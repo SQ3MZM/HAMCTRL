@@ -1,8 +1,28 @@
 /**
- * mobile.js — HAMCTRL Mobile: own minimal WS client + rendering.
- * Deliberately does NOT include ws.js (1418 lines, auto-enables Opus
- * audio on every connect regardless of subscribed channels, and is
- * wired to lots of desktop-only panels this page doesn't have).
+ * mobile.js — HAMCTRL Mobile.
+ *
+ * REUSE, DON'T REINVENT: VFO/freq/mode/band/PTT/meters/lock/log below are
+ * this page's OWN small implementation (same as v1) — simple enough that
+ * duplicating a few lines is cheaper than pulling in ui.js's much larger,
+ * desktop-DOM-coupled module for them.
+ *
+ * FT8/FT4 and CW, by contrast, are NOT reimplemented here at all. Those
+ * panels reuse the real public/js/wsjtx.js and public/js/cw.js verbatim —
+ * same safety-critical logic (FT8 "operator presence" watchdog, auto-QSO
+ * state machine, TX macro templating, CW macro save/edit) as the desktop,
+ * not a parallel hand-rolled copy that could silently diverge or drop a
+ * safety check. mobile.html gives those panels the SAME element IDs
+ * wsjtx.js/cw.js already target (wj-*, cw-*) — mobile.css just restyles
+ * those same IDs/classes for touch. See the <script> boot order in
+ * mobile.html: window.AppState/window.WS placeholders, then i18n.js (both
+ * modules call I18n.t()), then cw.js/wsjtx.js, then this file — which
+ * installs the REAL window.WS.send and forwards incoming WS messages to
+ * CW.handleWS/WSJTX.handleWS.
+ *
+ * Deliberately does NOT include ws.js (auto-enables continuous Opus RX
+ * audio on every connect regardless of subscribed channels — wrong for
+ * mobile data — and derives its channel subscription from desktop-only
+ * '.tab-btn.active' DOM).
  */
 (function () {
 'use strict';
@@ -10,6 +30,7 @@
 const S = {
   connected: false,
   freq: 0, mode: '', bandwidth: 0,
+  freqB: 0, vfo: 'VFOA', split: false,
   sMeter: 0, pwr: 0, swr: 0, alc: 0,
   ptt: false,
   lock: { locked: false, user_id: null, username: '', callsign: '' },
@@ -28,9 +49,6 @@ function canControl() { return iHaveLock() || isAdmin(); }
 
 // Same precision/grouping as desktop's fmtFreq (ui.js) — 5 MHz decimals =
 // 10 Hz resolution, matching the drag strip's own send granularity below.
-// Mobile previously showed only toFixed(3) (1 kHz resolution), so the last
-// two digits desktop shows were invisible on the phone — live-tested finding
-// looked like a www/phone frequency mismatch but was only a display gap.
 function fmtFreq(hz) {
   if (!hz) return '-.---.-- MHz';
   const s = (hz / 1e6).toFixed(5);
@@ -40,12 +58,19 @@ function fmtFreq(hz) {
 
 function showToast(msg, level) {
   const el = document.getElementById('m-toast');
+  if (!el) return;
   el.textContent = msg;
   el.className = 'm-toast' + (level === 'error' ? ' error' : '');
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
 }
+// wsjtx.js/cw.js report errors via window.UI?.showToast(...) — without
+// this shim those calls silently no-op (optional-chained) and FT8/CW
+// errors (e.g. "no CW authorization", radio-busy toasts) would vanish
+// on mobile instead of reaching the operator.
+window.UI = window.UI || {};
+window.UI.showToast = showToast;
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
@@ -71,24 +96,46 @@ function connect() {
     let msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     handleMessage(msg);
+    // Reuse desktop's own FT8/CW logic verbatim (see file header) instead
+    // of a parallel implementation here.
+    try { window.WSJTX?.handleWS?.(msg); } catch (err) { console.warn('[mobile] WSJTX.handleWS error:', err); }
+    try { window.CW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] CW.handleWS error:', err); }
   };
 }
 
 function wsSend(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
+// Installs the REAL sender for wsjtx.js/cw.js's bare `WS.send(...)` calls —
+// mobile.html pre-declares a no-op placeholder so nothing throws before
+// this runs (both modules capture `const S = window.AppState` and call
+// `WS.send` at times that predate this script).
+window.WS = { send: wsSend, ping: function () {} };
 
 function handleMessage(msg) {
   switch (msg.type) {
     case 'init':
       if (msg.freq) S.freq = msg.freq;
+      if (msg.freqB) S.freqB = msg.freqB;
       if (msg.mode) S.mode = msg.mode;
       if (msg.bandwidth) S.bandwidth = msg.bandwidth;
+      if (typeof msg.split === 'boolean') S.split = msg.split;
+      if (msg.vfo) S.vfo = msg.vfo;
       if (typeof msg.ptt === 'boolean') S.ptt = msg.ptt;
-      renderFreq(); updateModeActive(); updateBandActive(); renderPTT();
+      renderFreq(); updateModeActive(); updateBandActive(); updateVfoActive(); renderSplit(); renderPTT();
       break;
     case 'freq':
       S.freq = msg.freq; renderFreq(); updateBandActive();
+      break;
+    case 'freqB':
+      S.freqB = msg.freqB; renderFreq();
+      break;
+    case 'split':
+      S.split = !!msg.split; if (msg.freqB != null) S.freqB = msg.freqB;
+      renderFreq(); renderSplit();
+      break;
+    case 'vfo':
+      S.vfo = msg.vfo; updateVfoActive();
       break;
     case 'mode':
       S.mode = msg.mode; if (msg.bandwidth) S.bandwidth = msg.bandwidth;
@@ -114,18 +161,12 @@ function handleMessage(msg) {
     case 'toast':
       showToast(msg.msg || msg.message || '', msg.level);
       break;
-    case 'deepcw_text':
-      renderCwText(msg);
-      break;
     case 'qso_logged':
       if (msg.qso) prependLog(msg.qso);
       break;
-    case 'auto_qso_status':
-      renderFt8Status(msg);
-      break;
-    case 'auto_seq_status':
-      renderFt8Status(msg);
-      break;
+    // auto_qso_status / auto_seq_status / auto_qso_queue / wsjtx_decode /
+    // ft8_tx_status / cw_sending / ... are NOT handled here — they're
+    // rendered by the real WSJTX.handleWS / CW.handleWS forwarded above.
   }
 }
 
@@ -136,6 +177,23 @@ function updateConnUI() {
   label.textContent = S.connected ? 'połączono' : 'łączenie...';
 }
 
+// ── Tabs ─────────────────────────────────────────────────────────────────────
+let _ft8Inited = false;
+function initTabs() {
+  document.querySelectorAll('.m-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+}
+function switchTab(name) {
+  document.querySelectorAll('.m-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.m-tabpanel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  if (name === 'ft8' && !_ft8Inited) {
+    _ft8Inited = true;
+    try { window.FT8Timer?.init?.(); } catch (e) {}
+    try { window.WSJTX?.init?.(); window.WSJTX?.loadWorkedCalls?.(); } catch (e) { console.warn('[mobile] WSJTX.init error:', e); }
+  }
+}
+
 // ── Radio lock ───────────────────────────────────────────────────────────────
 function renderLock() {
   const statusEl = document.getElementById('m-lock-status');
@@ -143,15 +201,15 @@ function renderLock() {
   if (!S.lock.locked) {
     statusEl.textContent = 'Radio wolne';
     btn.textContent = 'Zajmij radio';
-    btn.className = 'm-btn m-btn-amber';
+    btn.className = 'm-btn m-btn-amber m-btn-sm';
   } else if (iHaveLock()) {
     statusEl.textContent = 'Radio zajęte przez Ciebie';
     btn.textContent = 'Zwolnij';
-    btn.className = 'm-btn m-btn-red';
+    btn.className = 'm-btn m-btn-red m-btn-sm';
   } else {
     statusEl.textContent = `Radio zajęte: ${S.lock.callsign || S.lock.username}`;
     btn.textContent = 'Poproś';
-    btn.className = 'm-btn m-btn-amber';
+    btn.className = 'm-btn m-btn-amber m-btn-sm';
   }
 }
 
@@ -170,27 +228,21 @@ async function toggleLock() {
 
 function renderLockedControls() {
   const enabled = canControl();
-  document.getElementById('m-ptt-btn').disabled = !enabled;
-  const strip = document.getElementById('m-freq-strip');
-  strip.dataset.disabled = enabled ? '0' : '1';
+  document.querySelectorAll('button[data-perm-disable], input[data-perm-disable]').forEach(el => { el.disabled = !enabled; });
   document.querySelectorAll('#m-mode-row .m-chip, #m-band-row .m-chip').forEach(c => { c.disabled = !enabled; });
+  const strip = document.getElementById('m-freq-strip');
+  if (strip) strip.dataset.disabled = enabled ? '0' : '1';
 }
 
-// ── Frequency / mode / bands ────────────────────────────────────────────────
+// ── Frequency / mode / bands (VFO A only — matches desktop's own
+// sendFreq()/tuneToBand(), which always target VFO A too; VFO B is a
+// separate, simpler read+swap+equalize control below, not independently
+// drag-tunable on mobile). ─────────────────────────────────────────────────
 function renderFreq() {
   document.getElementById('m-freq').textContent = fmtFreq(S.freq);
+  document.getElementById('m-freq-other').textContent = fmtFreq(S.freqB);
 }
 
-// Chip rows are built ONCE (loadBandsConfig) and afterwards only get their
-// 'active' class toggled — NOT a full innerHTML rebuild on every WS 'mode'/
-// 'freq' message. Also: the backend's mode/freq WS handlers broadcast the
-// confirmation with skip=ws (the SENDER never gets its own echo back — only
-// other connected clients do, see webapp.py ~5230 `hub.broadcast(..., skip=ws)`).
-// Live-tested finding: without a local optimistic update, tapping a mode/band
-// chip DID change the radio (confirmed on the desktop tab) but the mobile
-// page itself never reflected it — looked completely unresponsive. Fixed by
-// updating S.mode/S.freq and re-rendering immediately on tap, the same
-// pattern ui.js's setMode()/sendFreq() already use for the desktop UI.
 function buildModeChips() {
   const row = document.getElementById('m-mode-row');
   const modes = S.enabledModes.length ? S.enabledModes : ['USB', 'LSB', 'AM', 'FM', 'CW'];
@@ -262,7 +314,52 @@ async function loadBandsConfig() {
   } catch (e) { console.warn('[mobile] loadBandsConfig error:', e); }
 }
 
-// ── Frequency drag strip ─────────────────────────────────────────────────────
+// ── VFO A/B, split — own small implementation (ui.js's vfoSwap/vfoCopy/
+// toggleSplit/vfoSelect are each only a few lines; pulling in the whole
+// desktop-DOM-coupled ui.js module for them isn't worth it, unlike
+// FT8/CW above). Same optimistic-update pattern as freq/mode: 'freqB' is
+// broadcast with skip=ws (see webapp.py ~5458), so the sender needs a
+// local update before sending, same as mode/band chips in v1.
+function updateVfoActive() {
+  document.getElementById('m-vfoa-btn')?.classList.toggle('active', S.vfo !== 'VFOB');
+  document.getElementById('m-vfob-btn')?.classList.toggle('active', S.vfo === 'VFOB');
+}
+
+function renderSplit() {
+  document.getElementById('m-split-btn')?.classList.toggle('active', S.split);
+}
+
+function vfoSelect(vfo) {
+  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  if (S.vfo === vfo) return;
+  S.vfo = vfo;
+  updateVfoActive();
+  wsSend({ type: 'vfo', vfo });
+}
+
+function vfoSwap() {
+  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  [S.freq, S.freqB] = [S.freqB, S.freq];
+  renderFreq(); updateBandActive();
+  wsSend({ type: 'freq', freq: S.freq });
+  wsSend({ type: 'freqB', freqB: S.freqB });
+}
+
+function vfoEqualize() {
+  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  S.freqB = S.freq;
+  renderFreq();
+  wsSend({ type: 'freqB', freqB: S.freqB });
+}
+
+function toggleSplit() {
+  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  S.split = !S.split;
+  renderSplit();
+  wsSend({ type: 'split', split: S.split, freqB: S.freqB });
+}
+
+// ── Frequency drag strip (VFO A) ─────────────────────────────────────────────
 function initFreqStrip() {
   const strip = document.getElementById('m-freq-strip');
   let dragging = false, lastX = 0, lastT = 0, dragBand = null, lastSentAt = 0, pendingFreq = null;
@@ -352,28 +449,30 @@ function renderPTT() {
   btn.textContent = S.ptt ? 'NADAJE' : 'PTT';
 }
 
-// ── FT8 / CW status ──────────────────────────────────────────────────────────
-// States are qso_engine.py's ST_* constants, always uppercase: IDLE,
-// CALLING, REPORT_SENT, RRR_SENT, DONE (live-tested bug: comparing against
-// lowercase 'idle' never matched real 'IDLE', so the raw state string
-// leaked into the UI instead of the friendly fallback text below).
-function renderFt8Status(msg) {
-  const el = document.getElementById('m-ft8-status');
-  if (msg.state && msg.state !== 'IDLE') {
-    el.textContent = `${msg.state}${msg.partner ? ' — ' + msg.partner : ''}`;
-  } else if (msg.enabled === false) {
-    el.textContent = 'automatyka wyłączona';
-  } else {
-    el.textContent = 'brak aktywnego QSO';
-  }
-}
-
-let cwLine = '';
-function renderCwText(msg) {
-  if (msg.close) { cwLine = ''; }
-  else if (msg.block) { cwLine = ((cwLine + ' ' + msg.block).trim().slice(-120)); }
-  const el = document.getElementById('m-cw-text');
-  el.textContent = cwLine + (msg.preview || '');
+// ── CW macro grid — tap = CW.sendMacro(id), long-press = CW.startEdit(id).
+// The grid/status/edit-modal DOM all reuse cw.js's own IDs (see
+// mobile.html) — cw.js itself owns loading/saving/rendering/sending; this
+// is only the touch-gesture glue tap vs. long-press requires (a plain
+// onclick can't tell those apart, desktop uses dblclick instead).
+function initCwMacroGestures() {
+  document.querySelectorAll('#cw-macros-grid .m-macro-card').forEach(card => {
+    const id = parseInt(card.dataset.id, 10);
+    let pressTimer = null, longPressed = false;
+    card.addEventListener('pointerdown', () => {
+      longPressed = false;
+      pressTimer = setTimeout(() => { longPressed = true; window.CW?.startEdit?.(id); }, 550);
+    });
+    const cancelTimer = () => clearTimeout(pressTimer);
+    card.addEventListener('pointerup', () => {
+      cancelTimer();
+      if (!longPressed) {
+        if (!canControl()) { showToast('Zajmij radio, żeby nadawać CW', 'error'); return; }
+        window.CW?.sendMacro?.(id);
+      }
+    });
+    card.addEventListener('pointerleave', cancelTimer);
+    card.addEventListener('pointercancel', cancelTimer);
+  });
 }
 
 // ── QSO log ──────────────────────────────────────────────────────────────────
@@ -408,21 +507,42 @@ async function loadLog() {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('app:ready', () => {
+  // cw.js's sendText() fills {MYCALL} from window.AppState.callsign —
+  // wsjtx.js falls back to window.CurrentUser?.callsign on its own, but
+  // cw.js does not, so this needs setting explicitly.
+  window.AppState.callsign = window.CurrentUser?.callsign || window.CurrentUser?.username || '';
+  window.AppState.stationLocator = window.CurrentUser?.locator || '';
+
   loadBandsConfig();
   loadLog();
+  initCwMacroGestures();
   fetch('/api/radio/state').then(r => r.json()).then(d => {
     S.lock = { locked: !!d.locked, user_id: d.user_id, username: d.username, callsign: d.callsign };
     renderLock(); renderLockedControls();
   }).catch(() => {});
+  // CW.loadMacros() runs on its own (cw.js has its own 'app:ready' listener).
+  // FT8 (FT8Timer.init/WSJTX.init) boots eagerly here too rather than
+  // lazily on first tab-open like desktop — mobile has far fewer tabs and
+  // everything WSJTX.init() touches is already guarded for missing DOM.
+  try { window.FT8Timer?.init?.(); } catch (e) {}
+  try { window.WSJTX?.init?.(); window.WSJTX?.loadWorkedCalls?.(); } catch (e) { console.warn('[mobile] WSJTX.init error:', e); }
+  _ft8Inited = true;
 });
 
+initTabs();
 initFreqStrip();
 initPTT();
 renderLock();
 renderMeters();
 renderPTT();
+updateVfoActive();
+renderSplit();
 connect();
 
-window.Mobile = { toggleLock };
+window.Mobile = { toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit };
+
+// VFO A/B select buttons (declarative, matches the mode/band chip pattern)
+document.getElementById('m-vfoa-btn')?.addEventListener('click', () => vfoSelect('VFOA'));
+document.getElementById('m-vfob-btn')?.addEventListener('click', () => vfoSelect('VFOB'));
 
 })();

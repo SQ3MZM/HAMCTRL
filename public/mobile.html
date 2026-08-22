@@ -5,9 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608221500">
+<link rel="stylesheet" href="css/mobile.css?v=202608222200">
 </head>
 <body>
+
+<!-- window.AppState / window.WS must exist before cw.js/wsjtx.js load below —
+     both capture `const S = window.AppState` at script-eval time, and both
+     call bare `WS.send(...)`. mobile.js installs the REAL WS.send once its
+     own socket is up; this is just a safe placeholder so nothing throws
+     before that. See "REUSE, don't reinvent" note in mobile.js. -->
+<script>
+  window.AppState = window.AppState || { freq: 0, freqB: 0, mode: '', bands: {}, callsign: '', stationLocator: '' };
+  window.WS = window.WS || { send: function () {}, ping: function () {} };
+</script>
 
 <header class="m-topbar">
   <div class="m-conn"><span id="m-conn-dot" class="m-dot"></span><span id="m-conn-label">łączenie...</span></div>
@@ -18,55 +28,207 @@
   </div>
 </header>
 
+<div class="m-lockbar">
+  <div id="m-lock-status">sprawdzam blokadę radia...</div>
+  <button id="m-lock-btn" class="m-btn m-btn-amber m-btn-sm" onclick="Mobile.toggleLock()">...</button>
+</div>
+
 <div id="m-toast" class="m-toast" hidden></div>
 
 <main class="m-main">
 
-  <section class="m-card m-lock">
-    <div id="m-lock-status">sprawdzam blokadę radia...</div>
-    <button id="m-lock-btn" class="m-btn m-btn-amber" onclick="Mobile.toggleLock()">...</button>
-  </section>
+  <!-- ── RADIO (własna, mobilna implementacja — freq/tryb/pasmo/PTT/metry) ── -->
+  <section class="m-tabpanel active" id="tab-radio">
 
-  <section class="m-card m-freq-card">
-    <div id="m-freq" class="m-freq">-.--- MHz</div>
-    <div id="m-mode-row" class="m-chip-row"></div>
-
-    <div id="m-freq-strip" class="m-freq-strip" data-perm-disable="freq">
-      <div class="m-freq-strip-track">
-        <span class="m-freq-strip-hint">◄ przeciągnij, żeby stroić ►</span>
+    <section class="m-card m-freq-card">
+      <div class="m-vfo-row">
+        <button id="m-vfoa-btn" class="m-vfo-btn active" data-vfo="VFOA" data-perm-disable="vfo">VFO A</button>
+        <button id="m-vfob-btn" class="m-vfo-btn" data-vfo="VFOB" data-perm-disable="vfo">VFO B</button>
       </div>
-    </div>
 
-    <div id="m-band-row" class="m-chip-row m-band-row"></div>
+      <div id="m-freq" class="m-freq">-.---.-- MHz</div>
+      <div class="m-freq-other-row">
+        <span>VFO B</span>
+        <span id="m-freq-other" class="m-freq-other">-.---.-- MHz</span>
+      </div>
+
+      <div id="m-mode-row" class="m-chip-row"></div>
+
+      <div id="m-freq-strip" class="m-freq-strip" data-perm-disable="freq">
+        <div class="m-freq-strip-track">
+          <span class="m-freq-strip-hint">◄ przeciągnij, żeby stroić ►</span>
+        </div>
+      </div>
+
+      <div id="m-band-row" class="m-chip-row m-band-row"></div>
+
+      <div class="m-vfo-actions">
+        <button id="m-split-btn" class="m-btn m-btn-sm" data-perm-disable="vfo" onclick="Mobile.toggleSplit()">SPLIT</button>
+        <button class="m-btn m-btn-sm" data-perm-disable="vfo" onclick="Mobile.vfoSwap()">A⇄B</button>
+        <button class="m-btn m-btn-sm" data-perm-disable="vfo" onclick="Mobile.vfoEqualize()">A→B</button>
+      </div>
+    </section>
+
+    <section class="m-card m-meters">
+      <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">SWR</span><span id="m-swr" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">ALC</span><span id="m-alc" class="m-meter-val">--</span></div>
+    </section>
+
+    <section class="m-card m-ptt-card">
+      <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
+    </section>
+
   </section>
 
-  <section class="m-card m-meters">
-    <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
-    <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
-    <div class="m-meter"><span class="m-meter-lbl">SWR</span><span id="m-swr" class="m-meter-val">--</span></div>
-    <div class="m-meter"><span class="m-meter-lbl">ALC</span><span id="m-alc" class="m-meter-val">--</span></div>
+  <!-- ── FT8/FT4 — celowo UŻYWA tych samych ID co desktop (index.html /
+       wsjtx.js), żeby cała logika (silnik auto-QSO, timer bezpieczeństwa
+       Call 1st, makra TX, lista dekodów) była TĄ SAMĄ, już przetestowaną
+       logiką z desktopu — mobile.css tylko ją inaczej stylizuje. Zero
+       duplikatu logiki FT8 w mobile.js. ── -->
+  <section class="m-tabpanel" id="tab-ft8">
+
+    <section class="m-card">
+      <div class="wj-mode-switch" id="wj-mode-switch">
+        <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
+        <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
+      </div>
+      <select id="wj-band-select" class="wj-band-select" onchange="WSJTX.tuneToBand(this.value)">
+        <option value="">-- pasmo --</option>
+      </select>
+    </section>
+
+    <section class="m-card">
+      <label class="m-switch-row">
+        <span>Call 1st (autonomiczne odpowiadanie)</span>
+        <input type="checkbox" id="wj-call1st-toggle" data-perm-disable="ft8" onchange="WSJTX.toggleCall1st()">
+      </label>
+      <div id="wj-autoqso-status" class="m-ft8-status">Automatyka gotowa — dotknij wywołanie CQ na liście, żeby rozpocząć QSO</div>
+      <div class="m-ft8-timer-row">
+        <span id="ft8-timer-display" class="m-ft8-timer">--:--</span>
+        <button id="ft8-timer-confirm" class="m-btn m-btn-amber m-btn-sm" onclick="FT8Timer.confirm()" style="display:none">Potwierdzam obecność</button>
+      </div>
+      <div id="wj-autoqso-queue-wrap" class="m-ft8-queue-wrap" style="display:none">
+        <div class="m-card-title-row">
+          <span class="m-card-title">Kolejka</span>
+          <span id="wj-autoqso-queue-clear" class="m-mini-btn" onclick="WSJTX.clearAutoQsoQueue()">wyczyść</span>
+        </div>
+        <div id="wj-autoqso-queue" class="m-ft8-queue"></div>
+      </div>
+      <div class="m-ft8-actions">
+        <button id="wj-autoqso-skip" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ft8" onclick="WSJTX.skipAutoQso()" style="display:none">Pomiń QSO</button>
+        <button id="wj-halt-tx-btn" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ft8" onclick="WSJTX.haltTx()">STOP TX</button>
+      </div>
+    </section>
+
+    <section class="m-card">
+      <div class="m-card-title">DX (znak korespondenta)</div>
+      <input id="wj-dx-call" type="text" class="m-text-input" placeholder="-- dotknij wywołanie na liście lub wpisz --"
+        onkeydown="if(event.key==='Enter'){WSJTX.searchDxCall(this.value)}"
+        onblur="WSJTX.searchDxCall(this.value)">
+      <div class="m-card-title" style="margin-top:10px;">Makra TX</div>
+      <div class="wsjtx-tx-grid m-tx-grid">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx1" data-perm-disable="ft8" onclick="WSJTX.sendTx(1)">
+          <span class="wj-tx-num m-tx-btn-lbl">F1</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx1-text">CQ {MYCALL} {GRID}</span>
+        </button>
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx2" data-perm-disable="ft8" onclick="WSJTX.sendTx(2)">
+          <span class="wj-tx-num m-tx-btn-lbl">F2</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx2-text">{DXCALL} {MYCALL} {GRID}</span>
+        </button>
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx3" data-perm-disable="ft8" onclick="WSJTX.sendTx(3)">
+          <span class="wj-tx-num m-tx-btn-lbl">F3</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx3-text">{DXCALL} {MYCALL} R{REPORT}</span>
+        </button>
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx4" data-perm-disable="ft8" onclick="WSJTX.sendTx(4)">
+          <span class="wj-tx-num m-tx-btn-lbl">F4</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx4-text">{DXCALL} {MYCALL} RRR</span>
+        </button>
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx5" data-perm-disable="ft8" onclick="WSJTX.sendTx(5)">
+          <span class="wj-tx-num m-tx-btn-lbl">F5</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx5-text">{DXCALL} {MYCALL} 73</span>
+        </button>
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx6" data-perm-disable="ft8" onclick="WSJTX.sendTx(6)">
+          <span class="wj-tx-num m-tx-btn-lbl">F6</span>
+          <span class="wj-tx-text m-tx-btn-txt" id="wj-tx6-text">{DXCALL} RR73</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="m-card m-ft8-decodes-card">
+      <div class="m-card-title-row">
+        <span class="m-card-title">Odebrane wywołania</span>
+        <span class="m-mini-btn" onclick="WSJTX.clearDecodes()">wyczyść</span>
+      </div>
+      <div id="wj-decodes" class="wsjtx-decode-list m-ft8-decodes"></div>
+    </section>
+
   </section>
 
-  <section class="m-card m-ptt-card">
-    <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
+  <!-- ── CW — też na ID desktopu (cw.js), tylko przestylizowane na dotyk;
+       edycja makra wprost na telefonie (dotknij i przytrzymaj karte). ── -->
+  <section class="m-tabpanel" id="tab-cw">
+
+    <section class="m-card">
+      <div id="cw-status" class="m-cw-status">● GOTOWY</div>
+      <div id="cw-macros-grid" class="m-macro-grid">
+        <div class="m-macro-card" id="cwm-1" data-id="1"><span class="m-macro-lbl" id="cwm-lbl-1">F1</span><span class="m-macro-txt" id="cwm-txt-1">—</span></div>
+        <div class="m-macro-card" id="cwm-2" data-id="2"><span class="m-macro-lbl" id="cwm-lbl-2">F2</span><span class="m-macro-txt" id="cwm-txt-2">—</span></div>
+        <div class="m-macro-card" id="cwm-3" data-id="3"><span class="m-macro-lbl" id="cwm-lbl-3">F3</span><span class="m-macro-txt" id="cwm-txt-3">—</span></div>
+        <div class="m-macro-card" id="cwm-4" data-id="4"><span class="m-macro-lbl" id="cwm-lbl-4">F4</span><span class="m-macro-txt" id="cwm-txt-4">—</span></div>
+        <div class="m-macro-card" id="cwm-5" data-id="5"><span class="m-macro-lbl" id="cwm-lbl-5">F5</span><span class="m-macro-txt" id="cwm-txt-5">—</span></div>
+        <div class="m-macro-card" id="cwm-6" data-id="6"><span class="m-macro-lbl" id="cwm-lbl-6">F6</span><span class="m-macro-txt" id="cwm-txt-6">—</span></div>
+      </div>
+      <div class="m-cw-hint">dotknij = wyślij • przytrzymaj = edytuj</div>
+      <div class="m-cw-custom-row">
+        <input id="cw-custom-input" class="m-text-input" type="text" placeholder="własny tekst CW..." data-perm-disable="cw">
+        <button class="m-btn m-btn-sm" data-perm-disable="cw" onclick="CW.sendCustom()">Wyślij</button>
+      </div>
+      <button class="m-btn m-btn-red m-btn-sm" data-perm-disable="cw" onclick="CW.stopCW()">STOP</button>
+    </section>
+
   </section>
 
-  <section class="m-card">
-    <div class="m-card-title">FT8 / CW</div>
-    <div id="m-ft8-status" class="m-ft8-status">brak aktywnego QSO</div>
-    <div id="m-cw-text" class="m-cw-text"></div>
-  </section>
-
-  <section class="m-card m-log-card">
-    <div class="m-card-title">Log QSO</div>
-    <div id="m-log-list" class="m-log-list"><div class="m-log-empty">ładowanie...</div></div>
+  <!-- ── LOG ── -->
+  <section class="m-tabpanel" id="tab-log">
+    <section class="m-card m-log-card">
+      <div class="m-card-title">Log QSO</div>
+      <div id="m-log-list" class="m-log-list"><div class="m-log-empty">ładowanie...</div></div>
+    </section>
   </section>
 
   <a class="m-desktop-link" href="/?ui=desktop">Pełna wersja (desktop)</a>
 
 </main>
 
+<nav class="m-tabbar">
+  <button class="m-tab active" data-tab="radio">📻<span>Radio</span></button>
+  <button class="m-tab" data-tab="ft8">📡<span>FT8</span></button>
+  <button class="m-tab" data-tab="cw">📟<span>CW</span></button>
+  <button class="m-tab" data-tab="log">📋<span>Log</span></button>
+</nav>
+
+<!-- Edycja makra CW — te same ID co desktopowy #cw-edit-modal (cw.js:
+     startEdit/saveEditMacro czytają/pisza dokladnie te pola), tylko
+     wyglad z mobile.css. -->
+<div id="cw-edit-modal" class="m-modal" style="display:none">
+  <div class="m-modal-box">
+    <div class="m-card-title" id="cw-edit-title">Makro</div>
+    <input type="hidden" id="cw-edit-id">
+    <input id="cw-edit-label" class="m-text-input" type="text" placeholder="etykieta (np. CQ)" maxlength="12">
+    <textarea id="cw-edit-text" class="m-textarea" placeholder="treść makra (np. CQ CQ DE {MYCALL} K)"></textarea>
+    <div class="m-modal-actions">
+      <button class="m-btn m-btn-sm" onclick="CW.closeEdit()">Anuluj</button>
+      <button class="m-btn m-btn-amber m-btn-sm" onclick="CW.saveEditMacro()">Zapisz</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/auth.js?v=202608221000"></script>
-<script src="js/mobile.js?v=202608221600"></script>
+<script src="js/i18n.js?v=202608222200"></script>
+<script src="js/cw.js?v=202608222200"></script>
+<script src="js/wsjtx.js?v=202608222200"></script>
+<script src="js/mobile.js?v=202608222200"></script>
 </body>
 </html>
