@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608231400">
+<link rel="stylesheet" href="css/mobile.css?v=202608231600">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -25,6 +25,8 @@
   <div class="m-user">
     <span id="callsign-display">--</span>
     <span id="user-role" class="m-role"></span>
+    <button id="m-audio-btn" class="m-icon-btn" onclick="Mobile.toggleRxAudio()" title="Dźwięk (odsłuch)">🔇</button>
+    <button class="m-icon-btn" onclick="Mobile.openSettings()" title="Ustawienia telefonu">⋮</button>
     <button class="m-logout" onclick="Auth.logout()">Wyloguj</button>
   </div>
 </header>
@@ -317,6 +319,32 @@
   <button class="m-tab" data-tab="rotor">🧭<span>Rotor</span></button>
 </nav>
 
+<!-- Ustawienia telefonu ("⋮") — NIE zakładka na dolnym pasku, to celowo
+     osobne miejsce na rzeczy dotyczące tego konkretnego telefonu/
+     przeglądarki (nie funkcji radia): dźwięk RX + wybór mikrofonu TX.
+     Mikrofon zapisuje się pod TYM SAMYM kluczem localStorage co
+     desktopowy PROFIL (ham_audio_micId, patrz profile_audio.js), więc
+     wybór zrobiony kiedyś na tej samej przeglądarce na desktopie
+     obowiązuje też tutaj. -->
+<div id="m-settings-modal" class="m-modal" style="display:none">
+  <div class="m-modal-box">
+    <div class="m-card-title">Ustawienia telefonu</div>
+    <label class="m-switch-row">
+      <span>🔊 Dźwięk (odsłuch)</span>
+      <input type="checkbox" id="m-settings-audio-toggle" onchange="Mobile.toggleRxAudio(this.checked)">
+    </label>
+    <div class="m-select-row">
+      <span class="m-sub-lbl">MIKROFON (nadawanie)</span>
+      <select id="m-mic-select" class="m-select" onchange="Mobile.setMicDevice(this.value)">
+        <option value="">-- domyślny --</option>
+      </select>
+    </div>
+    <div class="m-modal-actions">
+      <button class="m-btn m-btn-sm" onclick="Mobile.closeSettings()">Zamknij</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edycja makra CW — te same ID co desktopowy #cw-edit-modal (cw.js:
      startEdit/saveEditMacro czytają/pisza dokladnie te pola), tylko
      wyglad z mobile.css. -->
@@ -339,7 +367,8 @@
 <script src="js/wsjtx.js?v=202608222200"></script>
 <script src="js/radiofunctions.js?v=202608231200"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
-<script src="js/rotormini.js?v=202608231400"></script>
-<script src="js/mobile.js?v=202608231400"></script>
+<script src="js/rotormini.js?v=202608231600"></script>
+<script src="js/mobile_audio.js?v=202608231600"></script>
+<script src="js/mobile.js?v=202608231600"></script>
 </body>
 </html>

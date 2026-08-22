@@ -193,6 +193,22 @@ function handleMessage(msg) {
     case 'toast':
       showToast(msg.msg || msg.message || '', msg.level);
       break;
+    case 'radio_locked':
+      // Generic radio_lock rejection for anything in the backend's
+      // _CONTROL_TYPES set (webapp.py ~5150) — webrtc_offer (mic TX) is
+      // one of them. Normal PTT already pre-checks canControl() before
+      // ever sending, so this mostly matters as a defense-in-depth path.
+      showToast(msg.message || 'Radio zablokowane', 'error');
+      break;
+    case 'webrtc_answer':
+      window.MobileAudio?.onAnswer?.(msg);
+      break;
+    case 'webrtc_ice':
+      window.MobileAudio?.onRemoteIce?.(msg);
+      break;
+    case 'webrtc_error':
+      window.MobileAudio?.onWebrtcError?.(msg);
+      break;
     case 'qso_logged':
       if (msg.qso) prependLog(msg.qso);
       break;
@@ -469,10 +485,15 @@ function initPTT() {
     if (!canControl()) { showToast('Zajmij radio, żeby nadawać', 'error'); return; }
     btn.setPointerCapture(e.pointerId);
     wsSend({ type: 'ptt', ptt: true });
+    // Arms the microphone (fresh getUserMedia + WebRTC offer) in parallel
+    // with keying the radio — see mobile_audio.js header for why this is
+    // per-press rather than a separate long-lived toggle like desktop.
+    window.MobileAudio?.startMicTx?.();
   }
   function up(e) {
     try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
     wsSend({ type: 'ptt', ptt: false });
+    window.MobileAudio?.stopMicTx?.();
   }
   btn.addEventListener('pointerdown', down);
   btn.addEventListener('pointerup', up);
@@ -542,6 +563,54 @@ async function loadLog() {
   }
 }
 
+// ── Settings ("⋮") — audio toggle + mic device picker ───────────────────────
+function esc(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function toggleRxAudio(forceOn) {
+  const wantOn = forceOn !== undefined ? !!forceOn : !window.MobileAudio?.isRxEnabled?.();
+  const on = window.MobileAudio?.enableRx?.(wantOn) ?? false;
+  const btn = document.getElementById('m-audio-btn');
+  if (btn) { btn.textContent = on ? '🔊' : '🔇'; btn.classList.toggle('active', on); }
+  const chk = document.getElementById('m-settings-audio-toggle');
+  if (chk) chk.checked = on;
+}
+
+async function loadMicList() {
+  const sel = document.getElementById('m-mic-select');
+  if (!sel) return;
+  try {
+    // Unlock real device labels — same throwaway-getUserMedia trick as
+    // profile_audio.js (without it, enumerateDevices() returns blank labels).
+    const tmp = await navigator.mediaDevices.getUserMedia({ audio: true });
+    tmp.getTracks().forEach(t => t.stop());
+  } catch (e) { /* permission denied — list still shows, just with generic labels */ }
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devs.filter(d => d.kind === 'audioinput');
+    const saved = localStorage.getItem('ham_audio_micId') || '';
+    sel.innerHTML = '<option value="">-- domyślny --</option>' +
+      inputs.map(d => `<option value="${esc(d.deviceId)}"${d.deviceId === saved ? ' selected' : ''}>${esc(d.label || 'Mikrofon')}</option>`).join('');
+  } catch (e) { showToast('Nie udało się odczytać listy mikrofonów', 'error'); }
+}
+
+function setMicDevice(id) {
+  localStorage.setItem('ham_audio_micId', id || '');
+}
+
+function openSettings() {
+  const modal = document.getElementById('m-settings-modal');
+  if (!modal) return;
+  const chk = document.getElementById('m-settings-audio-toggle');
+  if (chk) chk.checked = !!window.MobileAudio?.isRxEnabled?.();
+  modal.style.display = 'flex';
+  loadMicList();
+}
+
+function closeSettings() {
+  const modal = document.getElementById('m-settings-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('app:ready', () => {
   // cw.js's sendText() fills {MYCALL} from window.AppState.callsign —
@@ -576,7 +645,11 @@ updateVfoActive();
 renderSplit();
 connect();
 
-window.Mobile = { toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit };
+window.Mobile = {
+  toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit,
+  toggleRxAudio, openSettings, closeSettings, setMicDevice,
+  showToast, // mobile_audio.js reuses this for its own error toasts
+};
 
 // VFO A/B select buttons (declarative, matches the mode/band chip pattern)
 document.getElementById('m-vfoa-btn')?.addEventListener('click', () => vfoSelect('VFOA'));

@@ -5104,6 +5104,14 @@ class App:
         _CONTROL_TYPES = {
             "freq","freqB","mode","ptt","rig_slider","rig_action","vfo","vfo_op",
             "split","preamp","attenuator","tuner","tuner_autotune","ft8_tx",
+            # webrtc_offer starts microphone TX (WebRTC -> radio's TX audio
+            # input, see webrtc_audio.py) — it had NO gate at all (found
+            # while building mobile mic-TX): any logged-in client, including
+            # role=viewer and anyone not holding radio_lock, could call it
+            # directly and transmit. Adding it here reuses the SAME two
+            # checks every other control type already gets below (viewer
+            # hard-block + radio_lock-for-everyone-else) with no extra code.
+            "webrtc_offer",
         }
 
         # ── VIEWER: HARD WHITELIST ──────────────────

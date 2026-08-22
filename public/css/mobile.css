@@ -60,6 +60,11 @@ input, textarea { font-family: inherit; }
   color: var(--dim); font-size: 11px; padding: 6px 9px; cursor: pointer;
 }
 .m-logout:active { border-color: var(--red); color: var(--red); }
+.m-icon-btn {
+  background: transparent; border: 1px solid var(--border2); border-radius: 4px;
+  color: var(--dim); font-size: 13px; padding: 5px 8px; cursor: pointer; line-height: 1;
+}
+.m-icon-btn.active { border-color: var(--green); color: var(--green); }
 
 /* ── Radio-lock bar — sticky, shared across every tab: nothing is
    controllable without it, so it must stay visible regardless of which
