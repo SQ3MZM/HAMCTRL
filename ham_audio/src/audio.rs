@@ -230,12 +230,47 @@ fn run_rx_thread(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
 
+    // FIX: reported live — right after the IC-7300's USB Audio CODEC comes
+    // back from a power cycle, Windows can take a couple seconds to finish
+    // re-enumerating it. The old code did ONE lookup by name and silently
+    // fell back to host.default_input_device() if not found instantly -
+    // observed live picking the laptop's own "Internal Microphone" instead
+    // of the radio, with zero warning. The resulting stream looked
+    // perfectly healthy (frames flowing, receivers=1 ok=true) forever,
+    // because it genuinely WAS capturing something - just the wrong
+    // device - so neither the WASAPI-error nor the callback-staleness
+    // detector below ever caught it. Retry the by-name lookup for a few
+    // seconds (giving Windows time to finish re-enumerating the USB
+    // device) before giving up; NEVER silently substitute a different
+    // device for one the user explicitly configured — return an error
+    // instead, so run_audio_loop's existing retry/backoff (and eventual
+    // process-restart escalation, see its comment) keeps trying with a
+    // fresh lookup rather than settling into a silently-wrong device.
     let device = if device_name.is_empty() {
         host.default_input_device().ok_or("No default input device")?
     } else {
-        host.input_devices()?
-            .find(|d| d.name().map(|n| n.contains(&device_name)).unwrap_or(false))
-            .unwrap_or_else(|| host.default_input_device().unwrap())
+        const FIND_RETRIES: u32 = 10;
+        const FIND_RETRY_DELAY_MS: u64 = 500;
+        let mut found = None;
+        for attempt in 0..FIND_RETRIES {
+            if let Ok(mut devs) = host.input_devices() {
+                if let Some(d) = devs.find(|d| d.name().map(|n| n.contains(&device_name)).unwrap_or(false)) {
+                    found = Some(d);
+                    break;
+                }
+            }
+            if attempt == 0 {
+                warn!("[audio] RX device '{}' not found yet, retrying (USB re-enumeration after power-up can take a moment)...", device_name);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(FIND_RETRY_DELAY_MS));
+        }
+        match found {
+            Some(d) => d,
+            None => {
+                error!("[audio] RX device '{}' not found after {} retries — NOT falling back to a different device", device_name, FIND_RETRIES);
+                return Err(format!("RX device '{}' not found", device_name).into());
+            }
+        }
     };
 
     info!("[audio] RX: {}", device.name().unwrap_or_default());
