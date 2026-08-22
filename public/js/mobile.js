@@ -100,7 +100,27 @@ function connect() {
     // of a parallel implementation here.
     try { window.WSJTX?.handleWS?.(msg); } catch (err) { console.warn('[mobile] WSJTX.handleWS error:', err); }
     try { window.CW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] CW.handleWS error:', err); }
+    try { forwardToRadioFunctions(msg); } catch (err) { console.warn('[mobile] RadioFunctions forward error:', err); }
   };
+}
+
+// RadioFunctions (func-toggle buttons, RFPOWER/AF/.../WPM sliders) is
+// reused the same way as WSJTX/CW above, but ws.js's per-type routing
+// (the desktop dispatcher) isn't loaded here, so this mirrors just the
+// handful of cases ws.js forwards to RadioFunctions.
+function forwardToRadioFunctions(msg) {
+  const RF = window.RadioFunctions;
+  if (!RF) return;
+  switch (msg.type) {
+    case 'level_value':
+    case 'rig_slider_ack': RF.handleLevelValue?.(msg); break;
+    case 'func_state': RF.handleFuncState?.(msg); break;
+    case 'rig_features': RF.handleWsMessage?.(msg); break;
+    case 'tuner': RF.handleLegacyFunc?.('tuner', msg); break;
+    case 'preamp': RF.handleLegacyFunc?.('preamp', msg); break;
+    case 'attenuator': RF.handleLegacyFunc?.('attenuator', msg); break;
+    case 'power_state': RF.handlePowerState?.(!!msg.value); break;
+  }
 }
 
 function wsSend(obj) {
@@ -123,6 +143,11 @@ function handleMessage(msg) {
       if (msg.vfo) S.vfo = msg.vfo;
       if (typeof msg.ptt === 'boolean') S.ptt = msg.ptt;
       renderFreq(); updateModeActive(); updateBandActive(); updateVfoActive(); renderSplit(); renderPTT();
+      window.RadioFunctions?.syncStates?.({ vfo: S.vfo, split: S.split });
+      if (typeof msg.rigPowerOn === 'boolean') {
+        window.AppState.rigPowerOn = msg.rigPowerOn;
+        window.RadioFunctions?.handlePowerState?.(msg.rigPowerOn);
+      }
       break;
     case 'freq':
       S.freq = msg.freq; renderFreq(); updateBandActive();
@@ -133,13 +158,19 @@ function handleMessage(msg) {
     case 'split':
       S.split = !!msg.split; if (msg.freqB != null) S.freqB = msg.freqB;
       renderFreq(); renderSplit();
+      window.RadioFunctions?.syncStates?.({ split: S.split });
       break;
     case 'vfo':
       S.vfo = msg.vfo; updateVfoActive();
+      window.RadioFunctions?.syncStates?.({ vfo: S.vfo });
       break;
     case 'mode':
       S.mode = msg.mode; if (msg.bandwidth) S.bandwidth = msg.bandwidth;
-      updateModeActive();
+      updateModeActive(); // also mirrors S.mode into window.AppState
+      if (msg.filterNum) {
+        const sel = document.getElementById('bw-select');
+        if (sel) sel.value = String(msg.filterNum);
+      }
       break;
     case 'smeter':
       S.sMeter = msg.value ?? 0; renderMeters();
@@ -241,6 +272,10 @@ function renderLockedControls() {
 function renderFreq() {
   document.getElementById('m-freq').textContent = fmtFreq(S.freq);
   document.getElementById('m-freq-other').textContent = fmtFreq(S.freqB);
+  // qsolog.js::quickLog() reads window.AppState.freq for the logged QSO's
+  // band/frequency (const S = window.AppState there, a DIFFERENT object
+  // than this file's own S) — keep it mirrored.
+  window.AppState.freq = S.freq;
 }
 
 function buildModeChips() {
@@ -260,6 +295,7 @@ function buildModeChips() {
 }
 
 function updateModeActive() {
+  window.AppState.mode = S.mode; // see renderFreq() note on window.AppState mirroring
   document.querySelectorAll('#m-mode-row .m-chip').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.mode === S.mode);
   });

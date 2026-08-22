@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608222200">
+<link rel="stylesheet" href="css/mobile.css?v=202608230900">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
 
@@ -67,6 +68,27 @@
         <button class="m-btn m-btn-sm" data-perm-disable="vfo" onclick="Mobile.vfoSwap()">A⇄B</button>
         <button class="m-btn m-btn-sm" data-perm-disable="vfo" onclick="Mobile.vfoEqualize()">A→B</button>
       </div>
+    </section>
+
+    <!-- Przyciski funkcji radia (NB/NR/COMP/MON/...) i suwaki (RFPOWER/AF/...)
+         są generowane przez public/js/radiofunctions.js na podstawie tego,
+         co admin udostępnił temu userowi (ten sam mechanizm co desktop —
+         GET /api/rig/features) — mobile.html tylko daje im te same ID. -->
+    <section class="m-card">
+      <div class="m-card-title">Funkcje</div>
+      <div id="rig-features-buttons" class="rf-buttons-row"></div>
+      <div style="margin-top:10px;">
+        <span class="m-sub-lbl">FILTR (FIL1/2/3 — z menu radia)</span>
+        <select id="bw-select" class="m-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
+          <option value="1">FIL1</option>
+          <option value="2">FIL2</option>
+          <option value="3">FIL3</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="m-card" id="rig-dynamic-sliders" style="display:none;">
+      <div class="m-card-title">Suwaki radia</div>
     </section>
 
     <section class="m-card m-meters">
@@ -172,6 +194,12 @@
 
     <section class="m-card">
       <div id="cw-status" class="m-cw-status">● GOTOWY</div>
+      <div class="m-wpm-row">
+        <span class="m-sub-lbl">WPM</span>
+        <input type="range" min="6" max="48" step="1" value="18" id="cw-wpm-slider"
+          class="m-wpm-slider" data-perm-disable="cw" oninput="CW.setWPM(this.value)">
+        <span id="cw-wpm-val" class="m-wpm-val">18</span>
+      </div>
       <div id="cw-macros-grid" class="m-macro-grid">
         <div class="m-macro-card" id="cwm-1" data-id="1"><span class="m-macro-lbl" id="cwm-lbl-1">F1</span><span class="m-macro-txt" id="cwm-txt-1">—</span></div>
         <div class="m-macro-card" id="cwm-2" data-id="2"><span class="m-macro-lbl" id="cwm-lbl-2">F2</span><span class="m-macro-txt" id="cwm-txt-2">—</span></div>
@@ -190,8 +218,35 @@
 
   </section>
 
-  <!-- ── LOG ── -->
+  <!-- ── LOG — szybkie dodanie QSO reużywa qsolog.js::quickLog() (te same
+       ID co desktopowy pasek "SZYBKIE LOGOWANIE QSO"): pasmo/tryb/freq
+       biora sie automatycznie z window.AppState (freq/mode), które
+       mobile.js trzyma zsynchronizowane z własnym stanem. ── -->
   <section class="m-tabpanel" id="tab-log">
+    <section class="m-card">
+      <div class="m-card-title">Szybki log QSO</div>
+      <div class="m-qlog-row">
+        <input type="text" id="qlog-call" class="m-text-input" placeholder="CALL"
+          onkeydown="if(event.key==='Enter')QSOLog.quickLog()"
+          oninput="QSOLog.checkQuickLogWorkedBefore(this.value)">
+      </div>
+      <div class="m-qlog-row">
+        <div class="m-qlog-field">
+          <span class="m-sub-lbl">SENT</span>
+          <input type="text" id="qlog-rst-s" class="m-text-input" placeholder="599" maxlength="3" value="599">
+        </div>
+        <div class="m-qlog-field">
+          <span class="m-sub-lbl">RCVD</span>
+          <input type="text" id="qlog-rst-r" class="m-text-input" placeholder="599" maxlength="3" value="599">
+        </div>
+        <div class="m-qlog-field">
+          <span class="m-sub-lbl">GRID</span>
+          <input type="text" id="qlog-grid" class="m-text-input" placeholder="KO02" maxlength="8">
+        </div>
+      </div>
+      <button class="m-btn m-btn-amber m-btn-sm" onclick="QSOLog.quickLog()">+ LOG QSO</button>
+      <div id="qlog-status" class="m-qlog-status"></div>
+    </section>
     <section class="m-card m-log-card">
       <div class="m-card-title">Log QSO</div>
       <div id="m-log-list" class="m-log-list"><div class="m-log-empty">ładowanie...</div></div>
@@ -229,6 +284,8 @@
 <script src="js/i18n.js?v=202608222200"></script>
 <script src="js/cw.js?v=202608222200"></script>
 <script src="js/wsjtx.js?v=202608222200"></script>
-<script src="js/mobile.js?v=202608222200"></script>
+<script src="js/radiofunctions.js?v=202608230900"></script>
+<script src="js/qsolog.js?v=202608230900"></script>
+<script src="js/mobile.js?v=202608230900"></script>
 </body>
 </html>

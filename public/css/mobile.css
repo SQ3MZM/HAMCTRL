@@ -170,6 +170,40 @@ input, textarea { font-family: inherit; }
 .m-vfo-actions { display: flex; gap: 6px; margin-top: 10px; }
 .m-vfo-actions .m-btn { flex: 1; }
 
+/* ── Radio functions (radiofunctions.js reuse) — .rf-* / .rf-slider-*
+   are the SAME class names the module itself generates, same idea as
+   the wj-*/cw-* reuse elsewhere in this file. ── */
+.m-sub-lbl { display: block; font-family: var(--mono); font-size: 9px; color: var(--dim); letter-spacing: 1px; margin-bottom: 4px; }
+.m-select {
+  width: 100%; border: 1px solid var(--border2); border-radius: 8px; background: var(--panel2);
+  color: var(--text); font-family: var(--mono); font-size: 13px; padding: 8px; min-height: 40px;
+}
+.rf-buttons-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.rf-buttons-row::-webkit-scrollbar { display: none; }
+.rf-btn {
+  flex: 0 0 auto; border: 1px solid var(--border2); border-radius: 20px; background: var(--panel2);
+  color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 8px 12px; cursor: pointer;
+  min-height: 38px; white-space: nowrap;
+}
+.rf-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
+.rf-btn-power.active { border-color: var(--red); color: var(--red); background: rgba(217,119,106,0.12); }
+.rf-slider-tile { margin-top: 12px; }
+.rf-slider-tile-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.rf-slider-tile-left { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.rf-slider-tile-val { font-family: var(--mono); font-size: 12px; color: var(--green); }
+.rf-range { width: 100%; accent-color: var(--green); }
+
+/* ── CW WPM ── */
+.m-wpm-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.m-wpm-row .m-sub-lbl { margin-bottom: 0; }
+.m-wpm-slider { flex: 1; accent-color: var(--green); }
+.m-wpm-val { font-family: var(--mono); font-size: 13px; color: var(--green); width: 22px; text-align: right; }
+
+/* ── Quick QSO log ── */
+.m-qlog-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.m-qlog-field { flex: 1; min-width: 0; }
+.m-qlog-status { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 1.2em; }
+
 /* ── Meters ── */
 .m-meters { display: flex; justify-content: space-between; text-align: center; padding: 10px 8px; gap: 4px; }
 .m-meter { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
