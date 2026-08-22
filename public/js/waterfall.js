@@ -491,6 +491,7 @@ async function startScope(port, civAddr) {
 // Change the waterfall span (Hz) — sends it to the server, which sets it on the radio.
 // The IC-7300 supports: 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000 Hz.
 async function setSpan(spanHz) {
+  localStorage.setItem('wf_span_hz', String(spanHz));
   try {
     const token = localStorage.getItem('token');
     const r = await fetch('/api/scope/span', {
@@ -551,5 +552,17 @@ document.addEventListener('fullscreenchange', () => {
 window.Waterfall = { init, handleScopeData, handleFilterWidth, startScope, updateSourceBadge, stop,
                      setSpan, setPeakHold, toggleFullscreen, onPowerReset };
 document.addEventListener('DOMContentLoaded', () => setTimeout(init, 300));
+
+// Restore the last span the user picked (localStorage, per-browser) —
+// previously always reset to the hardcoded 20kHz default on every login/
+// reconnect. Runs on 'app:ready' (after auth), not DOMContentLoaded,
+// since /api/scope/span needs the Bearer token.
+window.addEventListener('app:ready', () => {
+  const saved = parseInt(localStorage.getItem('wf_span_hz'), 10);
+  if (!saved) return;
+  const sel = document.getElementById('wf-span-select');
+  if (sel) sel.value = String(saved);
+  setSpan(saved);
+});
 
 })();

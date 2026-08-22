@@ -2024,17 +2024,6 @@ class CivRig:
                     # matter what filter was actually selected on the radio.
                     if fp and len(fp) >= 2 and fp[0] == 0x03:
                         idx = (fp[1] >> 4) * 10 + (fp[1] & 0x0F)
-                        # DIAGNOSTIC: reported live as "filter overlay stuck
-                        # at 2400Hz even after changing the filter on the
-                        # radio" - logging every successful poll (not just
-                        # on change) to see live whether idx is even
-                        # arriving correctly, or whether it's stuck/wrong.
-                        # Remove once confirmed working.
-                        if getattr(self, "_filter_poll_logged", 0) < 30:
-                            self._filter_poll_logged = getattr(self, "_filter_poll_logged", 0) + 1
-                            self.log(f"[civ] filter poll: raw={fp.hex()} idx={idx} "
-                                     f"-> {filter_width_hz(self.mode, idx, self.data_mode)}Hz "
-                                     f"(current _filter_idx={self._filter_idx}, mode={self.mode}, data_mode={self.data_mode})")
                         if idx != self._filter_idx:
                             self._filter_idx = idx
                             self._filter_width_hz = filter_width_hz(self.mode, idx, self.data_mode)
