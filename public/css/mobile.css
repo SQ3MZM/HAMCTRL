@@ -178,6 +178,20 @@ input, textarea { font-family: inherit; }
   width: 100%; border: 1px solid var(--border2); border-radius: 8px; background: var(--panel2);
   color: var(--text); font-family: var(--mono); font-size: 13px; padding: 8px; min-height: 40px;
 }
+.m-select-row { margin-top: 10px; }
+
+/* ── Collapsible sections (native <details>/<summary> — no JS needed) ── */
+.m-collapsible summary {
+  cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px;
+  user-select: none;
+}
+.m-collapsible summary::-webkit-details-marker { display: none; }
+.m-collapsible summary::before {
+  content: '▸'; color: var(--dim); font-size: 10px; transition: transform 0.15s;
+}
+.m-collapsible[open] summary::before { transform: rotate(90deg); }
+.m-collapsible summary.m-card-title { margin-bottom: 0; }
+.m-collapsible[open] summary.m-card-title { margin-bottom: 8px; }
 .rf-buttons-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
 .rf-buttons-row::-webkit-scrollbar { display: none; }
 .rf-btn {

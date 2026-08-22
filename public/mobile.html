@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608230900">
+<link rel="stylesheet" href="css/mobile.css?v=202608231200">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -70,25 +70,41 @@
       </div>
     </section>
 
-    <!-- Przyciski funkcji radia (NB/NR/COMP/MON/...) i suwaki (RFPOWER/AF/...)
-         są generowane przez public/js/radiofunctions.js na podstawie tego,
-         co admin udostępnił temu userowi (ten sam mechanizm co desktop —
-         GET /api/rig/features) — mobile.html tylko daje im te same ID. -->
+    <!-- Przyciski funkcji radia (NB/NR/COMP/MON/...) są generowane przez
+         public/js/radiofunctions.js na podstawie tego, co admin udostępnił
+         temu userowi (ten sam mechanizm co desktop — GET /api/rig/features)
+         — mobile.html tylko daje im te same ID. FILTR/P.AMP/ATT to te same
+         <select> co desktop (nigdy nie synchronizowane z powrotem z radia
+         na desktopie też — czysto "wyślij i zapomnij", stan pokazuje się
+         realnie na samym radiu). -->
     <section class="m-card">
-      <div class="m-card-title">Funkcje</div>
-      <div id="rig-features-buttons" class="rf-buttons-row"></div>
-      <div style="margin-top:10px;">
-        <span class="m-sub-lbl">FILTR (FIL1/2/3 — z menu radia)</span>
-        <select id="bw-select" class="m-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
-          <option value="1">FIL1</option>
-          <option value="2">FIL2</option>
-          <option value="3">FIL3</option>
-        </select>
-      </div>
-    </section>
-
-    <section class="m-card" id="rig-dynamic-sliders" style="display:none;">
-      <div class="m-card-title">Suwaki radia</div>
+      <details class="m-collapsible" open>
+        <summary class="m-card-title">Funkcje</summary>
+        <div id="rig-features-buttons" class="rf-buttons-row"></div>
+        <div class="m-select-row">
+          <span class="m-sub-lbl">FILTR (FIL1/2/3 — z menu radia)</span>
+          <select id="bw-select" class="m-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
+            <option value="1">FIL1</option>
+            <option value="2">FIL2</option>
+            <option value="3">FIL3</option>
+          </select>
+        </div>
+        <div class="m-select-row">
+          <span class="m-sub-lbl">P.AMP</span>
+          <select id="preamp-select" class="m-select" onchange="WS.send({type:'preamp', value: parseInt(this.value)})">
+            <option value="0">P.AMP OFF</option>
+            <option value="1">P.AMP 1 ON</option>
+            <option value="2">P.AMP 2 ON</option>
+          </select>
+        </div>
+        <div class="m-select-row">
+          <span class="m-sub-lbl">ATT</span>
+          <select id="att-select" class="m-select" onchange="WS.send({type:'attenuator', value: this.value === '1'})">
+            <option value="0">ATT OFF</option>
+            <option value="1">ATT ON</option>
+          </select>
+        </div>
+      </details>
     </section>
 
     <section class="m-card m-meters">
@@ -100,6 +116,17 @@
 
     <section class="m-card m-ptt-card">
       <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
+    </section>
+
+    <!-- id musi być na <details>, nie na sekcji-owijce: renderSliders()
+         (radiofunctions.js) robi document.getElementById('rig-dynamic-sliders')
+         i appendChild(tile) BEZPOŚREDNIO do tego elementu — gdyby id było
+         na zewnętrznym <section>, suwaki wylądowałyby POZA <details> i nie
+         dałoby się ich zwinąć. -->
+    <section class="m-card">
+      <details class="m-collapsible" id="rig-dynamic-sliders" style="display:none;">
+        <summary class="m-card-title">Suwaki radia</summary>
+      </details>
     </section>
 
   </section>
@@ -284,8 +311,8 @@
 <script src="js/i18n.js?v=202608222200"></script>
 <script src="js/cw.js?v=202608222200"></script>
 <script src="js/wsjtx.js?v=202608222200"></script>
-<script src="js/radiofunctions.js?v=202608230900"></script>
-<script src="js/qsolog.js?v=202608230900"></script>
-<script src="js/mobile.js?v=202608230900"></script>
+<script src="js/radiofunctions.js?v=202608231200"></script>
+<script src="js/qsolog.js?v=202608231200"></script>
+<script src="js/mobile.js?v=202608231200"></script>
 </body>
 </html>
