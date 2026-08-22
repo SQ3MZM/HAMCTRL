@@ -44,6 +44,18 @@ person transmits at a time.
 - Multi-user accounts, role-based permissions, shared-radio lock/queue
 - Polish / English UI
 
+### System requirements
+
+- **OS: Windows 10 or newer** (64-bit). Not Windows 7/8/8.1 — the bundled
+  Rust audio/decode engine is compiled with a modern toolchain whose
+  binaries require Windows 10+ to even start.
+- **CPU/RAM:** modest. Measured on a 2012-era 4-core/8-thread laptop CPU
+  (i7-3612QM @ 2.1GHz) with FT8 decoding and the CW decoder both running
+  at once: ~17% total CPU, ~250MB total RAM across both HAMCTRL
+  processes. Any PC from the last ~10 years handles this comfortably.
+- A radio with a CI-V (or compatible) interface, connected by USB or a
+  serial/CAT cable (reference/tested model: Icom IC-7300).
+
 ### Quick start
 
 1. Download the installer from the [latest release](../../releases/latest).
@@ -136,6 +148,20 @@ systemowi blokady/przejęcia TRX, tak że nadaje zawsze tylko jedna osoba.
 - Audio SSB o niskim opóźnieniu przez WebRTC
 - Konta wielu użytkowników, uprawnienia wg roli, blokada/kolejka współdzielonego radia
 - Interfejs w języku polskim i angielskim
+
+### Wymagania systemowe
+
+- **System: Windows 10 lub nowszy** (64-bit). Nie Windows 7/8/8.1 —
+  dołączony silnik audio/dekodera w Rust jest budowany nowoczesnym
+  toolchainem, którego pliki .exe wymagają Windows 10+ żeby w ogóle
+  wystartować.
+- **CPU/RAM:** niewiele. Zmierzone na 4-rdzeniowym/8-wątkowym laptopie
+  sprzed ~13 lat (i7-3612QM @ 2.1GHz) przy jednoczesnym dekodowaniu FT8 i
+  pracy dekodera CW: ~17% CPU łącznie, ~250MB RAM łącznie dla obu
+  procesów HAMCTRL. Każdy komputer z ostatnich ~10 lat poradzi sobie bez
+  problemu.
+- Radio z interfejsem CI-V (lub kompatybilnym), podłączone przez USB lub
+  kabel szeregowy/CAT (model referencyjny/testowany: Icom IC-7300).
 
 ### Szybki start
 
