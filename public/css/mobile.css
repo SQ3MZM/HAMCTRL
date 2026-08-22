@@ -119,10 +119,10 @@ button, a { font-family: inherit; color: inherit; }
 .m-freq-strip[data-disabled="1"] { opacity: 0.4; touch-action: auto; }
 
 /* ── Meters ── */
-.m-meters { display: flex; justify-content: space-around; text-align: center; }
-.m-meter { display: flex; flex-direction: column; gap: 4px; }
-.m-meter-lbl { font-size: 10px; color: var(--dim); letter-spacing: 1px; }
-.m-meter-val { font-family: var(--mono); font-size: 20px; color: var(--green); }
+.m-meters { display: flex; justify-content: space-between; text-align: center; padding: 10px 8px; gap: 4px; }
+.m-meter { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.m-meter-lbl { font-size: 9px; color: var(--dim); letter-spacing: 1px; }
+.m-meter-val { font-family: var(--mono); font-size: 17px; color: var(--green); }
 
 /* ── PTT ── */
 .m-ptt-card { display: flex; justify-content: center; }

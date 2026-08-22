@@ -10,7 +10,7 @@
 const S = {
   connected: false,
   freq: 0, mode: '', bandwidth: 0,
-  sMeter: 0, pwr: 0, swr: 0,
+  sMeter: 0, pwr: 0, swr: 0, alc: 0,
   ptt: false,
   lock: { locked: false, user_id: null, username: '', callsign: '' },
   allBands: {}, enabledBands: [],
@@ -78,14 +78,14 @@ function handleMessage(msg) {
       if (msg.mode) S.mode = msg.mode;
       if (msg.bandwidth) S.bandwidth = msg.bandwidth;
       if (typeof msg.ptt === 'boolean') S.ptt = msg.ptt;
-      renderFreq(); renderModeChips(); renderPTT();
+      renderFreq(); updateModeActive(); updateBandActive(); renderPTT();
       break;
     case 'freq':
-      S.freq = msg.freq; renderFreq();
+      S.freq = msg.freq; renderFreq(); updateBandActive();
       break;
     case 'mode':
       S.mode = msg.mode; if (msg.bandwidth) S.bandwidth = msg.bandwidth;
-      renderModeChips();
+      updateModeActive();
       break;
     case 'smeter':
       S.sMeter = msg.value ?? 0; renderMeters();
@@ -93,6 +93,7 @@ function handleMessage(msg) {
     case 'txmeter':
       if (msg.meter === 'PWR') S.pwr = msg.value;
       else if (msg.meter === 'SWR') S.swr = msg.value;
+      else if (msg.meter === 'ALC') S.alc = msg.value;
       else break;
       renderMeters();
       break;
@@ -173,39 +174,65 @@ function renderFreq() {
   document.getElementById('m-freq').textContent = fmtFreq(S.freq);
 }
 
-function renderModeChips() {
+// Chip rows are built ONCE (loadBandsConfig) and afterwards only get their
+// 'active' class toggled — NOT a full innerHTML rebuild on every WS 'mode'/
+// 'freq' message. Also: the backend's mode/freq WS handlers broadcast the
+// confirmation with skip=ws (the SENDER never gets its own echo back — only
+// other connected clients do, see webapp.py ~5230 `hub.broadcast(..., skip=ws)`).
+// Live-tested finding: without a local optimistic update, tapping a mode/band
+// chip DID change the radio (confirmed on the desktop tab) but the mobile
+// page itself never reflected it — looked completely unresponsive. Fixed by
+// updating S.mode/S.freq and re-rendering immediately on tap, the same
+// pattern ui.js's setMode()/sendFreq() already use for the desktop UI.
+function buildModeChips() {
   const row = document.getElementById('m-mode-row');
   const modes = S.enabledModes.length ? S.enabledModes : ['USB', 'LSB', 'AM', 'FM', 'CW'];
-  row.innerHTML = modes.map(m =>
-    `<button class="m-chip ${m === S.mode ? 'active' : ''}" data-mode="${m}">${m}</button>`
-  ).join('');
+  row.innerHTML = modes.map(m => `<button class="m-chip" data-mode="${m}">${m}</button>`).join('');
   row.querySelectorAll('.m-chip').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!canControl()) { showToast('Zajmij radio, żeby zmieniać tryb', 'error'); return; }
-      wsSend({ type: 'mode', mode: btn.dataset.mode });
+      S.mode = btn.dataset.mode;
+      updateModeActive();
+      wsSend({ type: 'mode', mode: S.mode });
     });
   });
+  updateModeActive();
   renderLockedControls();
 }
 
-function renderBandChips() {
+function updateModeActive() {
+  document.querySelectorAll('#m-mode-row .m-chip').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === S.mode);
+  });
+}
+
+function buildBandChips() {
   const row = document.getElementById('m-band-row');
   const bands = S.enabledBands.length ? S.enabledBands : Object.keys(S.allBands);
-  const curBand = findBand(S.freq);
   row.innerHTML = bands.map(b => {
     const r = S.allBands[b];
     if (!r) return '';
-    return `<button class="m-chip ${b === curBand ? 'active' : ''}" data-freq="${r.def}" data-mode="${S.mode || 'USB'}">${b}</button>`;
+    return `<button class="m-chip" data-band="${b}" data-freq="${r.def}" data-mode="${S.mode || 'USB'}">${b}</button>`;
   }).join('');
   row.querySelectorAll('.m-chip').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!canControl()) { showToast('Zajmij radio, żeby zmieniać pasmo', 'error'); return; }
-      const freq = parseInt(btn.dataset.freq, 10);
-      wsSend({ type: 'freq', freq });
-      if (btn.dataset.mode && btn.dataset.mode !== S.mode) wsSend({ type: 'mode', mode: btn.dataset.mode });
+      S.freq = parseInt(btn.dataset.freq, 10);
+      if (btn.dataset.mode) S.mode = btn.dataset.mode;
+      renderFreq(); updateModeActive(); updateBandActive();
+      wsSend({ type: 'freq', freq: S.freq });
+      if (btn.dataset.mode) wsSend({ type: 'mode', mode: btn.dataset.mode });
     });
   });
+  updateBandActive();
   renderLockedControls();
+}
+
+function updateBandActive() {
+  const cur = findBand(S.freq);
+  document.querySelectorAll('#m-band-row .m-chip').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.band === cur);
+  });
 }
 
 function findBand(hz) {
@@ -223,8 +250,8 @@ async function loadBandsConfig() {
     S.enabledBands = db.enabledBands || [];
     S.allModes = dm.allModes || [];
     S.enabledModes = dm.enabledModes || [];
-    renderModeChips();
-    renderBandChips();
+    buildModeChips();
+    buildBandChips();
   } catch (e) { console.warn('[mobile] loadBandsConfig error:', e); }
 }
 
@@ -287,9 +314,10 @@ function initFreqStrip() {
 
 // ── Meters ───────────────────────────────────────────────────────────────────
 function renderMeters() {
-  document.getElementById('m-smeter').textContent = S.sMeter || S.sMeter === 0 ? S.sMeter : '--';
+  document.getElementById('m-smeter').textContent = S.sMeter != null ? S.sMeter : '--';
   document.getElementById('m-pwr').textContent = S.pwr != null ? S.pwr : '--';
   document.getElementById('m-swr').textContent = S.swr != null ? S.swr : '--';
+  document.getElementById('m-alc').textContent = S.alc != null ? S.alc : '--';
 }
 
 // ── PTT (press-and-hold — see plan for why not a toggle) ────────────────────
@@ -318,9 +346,13 @@ function renderPTT() {
 }
 
 // ── FT8 / CW status ──────────────────────────────────────────────────────────
+// States are qso_engine.py's ST_* constants, always uppercase: IDLE,
+// CALLING, REPORT_SENT, RRR_SENT, DONE (live-tested bug: comparing against
+// lowercase 'idle' never matched real 'IDLE', so the raw state string
+// leaked into the UI instead of the friendly fallback text below).
 function renderFt8Status(msg) {
   const el = document.getElementById('m-ft8-status');
-  if (msg.state && msg.state !== 'idle' && msg.state !== 'off') {
+  if (msg.state && msg.state !== 'IDLE') {
     el.textContent = `${msg.state}${msg.partner ? ' — ' + msg.partner : ''}`;
   } else if (msg.enabled === false) {
     el.textContent = 'automatyka wyłączona';
