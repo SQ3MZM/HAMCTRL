@@ -5668,6 +5668,32 @@ class App:
             # CQ to a specific station — automatically put the engine into
             # CALLING state so the automation can react to the reply without needing a double-click
             if self._auto_seq_enabled and call_to != "CQ":
+                # FIX (reported live 2026-08-24, RI1FJL/MSHV multistream):
+                # this path (manually typing/sending a grid to a NAMED
+                # station, without ever calling CQ or clicking a decoded
+                # row first) never synced the engine's my_call/my_grid to
+                # the operator's actual profile - unlike the "CQ" branch
+                # below (~line 5721) and ft8_start_auto_qso (~line 6093),
+                # which both do. self._qso_engine.my_call was left at
+                # whatever it was constructed with (a stale default), so
+                # EVERY incoming reply's "is this addressed to us"
+                # comparison silently failed - the automation was
+                # transmitting as the operator's real callsign (taken from
+                # elsewhere) but listening for a DIFFERENT one. Total
+                # silence on replies, with no error, exactly matching
+                # "automat nie reaguje na odpowiedz". Same sync logic as
+                # the other two call sites.
+                _ui = self.online_users.get(ws, {})
+                _ucall = (_ui.get("callsign") or "").strip().upper()
+                _uuid = _ui.get("user_id")
+                if _ucall:
+                    _uobj = self.find_user_by_id(_uuid) or {}
+                    _ugrid = (_uobj.get("locator") or LOCATOR).strip().upper()[:4]
+                    if (self._qso_engine.my_call != _ucall or
+                            self._qso_engine.my_grid != _ugrid):
+                        self._qso_engine.my_call = _ucall
+                        self._qso_engine.my_grid = _ugrid
+                        print(f"[autoqso] Manual-call operator sync: {_ucall} / {_ugrid}")
                 # If we're calling a specific station while the CQ loop is
                 # running - stop the CQ. Otherwise CQ and the station call
                 # fight over TX (the same conflict as CQ with a stale QSO).
@@ -6583,7 +6609,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-MULTISTREAM-DIAG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-MYCALL-DESYNC-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
