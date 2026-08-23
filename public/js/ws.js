@@ -623,11 +623,13 @@ function handleMessage(msg) {
     case 'level_value':
       // Slider value change (the CIV poller detected a change on the
       // radio, or another admin moved the slider — WS broadcast to everyone)
+      console.log(`[ws] level_value id=${msg.id} value=${msg.value}`);
       window.RadioFunctions?.handleLevelValue?.(msg);
       break;
     case 'rig_slider_ack':
       // ACK of a slider change from another user - update the slider for
       // whoever didn't change it (skip=ws on the server skips the author of the change).
+      console.log(`[ws] rig_slider_ack id=${msg.id} value=${msg.value}`);
       window.RadioFunctions?.handleLevelValue?.(msg);
       break;
     case 'func_state':

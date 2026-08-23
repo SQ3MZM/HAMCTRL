@@ -6583,7 +6583,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-MOBILE-FIXES, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-SLIDER-DIAG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7713,6 +7713,22 @@ class App:
                 await ws.send_json({"type": "toast",
                                      "msg": f"⚠ Nie udało się ustawić {param}", "level": "error"})
                 return
+
+        # Diagnostic (reported live 2026-08-23/24 as "phone slider changes
+        # the radio audibly, but www never updates") — print exactly who
+        # is about to receive the ack, so the next server log paste tells
+        # us whether www's connection is even in the recipient set
+        # (auth/subscription problem) or receives it but doesn't redraw
+        # (a frontend problem) instead of guessing further.
+        try:
+            recipients = [
+                self.online_users.get(c, {}).get("username", "?")
+                for c in self.hub._clients
+                if c is not ws and "control" in self.hub._subs.get(c, set())
+            ]
+            print(f"[rig] slider {slider_id}={value} ok -> rig_slider_ack to {recipients}")
+        except Exception:
+            pass
 
         await self.hub.broadcast({"type": "rig_slider_ack", "id": slider_id,
                                    "value": value}, skip=ws)
