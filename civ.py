@@ -506,16 +506,12 @@ class CivRig:
         Send text as CW over CI-V (cmd 17, max 30 characters at a time per
         the IC-7300/IC-746 documentation).
 
-        Conditions required by the radio:
-        1. Mode must be CW or CW-R (cmd 06 03 / 06 07)
-        2. Break-In must be enabled (cmd 16 47 01) — otherwise the radio
-           processes cmd 17 but doesn't enter TX
-        3. For IC-746: identical sequence, same commands
-
-        The function automatically:
-        - Switches to CW if the current mode isn't CW/CW-R
-        - Enables BK-IN if it isn't already enabled
-        - Restores the previous mode once sending is finished
+        Requires the radio to be in CW/CW-R mode (cmd 06 03) — this function
+        always (re-)sends that before keying, see the FIX comment below.
+        Keys via PTT (1C 00 01) + cmd 17, not BK-IN — BK-IN over USB causes
+        a continuous carrier instead of following the text, so PTT is used
+        instead. Does not restore whatever mode was active before the call;
+        the operator stays in CW after sending, as expected for a keyer.
         """
         text = "".join(c for c in text.upper() if c in self._CW_ALLOWED)
         if not text:
@@ -524,41 +520,37 @@ class CivRig:
             self.log(f"[civ] send_cw_message (SIM): {text!r}")
             return
 
-        # FIX (reported live 2026-08-24, mid-contest): this used to trust
-        # the CACHED self.mode to decide whether a mode switch is needed.
-        # self.mode is normally kept fresh by CI-V transceive echoes, but
-        # under heavy CI-V load (rapid-fire CW sends back to back, exactly
-        # a contest scenario) a manual mode change on the radio's own
-        # front panel — or any change whose echo lands while we're mid
-        # -transaction on something else — can be missed. Effect observed
-        # live: PTT visibly keys (ALC would move for a normal transmit)
-        # but NO CW actually goes out, because cmd 17 silently does
-        # nothing when the radio isn't really in CW — self.mode said CW,
-        # the radio wasn't, and the log showed a totally normal-looking
-        # PTT ON/chunk/PTT OFF/done sequence with nothing on the air. A
-        # fresh CI-V mode query here (bounded 0.3s) costs a little time
-        # but is the only way to be SURE — cheaper than a silently lost
-        # exchange.
-        real_mode = self.mode
-        try:
-            bp = await asyncio.to_thread(self._transact, bytes([0x04]), {0x04, 0x01}, 0.3)
-            if bp:
-                real_mode = self.mode_map.get(bp[0]) or self.mode
-        except Exception as e:
-            self.log(f"[civ] CW send: mode re-check failed ({e}), trusting cached mode")
-        if real_mode != self.mode:
-            self.log(f"[civ] CW send: cached mode {self.mode!r} was stale, radio is actually {real_mode!r}")
-            self.mode = real_mode
-
-        prev_mode = self.mode
-
-        # Step 1: Switch to CW if needed
-        cw_modes = ('CW', 'CW-R')
-        if self.mode not in cw_modes:
+        # FIX (reported live 2026-08-24, mid-contest, 2 rounds): this used
+        # to trust the CACHED self.mode, then (round 1 fix) confirm it with
+        # a fresh CI-V mode QUERY before deciding whether to switch. Round 1
+        # had its own blind spot: "raz nadaje ton a raz idzie tylko puste
+        # PTT... to ma chodzic jak karabin" (sometimes a real tone, sometimes
+        # just empty PTT — at contest, rapid-fire pace) — a busy CI-V bus is
+        # exactly when self.mode is MOST likely to have gone stale, and
+        # exactly when the confirmation query is MOST likely to itself
+        # time out and silently fall back to trusting the same stale
+        # self.mode, defeating the whole check under precisely the
+        # conditions it existed for.
+        #
+        # Fix: stop asking. ALWAYS send the mode-SET command, unconditionally,
+        # before every CW send — never trust self.mode to decide whether
+        # it's needed. Fire-and-forget (no ACK wait), same pattern set_freq()
+        # already uses below for the same reason: waiting for the ACK is
+        # what's slow, not the write itself, and cmd 17 already requires the
+        # radio to be in CW before it does anything anyway, so a redundant
+        # "set CW" when already in CW costs one bare serial write and stays
+        # invisible at contest speed. This trades the round-trip risk away
+        # entirely instead of trying to make it more reliable.
+        was_already_cw = self.mode in ('CW', 'CW-R')
+        if not was_already_cw:
             self.log(f"[civ] CW send: switching from {self.mode!r} to CW")
-            await asyncio.to_thread(
-                self._transact, bytes([0x06, 0x03]), {0xFB, 0xFA}, 0.4)
-            self.mode = 'CW'
+        await asyncio.to_thread(self._write, bytes([0x06, 0x03]))
+        self.mode = 'CW'
+        if not was_already_cw:
+            # Only pay the settle delay when we know we're ACTUALLY asking
+            # the radio to change something (mode indicator, filter, BFO) —
+            # a reinforcing "set CW" while already in CW is a no-op on the
+            # radio's end and needs no settle time.
             await asyncio.sleep(0.15)
 
         # Step 2: PTT ON (1C 00 01) — over USB the radio requires PTT before cmd 17
