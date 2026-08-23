@@ -349,10 +349,20 @@ const RadioFunctions = (() => {
 
   function handleWsMessage(data) {
     if (data.type !== 'rig_features') return;
-    if (data.active !== undefined) {
-      renderActions(data.actions || []);
-      renderSliders(data.sliders || []);
-    }
+    // FIX (found live 2026-08-24): this used to render straight from the
+    // broadcast payload (data.active/.actions/.sliders). But the server's
+    // POST /api/rig/features handler (_set_rig_features in webapp.py)
+    // broadcasts ONE payload to every client — the OPERATOR-shaped
+    // effective/filtered list — not the role-aware shape each client's
+    // own GET /api/rig/features would return. An admin's own www tab
+    // receiving that broadcast silently swapped its "see everything,
+    // even disabled" admin slider list for the same reduced list an
+    // operator sees, with no error and no visual sign anything changed —
+    // it just looked like sliders stopped syncing live. Re-fetching here
+    // instead goes through the same role-aware endpoint the initial page
+    // load uses, so admin stays admin and operator stays operator no
+    // matter who saved a feature toggle.
+    refresh();
   }
 
   // ── Live slider update after WS 'level_value' ────────────────────────────
