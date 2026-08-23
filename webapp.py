@@ -6583,7 +6583,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-RST-PLUS59-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-MULTISTREAM-DIAG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7027,11 +7027,36 @@ class App:
             # parsing would lose that (or parse nonsense, e.g. "RR73" as a
             # callsign). A dedicated translator is used instead.
             if m.get("isDxpedition"):
+                # Diagnostic (reported live 2026-08-24: "automat nie
+                # reaguje na multistream, w logu nic nie ma" - RI1FJL,
+                # MSHV Multi Answering). The generic per-decode print
+                # below is disabled for perf (20-40 decodes/sec), but
+                # type-0.1/multistream decodes are rare - printing every
+                # ONE of these costs nothing and is the only way to see
+                # what the Rust decoder actually extracted (call_to/
+                # call_de/senderCall/report) BEFORE parse_dxpedition_message
+                # runs, instead of guessing whether the miss is in
+                # decoding, parsing, or callsign matching.
+                print(f"[autoqso] DXpedition/multistream decode: "
+                      f"call_to={m.get('call_to')!r} call_de={m.get('call_de')!r} "
+                      f"senderCall={m.get('senderCall')!r} report={m.get('report_or_grid')!r} "
+                      f"my_call={self._qso_engine.my_call!r}")
                 parsed = qso_engine.parse_dxpedition_message(
                     m.get("call_to"), m.get("call_de"), m.get("senderCall"),
                     m.get("report_or_grid"), self._qso_engine.my_call)
+                print(f"[autoqso] DXpedition/multistream parsed -> {parsed!r}")
             else:
                 parsed = qso_engine.parse_message(m["message"])
+                # Same diagnostic, standard-format side: any raw decode
+                # whose sender is our CURRENT partner (bounded to one
+                # callsign, not the full band - safe to always print).
+                # Confirms whether RI1FJL-style stations sometimes answer
+                # in plain (non-multistream) format too, and whether our
+                # own parser recognizes it.
+                _partner = (self._qso_engine.partner_call or "").upper()
+                if _partner and str(m.get("call_de", "")).upper() == _partner:
+                    print(f"[autoqso] standard decode from partner {_partner}: "
+                          f"{m.get('message')!r} -> parsed={parsed!r}")
             # NOTE (perf): removed the per-decode print — it logged EVERY
             # FT8/FT4 decode (20-40/sec on a busy band), and each print is a
             # blocking syscall clogging the event loop.
