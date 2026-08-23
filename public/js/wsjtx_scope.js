@@ -324,6 +324,17 @@ function init() {
   canvas.addEventListener('mousedown', _onMouseDown);
   window.addEventListener('mousemove', _onMouseMove);
   window.addEventListener('mouseup', _onMouseUp);
+  // Touch support (added for the mobile mini-waterfall — this file
+  // previously only handled mouse events, which desktop browsers never
+  // needed touch equivalents for, but a phone has no mouse at all: no
+  // touch listeners meant the waterfall rendered but tapping/dragging the
+  // TX/RX markers (or picking a Hound slot) silently did nothing).
+  // {passive:false} is required because touchmove calls preventDefault()
+  // to stop the page from scrolling while dragging a marker.
+  canvas.addEventListener('touchstart', _onTouchStart, { passive: false });
+  window.addEventListener('touchmove', _onTouchMove, { passive: false });
+  window.addEventListener('touchend', _onTouchEnd);
+  window.addEventListener('touchcancel', _onTouchEnd);
 
   if (window.ResizeObserver) {
     const ro = new ResizeObserver(() => { _resizeCanvas(); _renderAxis(); _requestRender(); });
@@ -513,6 +524,25 @@ function _onMouseMove(ev) {
 
 function _onMouseUp() {
   _dragging = null;
+}
+
+// Touch equivalents — translate the touch point's clientX into the same
+// {clientX, preventDefault} shape _onMouseDown/_onMouseMove already
+// expect, instead of duplicating their hit-testing/drag logic.
+function _onTouchStart(ev) {
+  if (ev.touches.length !== 1) return; // ignore pinch/multi-touch
+  const t = ev.touches[0];
+  _onMouseDown({ clientX: t.clientX, preventDefault: () => ev.preventDefault() });
+}
+function _onTouchMove(ev) {
+  if (!_dragging) return;
+  const t = ev.touches[0];
+  if (!t) return;
+  ev.preventDefault(); // dragging a marker shouldn't also scroll the page
+  _onMouseMove({ clientX: t.clientX });
+}
+function _onTouchEnd() {
+  _onMouseUp();
 }
 
 function toggleTxFreeze() {

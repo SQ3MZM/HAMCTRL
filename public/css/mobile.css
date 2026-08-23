@@ -261,6 +261,45 @@ input, textarea { font-family: inherit; }
   width: 100%; border: 1px solid var(--border2); border-radius: 8px; background: var(--panel2);
   color: var(--text); font-family: var(--mono); font-size: 13px; padding: 10px; min-height: 44px;
 }
+
+/* ── FT8 top row (mode switch + clock + status pill), scope, TX settings ── */
+.m-ft8-top-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.m-ft8-top-row .wj-mode-switch { flex: 1; margin-bottom: 0; }
+.wsjtx-status-pill {
+  font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap;
+  border: 1px solid var(--border2); border-radius: 10px; padding: 4px 8px; background: var(--panel2);
+}
+.wsjtx-clock-wrap { display: flex; align-items: center; gap: 3px; }
+.m-ft8-clock-s { font-family: var(--mono); font-size: 13px; color: var(--text); min-width: 16px; text-align: right; }
+
+.m-ft8-check-row { display: flex; gap: 10px; margin-top: 8px; }
+.m-switch-row-inline {
+  display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; color: var(--dim);
+}
+.m-switch-row-inline input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); }
+.m-hound-check {
+  color: #f90; border: 1px solid rgba(255,140,0,0.3); border-radius: 4px; padding: 2px 6px;
+}
+.m-hound-check input[type="checkbox"] { accent-color: #f90; }
+
+/* Mini-wodospad: wsjtx_scope.js czeka na realny rozmiar canvasu (getBoundingClientRect)
+   zanim zainicjuje WebGL - musi mieć jawną wysokość, nie auto/0. */
+.m-ft8-scope-card { padding: 8px; }
+.m-ft8-scope-wrap { position: relative; width: 100%; height: 120px; border-radius: 6px; overflow: hidden; }
+.m-ft8-scope-canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.m-ft8-df-row {
+  display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10px;
+  color: var(--dim); margin-top: 4px;
+}
+.m-ft8-df-row span span { color: var(--green); }
+
+.m-ft8-period-switch { display: flex; gap: 6px; margin-bottom: 8px; }
+.m-ft8-freq-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.m-ft8-freq-row .m-sub-lbl { margin-bottom: 0; white-space: nowrap; }
+.m-ft8-freq-input {
+  flex: 1; text-align: right; font-family: var(--mono);
+}
+.m-ft8-fake-split-target { font-family: var(--mono); font-size: 9px; color: var(--dim); margin-top: 2px; }
 .m-switch-row {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 13px; padding: 4px 0;

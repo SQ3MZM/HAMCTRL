@@ -142,13 +142,60 @@
   <section class="m-tabpanel" id="tab-ft8">
 
     <section class="m-card">
-      <div class="wj-mode-switch" id="wj-mode-switch">
-        <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
-        <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
+      <div class="m-ft8-top-row">
+        <div class="wj-mode-switch" id="wj-mode-switch">
+          <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
+          <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
+        </div>
+        <div class="wsjtx-clock-wrap">
+          <canvas id="wj-clock" width="28" height="28"></canvas>
+          <div id="wj-clock-s" class="m-ft8-clock-s">0</div>
+        </div>
+        <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
       </div>
       <select id="wj-band-select" class="wj-band-select" onchange="WSJTX.tuneToBand(this.value)">
         <option value="">-- pasmo --</option>
       </select>
+      <div class="m-ft8-check-row">
+        <label class="m-switch-row-inline">
+          <input type="checkbox" id="wj-cq-only-toggle" onchange="WSJTX.toggleCqOnly()"> CQ
+        </label>
+        <label class="m-switch-row-inline m-hound-check">
+          <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"> HOUND
+        </label>
+      </div>
+      <!-- Elementy Hound ukryte tak samo jak na desktopie (index.html:
+           "Ukryte elementy Hound dla JS" - wsjtx.js sam wypelnia/czyta
+           te ID, nigdy nie mialy widocznego panelu nawet na desktopie -
+           przelacznik wyzej + dotkniecie wodospadu wystarcza do obslugi. -->
+      <input type="checkbox" id="wj-auto-seq-toggle" checked style="display:none;">
+      <div id="wj-hound-status" style="display:none;"></div>
+      <div id="wj-hound-seq" style="display:none;"></div>
+      <div id="wj-hound-step-1" style="display:none;"><span id="wj-hound-step-1-status"></span></div>
+      <div id="wj-hound-step-2" style="display:none;"><span id="wj-hound-step-2-status"></span></div>
+      <div id="wj-hound-step-3" style="display:none;"><span id="wj-hound-step-3-status"></span></div>
+      <div id="wj-hound-step-4" style="display:none;"><span id="wj-hound-step-4-status"></span></div>
+      <span id="wj-hound-fox-call" style="display:none;"></span>
+      <span id="wj-hound-tx-freq" style="display:none;"></span>
+      <span id="wj-hound-attempts" style="display:none;"></span>
+      <div id="wj-hound-active-badge" style="display:none;"></div>
+      <div id="wj-hound-desc" style="display:none;"></div>
+      <div id="wj-hound-status-inline" style="display:none;"></div>
+      <button id="wj-hound-stop-btn" style="display:none;" onclick="WSJTX.houndStop()"></button>
+    </section>
+
+    <!-- Mini-wodospad — ten sam wj-scope-canvas + wsjtx_scope.js co desktop
+         (WebGL, dane/palety identyczne), tylko nizszy przez CSS. Dotyk
+         dziala dzieki dopisanym w wsjtx_scope.js touchstart/move/end
+         (desktop mial tylko obsluge myszy). -->
+    <section class="m-card m-ft8-scope-card">
+      <div class="m-ft8-scope-wrap">
+        <canvas id="wj-scope-canvas" class="m-ft8-scope-canvas"></canvas>
+      </div>
+      <div class="m-ft8-df-row">
+        <span>RX <span id="wj-rx-df">--</span> Hz</span>
+        <span>TX <span id="wj-tx-df">--</span> Hz</span>
+      </div>
     </section>
 
     <section class="m-card">
@@ -214,6 +261,67 @@
         <span class="m-mini-btn" onclick="WSJTX.clearDecodes()">wyczyść</span>
       </div>
       <div id="wj-decodes" class="wsjtx-decode-list m-ft8-decodes"></div>
+    </section>
+
+    <!-- Rzadziej dotykane ustawienia TX — zwinięte domyślnie, te same ID/
+         funkcje wsjtx.js co desktop (period switch, TX/RX freq, freeze,
+         Fake Split, TUNE). HALT TX zostaje wyżej, zawsze widoczny (bezpieczeństwo). -->
+    <section class="m-card">
+      <details class="m-collapsible">
+        <summary class="m-card-title">Ustawienia TX</summary>
+        <div class="wj-period-switch m-ft8-period-switch" id="wj-period-switch">
+          <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
+          <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
+        </div>
+        <div class="m-ft8-freq-row">
+          <span class="m-sub-lbl">TX Hz</span>
+          <input type="number" id="wj-tx-freq-input" class="m-text-input m-ft8-freq-input" step="1"
+            onchange="WSJTX.setTxFreqManual(this.value)">
+          <button id="wj-rx-eq-tx-btn" class="m-btn m-btn-sm" onclick="WSJTX.rxEqTx()">RX=TX</button>
+        </div>
+        <div class="m-ft8-freq-row">
+          <span class="m-sub-lbl">RX Hz</span>
+          <input type="number" id="wj-rx-freq-input" class="m-text-input m-ft8-freq-input" step="1"
+            onchange="WSJTX.setRxFreqManual(this.value)">
+          <button id="wj-tx-eq-rx-btn" class="m-btn m-btn-sm" onclick="WSJTX.txEqRx()">TX=RX</button>
+        </div>
+        <div class="m-ft8-actions">
+          <button id="wj-tx-freeze-btn" class="m-btn m-btn-sm" onclick="WSJTX.toggleTxFreeze()">🔓 TX WOLNY</button>
+          <button id="wj-fake-split-toggle" class="m-btn m-btn-sm" onclick="WSJTX.toggleFakeSplit()">⭕ Fake Split: OFF</button>
+        </div>
+        <div id="wj-fake-split-target" class="m-ft8-fake-split-target"></div>
+        <button id="wj-tune-btn" class="m-btn m-btn-sm" onclick="WSJTX.startTune()" style="margin-top:6px;width:100%;">🎵 TUNE</button>
+      </details>
+    </section>
+
+    <!-- Filtry widoku i palety wodospadu — zwinięte, dotykane rzadko. -->
+    <section class="m-card">
+      <details class="m-collapsible">
+        <summary class="m-card-title">Filtry / widok</summary>
+        <label class="m-switch-row">
+          <span>Ukryj pracowane (HIDE WORKED)</span>
+          <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)">
+        </label>
+        <div class="m-wpm-row">
+          <span class="m-sub-lbl">REF</span>
+          <input type="range" id="wj-palette-ref" class="m-wpm-slider" min="0" max="100" value="15" step="1"
+            oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value">
+          <span id="wj-palette-ref-val" class="m-wpm-val">15</span>
+        </div>
+        <div class="m-wpm-row">
+          <span class="m-sub-lbl">ZERO</span>
+          <input type="range" id="wj-palette-zero" class="m-wpm-slider" min="0" max="60" value="0" step="1"
+            oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value">
+          <span id="wj-palette-zero-val" class="m-wpm-val">0</span>
+        </div>
+        <div class="m-wpm-row">
+          <span class="m-sub-lbl">GAIN</span>
+          <input type="range" id="wj-palette-gain" class="m-wpm-slider" min="30" max="300" value="100" step="5"
+            oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)">
+          <span id="wj-palette-gain-val" class="m-wpm-val">1.0</span>
+        </div>
+        <button onclick="WSJTX.resetPaletteAdjust()" class="m-btn m-btn-sm" style="width:100%;margin-top:4px;">↺ Reset palety</button>
+      </details>
     </section>
 
   </section>
@@ -380,6 +488,7 @@
 <script src="js/i18n.js?v=202608222200"></script>
 <script src="js/cw.js?v=202608241700"></script>
 <script src="js/wsjtx.js?v=202608241500"></script>
+<script src="js/wsjtx_scope.js?v=202608242000"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
