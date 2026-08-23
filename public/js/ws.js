@@ -635,6 +635,24 @@ function handleMessage(msg) {
     case 'func_state':
       window.RadioFunctions?.handleFuncState?.(msg);
       break;
+    case 'cw_sending':
+    case 'cw_done':
+    case 'cw_stopped':
+    case 'cw_error':
+      // FIX (reported live 2026-08-24: "bardzo dlugo czeka zanim mi
+      // pozwoli makro znow nadac" - every CW send left the keyer looking
+      // "busy" for ~20s). cw.js's own handleWS() (clears cwActive on
+      // cw_done/cw_stopped/cw_error, sets it on cw_sending) was never
+      // wired into this dispatcher on desktop at all - only mobile.js
+      // forwarded these types to CW.handleWS. Without it, cwActive here
+      // could only ever be cleared by cw.js's own 20s safety-timeout
+      // fallback (added earlier the same day for a different failure mode),
+      // never by the real, near-instant confirmation - so EVERY
+      // successful send left the "tap again = stop" state armed until
+      // that timeout finally expired, not until the transmission actually
+      // finished a few seconds later as intended.
+      window.CW?.handleWS?.(msg);
+      break;
     case 'rig_features':
       window.RadioFunctions?.handleWsMessage?.(msg);
       break;
