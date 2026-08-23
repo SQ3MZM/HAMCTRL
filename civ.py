@@ -524,6 +524,32 @@ class CivRig:
             self.log(f"[civ] send_cw_message (SIM): {text!r}")
             return
 
+        # FIX (reported live 2026-08-24, mid-contest): this used to trust
+        # the CACHED self.mode to decide whether a mode switch is needed.
+        # self.mode is normally kept fresh by CI-V transceive echoes, but
+        # under heavy CI-V load (rapid-fire CW sends back to back, exactly
+        # a contest scenario) a manual mode change on the radio's own
+        # front panel — or any change whose echo lands while we're mid
+        # -transaction on something else — can be missed. Effect observed
+        # live: PTT visibly keys (ALC would move for a normal transmit)
+        # but NO CW actually goes out, because cmd 17 silently does
+        # nothing when the radio isn't really in CW — self.mode said CW,
+        # the radio wasn't, and the log showed a totally normal-looking
+        # PTT ON/chunk/PTT OFF/done sequence with nothing on the air. A
+        # fresh CI-V mode query here (bounded 0.3s) costs a little time
+        # but is the only way to be SURE — cheaper than a silently lost
+        # exchange.
+        real_mode = self.mode
+        try:
+            bp = await asyncio.to_thread(self._transact, bytes([0x04]), {0x04, 0x01}, 0.3)
+            if bp:
+                real_mode = self.mode_map.get(bp[0]) or self.mode
+        except Exception as e:
+            self.log(f"[civ] CW send: mode re-check failed ({e}), trusting cached mode")
+        if real_mode != self.mode:
+            self.log(f"[civ] CW send: cached mode {self.mode!r} was stale, radio is actually {real_mode!r}")
+            self.mode = real_mode
+
         prev_mode = self.mode
 
         # Step 1: Switch to CW if needed
