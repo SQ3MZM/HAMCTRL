@@ -540,6 +540,69 @@ function initCwMacroGestures() {
   });
 }
 
+// ── Manual frequency entry (long-press #m-freq / #m-freq-other) ──────────
+// Same tap-vs-hold gesture pattern as initCwMacroGestures above, but
+// there's no competing short-tap action here (the freq display isn't
+// clickable otherwise), so any hold just opens the edit modal.
+let _freqEditVfo = null; // 'A' | 'B' — which display was long-pressed
+
+function initFreqEditGestures() {
+  [['m-freq', 'A'], ['m-freq-other', 'B']].forEach(([id, vfo]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let pressTimer = null;
+    el.addEventListener('pointerdown', () => {
+      pressTimer = setTimeout(() => openFreqEdit(vfo), 550);
+    });
+    const cancelTimer = () => clearTimeout(pressTimer);
+    el.addEventListener('pointerup', cancelTimer);
+    el.addEventListener('pointerleave', cancelTimer);
+    el.addEventListener('pointercancel', cancelTimer);
+  });
+}
+
+function openFreqEdit(vfo) {
+  if (!canControl()) { showToast('Zajmij radio, żeby zmienić częstotliwość', 'error'); return; }
+  _freqEditVfo = vfo;
+  const title = document.getElementById('m-freq-edit-title');
+  if (title) title.textContent = 'Częstotliwość VFO ' + vfo;
+  const input = document.getElementById('m-freq-edit-input');
+  if (input) {
+    const hz = vfo === 'B' ? S.freqB : S.freq;
+    input.value = hz ? String((hz / 1e6).toFixed(6)).replace(/0+$/, '').replace(/\.$/, '') : '';
+  }
+  const modal = document.getElementById('m-freq-edit-modal');
+  if (modal) modal.style.display = 'flex';
+  input?.focus();
+}
+
+function closeFreqEdit() {
+  const modal = document.getElementById('m-freq-edit-modal');
+  if (modal) modal.style.display = 'none';
+  _freqEditVfo = null;
+}
+
+function saveFreqEdit() {
+  const input = document.getElementById('m-freq-edit-input');
+  const raw = (input?.value || '').trim().replace(',', '.');
+  const v = parseFloat(raw);
+  if (!raw || isNaN(v) || v <= 0) { showToast('Nieprawidłowa częstotliwość', 'error'); return; }
+  // Accept either MHz ("14.074") or raw Hz — any real ham frequency in
+  // MHz is well under 1000, so a bigger typed number must already be Hz
+  // (same heuristic as qso_db.py's _normalize_freq_mhz).
+  const hz = Math.round(v < 1000 ? v * 1e6 : v);
+  if (_freqEditVfo === 'B') {
+    S.freqB = hz;
+    renderFreq();
+    wsSend({ type: 'freqB', freqB: hz });
+  } else {
+    S.freq = hz;
+    renderFreq();
+    wsSend({ type: 'freq', freq: hz });
+  }
+  closeFreqEdit();
+}
+
 // ── QSO log ──────────────────────────────────────────────────────────────────
 function renderLogRow(q) {
   const time = (q.time_on || '').slice(0, 5);
@@ -629,6 +692,7 @@ window.addEventListener('app:ready', () => {
   loadBandsConfig();
   loadLog();
   initCwMacroGestures();
+  initFreqEditGestures();
   fetch('/api/radio/state').then(r => r.json()).then(d => {
     S.lock = { locked: !!d.locked, user_id: d.user_id, username: d.username, callsign: d.callsign };
     renderLock(); renderLockedControls();
@@ -655,6 +719,7 @@ connect();
 window.Mobile = {
   toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit,
   toggleRxAudio, openSettings, closeSettings, setMicDevice,
+  closeFreqEdit, saveFreqEdit,
   showToast, // mobile_audio.js reuses this for its own error toasts
 };
 

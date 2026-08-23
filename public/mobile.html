@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608232330">
+<link rel="stylesheet" href="css/mobile.css?v=202608241800">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -54,6 +54,7 @@
         <span>VFO B</span>
         <span id="m-freq-other" class="m-freq-other">-.---.-- MHz</span>
       </div>
+      <div class="m-freq-hint">przytrzymaj częstotliwość, żeby wpisać ręcznie</div>
 
       <div id="m-mode-row" class="m-chip-row"></div>
 
@@ -345,6 +346,20 @@
   </div>
 </div>
 
+<!-- Ręczne wpisanie częstotliwości — przytrzymanie #m-freq/#m-freq-other
+     (initFreqEditGestures w mobile.js) otwiera ten modal dla VFO A/B. -->
+<div id="m-freq-edit-modal" class="m-modal" style="display:none">
+  <div class="m-modal-box">
+    <div class="m-card-title" id="m-freq-edit-title">Częstotliwość</div>
+    <input id="m-freq-edit-input" class="m-text-input" type="text" inputmode="decimal"
+      placeholder="np. 14.074 (MHz)">
+    <div class="m-modal-actions">
+      <button class="m-btn m-btn-sm" onclick="Mobile.closeFreqEdit()">Anuluj</button>
+      <button class="m-btn m-btn-amber m-btn-sm" onclick="Mobile.saveFreqEdit()">Ustaw</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edycja makra CW — te same ID co desktopowy #cw-edit-modal (cw.js:
      startEdit/saveEditMacro czytają/pisza dokladnie te pola), tylko
      wyglad z mobile.css. -->
@@ -369,6 +384,6 @@
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
 <script src="js/mobile_audio.js?v=202608232330"></script>
-<script src="js/mobile.js?v=202608232330"></script>
+<script src="js/mobile.js?v=202608241800"></script>
 </body>
 </html>
