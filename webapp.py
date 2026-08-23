@@ -5707,6 +5707,27 @@ class App:
                 if is_grid and self._qso_engine.state == "IDLE":
                     self._qso_engine.start_qso(call_to)
                     print(f"[autoqso] Manual TX grid -> auto-start QSO with {call_to}")
+                    # FIX (reported live 2026-08-24: "powinienem ja wolac w
+                    # periodzie 1 a wolam 2, bo inaczej sie na nia
+                    # nakladam") - auto-pick OUR TX period from the last
+                    # time we heard THIS station transmit (see the
+                    # _call_last_heard cache in _ft8_rx_loop), the same way
+                    # _send_auto_tx already does for automatic replies via
+                    # partner_decode. Without this, a manually-initiated
+                    # call to a named station kept whatever period was left
+                    # over from unrelated earlier activity - if that
+                    # happened to match the station's OWN period, every
+                    # transmission collided with theirs on air and neither
+                    # side could ever hear the other.
+                    _lh_epoch = getattr(self, "_call_last_heard", {}).get(call_to.upper())
+                    if _lh_epoch is not None:
+                        _window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
+                        _my_period = self._period_from_epoch(_lh_epoch, _window_s)
+                        if _my_period is not None and self._ft8_tx_period != _my_period:
+                            self._ft8_tx_period = _my_period
+                            print(f"[autoqso] Auto-period for manual call to {call_to}: {_my_period}")
+                            await self.hub.broadcast({"type": "ft8_tx_period", "period": _my_period})
+                        self._qso_period_locked = True
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,
                                                "partner": self._qso_engine.partner_call})
@@ -5773,6 +5794,19 @@ class App:
                                            "state": self._qso_engine.state,
                                            "partner": None})
                 return
+            # FIX (reported live 2026-08-24: "dlaczego wolam tylko raz a nie
+            # tyle ile idzie zegar" - a station worked by manually typing a
+            # grid and sending, never auto-retransmitted no matter how long
+            # we waited). should_retransmit()'s whole timer is driven by
+            # self._qso_engine.last_tx_at, but record_tx_sent() (the only
+            # thing that sets it) used to be called ONLY from _send_auto_tx
+            # - the AUTOMATIC reply path. A manually-triggered transmission
+            # like this one never told the engine "we just transmitted", so
+            # should_retransmit() saw last_tx_at=None forever and the retry
+            # timer never armed for a QSO that was manually started. Any
+            # actual transmission - manual or automatic - should count.
+            if self._qso_engine.is_active():
+                self._qso_engine.record_tx_sent()
             asyncio.create_task(self._ft8_tx_sequence(call_to, call_de, report, r_flag))
 
         elif t == "ft8_tx_stop":
@@ -6609,7 +6643,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-MYCALL-DESYNC-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-RETRY-AND-PERIOD-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7599,6 +7633,33 @@ class App:
                         if len(_gc) > 1000:
                             _gc.clear()
                         _gc[_cd] = _rg
+                except Exception:
+                    pass
+
+                # Cache call -> last RECEIVE epoch heard transmitting.
+                # Needed to auto-pick the correct TX period (1/2, see
+                # _period_from_epoch) when manually starting a QSO with a
+                # NAMED station we've only seen in the decode window, not
+                # yet exchanged with directly (see the "Manual TX grid"
+                # handler above) - without this the operator had to figure
+                # out and set the period by hand every time, or risk
+                # transmitting in the SAME period as the station they're
+                # calling (real on-air collision, reported live 2026-08-24:
+                # "powinienem ja wolac w periodzie 1 a wolam 2, bo inaczej
+                # sie na nia nakladam"). The odd/even period pattern is
+                # absolute (tied to UTC time, not relative to when we heard
+                # them), so even a STALE cached epoch from minutes ago still
+                # correctly says which period that station uses, as long as
+                # they haven't switched mid-session (atypical).
+                try:
+                    _sender_call = (msg.get("call_de") or "").strip().upper()
+                    if _sender_call and not _sender_call.startswith("<"):
+                        _lh = getattr(self, "_call_last_heard", None)
+                        if _lh is None:
+                            _lh = self._call_last_heard = {}
+                        if len(_lh) > 1000:
+                            _lh.clear()
+                        _lh[_sender_call] = msg["recvEpoch"]
                 except Exception:
                     pass
 
