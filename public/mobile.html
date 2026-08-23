@@ -73,6 +73,30 @@
       </div>
     </section>
 
+    <!-- Operatorzy online + prośby o TRX — reużywa RadioLock/OpPanel
+         (public/js/radiolock.js, wydzielone z index.html) tymi samymi ID
+         co desktop (op-list/op-btn-*), tylko przestylizowane. Istniejący
+         prosty przełącznik zajmij/zwolnij w górnym pasku (#m-lock-status/
+         #m-lock-btn) zostaje bez zmian — to dodaje to czego brakowało:
+         listę kto jest online i obsługę próśb o radio. Powiadomienie o
+         przychodzącej prośbie (_showRequestToast) działa automatycznie
+         na całej stronie, niezależnie od tej karty. -->
+    <section class="m-card">
+      <details class="m-collapsible" open>
+        <summary class="m-card-title">
+          Operatorzy <span id="op-online-count" class="m-op-count">0</span>
+        </summary>
+        <div id="op-list" class="m-op-list"></div>
+        <div id="op-lock-status" class="m-op-lock-status">🔓 RADIO WOLNE</div>
+        <div class="m-vfo-actions">
+          <button id="op-btn-take" class="m-btn m-btn-amber m-btn-sm" onclick="RadioLock.lockRadio()" style="display:none;">▶ PRZEJMIJ TRX</button>
+          <button id="op-btn-release" class="m-btn m-btn-red m-btn-sm" onclick="RadioLock.releaseRadio()" style="display:none;">✕ ODDAJ TRX</button>
+        </div>
+        <button id="op-btn-request" class="m-btn m-btn-amber m-btn-sm" onclick="RadioLock.requestRadio()" style="display:none;width:100%;margin-top:6px;">🙋 POPROŚ O TRX</button>
+        <button id="op-btn-force" class="m-btn m-btn-sm" onclick="RadioLock.forceRelease()" style="display:none;width:100%;margin-top:6px;">⚡ WYMUŚ (admin)</button>
+      </details>
+    </section>
+
     <section class="m-card m-meters">
       <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
       <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
@@ -468,6 +492,23 @@
   </div>
 </div>
 
+<!-- Generyczny modal potwierdzenia — window.UI.confirmModal() w mobile.js,
+     ten sam kontrakt (message, {title,okLabel,danger}) co desktopowy
+     #confirm-modal (ui.js), potrzebny żeby RadioLock.forceRelease()
+     (reużyte z radiolock.js) miało na czym zapytać "na pewno?" zamiast
+     cicho nic nie robić (window.UI?.confirmModal bez tego zwracał
+     undefined -> "wymuś" nigdy by faktycznie nie zadzialalo). -->
+<div id="confirm-modal" class="m-modal" style="display:none" onclick="if(event.target===this) UI._confirmModalCancel()">
+  <div class="m-modal-box">
+    <div class="m-card-title" id="confirm-modal-title">POTWIERDŹ</div>
+    <div id="confirm-modal-msg" class="m-confirm-msg"></div>
+    <div class="m-modal-actions">
+      <button class="m-btn m-btn-sm" onclick="UI._confirmModalCancel()">Anuluj</button>
+      <button id="confirm-modal-ok" class="m-btn m-btn-amber m-btn-sm" onclick="UI._confirmModalSubmit()">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- Edycja makra CW — te same ID co desktopowy #cw-edit-modal (cw.js:
      startEdit/saveEditMacro czytają/pisza dokladnie te pola), tylko
      wyglad z mobile.css. -->
@@ -489,6 +530,7 @@
 <script src="js/cw.js?v=202608241700"></script>
 <script src="js/wsjtx.js?v=202608241500"></script>
 <script src="js/wsjtx_scope.js?v=202608242000"></script>
+<script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>

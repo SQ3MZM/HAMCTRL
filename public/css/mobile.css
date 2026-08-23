@@ -293,6 +293,18 @@ input, textarea { font-family: inherit; }
 }
 .m-ft8-df-row span span { color: var(--green); }
 
+/* ── Operatorzy (RadioLock/OpPanel reuse, public/js/radiolock.js) ── */
+.m-op-count {
+  font-family: var(--mono); font-size: 10px; color: var(--green); background: var(--panel2);
+  border: 1px solid var(--border2); border-radius: 10px; padding: 1px 7px; margin-left: auto;
+}
+.m-op-list { display: flex; flex-direction: column; gap: 3px; max-height: 160px; overflow-y: auto; margin-bottom: 8px; }
+.m-op-lock-status {
+  font-family: var(--mono); font-size: 11px; text-align: center; color: var(--dim);
+  padding: 4px 0; margin-bottom: 6px;
+}
+.m-confirm-msg { font-family: var(--mono); font-size: 13px; color: var(--text); white-space: pre-line; margin: 8px 0 4px; }
+
 .m-ft8-period-switch { display: flex; gap: 6px; margin-bottom: 8px; }
 .m-ft8-freq-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .m-ft8-freq-row .m-sub-lbl { margin-bottom: 0; white-space: nowrap; }

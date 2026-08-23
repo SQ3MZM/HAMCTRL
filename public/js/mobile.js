@@ -72,6 +72,49 @@ function showToast(msg, level) {
 window.UI = window.UI || {};
 window.UI.showToast = showToast;
 
+// Same contract as desktop's UI.confirmModal (ui.js): a Promise-based
+// yes/no modal, needed so radiolock.js's RadioLock.forceRelease() (reused
+// verbatim, see mobile.html "Operatorzy" card) has something to await —
+// without this shim window.UI?.confirmModal(...) silently resolves to
+// undefined (optional chaining on a missing method), "!await undefined"
+// is true, and the function returns before ever confirming — the admin
+// "WYMUŚ" button would look clickable but do nothing.
+let _confirmModalResolve = null;
+function confirmModal(message, { title = 'POTWIERDŹ', okLabel = 'OK', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('confirm-modal');
+    const msgEl = document.getElementById('confirm-modal-msg');
+    const titleEl = document.getElementById('confirm-modal-title');
+    const okBtn = document.getElementById('confirm-modal-ok');
+    if (!modal || !msgEl) { resolve(false); return; }
+    if (titleEl) titleEl.textContent = title;
+    msgEl.textContent = message;
+    if (okBtn) {
+      okBtn.textContent = okLabel;
+      okBtn.className = 'm-btn m-btn-sm' + (danger ? ' m-btn-red' : ' m-btn-amber');
+    }
+    _confirmModalResolve = resolve;
+    modal.style.display = 'flex';
+  });
+}
+function _confirmModalClose() {
+  const modal = document.getElementById('confirm-modal');
+  if (modal) modal.style.display = 'none';
+}
+function _confirmModalSubmit() {
+  _confirmModalClose();
+  _confirmModalResolve?.(true);
+  _confirmModalResolve = null;
+}
+function _confirmModalCancel() {
+  _confirmModalClose();
+  _confirmModalResolve?.(false);
+  _confirmModalResolve = null;
+}
+window.UI.confirmModal = confirmModal;
+window.UI._confirmModalSubmit = _confirmModalSubmit;
+window.UI._confirmModalCancel = _confirmModalCancel;
+
 // ── WebSocket ────────────────────────────────────────────────────────────────
 function connect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -156,6 +199,12 @@ function handleMessage(msg) {
         window.AppState.rigPowerOn = msg.rigPowerOn;
         window.RadioFunctions?.handlePowerState?.(msg.rigPowerOn);
       }
+      // init carries the same online/requests/locked fields RadioLock's
+      // own handleWS expects (see ws.js on desktop, "Pass the operator
+      // state to OpPanel") - without this the "Operatorzy" card stayed
+      // empty until the NEXT unrelated online_update/radio_lock_state
+      // broadcast happened to arrive.
+      window.OpPanel?.handleWS?.(msg);
       break;
     case 'freq':
       S.freq = msg.freq; renderFreq(); updateBandActive();
@@ -196,6 +245,25 @@ function handleMessage(msg) {
     case 'radio_lock_state':
       S.lock = { locked: !!msg.locked, user_id: msg.user_id, username: msg.username, callsign: msg.callsign };
       renderLock(); renderLockedControls();
+      window.OpPanel?.handleWS?.(msg);
+      break;
+    case 'online_update':
+      // Reported live 2026-08-24: "nie widac userow na serwerze i nie
+      // widac prosb o radio" - the "Operatorzy" card (op-list/op-btn-*,
+      // reused from radiolock.js) needs BOTH this (who's online) and
+      // radio_lock_state above (who holds the radio) to render correctly;
+      // desktop's ws.js handles them with the same single case, mirrored here.
+      window.OpPanel?.handleWS?.(msg);
+      break;
+    case 'radio_request':
+    case 'radio_request_received':
+      // Shows the non-blocking "ktoś prosi o radio" toast (radiolock.js's
+      // own _showRequestToast, works anywhere on the page - no dependency
+      // on which tab is open or the Operatorzy card being visible).
+      window.OpPanel?.handleRequest?.(msg);
+      break;
+    case 'radio_request_rejected':
+      window.OpPanel?.handleRejected?.(msg);
       break;
     case 'toast':
       showToast(msg.msg || msg.message || '', msg.level);
