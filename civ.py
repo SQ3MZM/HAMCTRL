@@ -1819,6 +1819,26 @@ class CivRig:
                         if fb and abs(fb - self.freq_b) >= 1:
                             self.freq_b = fb
                             self.bcast({"type": "freqB", "freqB": fb})
+                # Split status: CI-V 0F with NO data byte = query (WITH a
+                # data byte = set, see set_split() above) -> response 0F
+                # [00=off, 01=on]. FIX (reported live 2026-08-24: "button
+                # split nie aktualizuje sie podswietleniem i rzeczywistym
+                # odczytem"): split was previously only ever SENT, never
+                # polled - our own self.split (and the button highlight
+                # every client derives from it) only changed when a client
+                # clicked the button itself. If split got toggled on the
+                # radio's own front panel, or missed by a client, nothing
+                # ever corrected the drift. Same class of bug as the CW
+                # stale-mode fix earlier today. Polled at the same ~1.2s
+                # cadence as freq_b - changes rarely, no need for every cycle.
+                if n % 4 == 1:
+                    sp = self._transact(bytes([0x0F]), {0x0F}, 0.3)
+                    if sp and len(sp) >= 1:
+                        is_split = bool(sp[0])
+                        if is_split != self.split:
+                            self.split = is_split
+                            self.bcast({"type": "split", "split": self.split,
+                                        "freqB": self.freq_b})
                 # S-meter: 0x15 0x02 -> response 0x15 ...
                 p = self._transact(bytes([0x15, 0x02]), {0x15}, 0.3, sub=0x02)
                 if p and len(p) >= 3 and p[0] == 0x02:
