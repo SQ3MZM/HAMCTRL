@@ -155,6 +155,18 @@ async function sendMacro(id) {
 
 async function sendText(text, extra = {}) {
   if (cwActive) { stopCW(); return; }
+  // FIX (reported live 2026-08-24): cwActive used to flip true only once
+  // the 'cw_sending' WS broadcast echoed back from the server. A repeat
+  // tap/keypress fired BEFORE that echo arrived (any real network RTT -
+  // worse on mobile/LTE) still saw cwActive===false, fell through to a
+  // brand-new /api/cw/send instead of the stop-toggle above, and the
+  // server's own overlap guard (_cw_tx_busy in webapp.py) silently
+  // rejected it - looked exactly like "the macro just does nothing" on
+  // 3 out of 4 rapid presses, with no obvious sign why. Setting it here,
+  // optimistically, closes that window: any repeat tap while our own
+  // request is in flight now correctly stops it instead of racing a
+  // second send.
+  cwActive = true;
   // {CALL} and {RST} used to be filled in from the "Quick QSO log" form
   // (removed). They remain as placeholders for the user to type manually
   // into the macro text (e.g. "UR 599 OP JAN") — {MYCALL} still works
@@ -173,9 +185,19 @@ async function sendText(text, extra = {}) {
     },
     body: JSON.stringify({ text, vars }),
   });
-  if (r.status === 401) { window.UI?.showToast('✗ CW: brak autoryzacji — zaloguj się ponownie', 'error'); return; }
+  if (r.status === 401) {
+    cwActive = false;
+    window.UI?.showToast('✗ CW: brak autoryzacji — zaloguj się ponownie', 'error');
+    return;
+  }
   const res = await r.json();
-  if (!res.ok) window.UI?.showToast('✗ CW: ' + (res.error || 'błąd'), 'error');
+  if (!res.ok) {
+    // The send never actually started (rejected before any PTT/keying) -
+    // undo the optimistic flag so the button/Escape-to-stop don't get
+    // stuck thinking a transmission is running when none is.
+    cwActive = false;
+    window.UI?.showToast('✗ CW: ' + (res.error || 'błąd'), 'error');
+  }
 }
 
 async function sendCustom() {
