@@ -167,36 +167,70 @@ async function sendText(text, extra = {}) {
   // request is in flight now correctly stops it instead of racing a
   // second send.
   cwActive = true;
-  // {CALL} and {RST} used to be filled in from the "Quick QSO log" form
-  // (removed). They remain as placeholders for the user to type manually
-  // into the macro text (e.g. "UR 599 OP JAN") — {MYCALL} still works
-  // automatically from the station settings.
-  const vars = {
-    myCall: S.callsign || '',
-    rst:    '599',
-    ...extra,
-  };
-  const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
-  const r   = await fetch('/api/cw/send', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? {'Authorization': `Bearer ${token}`} : {}),
-    },
-    body: JSON.stringify({ text, vars }),
-  });
-  if (r.status === 401) {
+  // FIX (reported live 2026-08-24: "cw makro sie zwiesilo, w ogole nie
+  // reaguje" - every tap after this just re-sent /api/cw/stop with no
+  // effect). The optimistic cwActive=true above has no recovery path if
+  // the fetch itself throws (dropped connection, server restart mid-
+  // request) - the old code had no try/catch here, so an exception left
+  // cwActive stuck true FOREVER: every later tap saw cwActive===true and
+  // called stopCW() instead of sending, forever, even though nothing was
+  // actually transmitting server-side. A safety timeout (below) also
+  // guards the case where the request itself succeeds but the
+  // 'cw_done'/'cw_stopped'/'cw_error' WS confirmation never arrives (a
+  // dropped WS reconnect mid-transmission) - self-heals either way
+  // instead of requiring a page reload.
+  const _cwSafetyTimer = setTimeout(() => {
+    if (cwActive) {
+      cwActive = false;
+      console.warn('[cw] cwActive force-cleared by safety timeout (no cw_done/error arrived)');
+    }
+  }, 20000); // generous: even a long macro at low WPM finishes well under this
+  try {
+    // {CALL} and {RST} used to be filled in from the "Quick QSO log" form
+    // (removed). They remain as placeholders for the user to type manually
+    // into the macro text (e.g. "UR 599 OP JAN") — {MYCALL} still works
+    // automatically from the station settings.
+    const vars = {
+      myCall: S.callsign || '',
+      rst:    '599',
+      ...extra,
+    };
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
+    const r   = await fetch('/api/cw/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? {'Authorization': `Bearer ${token}`} : {}),
+      },
+      body: JSON.stringify({ text, vars }),
+    });
+    if (r.status === 401) {
+      cwActive = false;
+      clearTimeout(_cwSafetyTimer);
+      window.UI?.showToast('✗ CW: brak autoryzacji — zaloguj się ponownie', 'error');
+      return;
+    }
+    const res = await r.json();
+    if (!res.ok) {
+      // The send never actually started (rejected before any PTT/keying) -
+      // undo the optimistic flag so the button/Escape-to-stop don't get
+      // stuck thinking a transmission is running when none is.
+      cwActive = false;
+      clearTimeout(_cwSafetyTimer);
+      window.UI?.showToast('✗ CW: ' + (res.error || 'błąd'), 'error');
+    }
+    // res.ok === true: DELIBERATELY leave cwActive=true and the safety
+    // timer RUNNING here - the fetch resolving successfully only means
+    // the server accepted and finished the transmission (it blocks until
+    // done), not that we've received the 'cw_done' WS confirmation that
+    // normally clears cwActive (handleWS below). If that WS message gets
+    // lost (a reconnect mid-transmission), the timer is the only thing
+    // that will ever clear it - clearing it here unconditionally would
+    // remove that backstop in exactly the case it exists for.
+  } catch (e) {
     cwActive = false;
-    window.UI?.showToast('✗ CW: brak autoryzacji — zaloguj się ponownie', 'error');
-    return;
-  }
-  const res = await r.json();
-  if (!res.ok) {
-    // The send never actually started (rejected before any PTT/keying) -
-    // undo the optimistic flag so the button/Escape-to-stop don't get
-    // stuck thinking a transmission is running when none is.
-    cwActive = false;
-    window.UI?.showToast('✗ CW: ' + (res.error || 'błąd'), 'error');
+    clearTimeout(_cwSafetyTimer);
+    window.UI?.showToast('✗ CW: błąd połączenia — ' + e.message, 'error');
   }
 }
 
