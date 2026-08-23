@@ -491,6 +491,40 @@ def test_partner_busy_with_someone_else():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Systematyczny przeglad scenariuszy (2026-08-24): partner ZNOWU wola CQ w
+# trakcie naszej z nim wymiany - silniejszy dowod ze "poszedl dalej" niz
+# partner_busy (odpowiada komus innemu), a wczesniej byl calkowicie
+# ignorowany (is_cq zawsze zwracalo None, bez sprawdzenia czy to nasz
+# partner). Routowane przez ten sam partner_busy (bounded retry, nie
+# natychmiastowy abort).
+# ════════════════════════════════════════════════════════════════════════════
+def test_partner_calls_cq_again():
+    section("Partner wola CQ ponownie w trakcie QSO -> partner_busy")
+    eng = QsoEngine("SQ3MZM", "JO72")
+    eng.start_qso("YO1BRANCUSI", parse_message("CQ YO1BRANCUSI KN34"))
+    check(eng.state == ST_CALLING, "Po start_qso: CALLING")
+
+    result = eng.on_decode(parse_message("CQ YO1BRANCUSI KN34"))
+    check(result is not None and result.get("action") == "partner_busy",
+          "Partner znow wola CQ -> akcja partner_busy")
+    check(result.get("call_de") == "YO1BRANCUSI",
+          "partner_busy wskazuje wlasciwa (nasza) stacje")
+
+    # Kontrola: CQ od OBCEJ stacji (nie naszego partnera) to normalna
+    # aktywnosc pasma - nie powinno nic wywolywac.
+    eng2 = QsoEngine("SQ3MZM", "JO72")
+    eng2.start_qso("YO1BRANCUSI", parse_message("CQ YO1BRANCUSI KN34"))
+    result2 = eng2.on_decode(parse_message("CQ DL1ABC JO40"))
+    check(result2 is None, "CQ od obcej stacji -> cisza (nie partner_busy)")
+
+    # Kontrola: CQ gdy jestesmy IDLE (bez aktywnego QSO) - bez zmian,
+    # UI/webapp decyduje czy odpowiedziec.
+    eng3 = QsoEngine("SQ3MZM", "JO72")
+    result3 = eng3.on_decode(parse_message("CQ YO1BRANCUSI KN34"))
+    check(result3 is None, "CQ gdy IDLE -> bez akcji silnika")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # NOWA FUNKCJA: parse_dxpedition_message (typ 0.1, i3=0/n3=1) - wiadomosc
 # ktorej Fox uzywa zeby JEDNOCZESNIE zamknac QSO (RR73) i zaprosic kolejna
 # stacje z raportem, w jednej transmisji. Ten sam format wiadomosci uzywaja
@@ -576,6 +610,7 @@ def main():
     test_call1st_start_with_raw_report()
     test_rrr_goes_straight_to_73()
     test_partner_busy_with_someone_else()
+    test_partner_calls_cq_again()
     test_dxpedition_message_not_for_us()
     test_dxpedition_message_we_get_report()
     test_dxpedition_message_we_get_rr73()

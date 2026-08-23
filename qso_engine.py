@@ -540,6 +540,21 @@ class QsoEngine:
             return None
 
         if parsed['is_cq']:
+            # FIX (found by systematic scenario review, 2026-08-24): a CQ
+            # from our OWN CURRENT PARTNER, mid-QSO, is even stronger
+            # evidence they've moved on than partner_busy (replying to
+            # someone else) — restarting CQ means THEY consider the
+            # exchange over/abandoned (didn't hear our last reply, gave
+            # up, or simply reset). Previously this was silently ignored
+            # like any other CQ, so the engine kept waiting/retrying a
+            # partner who had visibly already walked away. Routed through
+            # the same partner_busy handling (bounded retry/give-up timer
+            # in webapp.py, not an instant abort) - see the partner_busy
+            # comment below for why instant abort is avoided.
+            if self.is_active() and self.partner_call and parsed.get('call_de'):
+                de_base = parsed.get('de_base') or base_call(parsed['call_de'])
+                if de_base == base_call(self.partner_call):
+                    return {'action': 'partner_busy', 'call_de': self.partner_call}
             return None  # UI/webapp decides whether/when to start a QSO with the CQ caller
 
         if parsed['call_to'] != self.my_call:
