@@ -698,10 +698,19 @@ function _onAutoQsoComplete(msg) {
   if (callEl) callEl.value = msg.dxCall || '';
   const gridEl = document.getElementById('wj-log-grid');
   if (gridEl) gridEl.value = msg.dxGrid || '';
+  // FIX (reported live 2026-08-24): this used to fall back to the literal
+  // string '+00' whenever the completion broadcast carried an empty
+  // report (e.g. a QSO that ended via 73/RR73 before any report was ever
+  // exchanged - a real, if abnormal, sequence a partner can send). '+00'
+  // LOOKS like a real measured SNR, so it silently logged a fake report
+  // instead of visibly nothing - the operator had no way to tell it
+  // wasn't real. Falls back to the already-tracked frozen value first
+  // (should normally already be there), then to a genuinely empty field
+  // - honest "we don't know" beats a plausible-looking fake number.
   const rstSentEl = document.getElementById('wj-log-rst-sent');
-  if (rstSentEl) rstSentEl.value = msg.rstSent || '+00';
+  if (rstSentEl) rstSentEl.value = msg.rstSent || _frozenRstSent || '';
   const rstRcvdEl = document.getElementById('wj-log-rst-rcvd');
-  if (rstRcvdEl) rstRcvdEl.value = msg.rstRcvd || '+00';
+  if (rstRcvdEl) rstRcvdEl.value = msg.rstRcvd || _frozenRstRcvd || '';
   const modeEl = document.getElementById('wj-log-mode');
   // Reset the frozen reports after the QSO ends — otherwise they'd leak
   // into the next QSO in a Call 1st chain.
@@ -1633,8 +1642,12 @@ async function addLog() {
   const band   = _freqToBand(freq);
   const mode   = document.getElementById('wj-log-mode')?.value || 'FT8';
   const grid   = document.getElementById('wj-log-grid')?.value.trim().toUpperCase() || '';
-  const rstS   = document.getElementById('wj-log-rst-sent')?.value || '+00';
-  const rstR   = document.getElementById('wj-log-rst-rcvd')?.value || '+00';
+  // FIX (reported live 2026-08-24, matches the _onAutoQsoComplete fix
+  // above): '+00' looked like a real measured SNR, so an empty field
+  // (report genuinely unknown) silently saved a fake-looking value into
+  // the actual log entry instead of an honestly empty one.
+  const rstS   = document.getElementById('wj-log-rst-sent')?.value || '';
+  const rstR   = document.getElementById('wj-log-rst-rcvd')?.value || '';
   const comment= document.getElementById('wj-log-comment')?.value.trim() || '';
 
   // qso_db format (qso_date=YYYYMMDD, time_on=HHMMSS, no separators) -
