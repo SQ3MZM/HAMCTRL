@@ -5807,6 +5807,21 @@ class App:
             # actual transmission - manual or automatic - should count.
             if self._qso_engine.is_active():
                 self._qso_engine.record_tx_sent()
+                # FIX (reported live 2026-08-24: "musze recznie wolac
+                # wszystkie 3 makra... jak je wybiore recznie powinny
+                # zgodnie z zegarem to powtarzac"). record_tx_sent() above
+                # fixes WHEN the retry timer fires, but _check_retry_or_giveup
+                # resends self._last_auto_tx_action - which used to be set
+                # ONLY inside _send_auto_tx (the automatic reply path). A
+                # macro (F1-F6) sent manually here never went through
+                # _send_auto_tx, so the retry timer had no idea WHAT to
+                # repeat - it kept resending whatever the LAST automatic
+                # reply happened to be (stale, or nothing at all), not the
+                # macro the operator actually just chose. Every manual send
+                # now updates it too, so a manually-picked macro gets
+                # retried with its own content, same as an automatic one.
+                self._last_auto_tx_action = {'call_to': call_to, 'call_de': call_de,
+                                              'report_or_grid': report, 'r_flag': r_flag}
             asyncio.create_task(self._ft8_tx_sequence(call_to, call_de, report, r_flag))
 
         elif t == "ft8_tx_stop":
@@ -6643,7 +6658,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-MANUAL-FREQ-ENTRY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-MANUAL-MACRO-RETRY-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
