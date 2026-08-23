@@ -3077,7 +3077,13 @@ class App:
                 return 403, {"error": msg_err}
             rot = self.get_rot(int(m.group(1)))
             if not rot: return 404, {"error": "Rotator nie znaleziony"}
-            rot.stop()
+            # FIX (reported live 2026-08-24): stop() now reports whether the
+            # write to the port actually succeeded (see the comment on
+            # Rotator.stop in rotator.py) - surface that here instead of
+            # always claiming success, so the operator gets a real error
+            # instead of a false "stopped" when the port write failed.
+            if not rot.stop():
+                return 200, {"ok": False, "error": "Nie udało się wysłać STOP do rotora (port nie odpowiada)"}
             return 200, {"ok": True}
 
         m = re.match(r"^/api/rotator/(\d+)/test$", p)

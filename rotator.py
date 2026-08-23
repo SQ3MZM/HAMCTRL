@@ -278,13 +278,34 @@ class Rotator:
         self.moving = False
         self.bcast()
 
-    def stop(self):
+    def stop(self) -> bool:
+        """Returns True if the stop command was actually written to the
+        port. FIX (reported live 2026-08-24: "wcisniecie pokazuje okno
+        stop ale leci dalej, w ogole nie reaguje") - this used to call
+        _write() and ignore its return value entirely, then UNCONDITIONALLY
+        set self.moving=False and broadcast "stopped" to every client - so
+        if the port write silently failed (not open, or a transient
+        error - _write() swallows exceptions and just returns False), the
+        UI confidently showed "stopped" while the rotor never received
+        anything and kept turning to its last target. Now retries once
+        (a single failed write is often transient - lock contention with
+        the poll happening in the SAME instant) and reports failure back
+        to the caller instead of pretending it worked."""
         self._stop_ev.set()
         self.moving = False
+        ok = True
         if not self.sim:
-            self._write(self._stop_pkt())
+            ok = self._write(self._stop_pkt())
+            if not ok:
+                print(f"[rotator] {self.name} STOP write FAILED, retrying once")
+                ok = self._write(self._stop_pkt())
         self.bcast()
-        print(f"[rotator] {self.name} STOP az={self.az:.0f}°")
+        if ok:
+            print(f"[rotator] {self.name} STOP az={self.az:.0f}°")
+        else:
+            print(f"[rotator] {self.name} STOP write FAILED (port not open?) - "
+                     f"rotor may still be turning despite UI showing stopped")
+        return ok
 
     def poll_pos(self) -> bool:
         """Read position while the rotor is stationary. True if it changed."""
