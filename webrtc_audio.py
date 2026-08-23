@@ -10,11 +10,41 @@ separate HTTP endpoint is needed.
 Only one client transmits at a time (IC-746/PTT hardware limitation), so
 there's no need to mix — the newest connection replaces the previous one.
 """
-import asyncio, fractions, struct
+import asyncio, fractions, socket, struct, time
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaBlackhole
 
 OPUS_RATE = 48000
+
+_STUN_HOST = "stun.l.google.com"
+_STUN_PORT = 19302
+_stun_ip_cache: str | None = None
+
+
+async def _stun_url() -> str:
+    """
+    Resolve the STUN server hostname once and cache the IP.
+
+    Mobile TX opens a brand-new RTCPeerConnection on EVERY PTT press (see
+    mobile_audio.js header — a deliberate choice to avoid holding the mic
+    open). aioice's gather_candidates() does a blocking socket.gethostbyname()
+    on the STUN hostname for every single ICE gathering pass, so without
+    caching, every PTT press pays a fresh DNS round-trip on top of the STUN
+    UDP round-trip. Reported live as noticeable TX start delay. Resolving
+    once and reusing the numeric IP removes that repeated cost; falls back
+    to the hostname if resolution fails so behavior is unchanged in the
+    failure case. Run via asyncio.to_thread (not a plain blocking call) —
+    this shares the process with civ.py's CI-V polling loop on the same
+    event loop, and a blocking DNS lookup right on the loop would stall
+    that polling for however long the lookup takes.
+    """
+    global _stun_ip_cache
+    if _stun_ip_cache is None:
+        try:
+            _stun_ip_cache = await asyncio.to_thread(socket.gethostbyname, _STUN_HOST)
+        except OSError:
+            _stun_ip_cache = _STUN_HOST
+    return f"stun:{_stun_ip_cache}:{_STUN_PORT}"
 
 
 class WebRTCAudioReceiver:
@@ -46,8 +76,9 @@ class WebRTCAudioReceiver:
         if hasattr(self, "_resampler"):
             del self._resampler
 
+        t0 = time.monotonic()
         config = RTCConfiguration(iceServers=[
-            RTCIceServer(urls="stun:stun.l.google.com:19302")
+            RTCIceServer(urls=await _stun_url())
         ])
         pc = RTCPeerConnection(configuration=config)
         self._pc = pc
@@ -78,22 +109,27 @@ class WebRTCAudioReceiver:
 
         offer = RTCSessionDescription(sdp=sdp, type=type_)
         await pc.setRemoteDescription(offer)
+        t1 = time.monotonic()
 
         offer_candidates = sdp.count('a=candidate')
         print(f"[webrtc] Offer from client: {offer_candidates} ICE candidates")
 
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        t2 = time.monotonic()
 
         # Wait for the server's ICE gathering to finish (max 3s)
         for _ in range(30):
             if pc.iceGatheringState == "complete":
                 break
             await asyncio.sleep(0.1)
+        t3 = time.monotonic()
 
         final_sdp = pc.localDescription.sdp
         answer_candidates = final_sdp.count('a=candidate')
-        print(f"[webrtc] Server answer: {answer_candidates} ICE candidates, gathering={pc.iceGatheringState}")
+        print(f"[webrtc] Server answer: {answer_candidates} ICE candidates, gathering={pc.iceGatheringState} | "
+              f"timing: setRemoteDescription={1000*(t1-t0):.0f}ms createAnswer/setLocal={1000*(t2-t1):.0f}ms "
+              f"iceWait={1000*(t3-t2):.0f}ms total={1000*(t3-t0):.0f}ms")
 
         return {
             "sdp": final_sdp,

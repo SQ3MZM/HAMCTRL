@@ -114,7 +114,14 @@ function forwardToRadioFunctions(msg) {
   if (!RF) return;
   switch (msg.type) {
     case 'level_value':
-    case 'rig_slider_ack': RF.handleLevelValue?.(msg); break;
+    case 'rig_slider_ack':
+      // Diagnostic (reported live 2026-08-23 as "sliders don't stay in
+      // sync with www") — confirms whether the broadcast is even
+      // arriving here, to tell a routing bug apart from the silent
+      // set_level-failure case already fixed server-side (webapp.py
+      // _handle_rig_slider).
+      console.log(`[mobile] ${msg.type} id=${msg.id} value=${msg.value}`);
+      RF.handleLevelValue?.(msg); break;
     case 'func_state': RF.handleFuncState?.(msg); break;
     case 'rig_features': RF.handleWsMessage?.(msg); break;
     case 'tuner': RF.handleLegacyFunc?.('tuner', msg); break;

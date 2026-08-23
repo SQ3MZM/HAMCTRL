@@ -6583,7 +6583,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-23-MOBILE-AUDIO, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-MOBILE-FIXES, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7700,6 +7700,19 @@ class App:
                 await self.rig.set_level(param, value)
             except Exception as e:
                 print(f"[rig] set_level({param}) error: {e}")
+                # FIX: this used to broadcast rig_slider_ack unconditionally
+                # even when set_level failed (e.g. a CI-V transaction
+                # collision under load — same contention family as the
+                # "[civ] S-metr transact fail" case). Every OTHER client
+                # (www, other phones) would then show the slider at the
+                # new position even though the radio never actually moved
+                # — looked like "the phone and www don't stay in sync"
+                # when the real cause was a lost write, not a sync bug.
+                # Tell only the sender it didn't take, and don't lie to
+                # everyone else about the new value.
+                await ws.send_json({"type": "toast",
+                                     "msg": f"⚠ Nie udało się ustawić {param}", "level": "error"})
+                return
 
         await self.hub.broadcast({"type": "rig_slider_ack", "id": slider_id,
                                    "value": value}, skip=ws)

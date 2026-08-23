@@ -190,10 +190,18 @@ let pc = null;
 let micStream = null;
 let micActive = false;
 let stopRequested = false;
+// Diagnostic timing (reported as "significant TX delay" live 2026-08-23,
+// not yet root-caused end-to-end) — logs each phase so the next test
+// pinpoints where the time actually goes (mic grant vs. negotiation vs.
+// ICE) instead of guessing again. See webrtc_audio.py for the matching
+// server-side timing log. Module-level so onAnswer() (called later, from
+// the WS dispatcher) can log against the same start point.
+let _txT0 = 0;
 
 async function startMicTx() {
   if (micActive) return true;
   stopRequested = false;
+  _txT0 = performance.now();
   if (!navigator.mediaDevices?.getUserMedia) {
     window.Mobile?.showToast?.('Mikrofon niedostępny w tej przeglądarce', 'error');
     return false;
@@ -211,12 +219,14 @@ async function startMicTx() {
     window.Mobile?.showToast?.('Brak dostępu do mikrofonu: ' + e.message, 'error');
     return false;
   }
+  console.log(`[maudio] getUserMedia: ${(performance.now() - _txT0).toFixed(0)}ms`);
 
   pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   pc.onicecandidate = (ev) => {
     if (ev.candidate) window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
   };
   pc.onconnectionstatechange = () => {
+    console.log(`[maudio] connectionState=${pc.connectionState} at ${(performance.now() - _txT0).toFixed(0)}ms`);
     if (pc.connectionState === 'failed' || pc.connectionState === 'closed') stopMicTx();
   };
   micStream.getAudioTracks().forEach(t => pc.addTrack(t, micStream));
@@ -225,6 +235,7 @@ async function startMicTx() {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
+    console.log(`[maudio] offer sent: ${(performance.now() - _txT0).toFixed(0)}ms`);
   } catch (e) {
     cleanupMicTx();
     return false;
@@ -244,6 +255,7 @@ async function startMicTx() {
 
 function onAnswer(msg) {
   if (!pc) return;
+  console.log(`[maudio] answer received: ${(performance.now() - _txT0).toFixed(0)}ms`);
   pc.setRemoteDescription({ type: msg.sdpType || 'answer', sdp: msg.sdp }).catch(() => {});
 }
 

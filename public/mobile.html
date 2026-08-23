@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608231600">
+<link rel="stylesheet" href="css/mobile.css?v=202608232330">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -72,6 +72,17 @@
       </div>
     </section>
 
+    <section class="m-card m-meters">
+      <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">SWR</span><span id="m-swr" class="m-meter-val">--</span></div>
+      <div class="m-meter"><span class="m-meter-lbl">ALC</span><span id="m-alc" class="m-meter-val">--</span></div>
+    </section>
+
+    <section class="m-card m-ptt-card">
+      <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
+    </section>
+
     <!-- Przyciski funkcji radia (NB/NR/COMP/MON/...) są generowane przez
          public/js/radiofunctions.js na podstawie tego, co admin udostępnił
          temu userowi (ten sam mechanizm co desktop — GET /api/rig/features)
@@ -107,17 +118,6 @@
           </select>
         </div>
       </details>
-    </section>
-
-    <section class="m-card m-meters">
-      <div class="m-meter"><span class="m-meter-lbl">S</span><span id="m-smeter" class="m-meter-val">--</span></div>
-      <div class="m-meter"><span class="m-meter-lbl">PWR</span><span id="m-pwr" class="m-meter-val">--</span></div>
-      <div class="m-meter"><span class="m-meter-lbl">SWR</span><span id="m-swr" class="m-meter-val">--</span></div>
-      <div class="m-meter"><span class="m-meter-lbl">ALC</span><span id="m-alc" class="m-meter-val">--</span></div>
-    </section>
-
-    <section class="m-card m-ptt-card">
-      <button id="m-ptt-btn" class="m-ptt-btn" data-perm-disable="ptt">PTT</button>
     </section>
 
     <!-- id musi być na <details>, nie na sekcji-owijce: renderSliders()
@@ -368,7 +368,7 @@
 <script src="js/radiofunctions.js?v=202608231200"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
-<script src="js/mobile_audio.js?v=202608231600"></script>
-<script src="js/mobile.js?v=202608231600"></script>
+<script src="js/mobile_audio.js?v=202608232330"></script>
+<script src="js/mobile.js?v=202608232330"></script>
 </body>
 </html>

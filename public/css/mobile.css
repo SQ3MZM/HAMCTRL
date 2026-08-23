@@ -344,6 +344,12 @@ input, textarea { font-family: inherit; }
 .m-log-meta { color: var(--dim); }
 
 /* ── Rotor (rotormini.js reuse — #rot-* ids, same idea as elsewhere) ── */
+/* rotormini.js::updateUI() does panel.style.display='flex' with no
+   direction — desktop's own stylesheet sets flex-direction:column for
+   this id (it's a narrow sidebar there), but mobile.css never did, so
+   the default row stacked the compass/input/buttons side-by-side
+   ("cały układ w poziomie" reported live 2026-08-23). */
+#rot-side-panel { flex-direction: column; }
 .m-rot-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .m-rot-badge { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .m-rot-compass-wrap { position: relative; display: flex; justify-content: center; margin-bottom: 10px; }
