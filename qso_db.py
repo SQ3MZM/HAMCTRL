@@ -296,6 +296,30 @@ def add_qsos_bulk(user_id: str, qsos: list) -> dict:
     return {"inserted": inserted, "skipped": skipped, "duplicates": dupes}
 
 
+def _normalize_freq_mhz(freq) -> str:
+    """
+    The 'freq' field is stored as MHz (e.g. "21.095000"), matching ADIF.
+    Reported live (2026-08-24): a QSO logged while on a non-standard
+    frequency was saved with freq="21095000" instead of "21.095" - a raw
+    Hz value slipped through instead of MHz. No amateur band this project
+    tracks goes above 1300 MHz (23cm), so any numeric value bigger than
+    that is unambiguously Hz, not MHz - auto-correct it rather than store
+    a value that breaks ADIF export/CloudLog. Leaves anything that
+    doesn't parse as a plain number untouched (never raise here - this
+    guards a display field, not a required one).
+    """
+    s = str(freq or "").strip()
+    if not s:
+        return s
+    try:
+        v = float(s)
+    except ValueError:
+        return s
+    if v > 1300:
+        v /= 1e6
+    return f"{v:.6f}".rstrip("0").rstrip(".")
+
+
 def add_qso(user_id: str, data: dict) -> dict:
     """Add a QSO to the database. Returns the saved QSO with its id."""
     globals().pop("_WORKED_CACHE", None)   # new QSO — invalidate the worked-calls cache
@@ -323,7 +347,7 @@ def add_qso(user_id: str, data: dict) -> dict:
         "time_off":      time_off,
         "band":          data.get("band", ""),
         "mode":          data.get("mode", ""),
-        "freq":          data.get("freq", ""),
+        "freq":          _normalize_freq_mhz(data.get("freq", "")),
         "rst_sent":      data.get("rst_sent", "599"),
         "rst_rcvd":      data.get("rst_rcvd", "599"),
         "gridsquare":    (data.get("gridsquare") or "").upper(),
@@ -386,7 +410,7 @@ def update_qso(user_id: str, qso_id: str, data: dict, is_admin: bool = False) ->
         "time_off":      data.get("time_off", data.get("time_on", "")),
         "band":          data.get("band", ""),
         "mode":          data.get("mode", ""),
-        "freq":          data.get("freq", ""),
+        "freq":          _normalize_freq_mhz(data.get("freq", "")),
         "rst_sent":      data.get("rst_sent", "599"),
         "rst_rcvd":      data.get("rst_rcvd", "599"),
         "gridsquare":    (data.get("gridsquare") or "").upper(),

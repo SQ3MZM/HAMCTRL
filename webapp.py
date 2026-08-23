@@ -6583,7 +6583,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-SLIDER-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-MULTISTREAM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -6961,6 +6961,41 @@ class App:
                                                     partner_decode=_partner_decode,
                                                     tx_seq=self._reserve_tx_seq()))
 
+    async def _check_retry_or_giveup(self):
+        """Bounded retry/give-up timer for 'no reply this period'.
+
+        Shared by two callers (extracted 2026-08-24): the original
+        'result is None' case (a decode arrived but wasn't relevant to our
+        QSO) and 'partner_busy' (the partner is transmitting to someone
+        else THIS period). Both mean the same thing to the timer -
+        "no progress on our exchange this period" - so both should be
+        governed by the same bounded retry count instead of duplicating
+        this logic with a risk of the two copies drifting apart later.
+        """
+        _retry_period_s = 2 * (ft4_encoder.FT4_SLOT_TIME
+                                if self._ft8_decode_mode == "FT4" else 15.0)
+        _max_retries = 4
+        if self._qso_engine.should_retransmit(_retry_period_s):
+            if self._qso_engine.should_give_up(_max_retries):
+                print(f"[autoqso] {self._qso_engine.partner_call} not "
+                      f"responding after {_max_retries} tries — abandoning QSO")
+                self._qso_engine.abort_qso()
+                self._qso_period_locked = False
+                self._autoqso_tx_seq += 1  # see comment at REST /api/ft8/halt
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": "IDLE", "partner": None})
+                await self._advance_auto_qso_queue()
+            elif self._last_auto_tx_action:
+                self._qso_engine.note_retry()
+                print(f"[autoqso] No reply from "
+                      f"{self._qso_engine.partner_call} — retrying "
+                      f"(attempt {self._qso_engine.retry_count}/{_max_retries}): "
+                      f"{self._last_auto_tx_action['call_to']} "
+                      f"{self._last_auto_tx_action['call_de']} "
+                      f"{self._last_auto_tx_action.get('report_or_grid')}")
+                asyncio.create_task(self._send_auto_tx(
+                    self._last_auto_tx_action, tx_seq=self._reserve_tx_seq()))
+
     async def _process_auto_qso(self, m: dict):
         """
         Processes a SINGLE decoded FT8 message (m, from decode_window)
@@ -7044,29 +7079,7 @@ class App:
                 # off, 3-5 tries when enabled); ours is always on because
                 # Call 1st runs unattended and must free up for the next
                 # queued station.
-                _retry_period_s = 2 * (ft4_encoder.FT4_SLOT_TIME
-                                        if self._ft8_decode_mode == "FT4" else 15.0)
-                _max_retries = 4
-                if self._qso_engine.should_retransmit(_retry_period_s):
-                    if self._qso_engine.should_give_up(_max_retries):
-                        print(f"[autoqso] {self._qso_engine.partner_call} not "
-                              f"responding after {_max_retries} tries — abandoning QSO")
-                        self._qso_engine.abort_qso()
-                        self._qso_period_locked = False
-                        self._autoqso_tx_seq += 1  # see comment at REST /api/ft8/halt
-                        await self.hub.broadcast({"type": "auto_qso_status",
-                                                   "state": "IDLE", "partner": None})
-                        await self._advance_auto_qso_queue()
-                    elif self._last_auto_tx_action:
-                        self._qso_engine.note_retry()
-                        print(f"[autoqso] No reply from "
-                              f"{self._qso_engine.partner_call} — retrying "
-                              f"(attempt {self._qso_engine.retry_count}/{_max_retries}): "
-                              f"{self._last_auto_tx_action['call_to']} "
-                              f"{self._last_auto_tx_action['call_de']} "
-                              f"{self._last_auto_tx_action.get('report_or_grid')}")
-                        asyncio.create_task(self._send_auto_tx(
-                            self._last_auto_tx_action, tx_seq=self._reserve_tx_seq()))
+                await self._check_retry_or_giveup()
                 return
 
             if result.get("action") == "enqueue":
@@ -7098,27 +7111,26 @@ class App:
                 return
 
             if result.get("action") == "partner_busy":
-                # Our partner is already transmitting to SOMEONE ELSE -
-                # observed proof they've moved on to another station, no
-                # point calling them further or waiting for the
-                # retry-timeout (see the comment in qso_engine.py
-                # on_decode). Abandon right away, same as give-up after
-                # exhausting retries, just faster and without guessing.
-                print(f"[autoqso] {result['call_de']} already transmitting to "
-                      f"another station — abandoning call, moving to queue")
-                self._qso_engine.abort_qso()
-                self._qso_period_locked = False
-                # Without this, an already-scheduled (in-flight) retransmit
-                # to THIS partner still went out on air despite
-                # abort_qso() - observed live: partner_busy was correctly
-                # detected, but an earlier-scheduled retransmit
-                # (asyncio.create_task in the same block as "No reply —
-                # retrying") was already waiting for its window with an
-                # UNCHANGED tx_seq, so the stale-TX guard didn't catch it.
-                self._autoqso_tx_seq += 1
-                await self.hub.broadcast({"type": "auto_qso_status",
-                                           "state": "IDLE", "partner": None})
-                await self._advance_auto_qso_queue()
+                # FIX (reported live 2026-08-24, working an MSHV "Multi
+                # Answering"/multistream DXpedition): this used to
+                # abort_qso() INSTANTLY the moment the partner replied to
+                # ANYONE else, on the assumption that a normal 1:1 station
+                # can only run one exchange at a time, so that's proof
+                # they moved on. True for a normal station - WRONG for an
+                # MSHV multistream station, which legitimately interleaves
+                # replies to several callers within the same pileup and
+                # comes back to us a few periods later. Instantly
+                # abandoning made Call 1st give up on real DXpeditions
+                # after the very first sighting of them answering someone
+                # else, forcing the operator to work the whole QSO by
+                # hand. Now routed through the SAME bounded retry/give-up
+                # timer as "no reply this period" (_check_retry_or_giveup)
+                # instead of an instant abort - a normal station that
+                # really has moved on still gets abandoned, just after up
+                # to 4 retry periods instead of on the first sighting.
+                print(f"[autoqso] {result['call_de']} transmitting to another "
+                      f"station this period — waiting (retry/give-up timer applies)")
+                await self._check_retry_or_giveup()
                 return
 
             if result.get("action") == "reply":
