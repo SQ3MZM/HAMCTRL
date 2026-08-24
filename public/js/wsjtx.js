@@ -958,6 +958,13 @@ function _isHidden(message) {
 
 function _extractGrid(msg) {
   for (const p of msg.trim().toUpperCase().split(/\s+/)) {
+    // RR73 formally matches the locator pattern (letters A-R + digits) -
+    // the protocol deliberately chose an Antarctica grid to signal QSO
+    // end, so a sign-off message ("SP3GSK DL1ABC RR73") got "RR73"
+    // inserted as if it were the correspondent's real grid. Same
+    // exclusion as the backend's _call_grid_cache (webapp.py) already
+    // has - that one was fixed, this frontend copy never was.
+    if (p === 'RR73') continue;
     if (/^[A-R]{2}\d{2}([A-X]{2})?$/.test(p)) return p.slice(0,4);
   }
   return '';
@@ -1264,6 +1271,14 @@ function searchDxCall(rawCall) {
       window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
       const grid = _extractGrid(d.message);
       if (grid) _setField('wj-dx-grid', grid);
+      // Same SNR/macro-preview fill as clicking the row (_selectRow) -
+      // previously only the click path did this, so typing a callsign left
+      // SNR permanently at "--" and the F2-F6 macro previews showing
+      // whatever station was last clicked.
+      _lastDxSnr = d.snr;
+      const snrEl = document.getElementById('wj-dx-snr');
+      if (snrEl) snrEl.textContent = (d.snr >= 0 ? '+' : '') + d.snr + ' dB';
+      _updateMacroTexts();
       return;
     }
   }
