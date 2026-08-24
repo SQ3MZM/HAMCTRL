@@ -1011,6 +1011,16 @@ window.AudioControls = (function() {
   function setRxVol(pct) {
     _rxVol = Math.max(0, Math.min(100, pct)) / 100;
     if (window._masterGain) window._masterGain.gain.value = _rxVol * 0.9;
+    // BELT AND SUSPENDERS (2026-08-24): reported live - masterGain.gain
+    // confirmed set to 0 (via window._debugAudio()) while RX audio kept
+    // playing at full volume regardless. The RX <audio> element (see
+    // ws.js's ontrack handler) is tapped into masterGain via
+    // createMediaElementSource, but per the Web Audio spec the element's
+    // OWN .volume still applies as a separate stage even when redirected
+    // - it was never being set, so it stayed at its default (1.0) no
+    // matter what masterGain did. Setting it directly here guarantees
+    // control regardless of the exact interaction between the two.
+    if (window._rxAudioEl) window._rxAudioEl.volume = _rxVol;
     const el = document.getElementById('rx-vol-val');
     if (el) el.textContent = pct + '%';
     const sl = document.getElementById('rx-vol-slider');
@@ -1130,6 +1140,9 @@ window._debugAudio = function() {
     rxConnectionState: _rxPc ? _rxPc.connectionState : '(no _rxPc)',
     rxIceState: _rxPc ? _rxPc.iceConnectionState : '(no _rxPc)',
     masterGainValue: window._masterGain ? window._masterGain.gain.value : '(no _masterGain)',
+    rxAudioElVolume: window._rxAudioEl ? window._rxAudioEl.volume : '(no _rxAudioEl)',
+    rxAudioElMuted: window._rxAudioEl ? window._rxAudioEl.muted : '(no _rxAudioEl)',
+    rxAudioElPaused: window._rxAudioEl ? window._rxAudioEl.paused : '(no _rxAudioEl)',
     audioEnabled: !!window._audioEnabled,
   };
   console.log('[audio debug]', snap);
@@ -1174,6 +1187,8 @@ function _connectRxWebRTC() {
       el.srcObject = ev.streams[0];
       el.play().catch((e) => console.warn('[audio] RX play() error:', e));
       _rxAudioEl = el;
+      window._rxAudioEl = el;  // AudioControls.setRxVol (separate closure) needs this
+      window.AudioControls?.setRxVol?.(Math.round((window._masterGain ? window._masterGain.gain.value / 0.9 : 0.7) * 100));
       _rxSourceNode = audioCtx.createMediaElementSource(el);
       _rxSourceNode.connect(window._masterGain || audioCtx.destination);
     } catch (e) { console.warn('[audio] RX WebRTC track routing error:', e); }
@@ -1238,7 +1253,7 @@ function _closeRxWebRTC() {
   _aheadAvg = 0;
   _updateAudioLatencyBadge();
   if (_rxSourceNode) { try { _rxSourceNode.disconnect(); } catch (e) {} _rxSourceNode = null; }
-  if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} _rxAudioEl = null; }
+  if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} _rxAudioEl = null; window._rxAudioEl = null; }
   if (_rxPc) {
     try { _rxPc.close(); } catch (e) {}
     _rxPc = null;
