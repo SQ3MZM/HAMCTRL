@@ -310,6 +310,18 @@ function initTabs() {
 function switchTab(name) {
   document.querySelectorAll('.m-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.m-tabpanel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  if (name === 'ft8') {
+    // WSJTX.init() (below) runs once, eagerly, at boot — while this tab is
+    // still hidden behind Radio (display:none). The waterfall needs the
+    // canvas to have real pixel dimensions to init WebGL, and a
+    // display:none canvas has none, so the scope silently gives up after
+    // ~2s of retries and never gets another chance -> permanently blank
+    // waterfall. Re-trigger just the scope init here, every time this tab
+    // is opened, now that the canvas is actually visible and sized —
+    // WSJTXScope.init() is cheap/safe to call again (no-op once WebGL is
+    // already running).
+    window.WSJTXScope?.init?.();
+  }
   if (name === 'ft8' && !_ft8Inited) {
     _ft8Inited = true;
     try { window.FT8Timer?.init?.(); } catch (e) {}

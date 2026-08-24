@@ -314,12 +314,21 @@ function _reallocDataTextureIfNeeded() {
   }
 }
 
+let _listenersAttached = false;
+
 function init() {
   canvas = document.getElementById('wj-scope-canvas');
   if (!canvas) { console.warn('[scope] no canvas'); return; }
 
   // If GL is already initialized — just resize and render
   if (gl) { _resizeCanvas(); _renderAxis(); _requestRender(); return; }
+
+  // init() can now be called more than once (mobile re-triggers it when
+  // the FT8 tab becomes visible, since the first attempt at boot happens
+  // while the tab is still display:none — see mobile.js::switchTab) — only
+  // attach the listeners once, or a retry would register them twice.
+  if (_listenersAttached) { _waitAndInit(30); return; }
+  _listenersAttached = true;
 
   canvas.addEventListener('mousedown', _onMouseDown);
   window.addEventListener('mousemove', _onMouseMove);
