@@ -2381,6 +2381,30 @@
       <div id="smtp-msg" style="padding:0 12px 12px;font-family:var(--mono);font-size:10px;min-height:20px;"></div>
     </div>
 
+    <!-- AKTUALIZACJE — sprawdzanie nowej wersji na GitHub Releases -->
+    <div class="box">
+      <div class="box-header" data-i18n="adm_update_hdr">AKTUALIZACJE</div>
+      <div data-i18n="adm_update_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.9;border-bottom:1px solid var(--border);">
+        Sprawdza GitHub Releases raz przy starcie serwera (albo na żądanie poniżej). Niczego nie pobiera ani nie instaluje — tylko informuje.
+      </div>
+      <div class="settings-inner">
+        <div class="sg"><label data-i18n="adm_update_current_lbl">TWOJA WERSJA</label><div id="adm-update-current" style="font-family:var(--mono);font-size:12px;"></div></div>
+        <div class="sg"><label data-i18n="adm_update_status_lbl">STATUS</label><div id="adm-update-status" style="font-family:var(--mono);font-size:12px;"></div></div>
+        <div class="sg" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="adm-update-check-toggle" onchange="AdminUpdate.saveToggles()">
+          <label for="adm-update-check-toggle" data-i18n="adm_update_check_lbl" style="margin:0;">Automatyczne sprawdzanie przy starcie</label>
+        </div>
+        <div class="sg" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="adm-update-email-toggle" onchange="AdminUpdate.saveToggles()">
+          <label for="adm-update-email-toggle" data-i18n="adm_update_email_lbl" style="margin:0;">Powiadom adminów mailem (wymaga skonfigurowanego SMTP powyżej)</label>
+        </div>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;">
+        <button class="admin-btn" onclick="AdminUpdate.checkNow()" data-i18n="adm_update_check_now_btn">SPRAWDŹ TERAZ</button>
+      </div>
+      <div id="adm-update-msg" style="padding:0 12px 12px;font-family:var(--mono);font-size:10px;min-height:20px;"></div>
+    </div>
+
   </div>
 </div>
 
@@ -2574,7 +2598,7 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202608243500"></script>
+<script src="js/i18n.js?v=202608243600"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608243300"></script>
@@ -3023,6 +3047,76 @@ window.AdminSmtp = {
   }
 };
 
+// ── AdminUpdate — status/ustawienia sprawdzania nowej wersji na GitHub ──────
+// Backend (self._run_update_check, /api/update/config, /api/update/check)
+// istniał juz od dawna, ale nigdy nie mial frontu - stad "mam ustawiony
+// mail, a i tak nic nie przychodzi": updateEmail (osobny flag od samego
+// SMTP) byl domyslnie wylaczony i nie bylo jak go wlaczyc, a _update_info
+// nigdzie sie nie wyswietlal.
+window.AdminUpdate = {
+  async load() {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+      const r = await fetch('/api/update/config', {headers:{'Authorization':`Bearer ${token}`}});
+      const d = await r.json();
+      this._render(d);
+    } catch(e) {}
+  },
+  _render(d) {
+    document.getElementById('adm-update-current').textContent = d.current || '?';
+    document.getElementById('adm-update-check-toggle').checked = !!d.enabled;
+    document.getElementById('adm-update-email-toggle').checked = !!d.email;
+    const statusEl = document.getElementById('adm-update-status');
+    if (!d.repo_configured) {
+      statusEl.textContent = I18n.t('adm_update_no_repo');
+      statusEl.style.color = 'var(--dim)';
+    } else if (d.update && d.update.latest) {
+      statusEl.innerHTML = `⚠ ${I18n.t('adm_update_available').replace('{v}', d.update.latest)} — <a href="${d.update.url}" target="_blank" style="color:var(--green);">${I18n.t('adm_update_open_release')}</a>`;
+      statusEl.style.color = 'var(--amber)';
+    } else {
+      statusEl.textContent = I18n.t('adm_update_current_ok');
+      statusEl.style.color = 'var(--green)';
+    }
+  },
+  async saveToggles() {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    const body = {
+      enabled: document.getElementById('adm-update-check-toggle').checked,
+      email:   document.getElementById('adm-update-email-toggle').checked,
+    };
+    await fetch('/api/update/config', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body: JSON.stringify(body)
+    });
+  },
+  async checkNow() {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    const msg = document.getElementById('adm-update-msg');
+    msg.textContent = I18n.t('adm_update_checking');
+    msg.style.color = 'var(--dim)';
+    try {
+      const r = await fetch('/api/update/check', {
+        method: 'POST', headers: {'Authorization': `Bearer ${token}`}
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        msg.textContent = '✗ ' + (d.error || I18n.t('profile_error_fallback'));
+        msg.style.color = 'var(--red)';
+        return;
+      }
+      this._render({ current: d.current, update: d.update,
+        enabled: document.getElementById('adm-update-check-toggle').checked,
+        email: document.getElementById('adm-update-email-toggle').checked,
+        repo_configured: true });
+      msg.textContent = I18n.t('adm_update_checked');
+      msg.style.color = 'var(--green)';
+    } catch(e) {
+      msg.textContent = '✗ ' + I18n.t('cfg_conn_error') + ': ' + e.message;
+      msg.style.color = 'var(--red)';
+    }
+  }
+};
+
 // ── RadioLock — wydzielone do public/js/radiolock.js (2026-08-24), żeby
 // telefon mógł reużyć dokładnie tę samą logikę zamiast duplikować ją.
 
@@ -3059,7 +3153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (name === _lastPage) return;
     _lastPage = name;
     if (name === 'internet') { Tunnel.load(); Tunnel.checkCF(); }
-    if (name === 'admin')    { Admin.loadUsers(); Admin.loadFt8Timers?.(); AdminSmtp.load(); }
+    if (name === 'admin')    { Admin.loadUsers(); Admin.loadFt8Timers?.(); AdminSmtp.load(); AdminUpdate.load(); }
     if (name === 'log')     { window.QSOLog?.load(); }
     // Odswiez stan radia przy kazdej zmianie strony
     fetch('/api/radio/state').then(r=>r.json()).then(msg=>window.OpPanel?.handleWS(msg)).catch(()=>{});

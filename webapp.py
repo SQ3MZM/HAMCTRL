@@ -847,6 +847,16 @@ class App:
             await asyncio.sleep(3600)
 
     async def _do_update_check(self):
+        """Startup path: let the server finish coming up before touching the
+        network, then run the actual check (_run_update_check). Separate from
+        _run_update_check so the admin's manual "check now" button
+        (/api/update/check) can run the check immediately, without waiting
+        through this same 8s delay every time."""
+        self._update_info = None   # {latest, current, url} once a newer one is found
+        await asyncio.sleep(8.0)
+        await self._run_update_check()
+
+    async def _run_update_check(self):
         """Check GitHub Releases once for a newer HAMCTRL version and store a
         notice for the admin. Never downloads or installs anything — the admin
         fetches the new installer manually. Fully optional and silent:
@@ -857,10 +867,6 @@ class App:
             or spam the log. This is the product 'phoning home', so it is a
             single best-effort request, off the hot path, that fails quietly.
         """
-        self._update_info = None   # {latest, current, url} once a newer one is found
-        # Let the server finish coming up before we touch the network.
-        await asyncio.sleep(8.0)
-
         if not GITHUB_REPO:
             return   # no repo configured yet — nothing to check against
         if self.cfg.get("updateCheck", True) is False:
@@ -2621,6 +2627,18 @@ class App:
             return 200, {"ok": True,
                          "enabled": self.cfg.get("updateCheck", True),
                          "email": self.cfg.get("updateEmail", False)}
+
+        if p == "/api/update/check" and method == "POST":
+            # Manual "check now" - the automatic check only ever runs once,
+            # 8s after server startup (_do_update_check), so without this an
+            # admin would have to restart the whole server just to see
+            # whether a newer release showed up since then.
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            if not GITHUB_REPO:
+                return 200, {"ok": False, "error": "GITHUB_REPO nie skonfigurowany"}
+            await self._run_update_check()
+            return 200, {"ok": True, "current": SERVER_VERSION,
+                         "update": getattr(self, "_update_info", None)}
 
         if p == "/api/config" and method == "GET":
             return 200, {"callsign": CALLSIGN, "locator": LOCATOR, "port": PORT,
@@ -6758,7 +6776,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-v2.0.1, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-UPDATE-CHECK-UI, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

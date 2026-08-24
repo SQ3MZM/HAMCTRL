@@ -900,6 +900,21 @@ window.I18N_STRINGS = {
     adm_smtp_sending_test: "⏳ Wysyłam email testowy…",
     adm_smtp_sent: "✓ Wysłano",
 
+    // Dynamiczne (AdminUpdate — inline w index.html)
+    adm_update_hdr: "AKTUALIZACJE",
+    adm_update_desc: "Sprawdza GitHub Releases raz przy starcie serwera (albo na żądanie poniżej). Niczego nie pobiera ani nie instaluje — tylko informuje.",
+    adm_update_current_lbl: "TWOJA WERSJA",
+    adm_update_status_lbl: "STATUS",
+    adm_update_check_lbl: "Automatyczne sprawdzanie przy starcie",
+    adm_update_email_lbl: "Powiadom adminów mailem (wymaga skonfigurowanego SMTP powyżej)",
+    adm_update_check_now_btn: "SPRAWDŹ TERAZ",
+    adm_update_no_repo: "Repozytorium nieskonfigurowane",
+    adm_update_available: "Dostępna nowa wersja: {v}",
+    adm_update_open_release: "otwórz release",
+    adm_update_current_ok: "✓ Masz najnowszą wersję",
+    adm_update_checking: "⏳ Sprawdzam…",
+    adm_update_checked: "✓ Sprawdzono",
+
     // ── MOBILE (mobile.html / mobile.js / mobile_audio.js) ──
     m_lang_toggle_title: "Zmień język / Change language",
     m_audio_btn_title: "Dźwięk (odsłuch)",
@@ -1845,6 +1860,21 @@ window.I18N_STRINGS = {
     adm_smtp_enter_test_email: "✗ Enter an email address in the \"TEST EMAIL\" field",
     adm_smtp_sending_test: "⏳ Sending test email…",
     adm_smtp_sent: "✓ Sent",
+
+    // Dynamic (AdminUpdate — inline in index.html)
+    adm_update_hdr: "UPDATES",
+    adm_update_desc: "Checks GitHub Releases once at server startup (or on demand below). Never downloads or installs anything — informational only.",
+    adm_update_current_lbl: "YOUR VERSION",
+    adm_update_status_lbl: "STATUS",
+    adm_update_check_lbl: "Check automatically at startup",
+    adm_update_email_lbl: "Notify admins by email (requires SMTP configured above)",
+    adm_update_check_now_btn: "CHECK NOW",
+    adm_update_no_repo: "Repository not configured",
+    adm_update_available: "New version available: {v}",
+    adm_update_open_release: "open release",
+    adm_update_current_ok: "✓ You have the latest version",
+    adm_update_checking: "⏳ Checking…",
+    adm_update_checked: "✓ Checked",
 
     // ── MOBILE (mobile.html / mobile.js / mobile_audio.js) ──
     m_lang_toggle_title: "Zmień język / Change language",
