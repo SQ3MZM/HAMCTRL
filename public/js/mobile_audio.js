@@ -26,196 +26,47 @@
  *      gain by keeping the stream open, and doing so risks hitting the
  *      same class of bug on whatever OS a given phone runs.
  *
- * Backend contract (unchanged, see webapp.py):
- *   RX: separate WS straight to ham_audio.exe (wss://host:9443 / ws://host:9401),
- *       binary frames [0xA1][seq 4B LE][opus payload].
- *   TX: signaling over the MAIN app WS — {type:'webrtc_offer', sdp, sdpType}
- *       sent here via window.WS.send (mobile.js's shim), answered with
- *       webrtc_answer/webrtc_ice/webrtc_error (mobile.js forwards those to
+ * Backend contract (see webapp.py / webrtc_rx_audio.py / webrtc_audio.py):
+ *   RX and TX both go over WebRTC (aiortc), signaling over the MAIN app WS.
+ *   RX: server creates the offer ({type:'webrtc_rx_offer'}), browser answers
+ *       ({type:'webrtc_rx_answer'}) - opposite direction from TX, since the
+ *       server has the media to send. ICE both ways via
+ *       webrtc_rx_ice/webrtc_ice. Source: AudioStream._rx_loop's PCM
+ *       capture (audio_stream.py), the same one that already fed DeepCW/
+ *       the local waterfall - not a second capture.
+ *   TX: browser/mic offers ({type:'webrtc_offer'}), server answers
+ *       ({type:'webrtc_answer'}), sent here via window.WS.send (mobile.js's
+ *       shim), errors via webrtc_error (mobile.js forwards those to
  *       MobileAudio.onAnswer/onRemoteIce/onWebrtcError).
  */
 (function () {
 'use strict';
 
-// ── RX (listen) ──────────────────────────────────────────────────────────
-let audioCtx = null;
-let audioWs = null;
+// ── RX (listen) — over WebRTC ────────────────────────────────────────────
+// Was direct-to-ham_audio.exe WS/Opus, A/B tested against WebRTC, then
+// switched over for good (2026-08-24, live-confirmed clearly better with
+// 1 listener; WS stalled everything behind one lost/delayed TCP segment on
+// LTE - classic head-of-line blocking - while a lost UDP packet here is
+// just a small glitch). Server has the media (creates the offer, opposite
+// of TX mic below, where the browser/mic offers). Playback via a plain
+// <audio> element - the browser's own built-in WebRTC jitter buffer/PLC
+// handles it, no hand-tuned buffer logic needed here.
 let audioEnabled = false;
-let opusDecoder = null;
-
-// RX transport: 'ws' (default, direct to ham_audio.exe, unchanged) or
-// 'webrtc' (TEST BUILD - see webrtc_rx_audio.py). WS RX and TX mic both
-// share this device's LTE link; TX mic is already WebRTC/UDP (below), so a
-// lost packet there is a small glitch, while a lost packet on the RX WS
-// (TCP) stalls everything queued behind it on that SAME connection until
-// retransmission - reported live as "everything skips, worst with WS,
-// unusable the moment anything else uses the link". This flag lets the two
-// paths be A/B tested without touching the default for other users.
-const RX_TRANSPORT_KEY = 'ham_rx_transport_test';
-function _rxTransport() {
-  return localStorage.getItem(RX_TRANSPORT_KEY) === 'webrtc' ? 'webrtc' : 'ws';
-}
-function setRxTransport(mode) {
-  localStorage.setItem(RX_TRANSPORT_KEY, mode === 'webrtc' ? 'webrtc' : 'ws');
-  // Re-connect on the new transport if RX is currently on.
-  if (audioEnabled) { enableRx(false); enableRx(true); }
-}
-
-// Jitter buffer — same tuning constants as ws.js::_scheduleAudioBuffer,
-// already tuned against real LTE jitter (see memory
-// audio_pipeline_deep_analysis_2026-08-16), not reinvented here.
-let nextAudioTime = 0;
-let aheadAvg = 0;
-let audioTarget = 0.18;
-const TARGET_BASE = 0.18;
-const TARGET_CEIL = 0.30;
-const TARGET_STEP = 0.03;
-const TARGET_DECAY_STEP = 0.02;
-const TARGET_CLEAN_MS = 90000;
-let lastUnderrunAt = 0;
-const AUDIO_MIN = 0.05;
-const AUDIO_MAX = 0.40;
-
-setInterval(() => {
-  if (audioTarget <= TARGET_BASE) return;
-  if (performance.now() - lastUnderrunAt < TARGET_CLEAN_MS) return;
-  audioTarget = Math.max(TARGET_BASE, audioTarget - TARGET_DECAY_STEP);
-}, 5000);
-
-function initAudioContext() {
-  if (audioCtx) { if (audioCtx.state === 'suspended') audioCtx.resume(); return; }
-  try {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-  } catch (e) { console.warn('[maudio] AudioContext error:', e); }
-}
-
-function initOpusDecoder() {
-  if (!window.AudioDecoder) {
-    opusDecoder = null;
-    return false;
-  }
-  try {
-    const dec = new AudioDecoder({
-      output: (frame) => {
-        if (!audioCtx || frame.numberOfFrames === 0) { frame.close(); return; }
-        try {
-          const buf = audioCtx.createBuffer(frame.numberOfChannels, frame.numberOfFrames, frame.sampleRate);
-          for (let ch = 0; ch < frame.numberOfChannels; ch++) frame.copyTo(buf.getChannelData(ch), { planeIndex: ch });
-          frame.close();
-          scheduleAudioBuffer(buf);
-        } catch (e) { frame.close(); }
-      },
-      error: (e) => console.error('[maudio] AudioDecoder error:', e),
-    });
-    dec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 });
-    opusDecoder = { dec, ts: 0, first: true };
-    return true;
-  } catch (e) {
-    console.error('[maudio] AudioDecoder init error:', e);
-    opusDecoder = null;
-    return false;
-  }
-}
-
-function decodeFrame(opusData) {
-  if (!opusDecoder) return;
-  opusDecoder.dec.decode(new EncodedAudioChunk({
-    type: opusDecoder.first ? 'key' : 'delta',
-    timestamp: opusDecoder.ts,
-    data: opusData,
-  }));
-  opusDecoder.first = false;
-  opusDecoder.ts += 20000; // 20ms frames, in microseconds
-}
-
-function scheduleAudioBuffer(audioBuffer) {
-  if (!audioCtx) return;
-  const now = audioCtx.currentTime;
-  let ahead = nextAudioTime - now;
-
-  if (aheadAvg === 0) aheadAvg = ahead > 0 ? ahead : audioTarget;
-  aheadAvg = aheadAvg * 0.9 + ahead * 0.1;
-
-  let rate = 1.0;
-  if (ahead > 0) {
-    const err = aheadAvg - audioTarget;
-    if (Math.abs(err) > 0.04) rate = 1.0 + Math.max(-0.003, Math.min(0.003, err * 0.02));
-  }
-
-  if (ahead > 0 && ahead < AUDIO_MIN) {
-    nextAudioTime = now + audioTarget; ahead = audioTarget; aheadAvg = audioTarget;
-  } else if (ahead > AUDIO_MAX) {
-    nextAudioTime = now + audioTarget; ahead = audioTarget; aheadAvg = audioTarget;
-  }
-  if (ahead < 0) {
-    audioTarget = Math.min(TARGET_CEIL, audioTarget + TARGET_STEP);
-    lastUnderrunAt = performance.now();
-    nextAudioTime = now + audioTarget; ahead = audioTarget; aheadAvg = audioTarget; rate = 1.0;
-  }
-
-  const src = audioCtx.createBufferSource();
-  src.buffer = audioBuffer;
-  if (rate !== 1.0) src.playbackRate.value = rate;
-  src.connect(audioCtx.destination);
-  src.start(nextAudioTime);
-  nextAudioTime += audioBuffer.duration / rate;
-}
-
-function playOpusFrame(buffer) {
-  if (!audioEnabled || !audioCtx || !opusDecoder) return;
-  const view = new Uint8Array(buffer);
-  // ham_audio.exe framing: [0xA1][seq 4B LE][opus...] — skip 5 bytes.
-  const skip = view[0] === 0xA1 ? 5 : 1;
-  try { decodeFrame(view.slice(skip)); } catch (e) {}
-}
-
-function connectAudioWs() {
-  if (audioWs && audioWs.readyState <= 1) return;
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const port = location.protocol === 'https:' ? 9443 : 9401;
-  audioWs = new WebSocket(`${proto}//${location.hostname}:${port}`);
-  audioWs.binaryType = 'arraybuffer';
-  audioWs.onmessage = (e) => { if (e.data instanceof ArrayBuffer) playOpusFrame(e.data); };
-  audioWs.onclose = () => {
-    audioWs = null;
-    if (audioEnabled) setTimeout(connectAudioWs, 3000);
-  };
-  audioWs.onerror = () => {};
-}
+let rxPc = null;
+let rxAudioEl = null;
 
 // Returns the new enabled state (false if it failed to start, e.g. no
-// WebCodecs support — caller should reflect that back into the UI).
+// WebRTC support — caller should reflect that back into the UI).
 function enableRx(on) {
   if (!on) {
     audioEnabled = false;
-    if (audioWs) { try { audioWs.close(); } catch (e) {} audioWs = null; }
     closeRxWebRTC();
-    nextAudioTime = 0; aheadAvg = 0;
-    return false;
-  }
-  if (_rxTransport() === 'webrtc') {
-    audioEnabled = true;
-    connectRxWebRTC();
-    return true;
-  }
-  initAudioContext();
-  if (!initOpusDecoder()) {
-    window.Mobile?.showToast?.(I18n.t('m_audio_no_webcodecs'), 'error');
     return false;
   }
   audioEnabled = true;
-  connectAudioWs();
+  connectRxWebRTC();
   return true;
 }
-
-// ── RX over WebRTC (TEST BUILD) ─────────────────────────────────────────
-// Server has the media (it creates the offer, opposite of TX mic below,
-// where the browser/mic offers). No jitter-buffer tuning needed here at
-// all - a plain <audio> element plays a WebRTC track using the browser's
-// own built-in jitter buffer/PLC, the same machinery every video call uses.
-let rxPc = null;
-let rxAudioEl = null;
 
 function connectRxWebRTC() {
   if (rxPc) return;
@@ -238,17 +89,13 @@ function connectRxWebRTC() {
     // No retry here for 'disconnected' - that state is often transient
     // (brief ICE hiccup) and can self-recover; only 'failed'/'closed' are
     // terminal. Auto-reconnect after a short delay if RX is still
-    // supposed to be on and we're still on the webrtc transport -
-    // previously this just closed and gave up, matching exactly what was
-    // reported live: audio died the moment something (FT8 decode CPU
-    // load) stressed the connection, and only a full page reload (a
-    // brand new RTCPeerConnection) brought it back - toggling FT8 back
-    // off alone did nothing because nothing was left trying to reconnect.
+    // supposed to be on - previously this just closed and gave up,
+    // matching exactly what was reported live: audio died the moment
+    // something (FT8 decode CPU load) stressed the connection, and only a
+    // full page reload (a brand new RTCPeerConnection) brought it back.
     if (rxPc && (rxPc.connectionState === 'failed' || rxPc.connectionState === 'closed')) {
       closeRxWebRTC();
-      if (audioEnabled && _rxTransport() === 'webrtc') {
-        setTimeout(() => { if (audioEnabled && _rxTransport() === 'webrtc') connectRxWebRTC(); }, 2000);
-      }
+      if (audioEnabled) setTimeout(() => { if (audioEnabled) connectRxWebRTC(); }, 2000);
     }
   };
   window.WS?.send({ type: 'webrtc_rx_start' });
@@ -381,7 +228,7 @@ window.MobileAudio = {
   enableRx, isRxEnabled: () => audioEnabled,
   startMicTx, stopMicTx, onAnswer, onRemoteIce, onWebrtcError,
   isMicActive: () => micActive,
-  setRxTransport, getRxTransport: _rxTransport, onRxOffer, onRxWebrtcError,
+  onRxOffer, onRxWebrtcError,
 };
 
 })();

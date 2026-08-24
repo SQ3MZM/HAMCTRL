@@ -690,8 +690,9 @@ class App:
             on_track_started=self._webrtc_tx_start,
             on_track_ended=self._webrtc_tx_stop,
         ) if _WEBRTC else None
-        # RX audio over WebRTC (TEST BUILD) - one sender per connected
-        # client that opts in, keyed by their ws (see webrtc_rx_audio.py).
+        # RX audio over WebRTC - one sender per connected client, keyed by
+        # their ws (see webrtc_rx_audio.py). The RX audio path (2026-08-24
+        # onward), replacing the ham_audio.exe WS/Opus path client-side.
         # Unlike self.webrtc (TX, exclusive - one transmitter at a time),
         # RX listening isn't exclusive, so this is a dict, not a single
         # shared instance.
@@ -4390,6 +4391,7 @@ class App:
             _rx_sender = self._webrtc_rx_senders.pop(ws, None)
             if _rx_sender:
                 await _rx_sender.close()
+                self._log_rx_webrtc_listeners()
             # Remove from the online list and notify the others
             self.online_users.pop(ws, None)
             self.radio_requests.pop(uid, None)
@@ -5106,6 +5108,24 @@ class App:
         print("[webrtc] TX track ended")
         if self.audio.tx_active:
             self.audio.stop_tx()
+
+    def _log_rx_webrtc_listeners(self):
+        """Logs the current WebRTC RX listener count alongside total process
+        CPU%, every time a listener joins/leaves - so a multi-listener
+        capacity test (open N browser tabs/devices, watch this line) gives
+        a real measured count->CPU curve instead of a guess. Each listener
+        is its own aiortc RTCPeerConnection/track (independent Opus encode
+        per listener, unlike ham_audio.exe's Rust RX path which encodes
+        once and fans the same bytes out to every WS client) - CPU here is
+        expected to scale roughly linearly with listener count, this line
+        is what actually confirms that instead of assuming it."""
+        n = len(self._webrtc_rx_senders)
+        try:
+            import psutil as _ps
+            cpu = f"{_ps.cpu_percent(interval=None):.0f}%"
+        except Exception:
+            cpu = "?"
+        print(f"[webrtc-rx] listeners={n} cpu={cpu}", flush=True)
 
     async def _cw_decode_loop(self):
         """Feeds the CW decoder raw audio from the card (bypassing Opus).
@@ -6374,11 +6394,12 @@ class App:
             if self.audio.tx_active:
                 self.audio.stop_tx()
 
-        # ── WebRTC RX audio (TEST BUILD, see webrtc_rx_audio.py) - opposite
-        # direction from webrtc_offer above (server offers, browser
-        # answers). No radio_lock/viewer gate: listening isn't exclusive,
-        # same as the existing Rust-WS RX audio path anyone can already
-        # connect to. ──
+        # ── WebRTC RX audio (webrtc_rx_audio.py) - the RX audio path,
+        # opposite direction from webrtc_offer above (server offers,
+        # browser answers). No radio_lock/viewer gate: listening isn't
+        # exclusive - any number of clients can each hold their own
+        # sender at once (see _log_rx_webrtc_listeners below for
+        # capacity testing while stressing this with multiple listeners). ──
         elif t == "webrtc_rx_start":
             if not _WEBRTC:
                 await ws.send_json({"type": "webrtc_rx_error", "error": "WebRTC niedostepne na serwerze"})
@@ -6390,6 +6411,7 @@ class App:
             self._webrtc_rx_senders[ws] = sender
             offer = await sender.create_offer()
             await ws.send_json({"type": "webrtc_rx_offer", "sdp": offer["sdp"], "sdpType": offer["type"]})
+            self._log_rx_webrtc_listeners()
 
         elif t == "webrtc_rx_answer":
             sender = self._webrtc_rx_senders.get(ws)
@@ -6405,6 +6427,7 @@ class App:
             sender = self._webrtc_rx_senders.pop(ws, None)
             if sender:
                 await sender.close()
+            self._log_rx_webrtc_listeners()
 
         # ── Dynamic actions/sliders (from dump_caps: VFO A/B, functions, levels) ──
         elif t == "rig_action":

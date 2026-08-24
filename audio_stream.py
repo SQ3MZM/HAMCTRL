@@ -117,7 +117,7 @@ class AudioStream:
         # polled often (every ~0.5-1s), independent of the 15s FT8 decode cycle.
         self._waterfall_buf = bytearray()
         self._waterfall_buf_lock = threading.Lock()
-        # RX PCM subscribers (WebRTC test build, see webrtc_rx_audio.py) -
+        # RX PCM subscribers (WebRTC RX audio path, see webrtc_rx_audio.py) -
         # a list of (asyncio.Queue, loop) pairs fed from _rx_loop's thread
         # via loop.call_soon_threadsafe, same PCM chunks already flowing to
         # the CW/waterfall buffers above (one physical capture, several
@@ -239,8 +239,8 @@ class AudioStream:
                         del self._waterfall_buf[:len(self._waterfall_buf) - max_wf_bytes]
 
                 # Hand off to any WebRTC RX subscribers (see subscribe_rx_pcm
-                # above) - cheap no-op when the list is empty (the normal
-                # case until someone opts into the test build).
+                # above) - cheap no-op when the list is empty (e.g. nobody
+                # currently has RX audio turned on).
                 if self._rx_pcm_subscribers:
                     with self._rx_pcm_subscribers_lock:
                         subs = list(self._rx_pcm_subscribers)

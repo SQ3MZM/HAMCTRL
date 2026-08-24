@@ -1097,31 +1097,17 @@ window.AudioControls = (function() {
   return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain };
 })();
 
-// ── RX audio transport (TEST BUILD) — 'ws' (default, direct to
-// ham_audio.exe, unchanged) or 'webrtc' (see webrtc_rx_audio.py). Reported
-// live over LTE: audio+control both degrade together under any competing
-// network traffic, worst on WS — classic TCP head-of-line blocking (one
-// delayed/lost segment stalls everything queued behind it on that SAME
-// connection). TX mic already goes over WebRTC/UDP (_txMic below) and
-// doesn't have this problem — this lets RX be A/B tested against it
-// without touching the default for other users. Same localStorage key as
-// mobile_audio.js's identical toggle, though each browser/device has its
-// own storage regardless.
-const RX_TRANSPORT_KEY = 'ham_rx_transport_test';
-function _rxTransport() {
-  return localStorage.getItem(RX_TRANSPORT_KEY) === 'webrtc' ? 'webrtc' : 'ws';
-}
-function _setRxTransport(mode) {
-  localStorage.setItem(RX_TRANSPORT_KEY, mode === 'webrtc' ? 'webrtc' : 'ws');
-  if (window._audioEnabled) { window.WS.enableAudio(false); window.WS.enableAudio(true); }
-}
-
-// ── RX audio over WebRTC (TEST BUILD) ────────────────────────────────────
-// Server has the media (creates the offer) — opposite direction from
-// _txMic below (browser/mic offers, server answers). Playback via a plain
-// <audio> element: the browser's own built-in WebRTC jitter buffer/PLC
-// handles it, no need to port the hand-tuned WS/Opus jitter-buffer logic
-// (_scheduleAudioBuffer) to this path.
+// ── RX audio over WebRTC ─────────────────────────────────────────────────
+// Was direct-to-ham_audio.exe WS/Opus, A/B tested against WebRTC, then
+// switched over for good (2026-08-24, live-confirmed clearly better with
+// 1 listener; WS stalled everything behind one lost/delayed TCP segment on
+// LTE - classic head-of-line blocking - while a lost UDP packet here is
+// just a small glitch). Server has the media (creates the offer) —
+// opposite direction from _txMic below (browser/mic offers, server
+// answers). Playback via a plain <audio> element: the browser's own
+// built-in WebRTC jitter buffer/PLC handles it, no need for the hand-tuned
+// WS/Opus jitter-buffer logic (_scheduleAudioBuffer, still used elsewhere
+// in this file - see initLocalAudio) on this path.
 let _rxPc = null;
 let _rxAudioEl = null;
 
@@ -1150,9 +1136,7 @@ function _connectRxWebRTC() {
     // reload, since nothing was left trying to reconnect.
     if (_rxPc && (_rxPc.connectionState === 'failed' || _rxPc.connectionState === 'closed')) {
       _closeRxWebRTC();
-      if (window._audioEnabled && _rxTransport() === 'webrtc') {
-        setTimeout(() => { if (window._audioEnabled && _rxTransport() === 'webrtc') _connectRxWebRTC(); }, 2000);
-      }
+      if (window._audioEnabled) setTimeout(() => { if (window._audioEnabled) _connectRxWebRTC(); }, 2000);
     }
   };
   window.WS?.send({ type: 'webrtc_rx_start' });
@@ -1500,27 +1484,13 @@ window.WS = {
   enableAudio(on) {
     window._audioEnabled = !!on;
     if (on) {
-      if (_rxTransport() === 'webrtc') {
-        _connectRxWebRTC();
-        return;
-      }
-      initAudioContext();
-      initOpusDecoder();
-      // Check whether Rust audio is available (port 9401)
-      _connectAudioWs();
+      _connectRxWebRTC();
     } else {
       _closeRxWebRTC();
-      if (window._audioWs && window._audioWs.readyState === WebSocket.OPEN) {
-        window._audioWs.close();
-        window._audioWs = null;
-      }
       this.send({ type: 'audio_stop' });
-      _nextAudioTime = 0; _aheadAvg = 0; _audioBadgeAt = 0;
       _updateAudioLatencyBadge();
     }
   },
-  setRxTransport: (mode) => _setRxTransport(mode ? 'webrtc' : 'ws'),
-  getRxTransport: () => _rxTransport(),
   isConnected:   () => ws && ws.readyState === WebSocket.OPEN,
   initLocalAudio,
   stopLocalAudio,

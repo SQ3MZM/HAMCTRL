@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 webrtc_rx_audio.py — sends RX audio (radio -> browser) over WebRTC (aiortc).
-TEST BUILD for internal use: an alternative to the existing Rust/ham_audio.exe
--> browser WebSocket RX path, not a replacement for it (yet). Reported live
-over LTE: RX audio and control both degrade together under any competing
-network traffic, worst on WS - classic TCP head-of-line blocking, where one
+The RX audio path (2026-08-24 onward), replacing the direct
+browser<->ham_audio.exe WebSocket/Opus RX path. Reported live over LTE: RX
+audio and control both degraded together under any competing network
+traffic, worst on WS - classic TCP head-of-line blocking, where one
 delayed/lost segment stalls everything queued behind it on the same
 connection, regardless of how unrelated that data is. TX mic audio already
-goes over WebRTC (webrtc_audio.py, aiortc/UDP) and doesn't have this problem;
+went over WebRTC (webrtc_audio.py, aiortc/UDP) and didn't have this problem;
 this brings RX to the same transport so a lost packet is a small glitch
-instead of a multi-second stall.
+instead of a multi-second stall - live-confirmed clearly smoother with 1
+listener than the old WS path.
 
 Audio source: the ALREADY-RUNNING AudioStream._rx_loop PCM capture
 (audio_stream.py) that normally feeds only the CW decoder (DeepCW) and the
@@ -26,8 +27,12 @@ separate names from webrtc_offer/answer/ice/stop (TX) to avoid any ambiguity
 about which direction a given message is for.
 
 Multiple clients can each have their own WebRTCAudioSender at once (RX
-listening isn't exclusive like TX) - one instance per connected client that
-opts into the test build, tracked in App._webrtc_rx_senders keyed by the ws.
+listening isn't exclusive like TX) - one instance per connected client,
+tracked in App._webrtc_rx_senders keyed by the ws. Each listener is a
+separate aiortc connection/track (independent Opus encode per listener,
+unlike ham_audio.exe's Rust path which encodes once and fans out the same
+bytes to every WS client) - see App._log_rx_webrtc_listeners for the
+listener-count/CPU log line used to measure how this scales in practice.
 """
 import asyncio, fractions
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer

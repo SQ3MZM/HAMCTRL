@@ -478,14 +478,6 @@
       <span data-i18n="m_audio_toggle_lbl">🔊 Dźwięk (odsłuch)</span>
       <input type="checkbox" id="m-settings-audio-toggle" onchange="Mobile.toggleRxAudio(this.checked)">
     </label>
-    <!-- TEST BUILD: RX audio przez WebRTC/UDP zamiast WS/TCP - patrz
-         mobile_audio.js (nagłówek pliku) i webrtc_rx_audio.py. Domyślnie
-         wyłączone (WS zostaje domyślnym, stabilnym torem) - do
-         świadomego A/B testu na słabym łączu. -->
-    <label class="m-switch-row">
-      <span data-i18n="m_rx_webrtc_test_lbl">🧪 RX przez WebRTC (test)</span>
-      <input type="checkbox" id="m-settings-rx-webrtc-toggle" onchange="Mobile.setRxTransport(this.checked)">
-    </label>
     <div class="m-select-row">
       <span class="m-sub-lbl" data-i18n="m_mic_lbl">MIKROFON (nadawanie)</span>
       <select id="m-mic-select" class="m-select" onchange="Mobile.setMicDevice(this.value)">
@@ -546,7 +538,7 @@
 </div>
 
 <script src="js/auth.js?v=202608221000"></script>
-<script src="js/i18n.js?v=202608242900"></script>
+<script src="js/i18n.js?v=202608243200"></script>
 <script src="js/cw.js?v=202608242400"></script>
 <script src="js/wsjtx.js?v=202608242800"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
@@ -554,7 +546,7 @@
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
-<script src="js/mobile_audio.js?v=202608243100"></script>
+<script src="js/mobile_audio.js?v=202608243200"></script>
 <script src="js/mobile.js?v=202608242900"></script>
 </body>
 </html>
