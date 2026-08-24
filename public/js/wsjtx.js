@@ -1024,7 +1024,7 @@ function _addDecode(d) {
   // the RX window alongside received ones), but DON'T pass it to Hound or
   // count it as a received DX decode — it's our TX, not a signal from the band.
   if (!d.is_tx && _hound.active) _houndOnDecode(d);
-  if (!d.is_tx) _decodeCount++;
+  if (!d.is_tx) { _decodeCount++; _watchDxCall(d); }
   // Always add — isNew=false is replays from previous cycles (worth
   // showing too). On MSG_CLEAR, WSJT-X clears the table; we do the same in handleWS('wsjtx_clear')
   _decodes.push(d);
@@ -1258,6 +1258,22 @@ function _selectRow(el, idx) {
 // TX marker does NOT follow (unlike clicking a row) — typing a callsign
 // means "I'm looking/listening", not "I intend to transmit right now",
 // these two intents are meant to be kept separate.
+// Shared by searchDxCall (one-shot, searches decode HISTORY) and
+// _watchDxCall (live, called for every new decode as it arrives) - retunes
+// RX and fills grid/SNR/macro-preview the same way _selectRow does for a
+// clicked row, minus the TX marker (typing/tracking a callsign means "I'm
+// listening", not "I intend to transmit right now" - see the comment above
+// searchDxCall).
+function _applyDxMatch(d) {
+  window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
+  const grid = _extractGrid(d.message);
+  if (grid) _setField('wj-dx-grid', grid);
+  _lastDxSnr = d.snr;
+  const snrEl = document.getElementById('wj-dx-snr');
+  if (snrEl) snrEl.textContent = (d.snr >= 0 ? '+' : '') + d.snr + ' dB';
+  _updateMacroTexts();
+}
+
 function searchDxCall(rawCall) {
   const call = (rawCall || '').trim().toUpperCase();
   if (!call) return;
@@ -1268,21 +1284,25 @@ function searchDxCall(rawCall) {
     if (d.is_tx || d.deltaFreq === undefined) continue;
     const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
     if (tokens.includes(call)) {
-      window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
-      const grid = _extractGrid(d.message);
-      if (grid) _setField('wj-dx-grid', grid);
-      // Same SNR/macro-preview fill as clicking the row (_selectRow) -
-      // previously only the click path did this, so typing a callsign left
-      // SNR permanently at "--" and the F2-F6 macro previews showing
-      // whatever station was last clicked.
-      _lastDxSnr = d.snr;
-      const snrEl = document.getElementById('wj-dx-snr');
-      if (snrEl) snrEl.textContent = (d.snr >= 0 ? '+' : '') + d.snr + ' dB';
-      _updateMacroTexts();
+      _applyDxMatch(d);
       return;
     }
   }
   window.UI?.showToast(I18n.t('wj_toast_station_not_visible').replace('{call}', call), 'error');
+}
+
+// Live tracking: as long as the DX field still contains the callsign the
+// operator typed/selected, keep retuning RX to it whenever it's heard
+// again (e.g. searchDxCall found nothing yet because the station hadn't
+// called since, or it moves frequency between transmissions). Stops the
+// moment the DX field is cleared or changed to something else - it never
+// tracks anything beyond what's literally showing in that field right now.
+function _watchDxCall(d) {
+  if (d.is_tx || d.deltaFreq === undefined) return;
+  const call = (document.getElementById('wj-dx-call')?.value || '').trim().toUpperCase();
+  if (!call) return;
+  const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
+  if (tokens.includes(call)) _applyDxMatch(d);
 }
 
 // ── Antenna heading + rotator (the ANTENNA row below the DX field in QUICK QSO LOG) ─
