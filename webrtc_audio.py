@@ -47,6 +47,38 @@ async def _stun_url() -> str:
     return f"stun:{_stun_ip_cache}:{_STUN_PORT}"
 
 
+async def add_ice_candidate_to_pc(pc: RTCPeerConnection, candidate: dict):
+    """Add a trickle-ICE candidate (from the client) to an existing
+    RTCPeerConnection. Shared by WebRTCAudioReceiver (TX) and
+    WebRTCAudioSender (RX, webrtc_rx_audio.py) - identical parsing either
+    direction, only the target connection differs."""
+    raw = candidate.get("candidate", "")
+    if not raw:
+        return  # empty candidate = end-of-candidates, ignore
+    try:
+        from aioice import Candidate as IceCandidate
+        # candidate string format: "candidate:foundation component protocol priority ip port typ type ..."
+        ice_cand = IceCandidate.from_sdp(raw.replace("candidate:", "", 1))
+        cand = RTCIceCandidate(
+            component=ice_cand.component,
+            foundation=ice_cand.foundation,
+            ip=ice_cand.host,
+            port=ice_cand.port,
+            priority=ice_cand.priority,
+            protocol=ice_cand.transport,
+            type=ice_cand.type,
+            relatedAddress=ice_cand.related_address,
+            relatedPort=ice_cand.related_port,
+            tcpType=ice_cand.tcptype,
+            sdpMid=candidate.get("sdpMid"),
+            sdpMLineIndex=candidate.get("sdpMLineIndex"),
+        )
+        await pc.addIceCandidate(cand)
+        print(f"[webrtc] ICE candidate added: {ice_cand.host}:{ice_cand.port} type={ice_cand.type}")
+    except Exception as e:
+        print(f"[webrtc] ICE candidate error: {e} | raw={raw[:80]}")
+
+
 class WebRTCAudioReceiver:
     """
     Manages a single active RTCPeerConnection for TX audio.
@@ -140,31 +172,7 @@ class WebRTCAudioReceiver:
         """Add an ICE candidate from the client (trickle ICE)."""
         if not self._pc:
             return
-        raw = candidate.get("candidate", "")
-        if not raw:
-            return  # empty candidate = end-of-candidates, ignore
-        try:
-            from aioice import Candidate as IceCandidate
-            # candidate string format: "candidate:foundation component protocol priority ip port typ type ..."
-            ice_cand = IceCandidate.from_sdp(raw.replace("candidate:", "", 1))
-            cand = RTCIceCandidate(
-                component=ice_cand.component,
-                foundation=ice_cand.foundation,
-                ip=ice_cand.host,
-                port=ice_cand.port,
-                priority=ice_cand.priority,
-                protocol=ice_cand.transport,
-                type=ice_cand.type,
-                relatedAddress=ice_cand.related_address,
-                relatedPort=ice_cand.related_port,
-                tcpType=ice_cand.tcptype,
-                sdpMid=candidate.get("sdpMid"),
-                sdpMLineIndex=candidate.get("sdpMLineIndex"),
-            )
-            await self._pc.addIceCandidate(cand)
-            print(f"[webrtc] ICE candidate added: {ice_cand.host}:{ice_cand.port} type={ice_cand.type}")
-        except Exception as e:
-            print(f"[webrtc] ICE candidate error: {e} | raw={raw[:80]}")
+        await add_ice_candidate_to_pc(self._pc, candidate)
 
     async def _consume_track(self, track):
         """Loop receiving audio frames and passing PCM to the callback."""

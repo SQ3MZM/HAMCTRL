@@ -43,6 +43,24 @@ let audioWs = null;
 let audioEnabled = false;
 let opusDecoder = null;
 
+// RX transport: 'ws' (default, direct to ham_audio.exe, unchanged) or
+// 'webrtc' (TEST BUILD - see webrtc_rx_audio.py). WS RX and TX mic both
+// share this device's LTE link; TX mic is already WebRTC/UDP (below), so a
+// lost packet there is a small glitch, while a lost packet on the RX WS
+// (TCP) stalls everything queued behind it on that SAME connection until
+// retransmission - reported live as "everything skips, worst with WS,
+// unusable the moment anything else uses the link". This flag lets the two
+// paths be A/B tested without touching the default for other users.
+const RX_TRANSPORT_KEY = 'ham_rx_transport_test';
+function _rxTransport() {
+  return localStorage.getItem(RX_TRANSPORT_KEY) === 'webrtc' ? 'webrtc' : 'ws';
+}
+function setRxTransport(mode) {
+  localStorage.setItem(RX_TRANSPORT_KEY, mode === 'webrtc' ? 'webrtc' : 'ws');
+  // Re-connect on the new transport if RX is currently on.
+  if (audioEnabled) { enableRx(false); enableRx(true); }
+}
+
 // Jitter buffer — same tuning constants as ws.js::_scheduleAudioBuffer,
 // already tuned against real LTE jitter (see memory
 // audio_pipeline_deep_analysis_2026-08-16), not reinvented here.
@@ -172,8 +190,14 @@ function enableRx(on) {
   if (!on) {
     audioEnabled = false;
     if (audioWs) { try { audioWs.close(); } catch (e) {} audioWs = null; }
+    closeRxWebRTC();
     nextAudioTime = 0; aheadAvg = 0;
     return false;
+  }
+  if (_rxTransport() === 'webrtc') {
+    audioEnabled = true;
+    connectRxWebRTC();
+    return true;
   }
   initAudioContext();
   if (!initOpusDecoder()) {
@@ -183,6 +207,64 @@ function enableRx(on) {
   audioEnabled = true;
   connectAudioWs();
   return true;
+}
+
+// ── RX over WebRTC (TEST BUILD) ─────────────────────────────────────────
+// Server has the media (it creates the offer, opposite of TX mic below,
+// where the browser/mic offers). No jitter-buffer tuning needed here at
+// all - a plain <audio> element plays a WebRTC track using the browser's
+// own built-in jitter buffer/PLC, the same machinery every video call uses.
+let rxPc = null;
+let rxAudioEl = null;
+
+function connectRxWebRTC() {
+  if (rxPc) return;
+  if (typeof RTCPeerConnection === 'undefined') {
+    window.Mobile?.showToast?.(I18n.t('m_no_webrtc'), 'error');
+    return;
+  }
+  rxPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  rxPc.onicecandidate = (ev) => {
+    if (ev.candidate) window.WS?.send({ type: 'webrtc_rx_ice', candidate: ev.candidate.toJSON() });
+  };
+  rxPc.ontrack = (ev) => {
+    if (!rxAudioEl) rxAudioEl = new Audio();
+    rxAudioEl.srcObject = ev.streams[0];
+    rxAudioEl.autoplay = true;
+    rxAudioEl.play().catch((e) => console.warn('[maudio] RX play() error:', e));
+  };
+  rxPc.onconnectionstatechange = () => {
+    console.log(`[maudio] RX WebRTC connectionState=${rxPc?.connectionState}`);
+    if (rxPc && (rxPc.connectionState === 'failed' || rxPc.connectionState === 'closed')) closeRxWebRTC();
+  };
+  window.WS?.send({ type: 'webrtc_rx_start' });
+}
+
+async function onRxOffer(msg) {
+  if (!rxPc) return;
+  try {
+    await rxPc.setRemoteDescription({ type: msg.sdpType || 'offer', sdp: msg.sdp });
+    const answer = await rxPc.createAnswer();
+    await rxPc.setLocalDescription(answer);
+    window.WS?.send({ type: 'webrtc_rx_answer', sdp: answer.sdp, sdpType: answer.type });
+  } catch (e) {
+    console.warn('[maudio] RX offer handling error:', e);
+    closeRxWebRTC();
+  }
+}
+
+function closeRxWebRTC() {
+  if (rxAudioEl) { try { rxAudioEl.pause(); rxAudioEl.srcObject = null; } catch (e) {} rxAudioEl = null; }
+  if (rxPc) {
+    try { rxPc.close(); } catch (e) {}
+    rxPc = null;
+    window.WS?.send({ type: 'webrtc_rx_stop' });
+  }
+}
+
+function onRxWebrtcError(msg) {
+  window.Mobile?.showToast?.(I18n.t('m_mic_error_prefix') + (msg.error || ''), 'error');
+  closeRxWebRTC();
 }
 
 // ── TX (microphone) — fresh getUserMedia per PTT press, see file header ──
@@ -285,6 +367,7 @@ window.MobileAudio = {
   enableRx, isRxEnabled: () => audioEnabled,
   startMicTx, stopMicTx, onAnswer, onRemoteIce, onWebrtcError,
   isMicActive: () => micActive,
+  setRxTransport, getRxTransport: _rxTransport, onRxOffer, onRxWebrtcError,
 };
 
 })();

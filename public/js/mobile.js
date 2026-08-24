@@ -284,6 +284,12 @@ function handleMessage(msg) {
     case 'webrtc_error':
       window.MobileAudio?.onWebrtcError?.(msg);
       break;
+    case 'webrtc_rx_offer':
+      window.MobileAudio?.onRxOffer?.(msg);
+      break;
+    case 'webrtc_rx_error':
+      window.MobileAudio?.onRxWebrtcError?.(msg);
+      break;
     case 'qso_logged':
       if (msg.qso) prependLog(msg.qso);
       break;
@@ -762,8 +768,16 @@ function openSettings() {
   if (!modal) return;
   const chk = document.getElementById('m-settings-audio-toggle');
   if (chk) chk.checked = !!window.MobileAudio?.isRxEnabled?.();
+  const rxTransportChk = document.getElementById('m-settings-rx-webrtc-toggle');
+  if (rxTransportChk) rxTransportChk.checked = window.MobileAudio?.getRxTransport?.() === 'webrtc';
   modal.style.display = 'flex';
   loadMicList();
+}
+
+// TEST BUILD toggle - RX audio transport (WS default vs WebRTC/UDP test),
+// see mobile_audio.js header for why this exists.
+function setRxTransport(webrtcOn) {
+  window.MobileAudio?.setRxTransport?.(webrtcOn ? 'webrtc' : 'ws');
 }
 
 function closeSettings() {
@@ -809,7 +823,7 @@ connect();
 window.Mobile = {
   toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit,
   toggleRxAudio, openSettings, closeSettings, setMicDevice,
-  closeFreqEdit, saveFreqEdit,
+  closeFreqEdit, saveFreqEdit, setRxTransport,
   showToast, // mobile_audio.js reuses this for its own error toasts
 };
 

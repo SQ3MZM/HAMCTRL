@@ -29,6 +29,17 @@ OPUS_FRAMES = 960
 TX_TAG      = 0xA2
 
 
+def _safe_put_nowait(q, data):
+    """queue.put_nowait via loop.call_soon_threadsafe - if the consumer
+    (WebRTC track) has fallen behind and the queue is full, drop this
+    chunk rather than raising inside the event loop callback. Self-heals
+    on the next chunk instead of building an ever-growing backlog."""
+    try:
+        q.put_nowait(data)
+    except asyncio.QueueFull:
+        pass
+
+
 def _make_decoder():
     if not _OPUS: return None
     try:
@@ -106,6 +117,26 @@ class AudioStream:
         # polled often (every ~0.5-1s), independent of the 15s FT8 decode cycle.
         self._waterfall_buf = bytearray()
         self._waterfall_buf_lock = threading.Lock()
+        # RX PCM subscribers (WebRTC test build, see webrtc_rx_audio.py) -
+        # a list of (asyncio.Queue, loop) pairs fed from _rx_loop's thread
+        # via loop.call_soon_threadsafe, same PCM chunks already flowing to
+        # the CW/waterfall buffers above (one physical capture, several
+        # consumers) instead of opening a second one.
+        self._rx_pcm_subscribers = []
+        self._rx_pcm_subscribers_lock = threading.Lock()
+
+    def subscribe_rx_pcm(self, loop, maxsize=50):
+        """Register a new PCM subscriber (~1s of headroom at 20ms chunks
+        before frames start getting dropped). Returns the asyncio.Queue to
+        read chunks from; call unsubscribe_rx_pcm(q) when done."""
+        q = asyncio.Queue(maxsize=maxsize)
+        with self._rx_pcm_subscribers_lock:
+            self._rx_pcm_subscribers.append((q, loop))
+        return q
+
+    def unsubscribe_rx_pcm(self, q):
+        with self._rx_pcm_subscribers_lock:
+            self._rx_pcm_subscribers = [(qq, l) for qq, l in self._rx_pcm_subscribers if qq is not q]
 
     def set_loop(self, loop): self.loop = loop
 
@@ -206,6 +237,18 @@ class AudioStream:
                     max_wf_bytes = int(self._rx_rate * 3 * 2)  # max ~3s of headroom
                     if len(self._waterfall_buf) > max_wf_bytes:
                         del self._waterfall_buf[:len(self._waterfall_buf) - max_wf_bytes]
+
+                # Hand off to any WebRTC RX subscribers (see subscribe_rx_pcm
+                # above) - cheap no-op when the list is empty (the normal
+                # case until someone opts into the test build).
+                if self._rx_pcm_subscribers:
+                    with self._rx_pcm_subscribers_lock:
+                        subs = list(self._rx_pcm_subscribers)
+                    for q, loop in subs:
+                        try:
+                            loop.call_soon_threadsafe(_safe_put_nowait, q, mono_native)
+                        except Exception:
+                            pass
 
                 self.rx_frames += 1
                 if self.rx_frames % log_n == 0:

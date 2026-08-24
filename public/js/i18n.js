@@ -967,6 +967,7 @@ window.I18N_STRINGS = {
     m_audio_no_webcodecs: "Ten telefon/przeglądarka nie obsługuje dekodera audio (WebCodecs)",
     m_no_webrtc: "WebRTC niedostępne w tej przeglądarce",
     m_mic_error_prefix: "Błąd mikrofonu: ",
+    m_rx_webrtc_test_lbl: "🧪 RX przez WebRTC (test)",
     cw_status_ready: "● GOTOWY",
   },
   en: {
@@ -1918,6 +1919,7 @@ window.I18N_STRINGS = {
     m_audio_no_webcodecs: "This phone/browser doesn't support the audio decoder (WebCodecs)",
     m_no_webrtc: "WebRTC unavailable in this browser",
     m_mic_error_prefix: "Microphone error: ",
+    m_rx_webrtc_test_lbl: "🧪 RX over WebRTC (test)",
     cw_status_ready: "● READY",
   },
 };

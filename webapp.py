@@ -118,6 +118,7 @@ from audio import enumerate_audio_devices, auto_detect_radio_audio
 from audio_stream import AudioStream
 try:
     from webrtc_audio import WebRTCAudioReceiver
+    from webrtc_rx_audio import WebRTCAudioSender
     _WEBRTC = True
 except Exception as e:
     print(f"[webrtc] unavailable: {e}")
@@ -689,6 +690,12 @@ class App:
             on_track_started=self._webrtc_tx_start,
             on_track_ended=self._webrtc_tx_stop,
         ) if _WEBRTC else None
+        # RX audio over WebRTC (TEST BUILD) - one sender per connected
+        # client that opts in, keyed by their ws (see webrtc_rx_audio.py).
+        # Unlike self.webrtc (TX, exclusive - one transmitter at a time),
+        # RX listening isn't exclusive, so this is a dict, not a single
+        # shared instance.
+        self._webrtc_rx_senders = {}
         self.wsjtx    = WsjtxUdpServer(self.hub.broadcast)
         self.tunnel   = TunnelManager(self.hub)
         self._caps_cache = {}
@@ -4377,6 +4384,12 @@ class App:
             print(f"[ws] connection error: {e}", flush=True)
         finally:
             await self.hub.remove(ws)
+            # Close any WebRTC RX audio sender this client had open (test
+            # build, see webrtc_rx_audio.py) - otherwise a closed tab/lost
+            # connection leaks an aiortc RTCPeerConnection server-side.
+            _rx_sender = self._webrtc_rx_senders.pop(ws, None)
+            if _rx_sender:
+                await _rx_sender.close()
             # Remove from the online list and notify the others
             self.online_users.pop(ws, None)
             self.radio_requests.pop(uid, None)
@@ -6361,6 +6374,38 @@ class App:
             if self.audio.tx_active:
                 self.audio.stop_tx()
 
+        # ── WebRTC RX audio (TEST BUILD, see webrtc_rx_audio.py) - opposite
+        # direction from webrtc_offer above (server offers, browser
+        # answers). No radio_lock/viewer gate: listening isn't exclusive,
+        # same as the existing Rust-WS RX audio path anyone can already
+        # connect to. ──
+        elif t == "webrtc_rx_start":
+            if not _WEBRTC:
+                await ws.send_json({"type": "webrtc_rx_error", "error": "WebRTC niedostepne na serwerze"})
+                return
+            old = self._webrtc_rx_senders.pop(ws, None)
+            if old:
+                await old.close()
+            sender = WebRTCAudioSender(self.audio)
+            self._webrtc_rx_senders[ws] = sender
+            offer = await sender.create_offer()
+            await ws.send_json({"type": "webrtc_rx_offer", "sdp": offer["sdp"], "sdpType": offer["type"]})
+
+        elif t == "webrtc_rx_answer":
+            sender = self._webrtc_rx_senders.get(ws)
+            if sender:
+                await sender.set_answer(msg.get("sdp"), msg.get("sdpType", "answer"))
+
+        elif t == "webrtc_rx_ice":
+            sender = self._webrtc_rx_senders.get(ws)
+            if sender:
+                await sender.add_ice_candidate(msg.get("candidate", {}))
+
+        elif t == "webrtc_rx_stop":
+            sender = self._webrtc_rx_senders.pop(ws, None)
+            if sender:
+                await sender.close()
+
         # ── Dynamic actions/sliders (from dump_caps: VFO A/B, functions, levels) ──
         elif t == "rig_action":
             await self._handle_rig_action(msg, ws, role)
@@ -6690,7 +6735,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-DX-WATCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-RX-WEBRTC-TEST, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
