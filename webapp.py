@@ -4166,6 +4166,23 @@ class App:
                     if br:
                         await rust._send_ctrl({"cmd": "SetBitrate", "bps": int(br)})
                     print("[audio] Hot-swap OK - Rust reloaded the stream on the fly", flush=True)
+                    # ALSO restart the independent Python capture (audio_stream.py's
+                    # own PyAudio stream, running in parallel to Rust/cpal) if the RX
+                    # device changed - this is the ONLY thing WebRTC RX audio
+                    # (webrtc_rx_audio.py, subscribe_rx_pcm) reads from, completely
+                    # separate from Rust. Previously only Rust got the new device
+                    # here, so a hot-swap silently orphaned WebRTC RX on the OLD
+                    # device (still "connecting"/"connected" at the WebRTC level -
+                    # ICE/DTLS doesn't care there's no audio - just permanently
+                    # silent), while FT8 decode/CI-V kept working fine since those
+                    # go through Rust, not this. Reported live as "no audio in the
+                    # new version" right after a device hot-swap.
+                    if rx is not None:
+                        try:
+                            self.audio.start_rx(device=rx)
+                            print(f"[audio] Python RX capture also restarted on '{rx}'", flush=True)
+                        except Exception as _e2:
+                            print(f"[audio] Python RX capture restart error: {_e2}", flush=True)
                 except Exception as _e:
                     print(f"[audio] Hot-swap error: {_e}", flush=True)
                     await self.hub.broadcast({"type": "audio_warning",
