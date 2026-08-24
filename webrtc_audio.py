@@ -128,7 +128,15 @@ class WebRTCAudioReceiver:
         @pc.on("connectionstatechange")
         async def on_state_change():
             print(f"[webrtc] Connection state: {pc.connectionState}")
-            if pc.connectionState in ("failed", "closed", "disconnected"):
+            # 'disconnected' is DELIBERATELY not included - per the WebRTC
+            # spec it's a transient state the ICE transport often recovers
+            # from on its own within a second or two; treating it the same
+            # as 'failed' tears the connection down before it gets the
+            # chance. See the identical fix + longer comment in
+            # webrtc_rx_audio.py (found live via the RX path, which is
+            # long-lived and made this far more visible than TX's naturally
+            # short per-PTT-press connections).
+            if pc.connectionState == "failed":
                 await self.close()
 
         @pc.on("iceconnectionstatechange")

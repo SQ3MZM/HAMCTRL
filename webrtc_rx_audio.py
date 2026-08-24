@@ -101,8 +101,25 @@ class WebRTCAudioSender:
         @pc.on("connectionstatechange")
         async def on_state_change():
             print(f"[webrtc-rx] Connection state: {pc.connectionState}")
-            if pc.connectionState in ("failed", "closed", "disconnected"):
+            # 'disconnected' is DELIBERATELY not included here - per the
+            # WebRTC spec it's a transient state (the ICE transport is
+            # actively trying to recover, e.g. after a brief real-world
+            # network hiccup) that often self-heals within a second or two
+            # without any action needed. Treating it the same as 'failed'
+            # (a decisive, unrecoverable ICE failure) tore down and forced
+            # a full renegotiation on every minor blip - reported live as
+            # "connects, then dies almost immediately, repeatedly" over a
+            # real internet path (DuckDNS tunnel, not localhost/LAN).
+            if pc.connectionState == "failed":
                 await self.close()
+
+        @pc.on("iceconnectionstatechange")
+        async def on_ice_state_change():
+            # Separate from connectionstatechange above - ICE state alone
+            # narrows down whether a future "failed" is a real NAT/STUN
+            # traversal problem (ICE itself never reaches "completed") vs.
+            # something else entirely (ICE fine, DTLS or media path issue).
+            print(f"[webrtc-rx] ICE state: {pc.iceConnectionState}")
 
         offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
