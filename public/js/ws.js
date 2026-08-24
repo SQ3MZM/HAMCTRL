@@ -1104,12 +1104,19 @@ window.AudioControls = (function() {
 // LTE - classic head-of-line blocking - while a lost UDP packet here is
 // just a small glitch). Server has the media (creates the offer) —
 // opposite direction from _txMic below (browser/mic offers, server
-// answers). Playback via a plain <audio> element: the browser's own
-// built-in WebRTC jitter buffer/PLC handles it, no need for the hand-tuned
-// WS/Opus jitter-buffer logic (_scheduleAudioBuffer, still used elsewhere
-// in this file - see initLocalAudio) on this path.
+// answers).
+//
+// Routed through the SAME Web Audio graph as everything else
+// (_masterGain -> _audioCompressor -> destination), NOT a standalone
+// <audio> element - a plain element would play, but bypasses _masterGain
+// entirely, so the RX VOL slider (setRxVol, below) and setTxAudioDuck
+// (mutes RX during our own TX so MONI doesn't feed back our own tone)
+// would both silently do nothing. Reported live exactly this: "audio
+// latency badge doesn't work, RX vol slider doesn't work" - both because
+// this used to be a plain <audio> element with none of that wiring.
 let _rxPc = null;
-let _rxAudioEl = null;
+let _rxSourceNode = null;
+let _rxStatsTimer = null;
 
 function _connectRxWebRTC() {
   if (_rxPc) return;
@@ -1117,15 +1124,18 @@ function _connectRxWebRTC() {
     window.UI?.showToast?.('WebRTC niedostepny w tej przegladarce', 'error');
     return;
   }
+  initAudioContext();  // ensures audioCtx/_masterGain/_audioCompressor exist
   _rxPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   _rxPc.onicecandidate = (ev) => {
     if (ev.candidate) window.WS?.send({ type: 'webrtc_rx_ice', candidate: ev.candidate.toJSON() });
   };
   _rxPc.ontrack = (ev) => {
-    if (!_rxAudioEl) _rxAudioEl = new Audio();
-    _rxAudioEl.srcObject = ev.streams[0];
-    _rxAudioEl.autoplay = true;
-    _rxAudioEl.play().catch((e) => console.warn('[audio] RX WebRTC play() error:', e));
+    if (!audioCtx) return;
+    try {
+      if (_rxSourceNode) { try { _rxSourceNode.disconnect(); } catch (e) {} }
+      _rxSourceNode = audioCtx.createMediaStreamSource(ev.streams[0]);
+      _rxSourceNode.connect(window._masterGain || audioCtx.destination);
+    } catch (e) { console.warn('[audio] RX WebRTC track routing error:', e); }
   };
   _rxPc.onconnectionstatechange = () => {
     console.log(`[audio] RX WebRTC connectionState=${_rxPc?.connectionState}`);
@@ -1140,6 +1150,7 @@ function _connectRxWebRTC() {
     }
   };
   window.WS?.send({ type: 'webrtc_rx_start' });
+  _startRxStatsPoll();
 }
 
 async function _onRxOffer(msg) {
@@ -1155,8 +1166,37 @@ async function _onRxOffer(msg) {
   }
 }
 
+// Audio latency badge — was fed by the WS path's own jitter-buffer target
+// (_scheduleAudioBuffer/_aheadAvg), which never runs for WebRTC (the
+// browser's own internal jitter buffer handles that, invisibly). Poll
+// getStats() instead for the REAL measured jitterBufferDelay and feed it
+// into the same _aheadAvg/_updateAudioLatencyBadge the badge already knows
+// how to render, rather than inventing a second display path.
+function _startRxStatsPoll() {
+  _stopRxStatsPoll();
+  _rxStatsTimer = setInterval(async () => {
+    if (!_rxPc) return;
+    try {
+      const stats = await _rxPc.getStats();
+      stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'audio' && report.jitterBufferEmittedCount) {
+          _aheadAvg = report.jitterBufferDelay / report.jitterBufferEmittedCount;
+          _updateAudioLatencyBadge();
+        }
+      });
+    } catch (e) { /* getStats can throw briefly during teardown - ignore */ }
+  }, 1000);
+}
+
+function _stopRxStatsPoll() {
+  if (_rxStatsTimer) { clearInterval(_rxStatsTimer); _rxStatsTimer = null; }
+}
+
 function _closeRxWebRTC() {
-  if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} _rxAudioEl = null; }
+  _stopRxStatsPoll();
+  _aheadAvg = 0;
+  _updateAudioLatencyBadge();
+  if (_rxSourceNode) { try { _rxSourceNode.disconnect(); } catch (e) {} _rxSourceNode = null; }
   if (_rxPc) {
     try { _rxPc.close(); } catch (e) {}
     _rxPc = null;
