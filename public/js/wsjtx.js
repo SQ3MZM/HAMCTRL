@@ -657,7 +657,30 @@ function _onAutoSeqStatus(msg) {
 
 function _onAutoQsoStatus(msg) {
   if (msg.state !== undefined) _autoQsoState = msg.state;
-  if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
+  if (msg.partner !== undefined) {
+    _autoQsoPartner = msg.partner;
+    // Reported live: the automation auto-starting a QSO on its own (a
+    // direct call while idle, see "Auto-starting QSO" in webapp.py - no
+    // click involved at all) left the DX field/macro previews/RX+TX
+    // waterfall markers completely untouched, so the operator had no
+    // visible sign of who it was even talking to or where - only
+    // _selectRow (a manually clicked row) ever did this. auto_qso_status
+    // fires at every step of ANY auto-QSO (clicked or self-started), so
+    // this is the one place that covers both: fill the DX field (feeds
+    // the macro-preview refresh below) and follow RX+TX to wherever this
+    // partner was last actually heard, same as clicking their row would -
+    // re-checked on every step (not just QSO start) so it keeps tracking
+    // even if the partner drifts frequency mid-QSO.
+    if (msg.partner) {
+      _setField('wj-dx-call', msg.partner);
+      const d = _findLatestDecodeFrom(msg.partner.toUpperCase());
+      if (d) {
+        window.WSJTXScope?.setRxFreqManual(d.deltaFreq);
+        const txHeld = window.WSJTXScope?.isTxFrozen?.() || _hound?.active;
+        if (!txHeld) window.WSJTXScope?.setTxFreqManual(d.deltaFreq);
+      }
+    }
+  }
   // FROZEN report from the backend (partner_report_sent/recv). This IS
   // the value the backend transmits and logs. The UI MUST show exactly
   // this — not recompute from _lastDxSnr (a raw SNR from decodes, which
@@ -1274,20 +1297,26 @@ function _applyDxMatch(d) {
   _updateMacroTexts();
 }
 
+// Finds the most recent (newest first) RX decode with `call` as one of its
+// tokens, or null. Shared by searchDxCall, _watchDxCall and
+// _onAutoQsoStatus - one search implementation instead of three copies.
+function _findLatestDecodeFrom(call) {
+  for (let i = _decodes.length - 1; i >= 0; i--) {
+    const d = _decodes[i];
+    if (d.is_tx || d.deltaFreq === undefined) continue;
+    const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
+    if (tokens.includes(call)) return d;
+  }
+  return null;
+}
+
 function searchDxCall(rawCall) {
   const call = (rawCall || '').trim().toUpperCase();
   if (!call) return;
   // Search from the NEWEST decode backward — if the station appeared
   // multiple times, we care about its MOST RECENT known frequency.
-  for (let i = _decodes.length - 1; i >= 0; i--) {
-    const d = _decodes[i];
-    if (d.is_tx || d.deltaFreq === undefined) continue;
-    const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
-    if (tokens.includes(call)) {
-      _applyDxMatch(d);
-      return;
-    }
-  }
+  const d = _findLatestDecodeFrom(call);
+  if (d) { _applyDxMatch(d); return; }
   window.UI?.showToast(I18n.t('wj_toast_station_not_visible').replace('{call}', call), 'error');
 }
 
