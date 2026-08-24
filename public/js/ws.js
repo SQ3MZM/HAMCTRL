@@ -1118,6 +1118,23 @@ let _rxPc = null;
 let _rxSourceNode = null;
 let _rxStatsTimer = null;
 
+// DIAGNOSTIC (2026-08-24): audioCtx/_rxPc live inside this file's closure,
+// not on window - reported live as "audioCtx is not defined"/"_rxPc is not
+// defined" when trying to inspect them directly from the DevTools console.
+// This exposes a read-only snapshot so state can actually be checked live
+// without needing to touch closure internals.
+window._debugAudio = function() {
+  const snap = {
+    audioCtxState: audioCtx ? audioCtx.state : '(no audioCtx yet)',
+    rxConnectionState: _rxPc ? _rxPc.connectionState : '(no _rxPc)',
+    rxIceState: _rxPc ? _rxPc.iceConnectionState : '(no _rxPc)',
+    masterGainValue: window._masterGain ? window._masterGain.gain.value : '(no _masterGain)',
+    audioEnabled: !!window._audioEnabled,
+  };
+  console.log('[audio debug]', snap);
+  return snap;
+};
+
 function _connectRxWebRTC() {
   if (_rxPc) return;
   if (typeof RTCPeerConnection === 'undefined') {

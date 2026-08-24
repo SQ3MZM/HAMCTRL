@@ -56,7 +56,7 @@ class _RxAudioTrack(MediaStreamTrack):
         self._audio_stream = audio_stream
         self._queue = audio_stream.subscribe_rx_pcm(loop)
         self._rate = getattr(audio_stream, "_rx_rate", None) or OPUS_RATE
-        self._timestamp = 0
+        self._t0 = None
         self._recv_count = 0
 
     async def recv(self):
@@ -70,14 +70,32 @@ class _RxAudioTrack(MediaStreamTrack):
         # send loop swallows it silently and tears the connection down -
         # this print is the only way to see that instead of guessing.
         try:
-            import av
+            import av, time
             pcm = await self._queue.get()
             frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
             frame.planes[0].update(pcm)
             frame.sample_rate = self._rate
-            frame.pts = self._timestamp
+            # pts from REAL elapsed wall-clock time, not a running sample
+            # count. The old `self._timestamp += len(pcm)//2` approach
+            # silently assumed every chunk audio_stream.py ever queued
+            # actually reached here - but _safe_put_nowait (audio_stream.py)
+            # deliberately drops chunks under load (queue full) instead of
+            # blocking. Each silent drop left the sample-count timestamp
+            # running fast relative to real time, and that gap compounds -
+            # live evidence: chrome://webrtc-internals showed 13971 RTP
+            # packets received but 13800 (98.8%) discarded and
+            # jitterBufferFlushes=70, i.e. the browser's jitter buffer kept
+            # getting timestamps it couldn't reconcile with real arrival
+            # time and gave up on almost everything. Deriving pts from
+            # wall-clock time is self-correcting - a dropped chunk just
+            # means the next real one gets the pts that actually matches
+            # when it was captured, instead of inheriting an ever-growing
+            # backlog of unaccounted-for "missing" samples.
+            now = time.monotonic()
+            if self._t0 is None:
+                self._t0 = now
+            frame.pts = int((now - self._t0) * self._rate)
             frame.time_base = fractions.Fraction(1, self._rate)
-            self._timestamp += len(pcm) // 2
             self._recv_count += 1
             if self._recv_count % 250 == 0:
                 print(f"[webrtc-rx] track recv() #{self._recv_count} OK", flush=True)
