@@ -470,30 +470,40 @@ function renderSplit() {
 }
 
 function vfoSelect(vfo) {
-  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  if (!canControl()) { showToast(I18n.t('m_take_radio_btn'), 'error'); return; }
   if (S.vfo === vfo) return;
   S.vfo = vfo;
   updateVfoActive();
   wsSend({ type: 'vfo', vfo });
 }
 
+// swap/equalize use the native CI-V 07 B0/A0 commands (civ.py::vfo_swap/
+// vfo_equalize) via {type:'vfo_op'} - the radio does the copy/swap
+// atomically, and the server broadcasts back the real post-op freq/freqB.
+// Previously these sent {type:'freqB'} (CI-V 25 01, unselected-VFO
+// frequency set) fire-and-forget with no ACK check - looked right in the
+// UI (optimistic local update below), but per Hamlib's own icom.c this
+// command isn't reliably supported/ACKed on every rig (it defaults to
+// ASSUMING it fails until a live probe proves otherwise), which matches
+// exactly what was reported live: display updates, but the radio's real
+// VFO B still has the old frequency once you actually switch to it or
+// engage split.
 function vfoSwap() {
-  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  if (!canControl()) { showToast(I18n.t('m_take_radio_btn'), 'error'); return; }
   [S.freq, S.freqB] = [S.freqB, S.freq];
   renderFreq(); updateBandActive();
-  wsSend({ type: 'freq', freq: S.freq });
-  wsSend({ type: 'freqB', freqB: S.freqB });
+  wsSend({ type: 'vfo_op', op: 'swap' });
 }
 
 function vfoEqualize() {
-  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  if (!canControl()) { showToast(I18n.t('m_take_radio_btn'), 'error'); return; }
   S.freqB = S.freq;
   renderFreq();
-  wsSend({ type: 'freqB', freqB: S.freqB });
+  wsSend({ type: 'vfo_op', op: 'equalize' });
 }
 
 function toggleSplit() {
-  if (!canControl()) { showToast('Zajmij radio', 'error'); return; }
+  if (!canControl()) { showToast(I18n.t('m_take_radio_btn'), 'error'); return; }
   S.split = !S.split;
   renderSplit();
   wsSend({ type: 'split', split: S.split, freqB: S.freqB });

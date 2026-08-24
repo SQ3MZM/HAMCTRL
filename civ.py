@@ -884,8 +884,17 @@ class CivRig:
         if self.sim or not self._ser:
             self.freq_b = self.freq
             return
+        # 07 A0 copies A's freq/mode to B on the radio itself - deterministic,
+        # so update our own freq_b to match immediately rather than leaving
+        # it stale until some later unrelated poll happens to refresh it
+        # (previously never updated here at all: the WS handler broadcast
+        # this same, now-stale, self.freq_b right back to every client,
+        # which looked fine in the UI but the radio's real VFO B - revealed
+        # by actually switching to it or engaging split - still had the OLD
+        # frequency).
         await asyncio.to_thread(self._transact,
                                 bytes([0x07, 0xA0]), {0xFB, 0xFA}, 0.4)
+        self.freq_b = self.freq
 
     async def vfo_swap(self):
         """A<->B: swap VFO A and B (CI-V 07 B0)."""
@@ -894,6 +903,7 @@ class CivRig:
             return
         await asyncio.to_thread(self._transact,
                                 bytes([0x07, 0xB0]), {0xFB, 0xFA}, 0.4)
+        self.freq, self.freq_b = self.freq_b, self.freq
 
     async def set_func(self, func: str, on: bool):
         """

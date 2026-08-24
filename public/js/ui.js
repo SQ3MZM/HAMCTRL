@@ -475,14 +475,22 @@ function setLevel(param, value) {
 }
 
 // ── VFO ───────────────────────────────────────────────────────────────────────
+// swap/copy use the native CI-V 07 B0/A0 commands (civ.py::vfo_swap/
+// vfo_equalize) via {type:'vfo_op'} - the radio does the copy/swap
+// atomically. Previously these just poked S.freq/S.freqB locally (vfoCopy
+// never sent anything to the server at all) - looked right in the UI, but
+// the radio's real VFO B kept its old frequency until switched to or used
+// via split, which is exactly what it looked like: "changes visually, but
+// stays on the old freq once you actually use it".
 function vfoSwap() {
   [S.freq, S.freqB] = [S.freqB, S.freq];
-  WS.send({ type: 'freq', freq: S.freq });
   updateFreqDisplay();
+  WS.send({ type: 'vfo_op', op: 'swap' });
 }
 function vfoCopy() {
   S.freqB = S.freq;
   updateFreqDisplay();
+  WS.send({ type: 'vfo_op', op: 'equalize' });
 }
 function toggleSplit() {
   S.split = !S.split;
