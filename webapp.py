@@ -236,6 +236,7 @@ class WSHub:
         self._subs: dict = {}
         self._lock = asyncio.Lock()
         self._loop = None
+        self._last_ft8_diag = 0.0
 
     def set_loop(self, loop):
         self._loop = loop
@@ -307,6 +308,16 @@ class WSHub:
             ws for ws in self._clients
             if ws is not skip and channel in self._subs.get(ws, set())
         ]
+        if channel == "ft8" and msg.get("type") in ("wsjtx_decode", "ft8_waterfall"):
+            # Diagnostic for the "mobile FT8 tab gets no decodes/waterfall"
+            # report - confirms whether these messages actually have any
+            # 'ft8'-subscribed recipient at all. Throttled (once/5s) since
+            # ft8_waterfall streams several times a second during decoding.
+            _now = time.time()
+            if _now - self._last_ft8_diag > 5.0:
+                self._last_ft8_diag = _now
+                print(f"[ws] broadcast type={msg.get('type')} channel=ft8 "
+                      f"recipients={len(clients)}/{len(self._clients)}", flush=True)
         if not clients:
             return
         try:
@@ -5192,6 +5203,12 @@ class App:
                     await self.hub.subscribe(ws, channels)
                 else:
                     await self.hub.set_channels(ws, channels)
+                # Diagnostic for the "mobile FT8 tab gets nothing" report -
+                # confirms whether the client's channel set actually ends
+                # up containing 'ft8' after this call (cheap, one-shot per
+                # connect, not in any hot path).
+                print(f"[ws] subscribe: requested={channels} mode={mode} -> "
+                      f"now={sorted(self.hub._subs.get(ws, set()))}", flush=True)
             return
 
         if t == "freq":
@@ -6664,7 +6681,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-MOBILE-FT8-OPPANEL, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-FT8-CHANNEL-DIAG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
