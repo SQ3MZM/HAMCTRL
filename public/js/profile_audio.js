@@ -54,6 +54,10 @@ window.ProfileAudio = (function() {
     } catch(e) {
       console.warn('[profile-audio] load error:', e);
     }
+    // TEST BUILD toggle state (RX audio transport, see ws.js) - synced
+    // here too since this is what runs whenever the PROFILE tab is shown.
+    const rxWebrtcChk = document.getElementById('profile-rx-webrtc-toggle');
+    if (rxWebrtcChk) rxWebrtcChk.checked = window.WS?.getRxTransport?.() === 'webrtc';
   }
 
   function setOutput(deviceId) {

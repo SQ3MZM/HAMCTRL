@@ -1195,6 +1195,16 @@
           </div>
           <div id="profile-audio-hint" style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:3px;"></div>
         </div>
+        <!-- TEST BUILD: RX audio przez WebRTC/UDP zamiast WS/TCP - patrz
+             ws.js (funkcje _connectRxWebRTC/_rxTransport) i
+             webrtc_rx_audio.py. Domyslnie wylaczone (WS zostaje
+             domyslnym, stabilnym torem) - swiadomy A/B test na slabym
+             laczu (zgloszone live: audio+sterowanie razem "skacza" pod
+             obciazeniem, najgorzej na WS - TCP head-of-line blocking). -->
+        <div class="field" style="display:flex;align-items:center;gap:8px;padding-top:4px;border-top:1px solid var(--border);">
+          <input type="checkbox" id="profile-rx-webrtc-toggle" onchange="WS.setRxTransport(this.checked)">
+          <label for="profile-rx-webrtc-toggle" data-i18n="m_rx_webrtc_test_lbl" style="font-family:var(--mono);font-size:11px;">🧪 RX przez WebRTC (test)</label>
+        </div>
         <div data-i18n="profile_audio_footnote" style="font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.4;padding-top:4px;border-top:1px solid var(--border);">
           💡 Unikaj urządzeń "CABLE"/"Virtual" — to wirtualne kable dla programów (WSJT-X), nie Twój sprzęt.
         </div>
@@ -2586,7 +2596,7 @@
 <script src="js/i18n.js?v=202608242900"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608241900"></script>
+<script src="js/ws.js?v=202608243000"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/ui.js?v=202608242600"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
@@ -2601,7 +2611,7 @@
 <script src="js/rotormini.js?v=202608170001"></script>
 <script src="js/admin.js?v=202608210002"></script>
 <script src="js/admin_status.js?v=202608180002"></script>
-<script src="js/profile_audio.js?v=202608210001"></script>
+<script src="js/profile_audio.js?v=202608243000"></script>
 <script src="js/relay_admin.js?v=202608180001"></script>
 <script src="js/tunnel.js?v=202608180001"></script>
 <script src="js/dxcc.js?v=202608210002"></script>

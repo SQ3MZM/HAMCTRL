@@ -693,6 +693,12 @@ function handleMessage(msg) {
       console.warn('[txmic] server:', msg.error);
       _txMic.stop();
       break;
+    case 'webrtc_rx_offer':
+      _onRxOffer(msg);
+      break;
+    case 'webrtc_rx_error':
+      _onRxWebrtcError(msg);
+      break;
     case 'wsjtx_tx_start':
       // An external WSJT-X/JTDX (via the wsjtx_local.py bridge + Hamlib
       // emulation) turned on PTT - start the microphone stream (here: a
@@ -1091,6 +1097,84 @@ window.AudioControls = (function() {
   return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain };
 })();
 
+// ── RX audio transport (TEST BUILD) — 'ws' (default, direct to
+// ham_audio.exe, unchanged) or 'webrtc' (see webrtc_rx_audio.py). Reported
+// live over LTE: audio+control both degrade together under any competing
+// network traffic, worst on WS — classic TCP head-of-line blocking (one
+// delayed/lost segment stalls everything queued behind it on that SAME
+// connection). TX mic already goes over WebRTC/UDP (_txMic below) and
+// doesn't have this problem — this lets RX be A/B tested against it
+// without touching the default for other users. Same localStorage key as
+// mobile_audio.js's identical toggle, though each browser/device has its
+// own storage regardless.
+const RX_TRANSPORT_KEY = 'ham_rx_transport_test';
+function _rxTransport() {
+  return localStorage.getItem(RX_TRANSPORT_KEY) === 'webrtc' ? 'webrtc' : 'ws';
+}
+function _setRxTransport(mode) {
+  localStorage.setItem(RX_TRANSPORT_KEY, mode === 'webrtc' ? 'webrtc' : 'ws');
+  if (window._audioEnabled) { window.WS.enableAudio(false); window.WS.enableAudio(true); }
+}
+
+// ── RX audio over WebRTC (TEST BUILD) ────────────────────────────────────
+// Server has the media (creates the offer) — opposite direction from
+// _txMic below (browser/mic offers, server answers). Playback via a plain
+// <audio> element: the browser's own built-in WebRTC jitter buffer/PLC
+// handles it, no need to port the hand-tuned WS/Opus jitter-buffer logic
+// (_scheduleAudioBuffer) to this path.
+let _rxPc = null;
+let _rxAudioEl = null;
+
+function _connectRxWebRTC() {
+  if (_rxPc) return;
+  if (typeof RTCPeerConnection === 'undefined') {
+    window.UI?.showToast?.('WebRTC niedostepny w tej przegladarce', 'error');
+    return;
+  }
+  _rxPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  _rxPc.onicecandidate = (ev) => {
+    if (ev.candidate) window.WS?.send({ type: 'webrtc_rx_ice', candidate: ev.candidate.toJSON() });
+  };
+  _rxPc.ontrack = (ev) => {
+    if (!_rxAudioEl) _rxAudioEl = new Audio();
+    _rxAudioEl.srcObject = ev.streams[0];
+    _rxAudioEl.autoplay = true;
+    _rxAudioEl.play().catch((e) => console.warn('[audio] RX WebRTC play() error:', e));
+  };
+  _rxPc.onconnectionstatechange = () => {
+    console.log(`[audio] RX WebRTC connectionState=${_rxPc?.connectionState}`);
+    if (_rxPc && (_rxPc.connectionState === 'failed' || _rxPc.connectionState === 'closed')) _closeRxWebRTC();
+  };
+  window.WS?.send({ type: 'webrtc_rx_start' });
+}
+
+async function _onRxOffer(msg) {
+  if (!_rxPc) return;
+  try {
+    await _rxPc.setRemoteDescription({ type: msg.sdpType || 'offer', sdp: msg.sdp });
+    const answer = await _rxPc.createAnswer();
+    await _rxPc.setLocalDescription(answer);
+    window.WS?.send({ type: 'webrtc_rx_answer', sdp: answer.sdp, sdpType: answer.type });
+  } catch (e) {
+    console.warn('[audio] RX WebRTC offer handling error:', e);
+    _closeRxWebRTC();
+  }
+}
+
+function _closeRxWebRTC() {
+  if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} _rxAudioEl = null; }
+  if (_rxPc) {
+    try { _rxPc.close(); } catch (e) {}
+    _rxPc = null;
+    window.WS?.send({ type: 'webrtc_rx_stop' });
+  }
+}
+
+function _onRxWebrtcError(msg) {
+  console.warn('[audio] RX WebRTC server error:', msg.error);
+  _closeRxWebRTC();
+}
+
 // ── Audio WebSocket — direct connection to the Rust WSS (port 9443) ─────────
 let _audioWs = null;
 
@@ -1406,11 +1490,16 @@ window.WS = {
   enableAudio(on) {
     window._audioEnabled = !!on;
     if (on) {
+      if (_rxTransport() === 'webrtc') {
+        _connectRxWebRTC();
+        return;
+      }
       initAudioContext();
       initOpusDecoder();
       // Check whether Rust audio is available (port 9401)
       _connectAudioWs();
     } else {
+      _closeRxWebRTC();
       if (window._audioWs && window._audioWs.readyState === WebSocket.OPEN) {
         window._audioWs.close();
         window._audioWs = null;
@@ -1420,6 +1509,8 @@ window.WS = {
       _updateAudioLatencyBadge();
     }
   },
+  setRxTransport: (mode) => _setRxTransport(mode ? 'webrtc' : 'ws'),
+  getRxTransport: () => _rxTransport(),
   isConnected:   () => ws && ws.readyState === WebSocket.OPEN,
   initLocalAudio,
   stopLocalAudio,
