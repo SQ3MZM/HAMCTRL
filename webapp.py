@@ -4420,13 +4420,30 @@ class App:
             print(f"[ws] connection error: {e}", flush=True)
         finally:
             await self.hub.remove(ws)
-            # Close any WebRTC RX audio sender this client had open (test
-            # build, see webrtc_rx_audio.py) - otherwise a closed tab/lost
-            # connection leaks an aiortc RTCPeerConnection server-side.
-            _rx_sender = self._webrtc_rx_senders.pop(ws, None)
-            if _rx_sender:
-                await _rx_sender.close()
-                self._log_rx_webrtc_listeners()
+            # Stop TRACKING (but do NOT close) any WebRTC RX audio sender
+            # this client had open. The old code called _rx_sender.close()
+            # here, on the theory that a lost connection = the client is
+            # gone. WRONG: the control WS ('ws', this connection) and the
+            # RX WebRTC media connection are two SEPARATE peer connections
+            # - only signaling (webrtc_rx_start/answer/ice) goes over the
+            # control WS, the actual audio stream is its own independent
+            # WebRTC/UDP path once established. On a real remote link the
+            # control WS reconnects on its own periodically (ordinary
+            # network jitter, unrelated to whether audio itself is
+            # healthy) - closing RX audio every single time this happened
+            # was reported live as "audio never starts" (confirmed in the
+            # log: "close() called from ws_handler", not from an actual
+            # WebRTC failure - recv() had 1000+ successful calls with zero
+            # errors right before being killed). The old WS-based RX audio
+            # path never had this problem because it was ALWAYS a fully
+            # separate connection to ham_audio.exe, with no such coupling.
+            # A genuinely abandoned connection (the browser tab really
+            # closed, no reconnect ever comes) still gets cleaned up - its
+            # own WebRTCAudioSender.on_state_change transitions to 'failed'
+            # once WebRTC's own ICE consent-freshness checks detect the
+            # peer is truly gone, and closes itself independently of this
+            # bookkeeping dict.
+            self._webrtc_rx_senders.pop(ws, None)
             # Remove from the online list and notify the others
             self.online_users.pop(ws, None)
             self.radio_requests.pop(uid, None)
@@ -6793,7 +6810,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-WEBRTC-CLOSE-DIAG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-24-WEBRTC-DECOUPLE-WS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
