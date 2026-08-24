@@ -282,6 +282,10 @@ input, textarea { font-family: inherit; }
 }
 .m-hound-check input[type="checkbox"] { accent-color: #f90; }
 
+/* Master RX switch (WSJTX.toggleOwnRx) - full width, prominent, since
+   nothing else on the FT8 tab works until this is on. */
+.m-ft8-own-rx-btn { width: 100%; margin-bottom: 8px; font-weight: 600; }
+
 /* Mini-wodospad: wsjtx_scope.js czeka na realny rozmiar canvasu (getBoundingClientRect)
    zanim zainicjuje WebGL - musi mieć jawną wysokość, nie auto/0. */
 .m-ft8-scope-card { padding: 8px; }

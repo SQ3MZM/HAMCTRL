@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608241800">
+<link rel="stylesheet" href="css/mobile.css?v=202608242300">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -166,6 +166,16 @@
   <section class="m-tabpanel" id="tab-ft8">
 
     <section class="m-card">
+      <!-- Master switch for the whole FT8 pipeline (Rust decoder + waterfall
+           broadcast loop, see webapp.py::ft8_rx_enable / _ft8_waterfall_loop) -
+           desktop has always had this button (id="wj-own-rx-btn", same
+           WSJTX.toggleOwnRx()), but the mobile FT8 tab build-out never added
+           an equivalent control. Without it there was no way to ever turn
+           decoding/waterfall on from the phone - explains "black waterfall,
+           empty decode list despite strong S-meter" exactly (both the Rust
+           decode loop and the waterfall broadcast loop are gated behind
+           self._ft8_rx_enabled, which starts False on every server start). -->
+      <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="m-btn m-ft8-own-rx-btn">▶ START (własny RX)</button>
       <div class="m-ft8-top-row">
         <div class="wj-mode-switch" id="wj-mode-switch">
           <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
