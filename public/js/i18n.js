@@ -1932,7 +1932,13 @@ window.I18n = (function () {
     if (window.__HAM_INITIAL_LANG__ && SUPPORTED.includes(window.__HAM_INITIAL_LANG__)) {
       return window.__HAM_INITIAL_LANG__;
     }
-    return "pl";
+    // No explicit choice (localStorage) or server-configured default yet -
+    // fall back to the browser/OS language: Polish -> pl, anything else -> en.
+    // Each device/browser has its own localStorage, so this matters most on
+    // a brand new device (e.g. first time opening the phone) where nothing
+    // has been chosen yet.
+    const nav = (navigator.language || (navigator.languages && navigator.languages[0]) || "").toLowerCase();
+    return nav.startsWith("pl") ? "pl" : "en";
   }
 
   function t(key) {
