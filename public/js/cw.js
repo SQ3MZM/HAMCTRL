@@ -295,7 +295,7 @@ function handleWS(msg) {
   if (msg.type === 'cw_done' || msg.type === 'cw_stopped') {
     cwActive = false;
     const st = document.getElementById('cw-status');
-    if (st) { st.innerHTML = '● GOTOWY'; st.style.color = 'var(--dim)'; }
+    if (st) { st.innerHTML = I18n.t('cw_status_ready'); st.style.color = 'var(--dim)'; }
     document.querySelectorAll('.cw-send-btn').forEach(b => b.classList.remove('cw-tx'));
   }
   if (msg.type === 'cw_error') {

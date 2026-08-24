@@ -177,7 +177,7 @@ function enableRx(on) {
   }
   initAudioContext();
   if (!initOpusDecoder()) {
-    window.Mobile?.showToast?.('Ten telefon/przeglądarka nie obsługuje dekodera audio (WebCodecs)', 'error');
+    window.Mobile?.showToast?.(I18n.t('m_audio_no_webcodecs'), 'error');
     return false;
   }
   audioEnabled = true;
@@ -203,11 +203,11 @@ async function startMicTx() {
   stopRequested = false;
   _txT0 = performance.now();
   if (!navigator.mediaDevices?.getUserMedia) {
-    window.Mobile?.showToast?.('Mikrofon niedostępny w tej przeglądarce', 'error');
+    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_unavailable'), 'error');
     return false;
   }
   if (typeof RTCPeerConnection === 'undefined') {
-    window.Mobile?.showToast?.('WebRTC niedostępne w tej przeglądarce', 'error');
+    window.Mobile?.showToast?.(I18n.t('m_no_webrtc'), 'error');
     return false;
   }
   try {
@@ -216,7 +216,7 @@ async function startMicTx() {
     if (preferredMicId) constraint.deviceId = { exact: preferredMicId };
     micStream = await navigator.mediaDevices.getUserMedia({ audio: constraint });
   } catch (e) {
-    window.Mobile?.showToast?.('Brak dostępu do mikrofonu: ' + e.message, 'error');
+    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_no_access') + e.message, 'error');
     return false;
   }
   console.log(`[maudio] getUserMedia: ${(performance.now() - _txT0).toFixed(0)}ms`);
@@ -277,7 +277,7 @@ function stopMicTx() {
 }
 
 function onWebrtcError(msg) {
-  window.Mobile?.showToast?.('Błąd mikrofonu: ' + (msg.error || ''), 'error');
+  window.Mobile?.showToast?.(I18n.t('m_mic_error_prefix') + (msg.error || ''), 'error');
   stopMicTx();
 }
 

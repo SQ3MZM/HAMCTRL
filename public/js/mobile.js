@@ -80,7 +80,7 @@ window.UI.showToast = showToast;
 // is true, and the function returns before ever confirming — the admin
 // "WYMUŚ" button would look clickable but do nothing.
 let _confirmModalResolve = null;
-function confirmModal(message, { title = 'POTWIERDŹ', okLabel = 'OK', danger = false } = {}) {
+function confirmModal(message, { title = I18n.t('common_confirm_title'), okLabel = 'OK', danger = false } = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('confirm-modal');
     const msgEl = document.getElementById('confirm-modal-msg');
@@ -297,7 +297,7 @@ function updateConnUI() {
   const dot = document.getElementById('m-conn-dot');
   const label = document.getElementById('m-conn-label');
   dot.className = 'm-dot' + (S.connected ? ' ok' : '');
-  label.textContent = S.connected ? 'połączono' : 'łączenie...';
+  label.textContent = S.connected ? I18n.t('m_conn_connected') : I18n.t('m_conn_connecting');
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
@@ -334,16 +334,16 @@ function renderLock() {
   const statusEl = document.getElementById('m-lock-status');
   const btn = document.getElementById('m-lock-btn');
   if (!S.lock.locked) {
-    statusEl.textContent = 'Radio wolne';
-    btn.textContent = 'Zajmij radio';
+    statusEl.textContent = I18n.t('m_radio_free_short');
+    btn.textContent = I18n.t('m_take_radio_btn');
     btn.className = 'm-btn m-btn-amber m-btn-sm';
   } else if (iHaveLock()) {
-    statusEl.textContent = 'Radio zajęte przez Ciebie';
-    btn.textContent = 'Zwolnij';
+    statusEl.textContent = I18n.t('m_radio_busy_you');
+    btn.textContent = I18n.t('m_release_btn');
     btn.className = 'm-btn m-btn-red m-btn-sm';
   } else {
-    statusEl.textContent = `Radio zajęte: ${S.lock.callsign || S.lock.username}`;
-    btn.textContent = 'Poproś';
+    statusEl.textContent = I18n.t('m_radio_busy_by').replace('{name}', S.lock.callsign || S.lock.username);
+    btn.textContent = I18n.t('m_request_btn');
     btn.className = 'm-btn m-btn-amber m-btn-sm';
   }
 }
@@ -355,10 +355,10 @@ async function toggleLock() {
     } else {
       const r = await fetch('/api/radio/request', { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (r.ok && d.granted === false) showToast(d.message || 'Prośba wysłana');
-      else if (!r.ok) showToast(d.error || 'Błąd', 'error');
+      if (r.ok && d.granted === false) showToast(d.message || I18n.t('m_request_sent_short'));
+      else if (!r.ok) showToast(d.error || I18n.t('status_error_generic'), 'error');
     }
-  } catch (e) { showToast('Błąd sieci', 'error'); }
+  } catch (e) { showToast(I18n.t('m_network_error'), 'error'); }
 }
 
 function renderLockedControls() {
@@ -388,7 +388,7 @@ function buildModeChips() {
   row.innerHTML = modes.map(m => `<button class="m-chip" data-mode="${m}">${m}</button>`).join('');
   row.querySelectorAll('.m-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!canControl()) { showToast('Zajmij radio, żeby zmieniać tryb', 'error'); return; }
+      if (!canControl()) { showToast(I18n.t('m_need_radio_mode'), 'error'); return; }
       S.mode = btn.dataset.mode;
       updateModeActive();
       wsSend({ type: 'mode', mode: S.mode });
@@ -415,7 +415,7 @@ function buildBandChips() {
   }).join('');
   row.querySelectorAll('.m-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!canControl()) { showToast('Zajmij radio, żeby zmieniać pasmo', 'error'); return; }
+      if (!canControl()) { showToast(I18n.t('m_need_radio_band'), 'error'); return; }
       S.freq = parseInt(btn.dataset.freq, 10);
       if (btn.dataset.mode) S.mode = btn.dataset.mode;
       renderFreq(); updateModeActive(); updateBandActive();
@@ -519,7 +519,7 @@ function initFreqStrip() {
 
   strip.addEventListener('pointerdown', (e) => {
     if (strip.dataset.disabled === '1') return;
-    if (!canControl()) { showToast('Zajmij radio, żeby stroić', 'error'); return; }
+    if (!canControl()) { showToast(I18n.t('m_need_radio_tune'), 'error'); return; }
     dragging = true;
     strip.classList.add('dragging');
     strip.setPointerCapture(e.pointerId);
@@ -569,7 +569,7 @@ function initPTT() {
   const btn = document.getElementById('m-ptt-btn');
   function down(e) {
     if (btn.disabled) return;
-    if (!canControl()) { showToast('Zajmij radio, żeby nadawać', 'error'); return; }
+    if (!canControl()) { showToast(I18n.t('m_need_radio_tx'), 'error'); return; }
     btn.setPointerCapture(e.pointerId);
     wsSend({ type: 'ptt', ptt: true });
     // Arms the microphone (fresh getUserMedia + WebRTC offer) in parallel
@@ -611,7 +611,7 @@ function initCwMacroGestures() {
     card.addEventListener('pointerup', () => {
       cancelTimer();
       if (!longPressed) {
-        if (!canControl()) { showToast('Zajmij radio, żeby nadawać CW', 'error'); return; }
+        if (!canControl()) { showToast(I18n.t('m_need_radio_cw'), 'error'); return; }
         window.CW?.sendMacro?.(id);
       }
     });
@@ -642,10 +642,10 @@ function initFreqEditGestures() {
 }
 
 function openFreqEdit(vfo) {
-  if (!canControl()) { showToast('Zajmij radio, żeby zmienić częstotliwość', 'error'); return; }
+  if (!canControl()) { showToast(I18n.t('m_need_radio_freq'), 'error'); return; }
   _freqEditVfo = vfo;
   const title = document.getElementById('m-freq-edit-title');
-  if (title) title.textContent = 'Częstotliwość VFO ' + vfo;
+  if (title) title.textContent = I18n.t('m_freq_vfo_title').replace('{vfo}', vfo);
   const input = document.getElementById('m-freq-edit-input');
   if (input) {
     const hz = vfo === 'B' ? S.freqB : S.freq;
@@ -666,7 +666,7 @@ function saveFreqEdit() {
   const input = document.getElementById('m-freq-edit-input');
   const raw = (input?.value || '').trim().replace(',', '.');
   const v = parseFloat(raw);
-  if (!raw || isNaN(v) || v <= 0) { showToast('Nieprawidłowa częstotliwość', 'error'); return; }
+  if (!raw || isNaN(v) || v <= 0) { showToast(I18n.t('m_invalid_freq'), 'error'); return; }
   // Accept either MHz ("14.074") or raw Hz — any real ham frequency in
   // MHz is well under 1000, so a bigger typed number must already be Hz
   // (same heuristic as qso_db.py's _normalize_freq_mhz).
@@ -707,9 +707,9 @@ async function loadLog() {
     const qsos = d.qsos || [];
     list.innerHTML = qsos.length
       ? qsos.map(renderLogRow).join('')
-      : '<div class="m-log-empty">brak wpisów</div>';
+      : `<div class="m-log-empty">${I18n.t('m_log_empty')}</div>`;
   } catch (e) {
-    list.innerHTML = '<div class="m-log-empty">błąd ładowania</div>';
+    list.innerHTML = `<div class="m-log-empty">${I18n.t('m_load_error')}</div>`;
   }
 }
 
@@ -738,9 +738,9 @@ async function loadMicList() {
     const devs = await navigator.mediaDevices.enumerateDevices();
     const inputs = devs.filter(d => d.kind === 'audioinput');
     const saved = localStorage.getItem('ham_audio_micId') || '';
-    sel.innerHTML = '<option value="">-- domyślny --</option>' +
-      inputs.map(d => `<option value="${esc(d.deviceId)}"${d.deviceId === saved ? ' selected' : ''}>${esc(d.label || 'Mikrofon')}</option>`).join('');
-  } catch (e) { showToast('Nie udało się odczytać listy mikrofonów', 'error'); }
+    sel.innerHTML = `<option value="">${I18n.t('m_mic_default_opt')}</option>` +
+      inputs.map(d => `<option value="${esc(d.deviceId)}"${d.deviceId === saved ? ' selected' : ''}>${esc(d.label || I18n.t('profile_mic_fallback'))}</option>`).join('');
+  } catch (e) { showToast(I18n.t('m_mic_list_error'), 'error'); }
 }
 
 function setMicDevice(id) {
