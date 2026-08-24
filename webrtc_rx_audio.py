@@ -57,19 +57,39 @@ class _RxAudioTrack(MediaStreamTrack):
         self._queue = audio_stream.subscribe_rx_pcm(loop)
         self._rate = getattr(audio_stream, "_rx_rate", None) or OPUS_RATE
         self._timestamp = 0
+        self._recv_count = 0
 
     async def recv(self):
-        import av
-        pcm = await self._queue.get()
-        frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
-        frame.planes[0].update(pcm)
-        frame.sample_rate = self._rate
-        frame.pts = self._timestamp
-        frame.time_base = fractions.Fraction(1, self._rate)
-        self._timestamp += len(pcm) // 2
-        return frame
+        # DIAGNOSTIC (2026-08-24): reported live - the connection reaches
+        # ICE 'completed'/state 'connected', real audio is flowing
+        # server-side (_rx_loop's own frame counter proves that, but NOT
+        # that THIS track's queue is actually being drained), then closes
+        # on its own after ~20-30s with no 'failed'/'disconnected' state in
+        # between - meaning something OTHER than the connectionstatechange
+        # handler is closing it. If recv() itself raises, aiortc's RTP
+        # send loop swallows it silently and tears the connection down -
+        # this print is the only way to see that instead of guessing.
+        try:
+            import av
+            pcm = await self._queue.get()
+            frame = av.AudioFrame(format="s16", layout="mono", samples=len(pcm) // 2)
+            frame.planes[0].update(pcm)
+            frame.sample_rate = self._rate
+            frame.pts = self._timestamp
+            frame.time_base = fractions.Fraction(1, self._rate)
+            self._timestamp += len(pcm) // 2
+            self._recv_count += 1
+            if self._recv_count % 250 == 0:
+                print(f"[webrtc-rx] track recv() #{self._recv_count} OK", flush=True)
+            return frame
+        except Exception as e:
+            import traceback
+            print(f"[webrtc-rx] track recv() FAILED after {self._recv_count} frames: {e}", flush=True)
+            traceback.print_exc()
+            raise
 
     def stop(self):
+        print(f"[webrtc-rx] track stop() called after {self._recv_count} recv() calls", flush=True)
         self._audio_stream.unsubscribe_rx_pcm(self._queue)
         super().stop()
 
@@ -146,6 +166,16 @@ class WebRTCAudioSender:
         await add_ice_candidate_to_pc(self._pc, candidate)
 
     async def close(self):
+        # DIAGNOSTIC (2026-08-24): logs WHO called close() (a short stack
+        # summary) - see the matching comment on _RxAudioTrack.recv(). If
+        # this fires from somewhere OTHER than "webrtc_rx_start" (a fresh
+        # connection replacing an old one) or "failed" in
+        # on_state_change, that's direct evidence of a third, not-yet-
+        # found trigger closing otherwise-healthy connections.
+        if self._pc:
+            import traceback
+            caller = traceback.extract_stack()[-2]
+            print(f"[webrtc-rx] close() called from {caller.name} ({caller.filename}:{caller.lineno})", flush=True)
         if self._track:
             self._track.stop()
             self._track = None
