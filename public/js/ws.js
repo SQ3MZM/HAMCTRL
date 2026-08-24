@@ -1116,6 +1116,7 @@ window.AudioControls = (function() {
 // this used to be a plain <audio> element with none of that wiring.
 let _rxPc = null;
 let _rxSourceNode = null;
+let _rxAudioEl = null;
 let _rxStatsTimer = null;
 
 // DIAGNOSTIC (2026-08-24): audioCtx/_rxPc live inside this file's closure,
@@ -1148,9 +1149,32 @@ function _connectRxWebRTC() {
   };
   _rxPc.ontrack = (ev) => {
     if (!audioCtx) return;
+    // Live-diagnosed 2026-08-24: chrome://webrtc-internals showed ~98% of
+    // arriving RTP audio packets discarded (jitterBufferEmittedCount
+    // stuck at 0) ONLY on this desktop code path - confirmed on the SAME
+    // machine/browser/network by switching Chrome's device toolbar to a
+    // mobile UA, which serves mobile.html/mobile_audio.js instead and
+    // played fine immediately. That file decodes via a plain <audio>
+    // element; this one fed the track straight into
+    // audioCtx.createMediaStreamSource(stream) - Chrome's WebRTC jitter
+    // buffer / playout timing is tuned around HTMLMediaElement playback,
+    // and bypassing that via a raw MediaStreamAudioSourceNode is a known
+    // source of exactly this kind of silent packet loss. Fix: let a real
+    // <audio> element do the actual decode/playout (proven working by
+    // mobile), then tap ITS output into the Web Audio graph via
+    // createMediaElementSource so the RX VOL slider / duck-on-TX still
+    // work. createMediaElementSource can only be bound to a given element
+    // ONCE ever, so a fresh <audio> element is created on every ontrack
+    // (each reconnect) rather than reusing one.
     try {
       if (_rxSourceNode) { try { _rxSourceNode.disconnect(); } catch (e) {} }
-      _rxSourceNode = audioCtx.createMediaStreamSource(ev.streams[0]);
+      if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} }
+      const el = new Audio();
+      el.autoplay = true;
+      el.srcObject = ev.streams[0];
+      el.play().catch((e) => console.warn('[audio] RX play() error:', e));
+      _rxAudioEl = el;
+      _rxSourceNode = audioCtx.createMediaElementSource(el);
       _rxSourceNode.connect(window._masterGain || audioCtx.destination);
     } catch (e) { console.warn('[audio] RX WebRTC track routing error:', e); }
   };
@@ -1214,6 +1238,7 @@ function _closeRxWebRTC() {
   _aheadAvg = 0;
   _updateAudioLatencyBadge();
   if (_rxSourceNode) { try { _rxSourceNode.disconnect(); } catch (e) {} _rxSourceNode = null; }
+  if (_rxAudioEl) { try { _rxAudioEl.pause(); _rxAudioEl.srcObject = null; } catch (e) {} _rxAudioEl = null; }
   if (_rxPc) {
     try { _rxPc.close(); } catch (e) {}
     _rxPc = null;
