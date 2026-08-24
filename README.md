@@ -42,7 +42,13 @@ person transmits at a time.
 - COM-port bridge for third-party CI-V software (CW Skimmer, Ham Radio Deluxe, Logger32)
 - Low-latency WebRTC audio for SSB voice
 - Multi-user accounts, role-based permissions, shared-radio lock/queue
-- Polish / English UI
+- Automatic desktop / mobile web UI — a phone browser gets a
+  touch-optimized layout (VFO, FT8/FT4 with waterfall, CW, QSO log,
+  rotator, radio-lock/operators panel) at the *same* URL, detected from
+  the User-Agent; a manual `?ui=mobile` / `?ui=desktop` override is
+  remembered per browser
+- Polish / English UI, auto-detected from the browser's language on
+  first visit
 
 ### System requirements
 
@@ -147,7 +153,13 @@ systemowi blokady/przejęcia TRX, tak że nadaje zawsze tylko jedna osoba.
 - Mostek COM dla programów CI-V innych producentów (CW Skimmer, Ham Radio Deluxe, Logger32)
 - Audio SSB o niskim opóźnieniu przez WebRTC
 - Konta wielu użytkowników, uprawnienia wg roli, blokada/kolejka współdzielonego radia
-- Interfejs w języku polskim i angielskim
+- Automatyczny wybór interfejsu desktop / mobile — przeglądarka na
+  telefonie dostaje dotykowy layout (VFO, FT8/FT4 z wodospadem, CW, log
+  QSO, rotor, panel blokady radia/operatorów) pod *tym samym* adresem,
+  wykrywany po User-Agent; ręczne wymuszenie `?ui=mobile` / `?ui=desktop`
+  zapamiętywane per przeglądarka
+- Interfejs w języku polskim i angielskim, wykrywany automatycznie z
+  języka przeglądarki przy pierwszej wizycie
 
 ### Wymagania systemowe
 

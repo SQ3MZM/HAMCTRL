@@ -88,7 +88,16 @@ def _cache_static_file(fpath, mime: str) -> tuple:
             gz = None
     return (mtime, raw, gz, mime, etag)
 
-SERVER_VERSION = "1.0"
+# Semantic version (MAJOR.MINOR.PATCH) - the public-facing version users see
+# in the installer and in the GitHub release tag (vX.Y.Z), and what the
+# update-check below compares against releases/latest. NOT the same thing as
+# the "[build] webapp.py wersja BUILD-YYYY-MM-DD-..." line printed at
+# startup, which is an internal per-commit diagnostic marker used to confirm
+# a rebuilt EXE actually picked up the latest source - that one changes on
+# nearly every commit, this one only on an actual release. Keep this in sync
+# with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
+# all three are bumped together at release time, not per-commit.
+SERVER_VERSION = "2.0.0"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a

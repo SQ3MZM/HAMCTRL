@@ -21,10 +21,15 @@
 ; ============================================================================
 
 #define AppName "HAM RADIO CTRL"
-#define AppVersion "2.0"
+; Trzymaj zgodne z VERSION (root repo) i SERVER_VERSION w webapp.py -
+; wszystkie trzy bumpowane razem tylko przy release, nie przy kazdym commicie
+; (to inny numer niz znacznik [build] BUILD-YYYY-MM-DD-... w logu startowym,
+; ktory zmienia sie prawie na kazdy commit i sluzy do potwierdzenia ze EXE
+; spakowal najnowszy kod - nie do publicznego wersjonowania).
+#define AppVersion "2.0.0"
 #define AppPublisher "Franek (Claude.ai) & SQ3MZM Tom"
 #define AppExeName "HAM-RADIO-CTRL.exe"
-#define AppURL "https://github.com/"
+#define AppURL "https://github.com/SQ3MZM/HAMCTRL"
 
 [Setup]
 ; AppId: unikalny identyfikator (nie zmieniaj miedzy wersjami tego samego produktu)
