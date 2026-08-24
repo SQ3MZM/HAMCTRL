@@ -235,7 +235,21 @@ function connectRxWebRTC() {
   };
   rxPc.onconnectionstatechange = () => {
     console.log(`[maudio] RX WebRTC connectionState=${rxPc?.connectionState}`);
-    if (rxPc && (rxPc.connectionState === 'failed' || rxPc.connectionState === 'closed')) closeRxWebRTC();
+    // No retry here for 'disconnected' - that state is often transient
+    // (brief ICE hiccup) and can self-recover; only 'failed'/'closed' are
+    // terminal. Auto-reconnect after a short delay if RX is still
+    // supposed to be on and we're still on the webrtc transport -
+    // previously this just closed and gave up, matching exactly what was
+    // reported live: audio died the moment something (FT8 decode CPU
+    // load) stressed the connection, and only a full page reload (a
+    // brand new RTCPeerConnection) brought it back - toggling FT8 back
+    // off alone did nothing because nothing was left trying to reconnect.
+    if (rxPc && (rxPc.connectionState === 'failed' || rxPc.connectionState === 'closed')) {
+      closeRxWebRTC();
+      if (audioEnabled && _rxTransport() === 'webrtc') {
+        setTimeout(() => { if (audioEnabled && _rxTransport() === 'webrtc') connectRxWebRTC(); }, 2000);
+      }
+    }
   };
   window.WS?.send({ type: 'webrtc_rx_start' });
 }

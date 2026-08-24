@@ -1143,7 +1143,17 @@ function _connectRxWebRTC() {
   };
   _rxPc.onconnectionstatechange = () => {
     console.log(`[audio] RX WebRTC connectionState=${_rxPc?.connectionState}`);
-    if (_rxPc && (_rxPc.connectionState === 'failed' || _rxPc.connectionState === 'closed')) _closeRxWebRTC();
+    // Auto-reconnect on a terminal failure, same as _connectAudioWs's
+    // setTimeout retry for the WS path — previously this just closed and
+    // gave up, so a transient stall (e.g. FT8 decode CPU load stressing
+    // the connection) killed RX audio permanently until a full page
+    // reload, since nothing was left trying to reconnect.
+    if (_rxPc && (_rxPc.connectionState === 'failed' || _rxPc.connectionState === 'closed')) {
+      _closeRxWebRTC();
+      if (window._audioEnabled && _rxTransport() === 'webrtc') {
+        setTimeout(() => { if (window._audioEnabled && _rxTransport() === 'webrtc') _connectRxWebRTC(); }, 2000);
+      }
+    }
   };
   window.WS?.send({ type: 'webrtc_rx_start' });
 }
