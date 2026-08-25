@@ -227,6 +227,18 @@ class CivRig:
         # transactions (one at a time)
         self._txlock = threading.Lock()
         self._wlock  = threading.Lock()
+        # CW/SSB PTT priority (2026-08-25): set True for the brief window
+        # around a PTT ON/OFF command (or the whole CW send sequence) so
+        # _poller_loop below skips its ENTIRE cycle instead of racing PTT
+        # for the bus - the background poller (freq/mode/S-meter/TX
+        # meters, several transacts back-to-back) was live-suspected of
+        # crowding out PTT ON's ACK reply on a busy CI-V bus ("puste
+        # strzały" - PTT logged as sent but never actually keyed). This is
+        # a stronger guarantee than _txlock alone: _txlock only prevents
+        # two transacts' RESPONSES from getting scrambled together, it
+        # doesn't stop the poller from simply being first in line and
+        # making PTT wait its turn.
+        self._tx_priority_active = False
         self._resp_ev = threading.Event()
         self._resp_cmd = None
         self._resp_sub = None
@@ -480,6 +492,31 @@ class CivRig:
                         "dataMode": self.data_mode})
 
     async def set_ptt(self, on: bool):
+        # FIX (reported live 2026-08-25): "CW i SSB maja piorytet w
+        # nadawaniu, one nie moga nie docierac do radia" — this had the
+        # exact same unchecked-ACK bug as send_cw_message's PTT ON did
+        # before its fix: self.ptt was set to the REQUESTED state
+        # unconditionally, before the CI-V command was even attempted, and
+        # the transact's ACK/timeout result was discarded entirely. A
+        # dropped/unanswered PTT command (busy CI-V bus - the same
+        # background poller contention suspected in the CW bug) looked
+        # identical to a real success: every caller (SSB mic, FT8 TX,
+        # manual PTT button) believed transmit had started/stopped when
+        # the radio might never have actually done so.
+        #
+        # Now: retries once on a missing ACK, and for PTT ON specifically
+        # (SSB/FT8 - like the CW fix, no point pretending we're
+        # transmitting if the radio never confirmed it) refuses to claim
+        # self.ptt=True if still unconfirmed after the retry. PTT OFF
+        # always ends up reflecting "off" regardless (same reasoning as
+        # CW's PTT OFF - we want the intent to stop transmitting recorded
+        # either way, a truly stuck radio needs to be visible via the log,
+        # not via a state that pretends nothing is wrong). Wrapped in the
+        # same self._tx_priority_active window as CW (see _poller_loop)
+        # so the routine telemetry poller doesn't compete with PTT itself
+        # for the bus - this is not raised as an exception (many call
+        # sites across webapp.py, some in hot paths like FT8 TX) - a
+        # failure is logged loudly and reflected in self.ptt instead.
         on = bool(on)
         if on and not self.ptt:
             # New transmission starting — reset ALC/PWR peak-hold so it
@@ -488,11 +525,26 @@ class CivRig:
             self._alc_peak_raw = 0
             self._pwr_peak = 0.0
             self._pwr_peak_raw = 0
-        self.ptt = on
         if self.sim or not self._ser:
+            self.ptt = on
             return
-        await asyncio.to_thread(self._transact,
-                                bytes([0x1C, 0x00, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+        self._tx_priority_active = True
+        try:
+            resp = await asyncio.to_thread(self._transact,
+                                    bytes([0x1C, 0x00, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+            if resp is None:
+                self.log(f"[civ] set_ptt({on}): no ACK from radio - retrying once")
+                resp = await asyncio.to_thread(self._transact,
+                                        bytes([0x1C, 0x00, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+            if resp is None:
+                self.log(f"[civ] set_ptt({on}): STILL no ACK after retry - radio may NOT have "
+                         f"{'started' if on else 'stopped'} transmitting!")
+                if on:
+                    self.ptt = False
+                    return
+        finally:
+            self._tx_priority_active = False
+        self.ptt = on
 
     # Mapping of characters to CI-V CW message codes (cmd 17, doc p.19-12).
     # Most are standard ASCII (0-9, A-Z, a-z) — sent directly. Additional
@@ -541,42 +593,88 @@ class CivRig:
         # "set CW" when already in CW costs one bare serial write and stays
         # invisible at contest speed. This trades the round-trip risk away
         # entirely instead of trying to make it more reliable.
-        was_already_cw = self.mode in ('CW', 'CW-R')
-        if not was_already_cw:
-            self.log(f"[civ] CW send: switching from {self.mode!r} to CW")
-        await asyncio.to_thread(self._write, bytes([0x06, 0x03]))
-        self.mode = 'CW'
-        if not was_already_cw:
-            # Only pay the settle delay when we know we're ACTUALLY asking
-            # the radio to change something (mode indicator, filter, BFO) —
-            # a reinforcing "set CW" while already in CW is a no-op on the
-            # radio's end and needs no settle time.
-            await asyncio.sleep(0.15)
+        # Priority window (2026-08-25): give the mode-set/PTT-ON/keying
+        # setup exclusive access to the CI-V bus - see self._tx_priority_active
+        # in __init__ and _poller_loop. Released right after the last cmd-17
+        # chunk goes out, NOT held for the whole transmission - the WPM
+        # wait below is when the operator actually wants to see live
+        # ALC/PWR/S-meter updates (that's the whole point of watching the
+        # meters DURING a CW transmission), so the poller resumes there.
+        # Re-acquired briefly around PTT OFF at the end (its own critical
+        # moment, same reasoning as PTT ON).
+        self._tx_priority_active = True
+        try:
+            was_already_cw = self.mode in ('CW', 'CW-R')
+            if not was_already_cw:
+                self.log(f"[civ] CW send: switching from {self.mode!r} to CW")
+            await asyncio.to_thread(self._write, bytes([0x06, 0x03]))
+            self.mode = 'CW'
+            if not was_already_cw:
+                # Only pay the settle delay when we know we're ACTUALLY
+                # asking the radio to change something (mode indicator,
+                # filter, BFO) — a reinforcing "set CW" while already in CW
+                # is a no-op on the radio's end and needs no settle time.
+                await asyncio.sleep(0.15)
 
-        # Step 2: PTT ON (1C 00 01) — over USB the radio requires PTT before cmd 17
-        # BK-IN over USB causes a continuous carrier — PTT is used instead
-        self.log("[civ] CW send: PTT ON")
-        await asyncio.to_thread(
-            self._transact, bytes([0x1C, 0x00, 0x01]), {0xFB, 0xFA}, 0.4)
-        self.ptt = True
-        # PTT->keying delay. The IC-7300 over USB needs time to switch to
-        # transmit (T/R relay, possibly the tuner). With too short a delay,
-        # the first character goes out before the radio is fully
-        # transmitting, and the start gets clipped (observed: 'XX0XXX' ->
-        # dropped 'S'/'SQ'). 50ms was too little; 250ms gives margin.
-        # Configurable via cwPttDelay in settings (ms), since tuners need more.
-        _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
-        await asyncio.sleep(max(0.05, _ptt_delay))
+            # Step 2: PTT ON (1C 00 01) — over USB the radio requires PTT before cmd 17
+            # BK-IN over USB causes a continuous carrier — PTT is used instead
+            #
+            # FIX (reported live 2026-08-25): "puste strzały" — the software
+            # logged a normal PTT ON/send/PTT OFF/done sequence but an external
+            # PA's own TX indicator never lit, i.e. the radio never actually
+            # keyed. _transact() already waits for and returns the radio's
+            # ACK/NAK (0xFB/0xFA) or None on timeout — but the return value was
+            # discarded here, so a dropped/unanswered PTT ON command (busy CI-V
+            # bus) was treated identically to a real success and the rest of
+            # the sequence (chunk, wait, PTT OFF) ran anyway with the radio
+            # never having actually entered transmit. Same bug class as the
+            # rotor STOP-write fix (826a8eb) — don't pretend success on an
+            # unconfirmed write. Now abort with a real error instead of
+            # silently sending nothing.
+            self.log("[civ] CW send: PTT ON")
+            _ptt_on_resp = await asyncio.to_thread(
+                self._transact, bytes([0x1C, 0x00, 0x01]), {0xFB, 0xFA}, 0.4)
+            if _ptt_on_resp is None:
+                # A missing ACK has two possible real causes: the PTT ON
+                # command itself never reached the radio (safe to just abort —
+                # nothing is transmitting), OR the command DID land but only
+                # the radio's ACK reply got lost on a busy CI-V bus (the radio
+                # is now actually keyed, with no cleanup — a stuck-transmitting
+                # dead carrier, worse than the original "puste strzały" bug).
+                # _transact()'s 0.4s window only measures the reply, not the
+                # command, so we can't tell which case this is — fire a
+                # best-effort PTT OFF (no ACK wait, same fire-and-forget
+                # tradeoff as the CW-mode-set write above) before aborting, so
+                # the first case costs nothing extra and the second case
+                # doesn't leave the radio hung.
+                self.log("[civ] CW send: PTT ON got no ACK from radio - sending safety PTT OFF and aborting, nothing transmitted")
+                try:
+                    await asyncio.to_thread(self._write, bytes([0x1C, 0x00, 0x00]))
+                except Exception:
+                    pass
+                self.ptt = False
+                raise RuntimeError("Radio nie potwierdzilo PTT ON (CW) - transmisja NIE poszla w eter")
+            self.ptt = True
+            # PTT->keying delay. The IC-7300 over USB needs time to switch to
+            # transmit (T/R relay, possibly the tuner). With too short a delay,
+            # the first character goes out before the radio is fully
+            # transmitting, and the start gets clipped (observed: 'XX0XXX' ->
+            # dropped 'S'/'SQ'). 50ms was too little; 250ms gives margin.
+            # Configurable via cwPttDelay in settings (ms), since tuners need more.
+            _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
+            await asyncio.sleep(max(0.05, _ptt_delay))
 
-        # Step 3: Send the text via CI-V cmd 17
-        # The radio modulates CW while PTT is active
-        for i in range(0, len(text), 30):
-            chunk = text[i:i+30]
-            self.log(f"[civ] CW send chunk: {chunk!r}")
-            await asyncio.to_thread(
-                self._write, bytes([0x17]) + chunk.encode("ascii"))
-            if i + 30 < len(text):
-                await asyncio.sleep(0.1)
+            # Step 3: Send the text via CI-V cmd 17
+            # The radio modulates CW while PTT is active
+            for i in range(0, len(text), 30):
+                chunk = text[i:i+30]
+                self.log(f"[civ] CW send chunk: {chunk!r}")
+                await asyncio.to_thread(
+                    self._write, bytes([0x17]) + chunk.encode("ascii"))
+                if i + 30 < len(text):
+                    await asyncio.sleep(0.1)
+        finally:
+            self._tx_priority_active = False
 
         # Step 4: Read the current WPM from the radio and wait
         try:
@@ -600,10 +698,24 @@ class CivRig:
         self.log(f"[civ] CW send: waiting {wait_s:.1f}s ({wpm} WPM)")
         await asyncio.sleep(wait_s)
 
-        # Step 5: PTT OFF
+        # Step 5: PTT OFF — same unchecked-ACK bug as PTT ON above, but here
+        # we can't just abort (we WANT transmit to stop regardless); retry
+        # once and log loudly if still unconfirmed, since a truly stuck PTT
+        # leaves the radio transmitting a dead carrier until something else
+        # intervenes.
         self.log("[civ] CW send: PTT OFF")
-        await asyncio.to_thread(
-            self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
+        self._tx_priority_active = True
+        try:
+            _ptt_off_resp = await asyncio.to_thread(
+                self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
+            if _ptt_off_resp is None:
+                self.log("[civ] CW send: PTT OFF got no ACK - retrying once")
+                _ptt_off_resp = await asyncio.to_thread(
+                    self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
+                if _ptt_off_resp is None:
+                    self.log("[civ] CW send: PTT OFF STILL unconfirmed after retry - radio may be stuck transmitting!")
+        finally:
+            self._tx_priority_active = False
         self.ptt = False
         # T/R recovery: after PTT OFF the rig needs a moment to leave transmit
         # (T/R relay, internal sequencing) before it can cleanly accept a new CW
@@ -1807,6 +1919,13 @@ class CivRig:
                 if _off_logged:
                     self.log("[civ] Radio on — telemetry resumed")
                     _off_logged = False
+                # Yield the bus entirely to an in-flight CW/SSB PTT
+                # command - see the comment on self._tx_priority_active in
+                # __init__. Skip this whole cycle (no freq/mode/meter
+                # polling at all) rather than trying to interleave.
+                if self._tx_priority_active:
+                    time.sleep(0.02)
+                    continue
                 self._transact(bytes([0x03]), {0x03, 0x00}, 0.3)        # freq
                 if n % 4 == 0:
                     self._transact(bytes([0x04]), {0x04, 0x01}, 0.3)    # mode

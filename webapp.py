@@ -6459,7 +6459,14 @@ class App:
             old = self._webrtc_rx_senders.pop(ws, None)
             if old:
                 await old.close()
-            sender = WebRTCAudioSender(self.audio)
+            def _on_sender_failed(_ws=ws):
+                # Only remove if this ws's CURRENT entry is still the
+                # sender that just failed - a reconnect may have already
+                # replaced it with a newer one by the time this fires.
+                if self._webrtc_rx_senders.get(_ws) is sender:
+                    self._webrtc_rx_senders.pop(_ws, None)
+                    self._log_rx_webrtc_listeners()
+            sender = WebRTCAudioSender(self.audio, on_failed=_on_sender_failed)
             self._webrtc_rx_senders[ws] = sender
             offer = await sender.create_offer()
             await ws.send_json({"type": "webrtc_rx_offer", "sdp": offer["sdp"], "sdpType": offer["type"]})
@@ -6810,7 +6817,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-24-WEBRTC-DECOUPLE-WS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-25-PTT-PRIORITY-BUS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

@@ -1297,15 +1297,26 @@ function _applyDxMatch(d) {
   _updateMacroTexts();
 }
 
-// Finds the most recent (newest first) RX decode with `call` as one of its
-// tokens, or null. Shared by searchDxCall, _watchDxCall and
+// Finds the most recent (newest first) RX decode where `call` is the
+// station actually TRANSMITTING (calling CQ, or calling/replying to
+// someone) - not merely mentioned as the addressee in someone else's
+// transmission. Shared by searchDxCall, _watchDxCall and
 // _onAutoQsoStatus - one search implementation instead of three copies.
+//
+// FIX (reported live 2026-08-25): this used to match `call` against ANY
+// token in the message ("XX0XXX XX1XXX -10" matched "XX0XXX" too, even
+// though XX1XXX is the one transmitting there and XX0XXX is just being
+// called BY them) - so typing/tracking a callsign in the DX field
+// followed it around the waterfall based on OTHER stations calling it,
+// not its own activity. _extractCall() already correctly picks out
+// whoever is actually sending a given decode (CQ caller, or the DE
+// field of a CALL_TO CALL_DE exchange) - use that instead of a raw
+// token search.
 function _findLatestDecodeFrom(call) {
   for (let i = _decodes.length - 1; i >= 0; i--) {
     const d = _decodes[i];
     if (d.is_tx || d.deltaFreq === undefined) continue;
-    const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
-    if (tokens.includes(call)) return d;
+    if (_extractCall(d.message) === call) return d;
   }
   return null;
 }
@@ -1330,8 +1341,9 @@ function _watchDxCall(d) {
   if (d.is_tx || d.deltaFreq === undefined) return;
   const call = (document.getElementById('wj-dx-call')?.value || '').trim().toUpperCase();
   if (!call) return;
-  const tokens = (d.message || '').toUpperCase().replace(/[<>]/g, '').split(/\s+/);
-  if (tokens.includes(call)) _applyDxMatch(d);
+  // See the FIX note on _findLatestDecodeFrom above - must match the
+  // actual transmitting station, not just any mention of the callsign.
+  if (_extractCall(d.message) === call) _applyDxMatch(d);
 }
 
 // ── Antenna heading + rotator (the ANTENNA row below the DX field in QUICK QSO LOG) ─

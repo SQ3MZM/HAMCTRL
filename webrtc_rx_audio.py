@@ -112,10 +112,20 @@ class WebRTCAudioSender:
     offer/answer flow (mirrors WebRTCAudioReceiver's structure, opposite
     roles)."""
 
-    def __init__(self, audio_stream):
+    def __init__(self, audio_stream, on_failed=None):
         self._audio_stream = audio_stream
         self._pc: RTCPeerConnection | None = None
         self._track: _RxAudioTrack | None = None
+        # Optional callback invoked once when the connection reaches
+        # 'failed' on its own (real WebRTC-level death - ICE consent
+        # checks decided the peer is gone), not on every close(). Lets the
+        # app-level tracking dict (App._webrtc_rx_senders) remove this
+        # entry immediately instead of leaving an inert, closed sender
+        # sitting there until the client's own reconnect happens to
+        # overwrite it - harmless (no growing resource use, just a
+        # temporarily inflated listener count in the capacity log), but
+        # cheap to keep accurate.
+        self._on_failed = on_failed
 
     async def create_offer(self) -> dict:
         """Start a fresh connection (closing any previous one for this
@@ -145,6 +155,8 @@ class WebRTCAudioSender:
             # real internet path (DuckDNS tunnel, not localhost/LAN).
             if pc.connectionState == "failed":
                 await self.close()
+                if self._on_failed:
+                    self._on_failed()
 
         @pc.on("iceconnectionstatechange")
         async def on_ice_state_change():
