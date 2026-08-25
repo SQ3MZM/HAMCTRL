@@ -7221,6 +7221,21 @@ class App:
                 await self._advance_auto_qso_queue()
             elif self._last_auto_tx_action:
                 self._qso_engine.note_retry()
+                # FIX (2026-08-25): record_tx_sent() here too, SYNCHRONOUSLY,
+                # not just inside the create_task'd _send_auto_tx below.
+                # Rust streams a whole batch of decodes after each 15s
+                # window; when no WS client is connected, hub.broadcast()
+                # returns instantly with no await (line ~311), so
+                # _ft8_rx_loop can process several unrelated decodes back to
+                # back with NO real yield to the event loop in between. The
+                # create_task'd resend wouldn't get to run (and update
+                # last_tx_at) until that whole burst drains - so EVERY
+                # decode in the burst saw should_retransmit() still True and
+                # called note_retry() again, burning the 4-try budget in far
+                # fewer than 4 real 30s periods (reported live: "wychodzi
+                # ze jakos 2 razy tylko" instead of the intended 4).
+                # Resetting last_tx_at here closes that window.
+                self._qso_engine.record_tx_sent()
                 print(f"[autoqso] No reply from "
                       f"{self._qso_engine.partner_call} — retrying "
                       f"(attempt {self._qso_engine.retry_count}/{_max_retries}): "
