@@ -495,6 +495,24 @@ function toggleOwnRx() {
     btn.textContent = _ownRxEnabled ? I18n.t('wj_own_rx_stop') : I18n.t('wj_own_rx_start');
     btn.classList.toggle('active', _ownRxEnabled);
   }
+  // FIX (reported live 2026-08-26: "timer ft8 leci nawet jak zatrzymam
+  // odbior i pojde sobie np na cw"): the FT8 safety timer (Tx Watchdog)
+  // guards against UNATTENDED automated TX - with RX stopped there are no
+  // decodes, so the automation literally cannot answer anyone or
+  // transmit, and the timer has nothing to guard against. It used to arm
+  // once (on the first auto_seq_status after connect) and just run
+  // forever regardless of RX state - this is the actual on/off switch:
+  // stop the countdown the moment RX stops, (re)start it the moment RX
+  // starts, tracking the ONLY thing that determines whether unattended TX
+  // is even possible. Hound layers its own start() on top when armed
+  // while RX is running (see toggleHound); its stop no longer touches
+  // this shared timer (see houndStop) since RX may still be running the
+  // main automation after Hound turns off.
+  if (_ownRxEnabled) {
+    window.FT8Timer?.start();
+  } else {
+    window.FT8Timer?.stop();
+  }
 }
 
 function clearDecodes() {
@@ -627,23 +645,8 @@ function toggleAutoSeq() {
   window.WS?.send({ type: 'ft8_toggle_auto_seq', enabled });
 }
 
-let _watchdogArmed = false;
-
 function _onAutoSeqStatus(msg) {
   if (msg.enabled !== undefined) _autoSeqEnabled = msg.enabled;
-  // The FT8 safety timer (WSJT-X "Tx Watchdog") arms ONCE, the first time
-  // we hear the backend confirm the automation is active. FIX (2026-08-26,
-  // removed the "Call 1st" queue/toggle): auto-answering whoever calls
-  // while idle is no longer a toggle - the backend already does it
-  // unconditionally (has for a while - see "auto-start when IDLE always
-  // applies" in webapp.py) - so there's no toggle-flip left to hook the
-  // watchdog to. It's simply armed as soon as automation is confirmed on,
-  // which per the backend is always. Hound arms/disarms it independently
-  // on top of this for its own session (see toggleHound/houndStop).
-  if (_autoSeqEnabled && !_watchdogArmed) {
-    _watchdogArmed = true;
-    window.FT8Timer?.start();
-  }
   if (msg.state !== undefined) _autoQsoState = msg.state;
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
   _renderAutoQsoPanel();
@@ -1804,9 +1807,9 @@ window.FT8Timer = (() => {
   }
 
   function start() {
-    // Start the countdown - the automation is unconditionally active now
-    // (see _onAutoSeqStatus, which arms this on the first
-    // auto_seq_status), or Hound is enabled (toggleHound).
+    // Start the countdown - armed whenever FT8 RX is actually running (see
+    // toggleOwnRx: RX is the only thing that determines whether unattended
+    // auto-TX is even possible), or when Hound is enabled (toggleHound).
     _remaining  = _durationMs;
     _active     = true;
     _warnShown  = false;
@@ -1818,9 +1821,9 @@ window.FT8Timer = (() => {
   }
 
   function stop() {
-    // Stop the countdown (internal use on expiry - see _tick; nothing
-    // else calls this anymore now that the watchdog is always armed, see
-    // _onAutoSeqStatus). Does NOT clear _expired on its own - only
+    // Stop the countdown - RX turned off (toggleOwnRx, nothing left to
+    // guard against with no decodes coming in) or internal use on expiry
+    // (see _tick). Does NOT clear _expired on its own - only
     // confirm()/start() do that, so the "waiting for confirmation" state
     // doesn't silently vanish without an actual operator confirmation.
     _active = false;
@@ -1859,8 +1862,8 @@ window.FT8Timer = (() => {
     // to land exactly on the small button, instead of simply returning to normal work.
     if (_expired) { confirm(); return; }
     // Reset without stopping — after every user action, ONLY when the
-    // timer is actually active (armed once automation starts) - see
-    // _onAutoSeqStatus.
+    // timer is actually active (armed while FT8 RX is running) - see
+    // toggleOwnRx.
     if (_active) {
       _remaining = _durationMs;
       _warnShown = false;
