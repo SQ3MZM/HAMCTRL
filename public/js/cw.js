@@ -1,7 +1,8 @@
 
 /**
  * cw.js (frontend) — CW keying panel
- * Handles all TRX methods: auto/CAT/DTR/RTS
+ * Keying method: DTR or RTS on a COM port (CAT/cmd-17 retired 2026-08-26,
+ * see the cw_empty_ptt project memory).
  *
  * MACROS: editable by every user, in their own scope — saved in the
  * browser's localStorage (per-user/per-device, no effect on other
@@ -15,8 +16,7 @@ const S = window.AppState;
 const MACROS_KEY = 'cwMacros';
 let macros      = [];
 let cwActive    = false;
-let cwMethod    = 'auto';
-let catCapable  = null; // null=unknown
+let cwMethod    = 'dtr';
 
 // Default macros (used on first run / when nothing is saved in localStorage)
 const DEFAULT_MACROS = [
@@ -55,33 +55,16 @@ async function loadStatus() {
   try {
     const r   = await fetch('/api/cw/status');
     const st  = await r.json();
-    cwMethod  = st.method    || 'auto';
-    catCapable= st.capabilities?.catMorse ?? null;
+    cwMethod  = st.method || 'dtr';
     updateMethodBadge();
-    updateCapsBadge(st.capabilities);
   } catch(e) {}
 }
 
 function updateMethodBadge() {
   const el = document.getElementById('cw-method-badge');
   if (!el) return;
-  const labels = { auto:'AUTO', cat:'CAT', dtr:'DTR', rts:'RTS' };
-  const colors = { auto:'var(--dim)', cat:'var(--green)', dtr:'var(--amber)', rts:'var(--amber)' };
-  el.textContent = labels[cwMethod] || cwMethod.toUpperCase();
-  el.style.color = colors[cwMethod] || 'var(--dim)';
-}
-
-function updateCapsBadge(caps) {
-  const el = document.getElementById('cw-caps-badge');
-  if (!el || !caps) return;
-  if (caps.error) { el.textContent = '? nieznany'; el.style.color = 'var(--dim)'; return; }
-  if (caps.catMorse) {
-    el.textContent = `✓ CAT OK (${caps.rigMfr || ''})`;
-    el.style.color = 'var(--green)';
-  } else {
-    el.textContent = `⚠ CAT N/A → DTR/RTS`;
-    el.style.color = 'var(--amber)';
-  }
+  el.textContent = cwMethod.toUpperCase();
+  el.style.color = 'var(--amber)';
 }
 
 // ── Render macros ────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 /**
  * cw_sidetone.js — locally synthesized CW sidetone for the MON button.
  *
- * The radio does its own Morse keying internally (send_cw_message() in
- * civ.py just hands it the text over CI-V cmd 17) - the server never
- * knows the exact dit/dah timing, only the text and configured WPM. So
- * instead of trying to stream real audio from the radio (the MONI path
+ * The keyer thread (civ.py::_send_morse_blocking) runs on the server,
+ * toggling a DTR/RTS line - the browser has no way to observe that
+ * directly, only the text and configured WPM. So instead of trying to
+ * stream real audio from the radio (the MONI path
  * that turned out to be silenced by our own TX-time RX duck - see the
  * comment in radiofunctions.js), this generates a standard-timing Morse
  * tone LOCALLY in the browser the moment the server signals a CW send is

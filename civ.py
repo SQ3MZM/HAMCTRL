@@ -174,6 +174,30 @@ class CivRig:
         self._alc_peak_raw = 0
         self._pwr_peak     = 0.0
         self._pwr_peak_raw = 0
+        # Telemetry coalescing (2026-08-25): freq/mode/freqB/split/smeter/
+        # txmeter used to call self.bcast() -> broadcast_sync ->
+        # asyncio.run_coroutine_threadsafe() DIRECTLY from _reader_loop/
+        # _poller_loop (real OS threads) on every single change - up to a
+        # few dozen cross-thread loop wakeups/sec during PTT (4 TX meters
+        # every poll cycle) or during fast VFO knob spin on the radio's own
+        # front panel (every transceive frame in _handle_frame). This is
+        # the SAME pattern already found and fixed for the scope stream
+        # (see _latest_scope / webapp.py::_scope_pump) - confirmed there
+        # that frequent run_coroutine_threadsafe calls from a non-loop
+        # thread measurably stall the asyncio loop (lag grows linearly
+        # with call count), which now also delays WebRTC's own RTP send
+        # timing since it lives on the same loop. These specific message
+        # types are coalesced into this dict (last-value-wins per key) and
+        # drained by webapp.py::_telemetry_pump at a steady rate instead of
+        # synchronizing with the loop on every change. Both writer threads
+        # (_reader_loop/_poller_loop) and the pump's atomic swap-and-drain
+        # go through _telemetry_lock - a plain dict write is GIL-atomic on
+        # its own, but the pump's "grab old dict, iterate its .values()"
+        # step is NOT atomic against a writer that fetched the dict
+        # reference just before the swap and inserts a brand-new key just
+        # after - a lock closes that window instead of leaving it to luck.
+        self._telemetry_pending = {}
+        self._telemetry_lock = threading.Lock()
         self.split     = False
         self.powered   = True     # radio's power state (CI-V 0x18). After
                                   # power OFF the radio doesn't respond — polling is skipped
@@ -475,15 +499,38 @@ class CivRig:
             return
 
         mb = self.mode_rev.get(base_mode, 1)
-        await asyncio.to_thread(self._transact,
+        _mode_resp = await asyncio.to_thread(self._transact,
                                 bytes([0x06, mb, fb]), {0xFB, 0xFA}, 0.4)
+        if _mode_resp is None or self._resp_matched_cmd == 0xFA:
+            _why = "no ACK (timeout)" if _mode_resp is None else "radio REJECTED (NG)"
+            self.log(f"[civ] set_mode: base mode-set (06 {mb:02X} {fb:02X}) - {_why}")
 
         # Turn DATA mode on/off with a separate command (1A 06), independent
-        # of the base mode — this is the actual USB<->USB-D switch on the IC-7300.
+        # of the base mode — this is the actual USB<->USB-D switch on the
+        # IC-7300.
+        #
+        # FIX (audit 2026-08-26, cross-checked against the official CI-V
+        # doc): this command takes TWO data bytes -
+        # [1]=DATA mode(00/01), [2]=filter select (01/02/03=FIL1/2/3 when
+        # ON, must be 00 when OFF) - a single-byte payload (just the on/off
+        # flag) was sent here before, silently malformed on the wire. The
+        # `expect` set was also wrong: {0x1A} with sub=0x06 waits for an
+        # ECHO of the same command family (the read-QUERY response
+        # format), not the ACK/NG (0xFB/0xFA) a SET command (one that
+        # carries a data byte) actually gets - same pattern already fixed
+        # for set_scope_span/set_usb_keying/set_bk_in. In practice this
+        # `_transact` almost certainly always timed out silently (0.4s),
+        # every single USB<->USB-D switch, with the result discarded
+        # either way - self.data_mode was set unconditionally regardless
+        # of whether the radio actually switched.
         if is_data != self.data_mode:
-            await asyncio.to_thread(self._transact,
-                                    bytes([0x1A, 0x06, 0x01 if is_data else 0x00]),
-                                    {0x1A}, 0.4, sub=0x06)
+            _data_fil_byte = fb if is_data else 0x00
+            _data_resp = await asyncio.to_thread(self._transact,
+                                    bytes([0x1A, 0x06, 0x01 if is_data else 0x00, _data_fil_byte]),
+                                    {0xFB, 0xFA}, 0.4)
+            if _data_resp is None or self._resp_matched_cmd == 0xFA:
+                _why = "no ACK (timeout)" if _data_resp is None else "radio REJECTED (NG)"
+                self.log(f"[civ] set_mode: DATA mode -> {is_data} FIL{_data_fil_byte} - {_why} (radio may not have switched)")
             self.data_mode = is_data
             self._data_filter_initialized = True
             self._filter_width_hz = filter_width_hz(self.mode, getattr(self, "_filter_idx", 0), self.data_mode)
@@ -546,195 +593,6 @@ class CivRig:
             self._tx_priority_active = False
         self.ptt = on
 
-    # Mapping of characters to CI-V CW message codes (cmd 17, doc p.19-12).
-    # Most are standard ASCII (0-9, A-Z, a-z) — sent directly. Additional
-    # symbols: / ? . - , : ' ( ) = + " @ space — also ASCII. "^" joins
-    # characters with no gap between them (prosody); "FF" aborts sending.
-    _CW_ALLOWED = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-                      "/?.-,:'()=+\"@ ^")
-
-    async def send_cw_message(self, text: str):
-        """
-        Send text as CW over CI-V (cmd 17, max 30 characters at a time per
-        the IC-7300/IC-746 documentation).
-
-        Requires the radio to be in CW/CW-R mode (cmd 06 03) — this function
-        always (re-)sends that before keying, see the FIX comment below.
-        Keys via PTT (1C 00 01) + cmd 17, not BK-IN — BK-IN over USB causes
-        a continuous carrier instead of following the text, so PTT is used
-        instead. Does not restore whatever mode was active before the call;
-        the operator stays in CW after sending, as expected for a keyer.
-        """
-        text = "".join(c for c in text.upper() if c in self._CW_ALLOWED)
-        if not text:
-            return
-        if self.sim or not self._ser:
-            self.log(f"[civ] send_cw_message (SIM): {text!r}")
-            return
-
-        # FIX (reported live 2026-08-24, mid-contest, 2 rounds): this used
-        # to trust the CACHED self.mode, then (round 1 fix) confirm it with
-        # a fresh CI-V mode QUERY before deciding whether to switch. Round 1
-        # had its own blind spot: "raz nadaje ton a raz idzie tylko puste
-        # PTT... to ma chodzic jak karabin" (sometimes a real tone, sometimes
-        # just empty PTT — at contest, rapid-fire pace) — a busy CI-V bus is
-        # exactly when self.mode is MOST likely to have gone stale, and
-        # exactly when the confirmation query is MOST likely to itself
-        # time out and silently fall back to trusting the same stale
-        # self.mode, defeating the whole check under precisely the
-        # conditions it existed for.
-        #
-        # Fix: stop asking. ALWAYS send the mode-SET command, unconditionally,
-        # before every CW send — never trust self.mode to decide whether
-        # it's needed. Fire-and-forget (no ACK wait), same pattern set_freq()
-        # already uses below for the same reason: waiting for the ACK is
-        # what's slow, not the write itself, and cmd 17 already requires the
-        # radio to be in CW before it does anything anyway, so a redundant
-        # "set CW" when already in CW costs one bare serial write and stays
-        # invisible at contest speed. This trades the round-trip risk away
-        # entirely instead of trying to make it more reliable.
-        # Priority window (2026-08-25): give the mode-set/PTT-ON/keying
-        # setup exclusive access to the CI-V bus - see self._tx_priority_active
-        # in __init__ and _poller_loop. Released right after the last cmd-17
-        # chunk goes out, NOT held for the whole transmission - the WPM
-        # wait below is when the operator actually wants to see live
-        # ALC/PWR/S-meter updates (that's the whole point of watching the
-        # meters DURING a CW transmission), so the poller resumes there.
-        # Re-acquired briefly around PTT OFF at the end (its own critical
-        # moment, same reasoning as PTT ON).
-        self._tx_priority_active = True
-        try:
-            was_already_cw = self.mode in ('CW', 'CW-R')
-            if not was_already_cw:
-                self.log(f"[civ] CW send: switching from {self.mode!r} to CW")
-            await asyncio.to_thread(self._write, bytes([0x06, 0x03]))
-            self.mode = 'CW'
-            if not was_already_cw:
-                # Only pay the settle delay when we know we're ACTUALLY
-                # asking the radio to change something (mode indicator,
-                # filter, BFO) — a reinforcing "set CW" while already in CW
-                # is a no-op on the radio's end and needs no settle time.
-                await asyncio.sleep(0.15)
-
-            # Step 2: PTT ON (1C 00 01) — over USB the radio requires PTT before cmd 17
-            # BK-IN over USB causes a continuous carrier — PTT is used instead
-            #
-            # FIX (reported live 2026-08-25): "puste strzały" — the software
-            # logged a normal PTT ON/send/PTT OFF/done sequence but an external
-            # PA's own TX indicator never lit, i.e. the radio never actually
-            # keyed. _transact() already waits for and returns the radio's
-            # ACK/NAK (0xFB/0xFA) or None on timeout — but the return value was
-            # discarded here, so a dropped/unanswered PTT ON command (busy CI-V
-            # bus) was treated identically to a real success and the rest of
-            # the sequence (chunk, wait, PTT OFF) ran anyway with the radio
-            # never having actually entered transmit. Same bug class as the
-            # rotor STOP-write fix (826a8eb) — don't pretend success on an
-            # unconfirmed write. Now abort with a real error instead of
-            # silently sending nothing.
-            self.log("[civ] CW send: PTT ON")
-            _ptt_on_resp = await asyncio.to_thread(
-                self._transact, bytes([0x1C, 0x00, 0x01]), {0xFB, 0xFA}, 0.4)
-            if _ptt_on_resp is None:
-                # A missing ACK has two possible real causes: the PTT ON
-                # command itself never reached the radio (safe to just abort —
-                # nothing is transmitting), OR the command DID land but only
-                # the radio's ACK reply got lost on a busy CI-V bus (the radio
-                # is now actually keyed, with no cleanup — a stuck-transmitting
-                # dead carrier, worse than the original "puste strzały" bug).
-                # _transact()'s 0.4s window only measures the reply, not the
-                # command, so we can't tell which case this is — fire a
-                # best-effort PTT OFF (no ACK wait, same fire-and-forget
-                # tradeoff as the CW-mode-set write above) before aborting, so
-                # the first case costs nothing extra and the second case
-                # doesn't leave the radio hung.
-                self.log("[civ] CW send: PTT ON got no ACK from radio - sending safety PTT OFF and aborting, nothing transmitted")
-                try:
-                    await asyncio.to_thread(self._write, bytes([0x1C, 0x00, 0x00]))
-                except Exception:
-                    pass
-                self.ptt = False
-                raise RuntimeError("Radio nie potwierdzilo PTT ON (CW) - transmisja NIE poszla w eter")
-            self.ptt = True
-            # PTT->keying delay. The IC-7300 over USB needs time to switch to
-            # transmit (T/R relay, possibly the tuner). With too short a delay,
-            # the first character goes out before the radio is fully
-            # transmitting, and the start gets clipped (observed: 'XX0XXX' ->
-            # dropped 'S'/'SQ'). 50ms was too little; 250ms gives margin.
-            # Configurable via cwPttDelay in settings (ms), since tuners need more.
-            _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
-            await asyncio.sleep(max(0.05, _ptt_delay))
-
-            # Step 3: Send the text via CI-V cmd 17
-            # The radio modulates CW while PTT is active
-            for i in range(0, len(text), 30):
-                chunk = text[i:i+30]
-                self.log(f"[civ] CW send chunk: {chunk!r}")
-                await asyncio.to_thread(
-                    self._write, bytes([0x17]) + chunk.encode("ascii"))
-                if i + 30 < len(text):
-                    await asyncio.sleep(0.1)
-        finally:
-            self._tx_priority_active = False
-
-        # Step 4: Read the current WPM from the radio and wait
-        try:
-            lvl = self.profile.get("levels", {}).get("KEYSPD")
-            if lvl:
-                fresh_wpm = await asyncio.to_thread(self._read_level, "KEYSPD", lvl)
-                if fresh_wpm is not None:
-                    self.level_values["KEYSPD"] = fresh_wpm
-        except Exception:
-            pass
-        wpm = int(self.level_values.get("KEYSPD", 18) or 18)
-        # Exact CW duration instead of the old flat "len*10 units *1.5" guess.
-        # The old formula assumed every character is 10 units and then padded
-        # 50%, so PTT hung long after the keyer finished (audible carrier after
-        # the last character) and, for text with long characters, could even cut
-        # the macro short. We now sum the real Morse timing (dot=1, dash=3,
-        # intra-char gap=1, inter-char gap=3, word gap=7 units) so the hold
-        # matches what the rig's keyer actually sends.
-        wait_s = self._cw_text_duration_s(text, wpm) + 0.15
-        wait_s = max(0.3, min(wait_s, 120.0))
-        self.log(f"[civ] CW send: waiting {wait_s:.1f}s ({wpm} WPM)")
-        await asyncio.sleep(wait_s)
-
-        # Step 5: PTT OFF — same unchecked-ACK bug as PTT ON above, but here
-        # we can't just abort (we WANT transmit to stop regardless); retry
-        # once and log loudly if still unconfirmed, since a truly stuck PTT
-        # leaves the radio transmitting a dead carrier until something else
-        # intervenes.
-        self.log("[civ] CW send: PTT OFF")
-        self._tx_priority_active = True
-        try:
-            _ptt_off_resp = await asyncio.to_thread(
-                self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
-            if _ptt_off_resp is None:
-                self.log("[civ] CW send: PTT OFF got no ACK - retrying once")
-                _ptt_off_resp = await asyncio.to_thread(
-                    self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
-                if _ptt_off_resp is None:
-                    self.log("[civ] CW send: PTT OFF STILL unconfirmed after retry - radio may be stuck transmitting!")
-        finally:
-            self._tx_priority_active = False
-        self.ptt = False
-        # T/R recovery: after PTT OFF the rig needs a moment to leave transmit
-        # (T/R relay, internal sequencing) before it can cleanly accept a new CW
-        # buffer. Without this, a macro fired immediately after the previous one
-        # finished would push its cmd-17 text into the rig mid-transition and the
-        # rig would drop it — carrier keys up but nothing is sent (empty carrier
-        # with a valid chunk in the log). Configurable via cwTrRecovery (ms).
-        _tr_recovery = float(self.profile.get("cwTrRecovery", 200)) / 1000.0
-        await asyncio.sleep(max(0.05, _tr_recovery))
-        self.log("[civ] CW send: done")
-
-    async def stop_cw_message(self):
-        """Abort CW message sending (cmd 17 FF = clear buffer)."""
-        if self.sim or not self._ser:
-            return
-        # Clear the CW buffer — the radio drops TX on its own once it gets FF
-        await asyncio.to_thread(self._write, bytes([0x17, 0xFF]))
-        self.log("[civ] CW stop: buffer cleared")
-
     # ── DTR/RTS Keyer ─────────────────────────────────────────────────────────
 
     # Morse table — character -> string of '.' and '-'
@@ -786,6 +644,56 @@ class CivRig:
                     units += 1.0      # intra-character gap
         return units * dit
 
+    def set_usb_keying(self, value: int) -> bool:
+        """Set the IC-7300's internal "USB Keying (CW)" setting (CI-V 1A 05 00 97 XX).
+
+        value: 0=OFF, 1=USB(A) DTR, 2=USB(A) RTS, 3=USB(B) DTR, 4=USB(B) RTS.
+        The IC-7300 exposes TWO virtual COM ports over its single rear [USB]
+        connector; this setting tells the radio's own firmware to treat the
+        DTR or RTS line of one of them as a direct hardware key input -
+        exactly like an external transistor keyer wired into the KEY jack,
+        but needs no extra cable. This is what lets configure_keyer() below
+        key the radio for real over a second COM port from the SAME USB
+        cable already used for CI-V, instead of requiring separate hardware.
+        Returns True only on an actual radio ACK (0xFB), False on NG/timeout.
+        """
+        if value not in (0, 1, 2, 3, 4):
+            return False
+        if self.sim or not self._ser:
+            return True
+        resp = self._transact(bytes([0x1A, 0x05, 0x00, 0x97, value]), {0xFB, 0xFA}, 0.4)
+        matched = self._resp_matched_cmd
+        if resp is None:
+            self.log(f"[civ] USB Keying (CW) -> {value} — NO RESPONSE (timeout)")
+            return False
+        if matched == 0xFA:
+            self.log(f"[civ] USB Keying (CW) -> {value} — radio REJECTED (NG)")
+            return False
+        self.log(f"[civ] USB Keying (CW) -> {value} — OK")
+        return True
+
+    def set_bk_in(self, on: bool) -> bool:
+        """Set BK-IN (CI-V 16 47 00/01). Off by default at startup (safety -
+        see the comment in connect(): BK-IN + remote cmd-17 CW caused a
+        continuous carrier). LIVE-CONFIRMED 2026-08-26: BK-IN must be ON for
+        the radio to react to the DTR/RTS "USB Keying" key line at all - with
+        it off the radio simply ignores the key line outside an active PTT.
+        Callers should turn this ON only while cwMethod is dtr/rts, and back
+        OFF for cat/auto, to keep the original cmd-17 safety behavior intact.
+        """
+        if self.sim or not self._ser:
+            return True
+        resp = self._transact(bytes([0x16, 0x47, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+        matched = self._resp_matched_cmd
+        if resp is None:
+            self.log(f"[civ] BK-IN -> {on} — NO RESPONSE (timeout)")
+            return False
+        if matched == 0xFA:
+            self.log(f"[civ] BK-IN -> {on} — radio REJECTED (NG)")
+            return False
+        self.log(f"[civ] BK-IN -> {on} — OK")
+        return True
+
     def configure_keyer(self, port: str, line: str):
         """
         Configure the DTR/RTS keyer.
@@ -795,7 +703,23 @@ class CivRig:
         """
         import serial as _serial
         self._keyer_line = line.upper() if line else 'DTR'
-        if port and port != getattr(self, '_port', ''):
+        # FIX (audit 2026-08-26): this compared against self._port, an
+        # attribute that never existed on this class (the real one is
+        # self.port, no underscore) - getattr's default ('') made the
+        # comparison ALWAYS true for any non-empty port string, so typing
+        # in the SAME port CI-V already uses (not leaving it blank) always
+        # took the "separate port" branch below and tried to open a SECOND
+        # serial.Serial() on a port Windows already has open for CI-V -
+        # that open reliably fails (port busy), caught by the except
+        # below, which sets _keyer_ser=None and silently falls back to
+        # sharing self._ser via _set_key()'s own fallback anyway. Keying
+        # still worked by accident through that fallback, but a real
+        # second-port radio (IC-7610/9700) would have hit this same typo
+        # in the OTHER direction with no safety net. Also compare
+        # case-insensitively - Windows COM port names ("COM4" vs "com4")
+        # aren't reliably normalized before reaching here.
+        same_as_civ = (not port) or (port.strip().upper() == getattr(self, 'port', '').strip().upper())
+        if port and not same_as_civ:
             # Separate port for the keyer
             try:
                 if self._keyer_ser and self._keyer_ser is not self._ser:
@@ -814,8 +738,13 @@ class CivRig:
                 self.log(f"[keyer] Error opening port {port}: {e}")
                 self._keyer_ser = None
         else:
-            # Use the same port as CI-V
-            self._keyer_ser = self._ser
+            # Use the same port as CI-V. Deliberately do NOT cache self._ser
+            # here - if the radio reconnects later (fresh serial.Serial
+            # object), a cached reference would go stale and _set_key would
+            # keep toggling DTR/RTS on a closed port. Leave _keyer_ser unset
+            # so _set_key always reads self._ser fresh, at the moment of
+            # each key-down/key-up.
+            self._keyer_ser = None
             self._keyer_port = ''
 
     def _set_key(self, state: bool):
@@ -836,47 +765,75 @@ class CivRig:
         Synchronous CW sending via DTR/RTS (called in a separate thread).
         dit_ms = 1200 / wpm  (standard Morse timing, PARIS word = 50 units).
         stop_event: threading.Event — aborts sending immediately.
+
+        connect() force-disables BK-IN at startup (safety default); the
+        webapp layer re-enables it via set_bk_in(True) whenever cwMethod is
+        dtr/rts (see /api/cw/method and _on_rig_reconnected in webapp.py).
+        LIVE-CONFIRMED 2026-08-26: BK-IN must be ON for the radio to react
+        to the DTR/RTS key line at all - with it off the radio ignores the
+        key line entirely outside an active PTT (USB Keying (00 97) ACKs
+        fine but nothing keys). PTT is still explicitly held here (below)
+        for the whole message regardless of BK-IN, so the T/R relay has a
+        guaranteed settle window before the first dit - DTR/RTS only shapes
+        the dits/dahs WITHIN that PTT window.
         """
         import time as _time
         wpm = max(5, min(60, wpm))
         dit = 1.200 / wpm   # dit duration in seconds
 
-        # Delay at the start — the radio needs a moment to switch to
-        # transmit (T/R relay, tuner). Without this, the first dit goes out
-        # before the radio is transmitting, and the start of the character
-        # gets clipped (dropped 'S'/'SQ' at the operator's start).
-        # Configurable via cwPttDelay (ms).
-        _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
-        _time.sleep(max(0.05, _ptt_delay))
+        if self.sim or not self._ser:
+            return
 
-        def key_down(t):
-            self._set_key(True)
-            _time.sleep(t)
-            self._set_key(False)
+        _ptt_resp = self._transact(bytes([0x1C, 0x00, 0x01]), {0xFB, 0xFA}, 0.4)
+        _ptt_rejected = self._resp_matched_cmd == 0xFA
+        if _ptt_resp is None or _ptt_rejected:
+            _why = "radio REJECTED PTT ON (NG)" if _ptt_rejected else "no ACK from radio (timeout)"
+            self.log(f"[keyer] DTR/RTS send: PTT ON - {_why} - aborting, nothing keyed")
+            return
+        self.ptt = True
 
-        def pause(t):
-            _time.sleep(t)
+        try:
+            # Delay at the start — the radio needs a moment to switch to
+            # transmit (T/R relay, tuner). Without this, the first dit goes
+            # out before the radio is transmitting, and the start of the
+            # character gets clipped. Configurable via cwPttDelay (ms).
+            _ptt_delay = float(self.profile.get("cwPttDelay", 250)) / 1000.0
+            _time.sleep(max(0.05, _ptt_delay))
 
-        for char in text.upper():
-            if stop_event.is_set():
-                break
-            if char == ' ':
-                pause(dit * 7)  # word gap
-                continue
-            code = self._MORSE_TABLE.get(char)
-            if not code:
-                continue
-            for i, sym in enumerate(code):
+            def key_down(t):
+                self._set_key(True)
+                _time.sleep(t)
+                self._set_key(False)
+
+            def pause(t):
+                _time.sleep(t)
+
+            for char in text.upper():
                 if stop_event.is_set():
                     break
-                if sym == '.':
-                    key_down(dit)
-                else:
-                    key_down(dit * 3)
-                if i < len(code) - 1:
-                    pause(dit)   # gap between elements
-            pause(dit * 3)   # gap between letters
-        self._set_key(False)   # make sure the key is released
+                if char == ' ':
+                    pause(dit * 7)  # word gap
+                    continue
+                code = self._MORSE_TABLE.get(char)
+                if not code:
+                    continue
+                for i, sym in enumerate(code):
+                    if stop_event.is_set():
+                        break
+                    if sym == '.':
+                        key_down(dit)
+                    else:
+                        key_down(dit * 3)
+                    if i < len(code) - 1:
+                        pause(dit)   # gap between elements
+                pause(dit * 3)   # gap between letters
+            self._set_key(False)   # make sure the key is released
+        finally:
+            try:
+                self._transact(bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
+            except Exception:
+                pass
+            self.ptt = False
 
     async def send_cw_dtr_rts(self, text: str, wpm: int):
         """
@@ -906,6 +863,12 @@ class CivRig:
         """Abort DTR/RTS sending immediately."""
         self._keyer_stop.set()
         self._set_key(False)
+        if not self.sim and self._ser:
+            try:
+                await asyncio.to_thread(self._transact, bytes([0x1C, 0x00, 0x00]), {0xFB, 0xFA}, 0.4)
+            except Exception:
+                pass
+        self.ptt = False
 
     async def set_split(self, on: bool):
         self.split = bool(on)
@@ -1723,7 +1686,8 @@ class CivRig:
                         self.log(f"[civ] IGNORING absurd freq={f} Hz (BCD corruption?)")
                     else:
                         self.freq = f
-                        self.bcast({"type": "freq", "freq": f})
+                        with self._telemetry_lock:
+                            self._telemetry_pending["freq"] = {"type": "freq", "freq": f}
         # mode (0x04 response / 0x01 transceive) — payload[0]=mode,
         # payload[1]=filter (01/02/03=FIL1/2/3, when the radio reports it)
         #
@@ -1745,12 +1709,14 @@ class CivRig:
             nm = f"{base_nm}-D" if (base_nm and self.data_mode) else base_nm
             if nm and nm != self.mode:
                 self.mode = nm
-                self.bcast({"type": "mode", "mode": self.mode, "bandwidth": self.bw,
-                            "filterNum": self.filter_num})
+                with self._telemetry_lock:
+                    self._telemetry_pending["mode"] = {"type": "mode", "mode": self.mode,
+                                                        "bandwidth": self.bw, "filterNum": self.filter_num}
             if len(payload) >= 2 and payload[1] in (1, 2, 3) and payload[1] != self.filter_num:
                 self.filter_num = payload[1]
-                self.bcast({"type": "mode", "mode": self.mode, "bandwidth": self.bw,
-                            "filterNum": self.filter_num})
+                with self._telemetry_lock:
+                    self._telemetry_pending["mode"] = {"type": "mode", "mode": self.mode,
+                                                        "bandwidth": self.bw, "filterNum": self.filter_num}
         # PTT
         elif cmd == 0x1C and len(payload) >= 2 and payload[0] == 0x00:
             self.ptt = bool(payload[1])
@@ -1939,7 +1905,8 @@ class CivRig:
                         fb = bcd_to_freq(bp[1:6])
                         if fb and abs(fb - self.freq_b) >= 1:
                             self.freq_b = fb
-                            self.bcast({"type": "freqB", "freqB": fb})
+                            with self._telemetry_lock:
+                                self._telemetry_pending["freqB"] = {"type": "freqB", "freqB": fb}
                 # Split status: CI-V 0F with NO data byte = query (WITH a
                 # data byte = set, see set_split() above) -> response 0F
                 # [00=off, 01=on]. FIX (reported live 2026-08-24: "button
@@ -1958,8 +1925,9 @@ class CivRig:
                         is_split = bool(sp[0])
                         if is_split != self.split:
                             self.split = is_split
-                            self.bcast({"type": "split", "split": self.split,
-                                        "freqB": self.freq_b})
+                            with self._telemetry_lock:
+                                self._telemetry_pending["split"] = {"type": "split", "split": self.split,
+                                                                     "freqB": self.freq_b}
                 # S-meter: 0x15 0x02 -> response 0x15 ...
                 p = self._transact(bytes([0x15, 0x02]), {0x15}, 0.3, sub=0x02)
                 if p and len(p) >= 3 and p[0] == 0x02:
@@ -1968,7 +1936,8 @@ class CivRig:
                     if abs(lvl - self.s_meter) > 0.2:
                         self.s_meter = lvl
                         # The frontend (ws.js) listens for msg.value - NOT msg.smeter!
-                        self.bcast({"type": "smeter", "value": round(lvl, 1)})
+                        with self._telemetry_lock:
+                            self._telemetry_pending["smeter"] = {"type": "smeter", "value": round(lvl, 1)}
                 elif getattr(self, '_smeter_fail_logged', 0) < 5:
                     self.log(f"[civ] S-metr transact fail: p={p.hex() if p else None}")
                     self._smeter_fail_logged = getattr(self, '_smeter_fail_logged', 0) + 1
@@ -2009,12 +1978,14 @@ class CivRig:
                         if alc_pct > self._alc_peak:
                             self._alc_peak = alc_pct
                             self._alc_peak_raw = alc_raw
-                        self.bcast({"type": "txmeter", "meter": "ALC",
-                                    "raw": alc_raw,
-                                    "value": round(alc_pct, 1),
-                                    "pct": min(1.0, alc_raw / 120),
-                                    "peak": round(self._alc_peak, 1),
-                                    "peakRaw": self._alc_peak_raw})
+                        with self._telemetry_lock:
+                            self._telemetry_pending["txmeter_ALC"] = {
+                                "type": "txmeter", "meter": "ALC",
+                                "raw": alc_raw,
+                                "value": round(alc_pct, 1),
+                                "pct": min(1.0, alc_raw / 120),
+                                "peak": round(self._alc_peak, 1),
+                                "peakRaw": self._alc_peak_raw}
                     # PWR output. FIX: command "15 14" used to be used here
                     # (that's actually COMP — the speech compressor in dB,
                     # NOT power). The correct command for PO (output power)
@@ -2044,12 +2015,14 @@ class CivRig:
                         if pwr_pct > self._pwr_peak:
                             self._pwr_peak = pwr_pct
                             self._pwr_peak_raw = pwr_raw
-                        self.bcast({"type": "txmeter", "meter": "PWR",
-                                    "raw": pwr_raw,
-                                    "value": pwr_pct,
-                                    "pct": pwr_pct / 100,
-                                    "peak": round(self._pwr_peak, 1),
-                                    "peakRaw": self._pwr_peak_raw})
+                        with self._telemetry_lock:
+                            self._telemetry_pending["txmeter_PWR"] = {
+                                "type": "txmeter", "meter": "PWR",
+                                "raw": pwr_raw,
+                                "value": pwr_pct,
+                                "pct": pwr_pct / 100,
+                                "peak": round(self._pwr_peak, 1),
+                                "peakRaw": self._pwr_peak_raw}
                     # SWR
                     sp = self._transact(bytes([0x15, 0x12]), {0x15}, 0.25, sub=0x12)
                     if sp and len(sp) >= 3 and sp[0] == 0x12:
@@ -2075,10 +2048,12 @@ class CivRig:
                                 break
                         _dbg_swr = swr_val
                         _dbg_swr_raw = swr_raw
-                        self.bcast({"type": "txmeter", "meter": "SWR",
-                                    "raw": swr_raw,
-                                    "value": swr_val,
-                                    "pct": min(1.0, swr_raw / 120)})  # scale to SWR=3
+                        with self._telemetry_lock:
+                            self._telemetry_pending["txmeter_SWR"] = {
+                                "type": "txmeter", "meter": "SWR",
+                                "raw": swr_raw,
+                                "value": swr_val,
+                                "pct": min(1.0, swr_raw / 120)}  # scale to SWR=3
                     # Supply voltage (Vd — drain voltage / power amp supply
                     # voltage). Command "15 15" (NOT "15 16" — that's Id,
                     # current, a different meter). Calibration verified
@@ -2112,10 +2087,12 @@ class CivRig:
                                     break
                         _dbg_volt = volt
                         _dbg_volt_raw = v_raw
-                        self.bcast({"type": "txmeter", "meter": "VOLT",
-                                    "raw": v_raw,
-                                    "value": volt,
-                                    "pct": volt / 16.0})  # scale to nominal 16V
+                        with self._telemetry_lock:
+                            self._telemetry_pending["txmeter_VOLT"] = {
+                                "type": "txmeter", "meter": "VOLT",
+                                "raw": v_raw,
+                                "value": volt,
+                                "pct": volt / 16.0}  # scale to nominal 16V
 
                     # RFPOWER SET level (14 0A) — direct read-back of the
                     # radio's CONFIGURED power ceiling, independent of the

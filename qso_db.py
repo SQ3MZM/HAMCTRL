@@ -456,9 +456,9 @@ def delete_qso(user_id: str, qso_id: str, is_admin: bool = False) -> bool:
     return cur.rowcount > 0
 
 
-def worked_before(call: str, band: str = None, mode: str = None) -> dict:
+def worked_before(user_id: str, call: str, band: str = None, mode: str = None) -> dict:
     """Check whether the given call (optionally band/mode) has already been
-    worked by ANYONE in the database. Returns:
+    worked by THIS USER, in THEIR OWN log. Returns:
       {
         "worked":       bool,  # True if there's any QSO with this call
         "worked_band":  bool,  # True if there's a QSO on THIS band
@@ -467,6 +467,13 @@ def worked_before(call: str, band: str = None, mode: str = None) -> dict:
         "count":        int,   # total number of QSOs with this call
         "last_qso":     dict|None,  # most recent QSO {qso_date, band, mode}
       }
+
+    FIX (reported live 2026-08-26): this used to query across ALL users'
+    logs (no user_id filter at all) - "Szybki Log" flagged a call as a
+    duplicate in red even if a DIFFERENT operator on this shared server
+    had worked it, not the one currently logging. Every other lookup in
+    this file (get_qso/update_qso/delete_qso/list_qsos) already scopes by
+    user_id; this was the one outlier.
     """
     if not call:
         return {"worked": False, "worked_band": False, "worked_mode": False,
@@ -474,8 +481,8 @@ def worked_before(call: str, band: str = None, mode: str = None) -> dict:
     call = call.upper().strip()
     conn = _get_conn()
     cur = conn.execute(
-        "SELECT qso_date, band, mode FROM qso WHERE UPPER(call) = ? ORDER BY qso_date DESC",
-        (call,)
+        "SELECT qso_date, band, mode FROM qso WHERE user_id = ? AND UPPER(call) = ? ORDER BY qso_date DESC",
+        (user_id, call)
     )
     rows = cur.fetchall()
     if not rows:

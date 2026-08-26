@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.1"
+SERVER_VERSION = "2.0.2"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -741,9 +741,43 @@ class App:
         # it. This way the radio's scope stream does NOT synchronize with
         # the loop on every frame — which used to block asyncio for 100-500ms.
         self._supervise(lambda: self._scope_pump(), "scope_pump")
+        # Telemetry pump — same decoupling as the scope pump above, applied
+        # to freq/mode/freqB/split/smeter/txmeter (2026-08-25). These used
+        # to call civ.bcast() -> broadcast_sync -> run_coroutine_threadsafe
+        # directly from _reader_loop/_poller_loop (real OS threads) on every
+        # single change - up to a few dozen cross-thread loop wakeups/sec
+        # during PTT (4 TX meters every poll cycle), competing with
+        # WebRTC's own RTP send timing on the same loop. civ.py now only
+        # writes the freshest message per metric into rig._telemetry_pending;
+        # this pump drains and broadcasts them at a steady rate instead.
+        self._supervise(lambda: self._telemetry_pump(), "telemetry_pump")
         # Update check: once at startup, in the background, admin-only notice.
         # Never blocks startup and stays silent on any network error.
         self._supervise(lambda: self._update_check_loop(), "update_check")
+
+    async def _telemetry_pump(self):
+        """Reads the freshest freq/mode/freqB/split/smeter/txmeter messages
+        coalesced by civ.py and sends them at a steady ~20Hz. Decouples
+        that telemetry (reader/poller threads) from the event loop, same
+        reasoning as _scope_pump."""
+        while True:
+            await asyncio.sleep(0.05)
+            rig = self.rig
+            if not rig:
+                continue
+            lock = getattr(rig, "_telemetry_lock", None)
+            if lock is None:
+                continue
+            with lock:
+                pending = rig._telemetry_pending
+                if not pending:
+                    continue
+                rig._telemetry_pending = {}
+            for msg in pending.values():
+                try:
+                    await self.hub.broadcast(msg)
+                except Exception:
+                    pass
 
     async def _scope_pump(self):
         """Reads the freshest scope frame from the radio and sends it every
@@ -2894,17 +2928,21 @@ class App:
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, await self._set_rig_features(body or {})
 
-        # ── CW Keyer (sending CW macros via CI-V cmd 17) ────────────────────
+        # ── CW Keyer (DTR/RTS keying - CAT/cmd-17 retired 2026-08-26) ───────
         # Frontend (cw.js) calls:
-        #   POST /api/cw/send   {text, vars}  -> sends text as CW
-        #   POST /api/cw/stop                 -> aborts sending (17 FF)
-        #   GET  /api/cw/status                -> {method, capabilities}
-        #   POST /api/cw/method {method}       -> sets the method (auto/cat/dtr/rts)
-        #   POST /api/cw/dtr-port {port}       -> (placeholder, DTR not implemented)
-        # Only the CAT method (CI-V cmd 17) is currently implemented - works
-        # for the IC-7300/746 with no extra hardware. DTR/RTS keying needs
-        # direct control of serial port lines (outside CI-V) and isn't
-        # supported yet - the 'dtr'/'rts' method returns an error.
+        #   POST /api/cw/send    {text, vars} -> sends text as CW (DTR/RTS)
+        #   POST /api/cw/stop                 -> aborts sending, key up
+        #   GET  /api/cw/status                -> {method, dtrPort, dtrLine, usbKeying}
+        # Settings UI (settings.js Settings._cwKeyerSave) calls:
+        #   POST /api/cw/dtr-port {port, line} -> the ONE save action: sets
+        #     cwMethod/cwDtrPort/cwDtrLine, calls configure_keyer, derives
+        #     and sends the matching CI-V USB Keying value (1A 05 00 97),
+        #     and turns BK-IN on - see the handler below for why this is
+        #     all one call instead of three.
+        # /api/cw/method and /api/cw/usb-keying still exist standalone
+        # (harmless if called directly) but the UI no longer calls them
+        # separately - doing so used to require the two to be kept in sync
+        # by hand.
         if p == "/api/cw/macros" and method == "GET":
             u_obj = self.find_user_by_id(uid) or {}
             macros = u_obj.get("cwMacros") or self.cfg.get("cwMacros", DEFAULT_MACROS)
@@ -2919,7 +2957,7 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/cw/send" and method == "POST":
-            print(f"[cw] /api/cw/send: method={self.cfg.get('cwMethod','auto')!r} text={body.get('text','')!r} sim={self.rig.sim} ser={self.rig._ser is not None}", flush=True)
+            print(f"[cw] /api/cw/send: method={self.cfg.get('cwMethod','dtr')!r} text={body.get('text','')!r} sim={self.rig.sim} ser={self.rig._ser is not None}", flush=True)
             if role == "viewer":
                 return 403, {"ok": False, "error": "Brak uprawnien (CW)"}
             if role != "admin" and not self._user_has_lock(uid):
@@ -2945,108 +2983,64 @@ class App:
             text = text.strip()
             if not text:
                 return 200, {"ok": False, "error": "Pusty tekst"}
-            method_cw = self.cfg.get("cwMethod", "auto")
+            # DTR/RTS is the only CW keying method - see cw_empty_ptt saga:
+            # cmd-17 CAT keying was retired entirely (2026-08-26) once
+            # DTR/RTS+BK-IN was live-confirmed reliable. DTR/RTS covers both
+            # modern radios (IC-7300+: internal CI-V "USB Keying", see
+            # set_usb_keying) and older non-USB radios (external transistor
+            # keyer physically wired into the KEY jack from the DTR line -
+            # the same mechanism, just without the CI-V 00 97 step, since
+            # there the wiring itself does the job).
+            method_cw = self.cfg.get("cwMethod", "dtr")
+            if method_cw not in ("dtr", "rts"):
+                method_cw = "dtr"
             wpm = int(self.rig.level_values.get("KEYSPD", 18) or 18)
-            # Fallback: if the method is dtr/rts but there's no separate port -> use auto (CI-V)
-            if method_cw in ("dtr", "rts"):
-                keyer_port = self.cfg.get("cwDtrPort", "")
-                civ_port   = self.rig._port if hasattr(self.rig, "_port") else ""
-                if not keyer_port or keyer_port == civ_port:
-                    print(f"[cw] method {method_cw!r} has no separate port — falling back to CAT CI-V", flush=True)
-                    method_cw = "auto"
-            if method_cw in ("dtr", "rts"):
-                # Check whether DTR/RTS has a SEPARATE port configured.
-                # Using DTR/RTS on the same port as CI-V causes conflicts —
-                # toggling the DTR/RTS line disrupts CI-V communication
-                keyer_port = self.cfg.get("cwDtrPort", "")
-                civ_port   = self.rig._port if hasattr(self.rig, "_port") else ""
-                if not keyer_port or keyer_port == civ_port:
-                    return 200, {"ok": False,
-                        "error": "DTR/RTS keying wymaga osobnego portu COM. "
-                                 "Skonfiguruj osobny port w Konfiguracja > CW Keyer, "
-                                 "lub uzyj metody CAT CI-V (zalecane dla IC-7300/746)."}
+            print(f"[cw] method {method_cw!r}, port={self.cfg.get('cwDtrPort','') or '(same as CI-V)'}", flush=True)
             self._cw_tx_busy = True
-            # Both fired BEFORE the actual sending starts (cw_sending used
-            # to fire AFTER send_cw_message() already finished blocking -
-            # see the FIX note below, the CAT/CI-V path awaits the full
-            # transmission). cw_tx_start additionally drives the live
-            # sidetone (public/js/cw_sidetone.js) - the radio does its own
-            # Morse keying internally from the text we hand it over CI-V,
-            # so the browser can't know the exact dit/dah timing and
-            # instead synthesizes a same-content, same-WPM tone locally.
+            # cw_tx_start drives the live sidetone (public/js/cw_sidetone.js)
+            # - the keyer thread shapes real dits/dahs on the DTR/RTS line,
+            # the browser can't observe that directly, so it synthesizes a
+            # same-content, same-WPM tone locally instead.
             await self.hub.broadcast({"type": "cw_tx_start", "text": text, "wpm": wpm})
             await self.hub.broadcast({"type": "cw_sending", "text": text,
                                        "method": method_cw, "wpm": wpm})
             try:
-                if method_cw in ("dtr", "rts"):
-                    try:
-                        await self.rig.send_cw_dtr_rts(text, wpm)
-                    except Exception as e:
-                        return 200, {"ok": False, "error": str(e)}
-                else:
-                    if self.rig.sim:
-                        print(f"[cw] SIM CAT: {text!r}")
-                    else:
-                        _cw_err = None
-                        try:
-                            # Broadcast PTT ON before transmitting
-                            self.rig.ptt = True
-                            await self.hub.broadcast({"type": "ptt", "ptt": True})
-                            await self.rig.send_cw_message(text)
-                        except Exception as e:
-                            _cw_err = str(e)
-                            await self.hub.broadcast({"type": "cw_error", "error": str(e)})
-                        finally:
-                            # Broadcast PTT OFF after transmitting
-                            self.rig.ptt = False
-                            await self.hub.broadcast({"type": "ptt", "ptt": False})
-                        # Return the result AFTER finally: an error only when one actually occurred.
-                        if _cw_err is not None:
-                            return 200, {"ok": False, "error": _cw_err}
+                try:
+                    # Approximate PTT indicator for connected clients - the
+                    # real PTT ON happens moments later inside the
+                    # background keyer thread (after its own ACK wait).
+                    await self.hub.broadcast({"type": "ptt", "ptt": True})
+                    await self.rig.send_cw_dtr_rts(text, wpm)
+                except Exception as e:
+                    await self.hub.broadcast({"type": "ptt", "ptt": False})
+                    return 200, {"ok": False, "error": str(e)}
             finally:
                 self._cw_tx_busy = False
 
-            if method_cw in ("dtr", "rts"):
-                # send_cw_dtr_rts() is fire-and-forget (spawns a background
-                # keyer thread and returns immediately) - there's no other
-                # signal for when that thread actually finishes keying, so
-                # this timer is the only way to know. Use the SAME exact
-                # Morse timing as the rig (civ._cw_text_duration_s) instead
-                # of the old flat len*10 guess that disagreed with the
-                # actual transmission length.
-                try:
-                    duration_s = self.rig._cw_text_duration_s(text, wpm) + 0.15
-                except Exception:
-                    dit_ms = 1200.0 / max(5, wpm)
-                    duration_s = len(text) * 10 * dit_ms / 1000.0
-                duration_s = min(60.0, max(0.3, duration_s))
-                async def _cw_done_after(delay):
-                    await asyncio.sleep(delay)
-                    await self.hub.broadcast({"type": "cw_done"})
-                asyncio.create_task(_cw_done_after(duration_s))
-            else:
-                # FIX: the CAT/CI-V path above already BLOCKED (awaited)
-                # until send_cw_message() fully finished - PTT on, keying,
-                # PTT off, T/R recovery, all done by the time we're here.
-                # The old code then waited an ADDITIONAL full duration_s
-                # (recomputed with the same formula) before signaling
-                # cw_done - reported live during a fast RST exchange as
-                # having to wait for the "busy" lock to clear roughly
-                # DOUBLE the real keying time before the next macro could
-                # be sent. It's actually already done - say so immediately.
+            # send_cw_dtr_rts() is fire-and-forget (spawns a background
+            # keyer thread and returns immediately) - there's no other
+            # signal for when that thread actually finishes keying, so this
+            # timer is the only way to know. Use the SAME exact Morse timing
+            # as the rig (civ._cw_text_duration_s) instead of a flat guess.
+            try:
+                duration_s = self.rig._cw_text_duration_s(text, wpm) + 0.15
+            except Exception:
+                dit_ms = 1200.0 / max(5, wpm)
+                duration_s = len(text) * 10 * dit_ms / 1000.0
+            duration_s = min(60.0, max(0.3, duration_s))
+            async def _cw_done_after(delay):
+                await asyncio.sleep(delay)
+                await self.hub.broadcast({"type": "ptt", "ptt": False})
                 await self.hub.broadcast({"type": "cw_done"})
+            asyncio.create_task(_cw_done_after(duration_s))
             return 200, {"ok": True}
 
         if p == "/api/cw/stop" and method == "POST":
             if role == "viewer":
                 return 403, {"ok": False, "error": "Brak uprawnien (CW)"}
-            method_cw = self.cfg.get("cwMethod", "auto")
             if not self.rig.sim:
                 try:
-                    if method_cw in ("dtr", "rts"):
-                        await self.rig.stop_cw_dtr_rts()
-                    else:
-                        await self.rig.stop_cw_message()
+                    await self.rig.stop_cw_dtr_rts()
                 except Exception as e:
                     return 200, {"ok": False, "error": str(e)}
             await self.hub.broadcast({"type": "cw_stopped"})
@@ -3054,25 +3048,55 @@ class App:
 
         if p == "/api/cw/status" and method == "GET":
             return 200, {
-                "method":   self.cfg.get("cwMethod", "auto"),
+                "method":   self.cfg.get("cwMethod", "dtr"),
                 "dtrPort":  self.cfg.get("cwDtrPort", ""),
                 "dtrLine":  self.cfg.get("cwDtrLine", "DTR"),
+                "usbKeying": self.cfg.get("cwUsbKeying", 0),
                 "wpm":      self.rig.level_values.get("KEYSPD", 18),
-                "capabilities": {"catMorse": True, "dtr": True, "rts": True},
+                "capabilities": {"dtr": True, "rts": True},
             }
 
         if p == "/api/cw/method" and method == "POST":
             if role != "admin":
                 return 403, {"error": "Tylko admin"}
-            m = body.get("method", "auto")
-            if m not in ("auto", "cat", "dtr", "rts"):
+            m = body.get("method", "dtr")
+            if m not in ("dtr", "rts"):
                 return 400, {"error": "Nieznana metoda"}
             self.cfg["cwMethod"] = m
             save_json(CFG_F, self.cfg)
-            if m in ("dtr", "rts"):
-                port = self.cfg.get("cwDtrPort", "")
-                self.rig.configure_keyer(port, m.upper())
+            port = self.cfg.get("cwDtrPort", "")
+            self.rig.configure_keyer(port, m.upper())
+            # BK-IN must be ON for the DTR/RTS key line to actually trigger
+            # TX (live-confirmed 2026-08-26).
+            if hasattr(self.rig, "set_bk_in") and not self.rig.sim:
+                try:
+                    await asyncio.to_thread(self.rig.set_bk_in, True)
+                except Exception as e:
+                    print(f"[cw] set_bk_in error: {e}", flush=True)
             return 200, {"ok": True, "method": m}
+
+        if p == "/api/cw/usb-keying" and method == "POST":
+            if role != "admin":
+                return 403, {"error": "Tylko admin"}
+            try:
+                value = int(body.get("value", 0))
+            except (TypeError, ValueError):
+                return 400, {"ok": False, "error": "Nieprawidlowa wartosc"}
+            if value not in (0, 1, 2, 3, 4):
+                return 400, {"ok": False, "error": "value musi byc 0-4"}
+            if not hasattr(self.rig, "set_usb_keying"):
+                return 500, {"ok": False, "error": "set_usb_keying niedostepne w tym profilu"}
+            try:
+                # Blocking (up to 0.4s, waits for radio ACK/NG) - off the event loop thread.
+                ok = await asyncio.get_running_loop().run_in_executor(
+                    None, self.rig.set_usb_keying, value)
+            except Exception as e:
+                return 500, {"ok": False, "error": str(e)}
+            if ok:
+                self.cfg["cwUsbKeying"] = value
+                save_json(CFG_F, self.cfg)
+                return 200, {"ok": True, "value": value}
+            return 200, {"ok": False, "error": "Radio nie potwierdzilo ustawienia USB Keying (zobacz log [civ] USB Keying)"}
 
         if p == "/api/cw/dtr-port" and method == "POST":
             if role != "admin":
@@ -3081,15 +3105,53 @@ class App:
             line = body.get("line", "DTR").upper()
             if line not in ("DTR", "RTS"):
                 return 400, {"error": "Linia musi byc DTR lub RTS"}
+            self.cfg["cwMethod"]  = line.lower()  # 'dtr' or 'rts'
             self.cfg["cwDtrPort"] = port
             self.cfg["cwDtrLine"] = line
             save_json(CFG_F, self.cfg)
             try:
                 self.rig.configure_keyer(port, line)
-                return 200, {"ok": True,
-                             "message": f"Keyer {line} skonfigurowany: {port or 'port CI-V'}"}
             except Exception as e:
                 return 200, {"ok": False, "error": str(e)}
+
+            # Derive and send the matching CI-V USB Keying value (1A 05 00
+            # 97) automatically instead of making the admin pick USB(A)/
+            # USB(B) by hand - compare the entered port against the REAL
+            # CI-V port (self.rig.port), case-insensitively, empty=same.
+            # FIX (2026-08-26): this used to be guessed on the FRONTEND
+            # from "is the PORT field empty" alone - broke for this user,
+            # who types the SAME port CI-V already uses (not leaving it
+            # blank), which looked like a genuinely separate second port
+            # and picked USB(B) - a value the radio correctly rejects,
+            # surfaced as "Radio nie potwierdzilo ustawienia USB Keying"
+            # even though DTR itself keys fine via the same-port fallback.
+            civ_port = (getattr(self.rig, "port", "") or "").strip().upper()
+            same_as_civ = (not port) or (port.strip().upper() == civ_port)
+            usb_value = (1 if line == "DTR" else 2) + (0 if same_as_civ else 2)
+            usb_ok = True
+            if hasattr(self.rig, "set_usb_keying") and not self.rig.sim:
+                try:
+                    usb_ok = await asyncio.get_running_loop().run_in_executor(
+                        None, self.rig.set_usb_keying, usb_value)
+                except Exception as e:
+                    usb_ok = False
+                    print(f"[cw] set_usb_keying error: {e}", flush=True)
+                if usb_ok:
+                    self.cfg["cwUsbKeying"] = usb_value
+                    save_json(CFG_F, self.cfg)
+
+            # BK-IN must be ON for the DTR/RTS key line to actually trigger
+            # TX (live-confirmed 2026-08-26).
+            if hasattr(self.rig, "set_bk_in") and not self.rig.sim:
+                try:
+                    await asyncio.to_thread(self.rig.set_bk_in, True)
+                except Exception as e:
+                    print(f"[cw] set_bk_in error: {e}", flush=True)
+
+            msg = f"CW Keyer {line} skonfigurowany: {port or 'port CI-V'}"
+            if not usb_ok:
+                msg += " — UWAGA: radio NIE potwierdzilo USB Keying, kluczowanie moze nie dzialac"
+            return 200, {"ok": True, "message": msg, "usbKeyingOk": usb_ok, "usbKeyingValue": usb_value}
 
         if p == "/api/rotator" and method == "GET":
             return 200, [r.state() for r in self.rotators]
@@ -3850,7 +3912,7 @@ class App:
             if isinstance(call, list): call = call[0] if call else ""
             if isinstance(band, list): band = band[0] if band else None
             if isinstance(mode, list): mode = mode[0] if mode else None
-            result = qso_db.worked_before(call, band, mode)
+            result = qso_db.worked_before(uid, call, band, mode)
             return 200, {"ok": True, **result}
 
         if p == "/api/qsolog/all" and method == "DELETE":
@@ -5136,6 +5198,22 @@ class App:
                 print("[rig] scope enabled (real radio, reconnect)", flush=True)
         except Exception as e:
             print(f"[rig] scope_start on reconnect error: {e}", flush=True)
+        # Re-apply the saved CW keying config - a fresh connect() always
+        # force-disables BK-IN (safety default), and configure_keyer's
+        # in-memory state doesn't survive a reconnect either. Without this,
+        # DTR/RTS keying silently reverts to doing nothing after every
+        # reconnect until the admin re-saves it from Settings.
+        try:
+            method_cw = self.cfg.get("cwMethod", "dtr")
+            if method_cw not in ("dtr", "rts"):
+                method_cw = "dtr"
+            if not self.rig.sim and hasattr(self.rig, "set_bk_in"):
+                await asyncio.to_thread(self.rig.set_bk_in, True)
+                if hasattr(self.rig, "configure_keyer"):
+                    self.rig.configure_keyer(self.cfg.get("cwDtrPort", ""), self.cfg.get("cwDtrLine", "DTR"))
+                print(f"[rig] CW keying restored on reconnect: method={method_cw!r} BK-IN=True", flush=True)
+        except Exception as e:
+            print(f"[rig] CW keying restore on reconnect error: {e}", flush=True)
         rig_id = self._current_rig_id()
         enabled     = self._get_enabled_features(rig_id)
         enabled_dyn = self._get_enabled_dynamic(rig_id)
@@ -5222,7 +5300,7 @@ class App:
             # directly and transmit. Adding it here reuses the SAME two
             # checks every other control type already gets below (viewer
             # hard-block + radio_lock-for-everyone-else) with no extra code.
-            "webrtc_offer",
+            "webrtc_offer", "webrtc_stop",
         }
 
         # ── VIEWER: HARD WHITELIST ──────────────────
@@ -6817,7 +6895,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-25-RETRY-RACE-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-26-CW-KEYER-CONFIG-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

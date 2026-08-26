@@ -116,39 +116,37 @@ function buildRigPanel(id, rig, isAdmin) {
       </div>
     </div>
 
-    <!-- CW KEYER — method and DTR/RTS port -->
+    <!-- CW KEYER — DTR/RTS is the only method (CAT/cmd-17 retired 2026-08-26,
+         see cw_empty_ptt saga in project memory - DTR/RTS+BK-IN covers both
+         modern radios via internal USB Keying and older ones via an
+         external transistor keyer wired to the KEY jack from the same line).
+         One combined save: LINE + PORT together derive the CI-V USB Keying
+         value automatically (no separate USB(A)/USB(B) picker to keep in
+         sync by hand - empty PORT = the radio's only/primary port = "A",
+         a filled PORT = a genuinely separate second port = "B"). -->
     <div class="sg" style="grid-column:1/-1;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
       <label style="color:var(--amber);">${I18n.t('cfg_cw_keyer_hdr')}</label>
-      <select id="cfg-cw-method-${id}" style="font-family:var(--mono);font-size:11px;margin-bottom:8px;"
-        onchange="Settings._cwMethodChange(${id})">
-        <option value="auto">${I18n.t('cfg_cw_auto_opt')}</option>
-        <option value="cat">${I18n.t('cfg_cw_cat_opt')}</option>
-        <option value="dtr">${I18n.t('cfg_cw_dtr_opt')}</option>
-        <option value="rts">${I18n.t('cfg_cw_rts_opt')}</option>
-      </select>
-      <div id="cfg-cw-dtr-section-${id}" style="display:none;">
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:6px;line-height:1.8;">
-          ${I18n.t('cfg_dtr_desc')}
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:120px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_dtr_port_lbl')}</div>
-            <input type="text" id="cfg-cw-dtr-port-${id}" placeholder="${I18n.t('cfg_dtr_port_ph')}"
-              style="font-family:var(--mono);font-size:11px;" value="${rig.cwDtrPort||''}">
-          </div>
-          <div style="flex:1;min-width:100px;">
-            <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_line_lbl')}</div>
-            <select id="cfg-cw-dtr-line-${id}" style="font-family:var(--mono);font-size:11px;">
-              <option value="DTR" ${(rig.cwDtrLine||'DTR')==='DTR'?'selected':''}>DTR</option>
-              <option value="RTS" ${(rig.cwDtrLine||'DTR')==='RTS'?'selected':''}>RTS</option>
-            </select>
-          </div>
-        </div>
-        <button onclick="Settings._cwDtrSave(${id})" class="save-btn" style="margin-top:8px;">
-          ${I18n.t('cfg_save_dtr_btn')}
-        </button>
-        <span id="cfg-cw-dtr-status-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:8px;"></span>
+      <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:6px;line-height:1.8;">
+        ${I18n.t('cfg_dtr_desc')}
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:100px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_line_lbl')}</div>
+          <select id="cfg-cw-dtr-line-${id}" style="font-family:var(--mono);font-size:11px;">
+            <option value="DTR" selected>DTR</option>
+            <option value="RTS">RTS</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:120px;">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_dtr_port_lbl')}</div>
+          <input type="text" id="cfg-cw-dtr-port-${id}" placeholder="${I18n.t('cfg_dtr_port_ph')}"
+            style="font-family:var(--mono);font-size:11px;" value="">
+        </div>
+      </div>
+      <button onclick="Settings._cwKeyerSave(${id})" class="save-btn" style="margin-top:8px;">
+        ${I18n.t('cfg_save_dtr_btn')}
+      </button>
+      <span id="cfg-cw-dtr-status-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:8px;"></span>
     </div>
 
     <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap;">
@@ -305,10 +303,17 @@ async function saveRig(id) {
     civ:     get(`cfg-civ-${id}`)     || '0x94',
     audioRx:    get(`cfg-audio-rx-${id}`),
     audioTx:    get(`cfg-audio-tx-${id}`),
-    cwDtrPort:  get(`cfg-cw-dtr-port-${id}`) || '',
-    cwDtrLine:  get(`cfg-cw-dtr-line-${id}`) || 'DTR',
     active:  id === 1,
   };
+  // CW Keyer settings (method/port/line/USB Keying) are deliberately NOT
+  // part of this save - they live in their OWN config path
+  // (self.cfg["cwMethod"/"cwDtrPort"/...], set via Settings._cwKeyerSave
+  // -> /api/cw/dtr-port) with their own save button below. They used to
+  // ALSO get written here into the per-rig object, a second, dead copy
+  // nothing ever read back - it just meant this button and the CW Keyer
+  // button could silently overwrite each other's idea of the current
+  // port/line depending on which was clicked last (reported live
+  // 2026-08-26 as "radio config lost its settings").
   // Update the cache
   const idx = _rigs.findIndex(r => r.id === id);
   if (idx >= 0) _rigs[idx] = { ..._rigs[idx], ...body };
@@ -429,65 +434,52 @@ async function toggleAudio(on) {
   }
 }
 
-// ── CW Keyer method helpers ───────────────────────────────────────────────────
-async function _cwMethodChange(id) {
-  const method = document.getElementById(`cfg-cw-method-${id}`)?.value;
-  const dtrSection = document.getElementById(`cfg-cw-dtr-section-${id}`);
-  if (dtrSection) dtrSection.style.display = (method === 'dtr' || method === 'rts') ? '' : 'none';
-  // Save the method right away
-  const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
-  await fetch('/api/cw/method', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','Authorization':`Bearer ${token}`},
-    body: JSON.stringify({method}),
-  }).then(r => r.json())
-    .then(d => UI.showToast(d.ok ? I18n.t('cfg_cw_method_toast').replace('{method}', method.toUpperCase()) : `✗ ${d.error||d.message||I18n.t('profile_error_fallback')}`))
-    .catch(() => {});
-}
-
-async function _cwDtrSave(id) {
-  const port   = document.getElementById(`cfg-cw-dtr-port-${id}`)?.value.trim() || '';
+// ── CW Keyer (DTR/RTS only - CAT/cmd-17 retired 2026-08-26) ───────────────────
+// One save, one backend call: /api/cw/dtr-port does everything server-side
+// (cwMethod, cwDtrPort/cwDtrLine, configure_keyer, derives+sends the
+// matching CI-V USB Keying value, turns BK-IN on) - it needs the REAL CI-V
+// port to correctly tell "same port as CI-V" from "a genuinely separate
+// second port", which only the backend (self.rig.port) actually knows;
+// guessing that here from just the PORT field's emptiness broke for a
+// user who types the SAME port explicitly instead of leaving it blank.
+async function _cwKeyerSave(id) {
   const line   = document.getElementById(`cfg-cw-dtr-line-${id}`)?.value || 'DTR';
+  const port   = document.getElementById(`cfg-cw-dtr-port-${id}`)?.value.trim() || '';
   const status = document.getElementById(`cfg-cw-dtr-status-${id}`);
   const token  = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
-  if (status) status.textContent = I18n.t('cfg_configuring');
+  if (status) { status.textContent = I18n.t('cfg_configuring'); status.style.color = 'var(--dim)'; }
+
   const r = await fetch('/api/cw/dtr-port', {
     method: 'POST',
     headers: {'Content-Type':'application/json','Authorization':`Bearer ${token}`},
     body: JSON.stringify({port, line}),
-  }).then(r => r.json()).catch(e => ({ok:false,error:e.message}));
+  }).then(r => r.json()).catch(e => ({ok:false, error:e.message}));
+
   if (status) {
     status.textContent = r.ok ? `✓ ${r.message}` : `✗ ${r.error}`;
-    status.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+    status.style.color = r.ok ? (r.usbKeyingOk === false ? 'var(--amber)' : 'var(--green)') : 'var(--red)';
   }
 }
 
-// ── Initialize the CW method state when loading rig settings ─────────────────
+// ── Initialize the CW keyer state when loading rig settings ──────────────────
 async function _initCwStatus() {
   const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
   try {
     const d = await fetch('/api/cw/status', {
       headers: {'Authorization': `Bearer ${token}`}
     }).then(r => r.json());
-    // Set the select and DTR section visibility for every loaded radio
-    document.querySelectorAll('[id^="cfg-cw-method-"]').forEach(sel => {
-      const id = sel.id.replace('cfg-cw-method-','');
-      sel.value = d.method || 'auto';
-      const dtrSection = document.getElementById(`cfg-cw-dtr-section-${id}`);
-      if (dtrSection) {
-        dtrSection.style.display = (d.method==='dtr'||d.method==='rts') ? '' : 'none';
-      }
+    document.querySelectorAll('[id^="cfg-cw-dtr-line-"]').forEach(lineEl => {
+      const id = lineEl.id.replace('cfg-cw-dtr-line-','');
+      lineEl.value = (d.method === 'rts') ? 'RTS' : (d.dtrLine || 'DTR');
       const portEl = document.getElementById(`cfg-cw-dtr-port-${id}`);
       if (portEl && d.dtrPort) portEl.value = d.dtrPort;
-      const lineEl = document.getElementById(`cfg-cw-dtr-line-${id}`);
-      if (lineEl && d.dtrLine) lineEl.value = d.dtrLine;
     });
   } catch(e) {}
 }
 
 window.Settings = { populateModels, renderRigs, saveRig, connectRig, loadStatus, toggleAudio, loadAudioCards, addRig, removeRig,
   loadAudioDevices: loadAudioCards,
-  _cwMethodChange, _cwDtrSave, _initCwStatus,
+  _cwKeyerSave, _initCwStatus,
 };
 
 
