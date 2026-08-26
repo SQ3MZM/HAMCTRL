@@ -90,9 +90,23 @@ async fn run_loop(
 
         // Wake shortly after the window boundary so the just-completed window
         // is fully in the buffer, then decode it from an aligned snapshot.
-        let pos = current_pos_in_window(window_s);   // 0..window_s
+        let now_epoch = current_epoch();
+        let pos = now_epoch % window_s;               // 0..window_s
         let settle = 0.3f64;                          // wait past boundary a touch
         let wait = (window_s - pos) + settle;
+        // TRUE UTC start of the window we're about to decode, captured NOW
+        // (before sleeping) - NOT recomputed after waking. Bug found live
+        // 2026-08-26 (operator reported: "I can't tell who's replying to
+        // whom, the displayed decode time is the same period as when
+        // someone transmits to us"): the timeStr sent to Python/the UI used
+        // to be computed via utc_time_str() AFTER this sleep, i.e. at
+        // window_start + window_s + settle - the START of the FOLLOWING
+        // window, not the window whose audio was actually just decoded.
+        // Every RX decode was therefore labeled one full window (15s FT8 /
+        // 7.5s FT4) too late, which made it collide in the UI with OUR OWN
+        // next transmission instead of showing when the partner actually
+        // sent it.
+        let window_start_epoch = now_epoch - pos;
         tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait.max(0.0))).await;
 
         if !rx_enabled {
@@ -148,7 +162,7 @@ async fn run_loop(
                 if is_ft4 { decode_ft4(&samples, &ap_hints, &mut on_pass) } else { decode_ft8(&samples, &ap_hints, &mut on_pass) }
             });
 
-            let time_str = utc_time_str();
+            let time_str = utc_time_str_at(window_start_epoch);
             while let Some((pass_elapsed, timing, batch)) = rx_batch.recv().await {
                 // Diagnostyka: pelny rozklad fazowy tego przebiegu - cztery
                 // niezalezne poprawki (wczesniejsze dostarczanie wynikow,
@@ -223,21 +237,17 @@ async fn run_loop(
     }
 }
 
-fn current_pos_in_window(window_s: f64) -> f64 {
-    let now = SystemTime::now()
+fn current_epoch() -> f64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs_f64();
-    now % window_s
+        .as_secs_f64()
 }
 
-fn utc_time_str() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let h = (now / 3600) % 24;
-    let m = (now / 60) % 60;
-    let s = now % 60;
+fn utc_time_str_at(epoch_secs: f64) -> String {
+    let secs = epoch_secs as u64;
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
     format!("{:02}{:02}{:02}", h, m, s)
 }

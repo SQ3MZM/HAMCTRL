@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202608170004">
+<link rel="stylesheet" href="css/style.css?v=202608260010">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -683,19 +683,10 @@
         <span data-i18n="wj_autoqso_hdr">AUTOMATYKA QSO</span>
         <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(184,201,143,0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
         <div style="flex:1"></div>
-        <label style="font-family:var(--mono);font-size:10px;"><input type="checkbox" id="wj-call1st-toggle" onchange="WSJTX.toggleCall1st()"> Call 1st</label>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
         <div id="wj-autoqso-status" data-i18n="wj_autoqso_ready" style="flex:1;font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
-        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;font-family:var(--mono);font-size:9px;padding:2px 6px;white-space:nowrap;" data-i18n-title="wj_skip_title" title="Porzuć bieżącą stację i przejdź od razu do następnej z kolejki (bez czekania 60s)" data-i18n="wj_skip_btn">⏭ Pomiń</button>
-      </div>
-      <div id="wj-autoqso-queue-wrap" style="display:none;">
-        <div style="display:flex;align-items:center;margin-bottom:3px;">
-          <div style="font-size:9px;color:#666;text-transform:uppercase;" data-i18n="wj_queue_lbl">Kolejka (Call 1st):</div>
-          <div style="flex:1"></div>
-          <span id="wj-autoqso-queue-clear" style="font-family:var(--mono);font-size:9px;color:#888;cursor:pointer;text-decoration:underline;" data-i18n-title="wj_clear_queue_title" title="Usuń wszystkie stacje z kolejki" onclick="WSJTX.clearAutoQsoQueue()" data-i18n="wj_clear_queue_btn">wyczyść</span>
-        </div>
-        <div id="wj-autoqso-queue"></div>
+        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;font-family:var(--mono);font-size:9px;padding:2px 6px;white-space:nowrap;" data-i18n-title="wj_skip_title" title="Porzuć bieżącą stację (bez czekania na limit prób)" data-i18n="wj_skip_btn">⏭ Pomiń</button>
       </div>
     </div>
 
@@ -2398,6 +2389,7 @@
           <input type="checkbox" id="adm-update-email-toggle" onchange="AdminUpdate.saveToggles()">
           <label for="adm-update-email-toggle" data-i18n="adm_update_email_lbl" style="margin:0;">Powiadom adminów mailem (wymaga skonfigurowanego SMTP powyżej)</label>
         </div>
+        <div id="adm-update-email-diag" style="font-family:var(--mono);font-size:9px;color:var(--dim);display:none;"></div>
       </div>
       <div style="padding:0 12px 12px;display:flex;gap:8px;">
         <button class="admin-btn" onclick="AdminUpdate.checkNow()" data-i18n="adm_update_check_now_btn">SPRAWDŹ TERAZ</button>
@@ -2598,7 +2590,7 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202608260004"></script>
+<script src="js/i18n.js?v=202608260010"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608243900"></script>
@@ -2622,7 +2614,7 @@
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608250100"></script>
+<script src="js/wsjtx.js?v=202608260010"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
@@ -3077,6 +3069,21 @@ window.AdminUpdate = {
       statusEl.textContent = I18n.t('adm_update_current_ok');
       statusEl.style.color = 'var(--green)';
     }
+    // FIX (reported live 2026-08-26: "widze ze jest nowa wersja ale zaden
+    // mail nie przyszedl" - the admin had no way to see WHY, only a
+    // server-console print). email_diag comes straight from the backend's
+    // LAST actual send attempt (or non-attempt) - show it whenever present,
+    // regardless of whether it was success or failure, so this box is
+    // never silently wrong again.
+    const diagEl = document.getElementById('adm-update-email-diag');
+    if (diagEl) {
+      if (d.email_diag) {
+        diagEl.textContent = d.email_diag;
+        diagEl.style.display = '';
+      } else {
+        diagEl.style.display = 'none';
+      }
+    }
   },
   async saveToggles() {
     const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
@@ -3107,6 +3114,7 @@ window.AdminUpdate = {
       this._render({ current: d.current, update: d.update,
         enabled: document.getElementById('adm-update-check-toggle').checked,
         email: document.getElementById('adm-update-email-toggle').checked,
+        email_diag: d.email_diag,
         repo_configured: true });
       msg.textContent = I18n.t('adm_update_checked');
       msg.style.color = 'var(--green)';

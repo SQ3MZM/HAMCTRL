@@ -6,7 +6,6 @@ Pure logic (no asyncio/networking), easy to test in isolation.
 Responsible for:
   1. Parsing received FT8 messages (who/to whom/what).
   2. The state machine of a single QSO (Tx1..Tx5, classic RRR->73 sequence).
-  3. The queue of stations answering our CQ ("Call 1st" / FIFO).
 
 Standard auto-QSO message sequence (when WE start, answering someone else's
 CQ — i.e. Tx1 as the first step):
@@ -357,8 +356,11 @@ ST_DONE = 'DONE'                  # QSO finished (received/sent 73), ready to lo
 
 class QsoEngine:
     """
-    State machine for a single active QSO + the queue of waiting stations
-    (answered our CQ but aren't being handled yet).
+    State machine for a single active QSO. While busy with one partner, any
+    OTHER station answering our CQ is simply ignored (not queued) - on a
+    busy band nobody waits minutes for their turn, so there's no point
+    remembering callers we can't get back to soon. Once free again (IDLE),
+    whoever calls next gets an immediate reply.
 
     Usage (from webapp.py):
       engine = QsoEngine(my_call='XX0XXX', my_grid='KO02')
@@ -379,15 +381,6 @@ class QsoEngine:
         self.last_activity_at = None
         self.last_tx_at = None    # when we LAST sent anything in this QSO
         self.retry_count = 0      # how many times we repeated the last message with no reply
-        self.queue = []   # list of callsigns waiting in the queue (FIFO), filled by CQ answers
-        self._queue_seen = set()  # prevents duplicates in the queue
-        # call -> recvEpoch (the RECEIVE time of the decode that added this
-        # station to the queue). Needed so that after pop_next_from_queue()
-        # webapp.py can correctly compute the TX period (see
-        # _period_from_epoch in webapp.py) - without this, auto-advance from
-        # the queue would transmit with a RANDOM/stale period left over from
-        # the previous QSO, randomly colliding with the partner.
-        self._queue_recv_epoch = {}
 
     # ── QSO management ──────────────────────────────────────────────────────
 
@@ -431,9 +424,6 @@ class QsoEngine:
         self.last_activity_at = self.started_at
         self.last_tx_at = None
         self.retry_count = 0
-        self._queue_seen.discard(self.partner_call)
-        self.queue = [c for c in self.queue if c != self.partner_call]
-        self._queue_recv_epoch.pop(self.partner_call, None)
         if initial_decode is not None:
             return self.on_decode(initial_decode)
         return None
@@ -449,76 +439,14 @@ class QsoEngine:
         self.last_tx_at = None
         self.retry_count = 0
 
-    def enqueue_caller(self, callsign: str, recv_epoch: float = None):
-        """Adds a station to the "Call 1st" queue (answered our CQ, but
-        we're currently in another QSO or haven't started one yet).
-        FIFO, no duplicates. recv_epoch (the receive time of the decode
-        that added it) is remembered for later TX period computation in
-        pop_next_from_queue()."""
-        callsign = callsign.upper()
-        # Compare by BASE call so that XX0XXX/M doesn't get duplicated when
-        # XX0XXX is already the partner (or vice versa).
-        if base_call(callsign) == base_call(self.partner_call or ''):
-            return
-        if callsign in self._queue_seen:
-            return
-        self._queue_seen.add(callsign)
-        self.queue.append(callsign)
-        if recv_epoch is not None:
-            self._queue_recv_epoch[callsign] = recv_epoch
-
-    def pop_next_from_queue(self):
-        """Returns (callsign, recv_epoch) of the first station in the queue
-        (FIFO) and removes it, or (None, None) if empty. recv_epoch is None
-        when the station was queued without a timestamp (shouldn't happen
-        in normal use, but the caller must handle it)."""
-        if not self.queue:
-            return None, None
-        callsign = self.queue.pop(0)
-        self._queue_seen.discard(callsign)
-        recv_epoch = self._queue_recv_epoch.pop(callsign, None)
-        return callsign, recv_epoch
-
-    def remove_from_queue(self, callsign: str) -> bool:
-        """Removes the given station from the queue (the ✕ button in the
-        UI). Returns True if the station was in the queue. Also clears
-        _queue_seen so the station can rejoin the queue if it answers a
-        CQ again."""
-        callsign = (callsign or "").upper()
-        if callsign not in self.queue:
-            return False
-        self.queue = [c for c in self.queue if c != callsign]
-        self._queue_seen.discard(callsign)
-        self._queue_recv_epoch.pop(callsign, None)
-        return True
-
-    def clear_queue(self):
-        """Empties the whole "Call 1st" queue (the "clear" button in the
-        UI). Without this, old, long-stale entries (stations that answered
-        a CQ minutes/hours earlier and may no longer be listening) had no
-        way to leave the queue except manually clicking ✕ on each one
-        individually — over a long session the queue would grow and
-        Call 1st would eventually "call" a stale, no-longer-relevant
-        callsign."""
-        self.queue = []
-        self._queue_seen = set()
-        self._queue_recv_epoch = {}
-
     # ── Processing received messages ──────────────────────────────────
 
-    def on_decode(self, parsed: dict, recv_epoch: float = None):
+    def on_decode(self, parsed: dict):
         """
         Called for EVERY parsed decode (see parse_message).
-        Returns a dict {'action': 'reply'|'enqueue'|None, 'call_to', 'call_de',
+        Returns a dict {'action': 'reply'|'new_caller'|None, 'call_to', 'call_de',
         'report_or_grid', 'r_flag'} describing what to do, or None if this
         message requires no reaction.
-
-        recv_epoch: the RECEIVE time of this decode (webapp.py's recvEpoch)
-        — if the station is queued to Call 1st, it's remembered alongside
-        it (see enqueue_caller) so that after pop_next_from_queue()
-        webapp.py can correctly compute the TX period for that station
-        instead of inheriting a random period left over from the previous
-        QSO.
 
         Recognition logic:
         - If it's a CQ from someone: if IDLE -> nothing (the UI can show a
@@ -529,12 +457,11 @@ class QsoEngine:
         - If the message is ADDRESSED TO US (call_to == my_call):
             - if call_de == the partner_call of the ACTIVE QSO -> process
               per the state machine
-            - if call_de != partner_call but we're IDLE or CALLING someone
-              else -> someone else is answering us (e.g. our CQ) ->
-              enqueue (unless we're IDLE and this is the first such station
-              — then the UI/webapp may decide to start_qso immediately; the
-              engine only signals 'enqueue', the calling code decides on
-              auto-start based on the Call 1st settings)
+            - if call_de != partner_call and we're IDLE -> someone else is
+              answering us (e.g. our CQ) -> signals 'new_caller' so
+              webapp.py can start_qso immediately
+            - if call_de != partner_call and we're BUSY with another QSO ->
+              ignored (no queue — see the class docstring)
         """
         if parsed is None:
             return None
@@ -604,18 +531,16 @@ class QsoEngine:
             # de_base == partner_base) — never a fresh opener.
             if parsed['is_73'] or parsed['is_rr73'] or parsed['is_rrr']:
                 return None
-            # Always actually add to the queue (not just signal it) — so
-            # that even if webapp.py ignores the returned 'enqueue' and
-            # doesn't immediately fire start_qso, the station still isn't
-            # lost.
-            self.enqueue_caller(call_de, recv_epoch)
             if self.state == ST_IDLE:
-                # No one is currently being handled — signal 'enqueue' so
-                # webapp.py can (per the Call 1st settings) IMMEDIATELY
-                # call start_qso(call_de, initial_decode=parsed) instead of
-                # waiting in the queue.
-                return {'action': 'enqueue', 'call_de': call_de}
-            return None  # busy with another QSO — waits in the queue for later
+                # We're free — this caller becomes our next QSO immediately.
+                return {'action': 'new_caller', 'call_de': call_de}
+            # FIX (2026-08-26, live feedback): NO QUEUE. On a busy band
+            # nobody waits several minutes for a QSO with us — a station
+            # answering our CQ while we're already busy with someone else
+            # is simply not tracked. If it's still there when we're free
+            # again, it'll show up as a fresh decode and get an immediate
+            # reply then; if not, no harm done (we never queued it either).
+            return None
 
         # Message FROM THE CURRENT QSO PARTNER — process per the state
         # machine. The partner is actually responding, so reset the retry
@@ -788,6 +713,7 @@ class QsoEngine:
         Other auto-QSO implementations usually have this counter disabled
         by default (they retry indefinitely, since the operator is
         watching the screen and can decide when to give up). Our engine
-        runs unsupervised (Call 1st needs to move on to the next station
-        in the queue), so the limit is ALWAYS ENABLED here."""
+        runs unsupervised and needs to free up for the next caller instead
+        of chasing an unresponsive station forever, so the limit is ALWAYS
+        ENABLED here."""
         return self.retry_count >= max_retries

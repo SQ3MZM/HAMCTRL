@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608242300">
+<link rel="stylesheet" href="css/mobile.css?v=202608260010">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -160,8 +160,8 @@
   </section>
 
   <!-- ── FT8/FT4 — celowo UŻYWA tych samych ID co desktop (index.html /
-       wsjtx.js), żeby cała logika (silnik auto-QSO, timer bezpieczeństwa
-       Call 1st, makra TX, lista dekodów) była TĄ SAMĄ, już przetestowaną
+       wsjtx.js), żeby cała logika (silnik auto-QSO, timer bezpieczeństwa,
+       makra TX, lista dekodów) była TĄ SAMĄ, już przetestowaną
        logiką z desktopu — mobile.css tylko ją inaczej stylizuje. Zero
        duplikatu logiki FT8 w mobile.js. ── -->
   <section class="m-tabpanel" id="tab-ft8">
@@ -234,21 +234,10 @@
     </section>
 
     <section class="m-card">
-      <label class="m-switch-row">
-        <span data-i18n="m_call1st_lbl">Call 1st (autonomiczne odpowiadanie)</span>
-        <input type="checkbox" id="wj-call1st-toggle" data-perm-disable="ft8" onchange="WSJTX.toggleCall1st()">
-      </label>
       <div id="wj-autoqso-status" class="m-ft8-status" data-i18n="m_autoqso_ready">Automatyka gotowa — dotknij wywołanie CQ na liście, żeby rozpocząć QSO</div>
       <div class="m-ft8-timer-row">
         <span id="ft8-timer-display" class="m-ft8-timer">--:--</span>
         <button id="ft8-timer-confirm" class="m-btn m-btn-amber m-btn-sm" onclick="FT8Timer.confirm()" style="display:none" data-i18n="m_confirm_presence">Potwierdzam obecność</button>
-      </div>
-      <div id="wj-autoqso-queue-wrap" class="m-ft8-queue-wrap" style="display:none">
-        <div class="m-card-title-row">
-          <span class="m-card-title" data-i18n="m_queue_hdr">Kolejka</span>
-          <span id="wj-autoqso-queue-clear" class="m-mini-btn" onclick="WSJTX.clearAutoQsoQueue()" data-i18n="wj_clear_queue_btn">wyczyść</span>
-        </div>
-        <div id="wj-autoqso-queue" class="m-ft8-queue"></div>
       </div>
       <div class="m-ft8-actions">
         <button id="wj-autoqso-skip" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ft8" onclick="WSJTX.skipAutoQso()" style="display:none" data-i18n="m_skip_qso_btn">Pomiń QSO</button>
@@ -538,15 +527,15 @@
 </div>
 
 <script src="js/auth.js?v=202608221000"></script>
-<script src="js/i18n.js?v=202608260004"></script>
+<script src="js/i18n.js?v=202608260010"></script>
 <script src="js/cw.js?v=202608260003"></script>
-<script src="js/wsjtx.js?v=202608250100"></script>
+<script src="js/wsjtx.js?v=202608260010"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
 <script src="js/mobile_audio.js?v=202608243200"></script>
-<script src="js/mobile.js?v=202608242900"></script>
+<script src="js/mobile.js?v=202608260010"></script>
 </body>
 </html>

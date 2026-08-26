@@ -293,7 +293,7 @@ function handleMessage(msg) {
     case 'qso_logged':
       if (msg.qso) prependLog(msg.qso);
       break;
-    // auto_qso_status / auto_seq_status / auto_qso_queue / wsjtx_decode /
+    // auto_qso_status / auto_seq_status / wsjtx_decode /
     // ft8_tx_status / cw_sending / ... are NOT handled here — they're
     // rendered by the real WSJTX.handleWS / CW.handleWS forwarded above.
   }

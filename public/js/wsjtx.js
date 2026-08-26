@@ -181,12 +181,10 @@ function toggleCountryMode() {
 }
 
 // QSO automation (UI state, the source of truth is on the backend —
-// synced via WS auto_seq_status/auto_qso_status/auto_qso_queue)
+// synced via WS auto_seq_status/auto_qso_status)
 let _autoSeqEnabled = false;
-let _autoCall1st = false;
 let _autoQsoState = 'IDLE';
 let _autoQsoPartner = null;
-let _autoQsoQueue = [];
 
 // ── 15s clock ─────────────────────────────────────────────────────────────────
 function _startClock() {
@@ -629,29 +627,25 @@ function toggleAutoSeq() {
   window.WS?.send({ type: 'ft8_toggle_auto_seq', enabled });
 }
 
-function toggleCall1st() {
-  const cb = document.getElementById('wj-call1st-toggle');
-  const enabled = cb ? cb.checked : !_autoCall1st;
-  window.WS?.send({ type: 'ft8_toggle_call_1st', enabled });
-}
+let _watchdogArmed = false;
 
 function _onAutoSeqStatus(msg) {
-  if (msg.call1st !== undefined) {
-    // The FT8 safety timer (WSJT-X "Tx Watchdog") ARM/DISARM on the
-    // actual Call 1st state change (confirmed by the backend, not
-    // optimistically in toggleCall1st()) - Call 1st ON is the only mode
-    // in this app where the automation actually replies to unknown
-    // callers without operator involvement, so it should be the one
-    // arming the timer. FT8Timer.start()/stop() used to be called ONLY
-    // from toggleHound() - for regular automation (Call 1st) the timer never armed.
-    if (msg.call1st && !_autoCall1st) window.FT8Timer?.start();
-    else if (!msg.call1st && _autoCall1st) window.FT8Timer?.stop();
-    _autoCall1st = msg.call1st;
-  }
   if (msg.enabled !== undefined) _autoSeqEnabled = msg.enabled;
+  // The FT8 safety timer (WSJT-X "Tx Watchdog") arms ONCE, the first time
+  // we hear the backend confirm the automation is active. FIX (2026-08-26,
+  // removed the "Call 1st" queue/toggle): auto-answering whoever calls
+  // while idle is no longer a toggle - the backend already does it
+  // unconditionally (has for a while - see "auto-start when IDLE always
+  // applies" in webapp.py) - so there's no toggle-flip left to hook the
+  // watchdog to. It's simply armed as soon as automation is confirmed on,
+  // which per the backend is always. Hound arms/disarms it independently
+  // on top of this for its own session (see toggleHound/houndStop).
+  if (_autoSeqEnabled && !_watchdogArmed) {
+    _watchdogArmed = true;
+    window.FT8Timer?.start();
+  }
   if (msg.state !== undefined) _autoQsoState = msg.state;
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
-  if (msg.queue !== undefined) _autoQsoQueue = msg.queue;
   _renderAutoQsoPanel();
 }
 
@@ -716,7 +710,7 @@ function _onAutoQsoComplete(msg) {
   // val (useful when manually filling in from the decode list, where no
   // data = leave unchanged) — here it's the opposite, we want to ALWAYS
   // overwrite, even with an empty string, so as not to leave "leaking"
-  // data from the previous QSO in a chain of multiple automatic QSOs in a row (Call 1st).
+  // data from the previous QSO in a chain of multiple automatic QSOs in a row.
   const callEl = document.getElementById('wj-log-call');
   if (callEl) callEl.value = msg.dxCall || '';
   const gridEl = document.getElementById('wj-log-grid');
@@ -736,7 +730,7 @@ function _onAutoQsoComplete(msg) {
   if (rstRcvdEl) rstRcvdEl.value = msg.rstRcvd || _frozenRstRcvd || '';
   const modeEl = document.getElementById('wj-log-mode');
   // Reset the frozen reports after the QSO ends — otherwise they'd leak
-  // into the next QSO in a Call 1st chain.
+  // into the next automatic QSO.
   _frozenRstSent = null; // reset after the QSO
   _frozenRstRcvd = null;
   _updateMacroTexts(); // the macro-3 preview reverts to the current _lastDxSnr
@@ -768,29 +762,9 @@ function _onAutoQsoComplete(msg) {
   }
 }
 
-function _onAutoQsoQueue(msg) {
-  if (msg.queue !== undefined) _autoQsoQueue = msg.queue;
-  if (msg.active !== undefined) _autoQsoPartner = msg.active;
-  _renderAutoQsoPanel();
-}
-
-// Removes a single station from the "Call 1st" queue (✕ on the chip).
-function removeFromQueue(call) {
-  window.WS?.send({ type: 'ft8_queue_remove', call });
-}
-
-// Empties the entire "Call 1st" queue (the "clear" button in the panel
-// header) — without this, stale entries (stations that replied to a CQ
-// long ago and may no longer be listening) had no way to leave the queue
-// other than removing them one by one, so over a longer session it grew
-// and Call 1st eventually called an old, stale callsign.
-function clearAutoQsoQueue() {
-  window.WS?.send({ type: 'ft8_queue_clear' });
-}
-
 // Manual "skip" of the current station — abandons the active QSO and
-// immediately (without waiting for the backend's 60s stall-timeout)
-// moves to the next station in the Call 1st queue, if one is waiting.
+// immediately (without waiting for the backend's 60s stall-timeout) goes
+// back to answering whoever calls next (no queue).
 function skipAutoQso() {
   window.WS?.send({ type: 'ft8_abort_auto_qso' });
 }
@@ -798,8 +772,6 @@ function skipAutoQso() {
 function _renderAutoQsoPanel() {
   const seqCb = document.getElementById('wj-auto-seq-toggle');
   if (seqCb) seqCb.checked = _autoSeqEnabled;
-  const c1Cb = document.getElementById('wj-call1st-toggle');
-  if (c1Cb) c1Cb.checked = _autoCall1st;
 
   const skipBtn = document.getElementById('wj-autoqso-skip');
   if (skipBtn) {
@@ -814,9 +786,7 @@ function _renderAutoQsoPanel() {
     if (!_autoSeqEnabled) {
       statusEl.textContent = I18n.t('wj_status_no_decoding');
     } else if (_autoQsoState === 'IDLE' || !_autoQsoPartner) {
-      statusEl.textContent = _autoCall1st
-        ? I18n.t('wj_status_waiting_call1st')
-        : I18n.t('wj_status_waiting_cq');
+      statusEl.textContent = I18n.t('wj_status_waiting_call1st');
     } else if (_autoQsoState === 'DONE') {
       statusEl.textContent = I18n.t('wj_status_qso_done').replace('{partner}', _autoQsoPartner);
       statusEl.classList.add('done');
@@ -828,20 +798,6 @@ function _renderAutoQsoPanel() {
       };
       statusEl.textContent = I18n.t('wj_status_qso_with').replace('{partner}', _autoQsoPartner).replace('{state}', stateLabels[_autoQsoState] || _autoQsoState);
       statusEl.classList.add('active');
-    }
-  }
-
-  const queueWrap = document.getElementById('wj-autoqso-queue-wrap');
-  const queueEl = document.getElementById('wj-autoqso-queue');
-  if (queueWrap && queueEl) {
-    if (_autoQsoQueue.length > 0) {
-      queueWrap.style.display = '';
-      queueEl.innerHTML = _autoQsoQueue.map((call, i) =>
-        `<span class="wj-queue-chip${i===0?' first':''}">${_esc(call)}` +
-        `<span class="wj-queue-chip-x" title="${I18n.t('wj_queue_remove_title').replace('{call}', _esc(call))}" onclick="WSJTX.removeFromQueue('${_esc(call)}')">✕</span></span>`
-      ).join('');
-    } else {
-      queueWrap.style.display = 'none';
     }
   }
 }
@@ -879,7 +835,6 @@ function handleWS(msg) {
     case 'auto_seq_status':  _onAutoSeqStatus(msg); break;
     case 'auto_qso_status':  _onAutoQsoStatus(msg); break;
     case 'auto_qso_complete': _onAutoQsoComplete(msg); break;
-    case 'auto_qso_queue':   _onAutoQsoQueue(msg); break;
     case 'auto_qso_error':   window.UI?.showToast(`⚠ ${msg.error}`); break;
     case 'qso_logged':
       // A new QSO in the real log (qso_db) — from both the automation and
@@ -1246,8 +1201,7 @@ function _selectRow(el, idx) {
   // call_to), with automation enabled, starts a FULL automatic QSO
   // (instead of just filling in the fields for manual sending). This used
   // to work ONLY for "CQ ..." — a station that called us directly (e.g.
-  // "SQ3MZM DL3MIB JN57", which enters the Call 1st queue automatically
-  // on the backend) couldn't be manually "jumped to" by clicking, because
+  // "SQ3MZM DL3MIB JN57") couldn't be manually "jumped to" by clicking, because
   // isCq was false and the click only retuned RX/TX, without sending
   // ft8_start_auto_qso at all — the backend (the "ft8_start_auto_qso"
   // handler in webapp.py) had long since correctly accepted an
@@ -1479,8 +1433,8 @@ function rotorManualSubmit() {
 // FROZEN report: while a QSO is active, show EXCLUSIVELY the
 // backend-confirmed frozen value (or a neutral placeholder until it
 // appears) - NEVER _lastDxSnr during this phase. _lastDxSnr is the SNR of
-// the LAST CLICKED decode row, which during full automation (Call 1st,
-// nobody clicking manually) is completely unrelated to the current
+// the LAST CLICKED decode row, which during full automation (nobody
+// clicking manually) is completely unrelated to the current
 // partner - it gave a plausible-looking but random number before the
 // backend got around to freezing the real report (e.g. during the phase
 // of sending our own Tx1/grid, before receiving a report from the
@@ -1850,8 +1804,9 @@ window.FT8Timer = (() => {
   }
 
   function start() {
-    // Start the countdown - Call 1st enabled (the main automation) or
-    // Hound enabled, see _onAutoSeqStatus/toggleHound.
+    // Start the countdown - the automation is unconditionally active now
+    // (see _onAutoSeqStatus, which arms this on the first
+    // auto_seq_status), or Hound is enabled (toggleHound).
     _remaining  = _durationMs;
     _active     = true;
     _warnShown  = false;
@@ -1863,11 +1818,11 @@ window.FT8Timer = (() => {
   }
 
   function stop() {
-    // Stop the countdown (Call 1st/Hound disabled, or internal use on
-    // expiry - see _tick). Explicit disarm (Call 1st off) does NOT clear
-    // _expired on its own - only confirm()/start() do that, so the
-    // "waiting for confirmation" state doesn't silently vanish without an
-    // actual operator confirmation.
+    // Stop the countdown (internal use on expiry - see _tick; nothing
+    // else calls this anymore now that the watchdog is always armed, see
+    // _onAutoSeqStatus). Does NOT clear _expired on its own - only
+    // confirm()/start() do that, so the "waiting for confirmation" state
+    // doesn't silently vanish without an actual operator confirmation.
     _active = false;
     clearInterval(_interval);
     _interval = null;
@@ -1904,7 +1859,8 @@ window.FT8Timer = (() => {
     // to land exactly on the small button, instead of simply returning to normal work.
     if (_expired) { confirm(); return; }
     // Reset without stopping — after every user action, ONLY when the
-    // timer is actually active (Call 1st enabled) - see _onAutoSeqStatus.
+    // timer is actually active (armed once automation starts) - see
+    // _onAutoSeqStatus.
     if (_active) {
       _remaining = _durationMs;
       _warnShown = false;
@@ -1942,14 +1898,14 @@ window.FT8Timer = (() => {
     // Stop ACTUAL transmitting (PTT + QSO engine) - the previous version
     // only called stopTx() (a cosmetic reset of the button highlight,
     // doesn't touch PTT or the engine) and houndStop(), so for the main
-    // automation (Call 1st) it didn't actually stop anything at all.
+    // automation it didn't actually stop anything at all.
     // haltTx() is the same full halt as the HALT TX button (PTT off +
     // abort_qso + invalidating any in-flight scheduled retransmits).
     window.WSJTX?.haltTx();
     if (window.WSJTX?.houndStop) window.WSJTX.houndStop();
     // Notify the backend - until ft8_timer_confirm arrives, the
-    // automation must STOP responding to new callers even with Call 1st
-    // enabled (see _ft8_operator_present in webapp.py). haltTx() alone
+    // automation must STOP responding to new callers
+    // (see _ft8_operator_present in webapp.py). haltTx() alone
     // only stops the CURRENT transmission - without this extra block the
     // automation would catch the next caller right away, making the
     // whole timer useless (exactly the problem reported: the timer was
@@ -2060,7 +2016,12 @@ function houndStop() {
   _hound.attempts = 0;
   clearInterval(_hound.timer);
   clearInterval(_hound.cycleTimer);
-  window.FT8Timer?.stop();  // Stop the timer
+  // Deliberately does NOT stop FT8Timer: the watchdog is a single shared
+  // timer for ALL automated TX (see _onAutoSeqStatus) - regular
+  // auto-answer keeps running after Hound turns off, so stopping it here
+  // would leave that automation transmitting unattended with no cap.
+  // Watchdog EXPIRY calls stop() itself (in _tick) before calling this
+  // function, so that path is unaffected.
   const _ht = document.getElementById('wj-hound-toggle');
   if (_ht) _ht.checked = false;
   _houndUpdateUI();
@@ -2309,12 +2270,12 @@ window.WSJTX = {
   tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
   updateBeamRow, rotorGoBeam, rotorGoManual, rotorManualClose, rotorManualSubmit,
-  toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, toggleCall1st, setDecodeMode,
+  toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, setDecodeMode,
   tuneToBand, setTxPeriod,
   setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx,
   _selectRow, addLog, exportAdif,
   toggleHound, houndStop, houndConfirm,
-  removeFromQueue, clearAutoQsoQueue, skipAutoQso,
+  skipAutoQso,
   resetPaletteAdjust, startTune,
 };
 

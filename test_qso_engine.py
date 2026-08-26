@@ -16,7 +16,7 @@ Pokrycie:
       * przedluzanie po DONE (echo 73/RR73/RRR -> cisza)
       * powtorka wolania partnera (grid w REPORT_SENT -> powtorz raport)
       * zamrozenie raportu SNR (staly przez cale QSO)
-  - Kolejka (Call 1st): enqueue, pop, remove, brak duplikatow
+  - Brak kolejki Call 1st: obca stacja w trakcie zajetego QSO jest ignorowana
   - Reset stanu miedzy QSO
 
 Zwraca exit code 0 gdy wszystko OK, 1 gdy sa bledy (do CI/skryptow).
@@ -252,14 +252,12 @@ def test_no_loop_after_abort_on_partner_echo():
     check(eng.partner_call is None, "Partner nadal None (nie wystartowalo nowe QSO)")
 
     # To samo dla RR73 i RRR jako "echo po abort" - zaden nie powinien
-    # startowac nowego QSO ani trafiac do kolejki Call 1st.
+    # startowac nowego QSO.
     result = eng.on_decode(parse_message("SQ3MZM SP9XYZ RR73"))
     check(result is None, "Echo RR73 po abort_qso() -> cisza")
-    check(eng.queue == [], "RR73 po abort nie trafia do kolejki Call 1st")
 
     result = eng.on_decode(parse_message("SQ3MZM SP9XYZ RRR"))
     check(result is None, "Echo RRR po abort_qso() -> cisza")
-    check(eng.queue == [], "RRR po abort nie trafia do kolejki Call 1st")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -335,64 +333,32 @@ def test_partner_report_last_value():
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 8. KOLEJKA (Call 1st): enqueue / pop / remove / brak duplikatow
+# 8. BRAK KOLEJKI Call 1st (usunieta 2026-08-26, live feedback: "kolejka nie
+#    ma sensu przy 4 stacjach w kolejce nikt nie bedzie czekal 4 minut")
 # ════════════════════════════════════════════════════════════════════════════
-def test_queue():
-    section("Kolejka Call 1st")
+def test_no_queue_busy_caller_ignored():
+    section("Brak kolejki: stacja wolajaca gdy jestesmy zajeci -> ignorowana")
     eng = QsoEngine("SQ3MZM", "JO82")
-    eng.enqueue_caller("SP1AAA")
-    eng.enqueue_caller("SP2BBB")
-    check(list(eng.queue) == ["SP1AAA", "SP2BBB"], "Enqueue: kolejnosc FIFO")
+    eng.start_qso("SP9XYZ", parse_message("CQ SP9XYZ JO90"))
+    check(eng.state == ST_CALLING, "Zajeci: QSO z SP9XYZ w toku")
 
-    eng.enqueue_caller("SP1AAA")  # duplikat
-    check(eng.queue.count("SP1AAA") == 1, "Brak duplikatow w kolejce")
+    # Inna stacja odpowiada na nasze CQ, podczas gdy jestesmy zajeci SP9XYZ.
+    result = eng.on_decode(parse_message("SQ3MZM SP1AAA JO70"))
+    check(result is None, "Obca stacja w trakcie zajetego QSO -> cisza (brak kolejki)")
+    check(eng.partner_call == "SP9XYZ", "Partner sie nie zmienil")
 
-    nxt, nxt_epoch = eng.pop_next_from_queue()
-    check(nxt == "SP1AAA", "Pop: FIFO (najpierw SP1AAA)")
-    check(nxt_epoch is None, "Pop: brak recv_epoch gdy nie podano przy enqueue")
+    # Konczymy QSO z SP9XYZ.
+    _dispatch(eng, "SQ3MZM SP9XYZ -12", snr=-8)
+    _dispatch(eng, "SQ3MZM SP9XYZ RR73", snr=-8)
+    eng.abort_qso()
+    check(eng.state == ST_IDLE, "Wolni po zakonczeniu QSO")
 
-    ok = eng.remove_from_queue("SP2BBB")
-    check(ok and "SP2BBB" not in eng.queue, "Remove: usuwa z kolejki")
-
-    eng.enqueue_caller("SP3CCC")
-    eng.enqueue_caller("SP4DDD")
-    eng.clear_queue()
-    check(eng.queue == [], "Clear: oproznia cala kolejke")
-    eng.enqueue_caller("SP3CCC")  # po clear stacja moze wrocic (nie jest "widziana")
-    check(eng.queue == ["SP3CCC"], "Clear: resetuje tez dedup (_queue_seen)")
-
-
-def test_queue_recv_epoch():
-    # Regresja 2026-08-13: _advance_auto_qso_queue w webapp.py wywolywal
-    # _send_auto_tx dla stacji wywolanej z kolejki BEZ partner_decode, wiec
-    # nigdy nie przeliczal periodu TX dla tej konkretnej stacji — dziedziczyl
-    # przypadkowy period zostawiony po POPRZEDNIM QSO. Losowo (gdy parzystosc
-    # sie nie zgadzala) nadawalismy w oknie partnera zamiast wlasnym, co
-    # gwarantowalo brak odpowiedzi. Fix: kolejka pamieta recv_epoch dekodu,
-    # ktory dodal kazda stacje, zeby po pop_next_from_queue() mozna bylo
-    # poprawnie wyliczyc period (patrz _period_from_epoch w webapp.py).
-    section("Kolejka Call 1st: recv_epoch do wyliczenia periodu TX")
-    eng = QsoEngine("SQ3MZM", "JO82")
-    eng.enqueue_caller("SP1AAA", recv_epoch=1000.5)
-    eng.enqueue_caller("SP2BBB", recv_epoch=1015.7)
-
-    nxt, nxt_epoch = eng.pop_next_from_queue()
-    check(nxt == "SP1AAA" and nxt_epoch == 1000.5,
-          "Pop: zwraca recv_epoch zapamietany przy enqueue")
-
-    nxt2, nxt2_epoch = eng.pop_next_from_queue()
-    check(nxt2 == "SP2BBB" and nxt2_epoch == 1015.7,
-          "Pop: kazda stacja ma WLASNY recv_epoch (nie dzieli sie ze wspolna)")
-
-    empty, empty_epoch = eng.pop_next_from_queue()
-    check(empty is None and empty_epoch is None, "Pop z pustej kolejki: (None, None)")
-
-    eng.enqueue_caller("SP3CCC", recv_epoch=2000.0)
-    eng.remove_from_queue("SP3CCC")
-    eng.enqueue_caller("SP3CCC", recv_epoch=2050.0)  # wraca z NOWYM czasem
-    _, re_epoch = eng.pop_next_from_queue()
-    check(re_epoch == 2050.0,
-          "Remove+re-enqueue: stary recv_epoch nie zostaje jako smiec")
+    # SP1AAA (ktora wolala nas w trakcie zajetosci) NIE zostala zapamietana
+    # - dopiero SWIEZY dekod od niej (a nie ten sprzed chwili) dostaje odpowiedz.
+    result = eng.on_decode(parse_message("SQ3MZM SP1AAA JO70"))
+    check(result is not None and result.get("action") == "new_caller",
+          "SP1AAA wola PONOWNIE gdy jestesmy wolni -> natychmiastowa odpowiedz")
+    check(result.get("call_de") == "SP1AAA", "new_caller: poprawny call_de")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -454,16 +420,16 @@ def test_call1st_start_with_raw_report():
           "Parsowanie: wiadomosc z surowym raportem (bez R-prefix)")
 
     # Krok 1 (webapp.py _process_auto_qso): silnik w IDLE, wiadomosc od NOWEJ
-    # stacji adresowana do nas -> sygnalizuje 'enqueue' (Call 1st moze
-    # natychmiast wywolac start_qso z tym samym dekodem).
+    # stacji adresowana do nas -> sygnalizuje 'new_caller' (webapp.py
+    # natychmiast wywoluje start_qso z tym samym dekodem).
     result = eng.on_decode(parsed)
-    check(result is not None and result.get("action") == "enqueue",
-          "IDLE + obca stacja z raportem -> 'enqueue' (tak jak przy CQ-odpowiedzi)")
-    check(result.get("call_de") == "XX0XXX", "enqueue: poprawny call_de")
+    check(result is not None and result.get("action") == "new_caller",
+          "IDLE + obca stacja z raportem -> 'new_caller' (tak jak przy CQ-odpowiedzi)")
+    check(result.get("call_de") == "XX0XXX", "new_caller: poprawny call_de")
 
-    # Krok 2 (webapp.py: Call 1st wlaczone) -> natychmiast start_qso z TYM
-    # SAMYM dekodem jako initial_decode, zeby nie wysylac zbednego Tx1/grid
-    # (partner juz przeslal cos wiecej niz CQ).
+    # Krok 2 (webapp.py) -> natychmiast start_qso z TYM SAMYM dekodem jako
+    # initial_decode, zeby nie wysylac zbednego Tx1/grid (partner juz
+    # przeslal cos wiecej niz CQ).
     start_result = eng.start_qso("XX0XXX", initial_decode=parsed)
     check(start_result is not None and start_result.get("action") == "reply",
           "start_qso(initial_decode=raport) -> od razu akcja 'reply' (pomija Tx1)")
@@ -590,11 +556,11 @@ def test_dxpedition_message_we_get_report():
     check(not parsed["is_rr73"] and not parsed["is_73"] and not parsed["is_rrr"],
           "To NIE jest RR73/73/RRR - zwykly nowy raport")
 
-    # Pelna integracja: IDLE + Call 1st -> powinno dac 'enqueue'
+    # Pelna integracja: IDLE -> powinno dac 'new_caller'
     eng = QsoEngine("SQ3MZM", "JO82")
     result = eng.on_decode(parsed)
-    check(result is not None and result.get("action") == "enqueue",
-          "Stacja MSHV zaprasza nas z raportem gdy IDLE -> enqueue")
+    check(result is not None and result.get("action") == "new_caller",
+          "Stacja MSHV zaprasza nas z raportem gdy IDLE -> new_caller")
 
 
 def test_dxpedition_message_we_get_rr73():
@@ -643,8 +609,7 @@ def main():
     test_repeated_call()
     test_frozen_report()
     test_partner_report_last_value()
-    test_queue()
-    test_queue_recv_epoch()
+    test_no_queue_busy_caller_ignored()
     test_reset_between_qso()
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()

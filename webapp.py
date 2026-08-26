@@ -197,7 +197,6 @@ _MSG_TYPE_TO_CHANNEL = {
     'ft8_decode_mode':   'ft8',
     'auto_seq_status':   'ft8',
     'auto_qso_status':   'ft8',
-    'auto_qso_queue':    'ft8',
     'auto_qso_error':    'ft8',
     'auto_qso_complete': 'ft8',
     'tune_status':       'ft8',
@@ -644,17 +643,11 @@ class App:
         self._auto_seq_enabled = True    # ALWAYS active (there's no longer a
                                           # UI toggle); clicking a macro is a manual override
         # FT8 safety timer (WSJT-X's "Tx Watchdog") - False means the
-        # operator has NOT recently confirmed presence (click/TX macro)
-        # despite Call 1st being enabled, and the automation MUST stop
-        # reacting to callers (see _process_auto_qso) until an
-        # "ft8_timer_confirm" arrives from the frontend (FT8Timer.confirm()
-        # in wsjtx.js). DELIBERATELY a separate flag from _auto_call_1st -
-        # Call 1st by itself no longer gates auto-start on idleness, so
-        # disabling Call 1st wouldn't replace this guard.
+        # operator has NOT recently confirmed presence (click/TX macro),
+        # and the automation MUST stop reacting to callers (see
+        # _process_auto_qso) until an "ft8_timer_confirm" arrives from the
+        # frontend (FT8Timer.confirm() in wsjtx.js).
         self._ft8_operator_present = True
-        self._auto_call_1st = False      # whether to automatically start a
-        # QSO with the first station answering our CQ (instead of waiting
-        # for a manual pick from the queue)
         self._auto_cq_text = None        # the CQ text we're currently
         # "transmitting" (used to recognize that a received reply concerns
         # OUR CQ, not some unrelated message addressed to us outside a QSO context)
@@ -938,39 +931,92 @@ class App:
             # a new version resets it. Opt-in: only if updateEmail is enabled and
             # SMTP is configured.
             already = self.cfg.get("updateEmailedVersion", "")
-            if (self.cfg.get("updateEmail", False) and already != latest):
-                sent = await self._email_admins_update(latest, url)
+            # FIX (reported live 2026-08-26: "widze ze jest nowa wersja ale
+            # zaden mail nie przyszedl" — an update WAS detected, but the
+            # admin had zero visibility into WHY the email silently never
+            # went out). self._update_email_diag now records exactly what
+            # happened on the LAST attempt (or non-attempt), surfaced via
+            # /api/update/config -> AdminUpdate._render, instead of only a
+            # server-console print nobody watching the UI ever sees.
+            if not self.cfg.get("updateEmail", False):
+                self._update_email_diag = ("Powiadomienie mailem jest wylaczone "
+                                            "(wlacz przelacznik powyzej).")
+            elif already == latest:
+                self._update_email_diag = f"Mail o wersji {latest} zostal juz wyslany wczesniej."
+            else:
+                sent, diag = await self._email_admins_update(latest, url)
+                self._update_email_diag = diag
                 if sent:
                     self.cfg["updateEmailedVersion"] = latest
                     save_json(CFG_F, self.cfg)
 
-    async def _email_admins_update(self, latest: str, url: str) -> bool:
-        """Email every admin who has an address about a new version. Returns True
-        if at least one email went out (so we can mark this version as notified).
-        Best-effort: failures are logged, never raised."""
-        subject = f"HAMCTRL — dostepna nowa wersja {latest}"
-        body = (
-            f"Dostepna jest nowa wersja HAMCTRL: {latest}\n"
-            f"Twoja obecna wersja: {SERVER_VERSION}\n\n"
-            f"Pobierz nowy instalator ze strony wydania:\n  {url}\n\n"
-            f"Instalator zaktualizuje istniejaca instalacje, zachowujac dane "
-            f"(konta, konfiguracje, dziennik QSO).\n\n"
-            f"To powiadomienie mozna wylaczyc w ustawieniach administratora.\n\n"
-            f"73 de HAMCTRL\n"
-        )
+    async def _email_admins_update(self, latest: str, url: str) -> tuple:
+        """Email every admin who has an address about a new version.
+        Returns (any_sent: bool, diagnostic: str) — the diagnostic explains
+        exactly what happened (no admin has an email set, SMTP error(s), or
+        who it was actually sent to), so the admin panel can show WHY an
+        expected email never arrived instead of silence. Best-effort:
+        exceptions are caught and folded into the diagnostic, never raised."""
+        # Language: the server-wide install-time language (self.cfg["lang"],
+        # seeded from the installer's language choice - see data.py's
+        # get_cfg and /api/config/lang), NOT a per-admin preference (there
+        # is no such stored setting - language in this app is a per-browser
+        # localStorage choice, invisible to the server). Requested live
+        # 2026-08-26: "musi byc po eng lub po polsku w zaleznosci od wersji
+        # HAMCTRL" - a PL-installed HAMCTRL should email in Polish, an
+        # EN-installed one in English.
+        if self.cfg.get("lang", "pl") == "en":
+            subject = f"HAMCTRL — new version {latest} available"
+            body = (
+                f"A new version of HAMCTRL is available: {latest}\n"
+                f"Your current version: {SERVER_VERSION}\n\n"
+                f"Download the new installer from the release page:\n  {url}\n\n"
+                f"The installer will update your existing installation, keeping "
+                f"your data (accounts, configuration, QSO log).\n\n"
+                f"You can turn this notification off in the admin settings.\n\n"
+                f"73 de HAMCTRL\n"
+            )
+        else:
+            subject = f"HAMCTRL — dostepna nowa wersja {latest}"
+            body = (
+                f"Dostepna jest nowa wersja HAMCTRL: {latest}\n"
+                f"Twoja obecna wersja: {SERVER_VERSION}\n\n"
+                f"Pobierz nowy instalator ze strony wydania:\n  {url}\n\n"
+                f"Instalator zaktualizuje istniejaca instalacje, zachowujac dane "
+                f"(konta, konfiguracje, dziennik QSO).\n\n"
+                f"To powiadomienie mozna wylaczyc w ustawieniach administratora.\n\n"
+                f"73 de HAMCTRL\n"
+            )
         any_sent = False
+        admins_with_email = []
+        sent_to = []
+        errors = []
         for u in self.users:
-            try:
-                if u.get("role") != "admin":
-                    continue
-                email_addr = u.get("email", "")
-                if not email_addr:
-                    continue
-                ok, _err = await self._send_email(email_addr, subject, body)
-                any_sent = any_sent or ok
-            except Exception:
+            if u.get("role") != "admin":
                 continue
-        return any_sent
+            email_addr = u.get("email", "")
+            if not email_addr:
+                continue
+            admins_with_email.append(email_addr)
+            try:
+                ok, err = await self._send_email(email_addr, subject, body)
+                if ok:
+                    any_sent = True
+                    sent_to.append(email_addr)
+                else:
+                    errors.append(f"{email_addr}: {err}")
+            except Exception as e:
+                errors.append(f"{email_addr}: {e}")
+        if not admins_with_email:
+            diag = ("Zaden administrator nie ma ustawionego adresu e-mail "
+                     "(PROFIL -> E-MAIL -> ZAPISZ PROFIL).")
+        elif sent_to and not errors:
+            diag = f"Wyslano do: {', '.join(sent_to)}."
+        elif sent_to and errors:
+            diag = f"Wyslano do: {', '.join(sent_to)}. Bledy: {'; '.join(errors)}."
+        else:
+            diag = f"Nie wyslano do nikogo. Bledy: {'; '.join(errors)}."
+        return any_sent, diag
 
     @staticmethod
     def _version_is_newer(a: str, b: str) -> bool:
@@ -1007,11 +1053,24 @@ class App:
         return next((u for u in self.users if u["id"] == uid), None)
 
     def _migrate_plaintext_secrets(self):
-        """One-time startup pass: encrypt any CloudLog/QRZ/HamQTH credentials
-        still stored as plaintext from before encryption at rest was added
-        (see crypto_secrets.py). Idempotent - encrypt_secret() is a no-op on
-        values already carrying the enc1: prefix, so this is safe to run on
-        every startup."""
+        """One-time startup pass: encrypt any CloudLog/QRZ/HamQTH/SMTP
+        credentials still stored as plaintext from before encryption at
+        rest was added (see crypto_secrets.py). Idempotent - encrypt_secret()
+        is a no-op on values already carrying the enc1: prefix, so this is
+        safe to run on every startup.
+
+        SMTP was found live 2026-08-26 (while diagnosing a silent
+        update-notification email failure) to have been missed entirely by
+        this pass since it was written - the password lives in self.cfg
+        (config.json), not per-user in self.users like the others, so it
+        needs its own separate encrypt-and-save step."""
+        smtp_pw = self.cfg.get("smtp", {}).get("password", "")
+        if smtp_pw:
+            enc = encrypt_secret(smtp_pw)
+            if enc != smtp_pw:
+                self.cfg["smtp"]["password"] = enc
+                save_json(CFG_F, self.cfg)
+                print("[secrets] encrypted SMTP password in config.json", flush=True)
         changed = False
         for u in self.users:
             cl = u.get("cloudlog")
@@ -1505,7 +1564,7 @@ class App:
         msg.set_content(body)
         host = smtp_cfg["host"]; port = int(smtp_cfg.get("port", 587))
         use_tls = smtp_cfg.get("use_tls", True)
-        user = smtp_cfg["user"]; password = smtp_cfg["password"]
+        user = smtp_cfg["user"]; password = decrypt_secret(smtp_cfg["password"])
         def _send():
             if use_tls:
                 with smtplib.SMTP(host, port, timeout=15) as s:
@@ -1553,7 +1612,7 @@ class App:
         port     = int(smtp_cfg.get("port", 587))
         use_tls  = smtp_cfg.get("use_tls", True)
         user     = smtp_cfg["user"]
-        password = smtp_cfg["password"]
+        password = decrypt_secret(smtp_cfg["password"])
 
         def _send():
             if use_tls:
@@ -2624,7 +2683,7 @@ class App:
                 "use_tls": bool(body.get("use_tls", smtp.get("use_tls", True))),
             })
             if body.get("password"):  # Only overwrite the password if a new one was given
-                smtp["password"] = body["password"]
+                smtp["password"] = encrypt_secret(body["password"])
             save_json(CFG_F, self.cfg)
             return 200, {"ok": True}
 
@@ -2649,6 +2708,7 @@ class App:
                 "current": SERVER_VERSION,
                 "repo_configured": bool(GITHUB_REPO),
                 "update": getattr(self, "_update_info", None),
+                "email_diag": getattr(self, "_update_email_diag", None),
             }
 
         if p == "/api/update/config" and method == "POST":
@@ -2672,7 +2732,8 @@ class App:
                 return 200, {"ok": False, "error": "GITHUB_REPO nie skonfigurowany"}
             await self._run_update_check()
             return 200, {"ok": True, "current": SERVER_VERSION,
-                         "update": getattr(self, "_update_info", None)}
+                         "update": getattr(self, "_update_info", None),
+                         "email_diag": getattr(self, "_update_email_diag", None)}
 
         if p == "/api/config" and method == "GET":
             return 200, {"callsign": CALLSIGN, "locator": LOCATOR, "port": PORT,
@@ -4406,10 +4467,8 @@ class App:
             await ws.send_str(json.dumps({
                 "type": "auto_seq_status",
                 "enabled": self._auto_seq_enabled,
-                "call1st": self._auto_call_1st,
                 "state": self._qso_engine.state,
                 "partner": self._qso_engine.partner_call,
-                "queue": list(self._qso_engine.queue),
             }))
             await ws.send_str(json.dumps({
                 "type": "ft8_fake_split_status",
@@ -5951,21 +6010,20 @@ class App:
                 # Also abort any in-flight TX sequencer
                 if self._ft8_tx_lock.locked():
                     self._ft8_tx_abort = True
-                # CRITICAL (Call 1st): set the OPERATOR's callsign in the
-                # engine BEFORE calling CQ. The engine starts with
+                # CRITICAL: set the OPERATOR's callsign in the engine
+                # BEFORE calling CQ. The engine starts with
                 # my_call=CALLSIGN from the config (a placeholder XX0XXX /
                 # club callsign); the operator's callsign used to be set
                 # ONLY when clicking a station (ft8_start_auto_qso).
                 # Without this, replies to our CQ ("XX0XXX XXX ...") were
                 # rejected in on_decode as "not for us" (call_to !=
-                # my_call) -> the automation was DEAF to callers despite
-                # Call 1st being enabled.
+                # my_call) -> the automation was DEAF to callers.
                 _ui = self.online_users.get(ws, {})
                 _ucall = (_ui.get("callsign") or "").strip().upper() or \
                          (call_de or "").upper()
                 _uuid = _ui.get("user_id")
                 if _uuid:
-                    self._autoqso_uid = _uuid  # for auto-saving a QSO from the queue
+                    self._autoqso_uid = _uuid  # for auto-saving the QSO on completion
                 if _ucall:
                     _uobj = self.find_user_by_id(_uuid) or {}
                     _ugrid = (_uobj.get("locator") or LOCATOR).strip().upper()[:4]
@@ -6031,11 +6089,8 @@ class App:
             # state (e.g. mid-conversation with a partner) and on the NEXT
             # decode from that station (or its own retransmit from the
             # timer) would schedule a NEW transmission on its own —
-            # symptom: "I hit HALT and cleared the queue, and the
-            # automation still pushes out a transmission from memory after
-            # a while". The queue is DELIBERATELY left untouched (there's a
-            # separate "clear queue" button for that) — HALT is meant to
-            # stop the current action, not wipe the list of waiting stations.
+            # symptom: "I hit HALT and the automation still pushes out a
+            # transmission from memory after a while".
             if self._qso_engine.is_active():
                 print(f"[autoqso] HALT: aborting QSO with {self._qso_engine.partner_call}")
                 self._qso_engine.abort_qso()
@@ -6287,48 +6342,17 @@ class App:
             self._auto_seq_enabled = True
             await self.hub.broadcast({"type": "auto_seq_status",
                                        "enabled": True,
-                                       "call1st": self._auto_call_1st,
                                        "state": self._qso_engine.state,
-                                       "partner": self._qso_engine.partner_call,
-                                       "queue": list(self._qso_engine.queue)})
-
-        elif t == "ft8_toggle_call_1st":
-            # Gate: Call 1st ON lets the automation independently ANSWER
-            # every heard CQ and TRANSMIT without a further operator
-            # action (see _process_auto_qso -> 'enqueue' -> start_qso ->
-            # _send_auto_tx). _ft8_tx_sequence_inner only checks radio_lock
-            # if _autoqso_uid was ALREADY set (a safety net for the radio
-            # being taken over WHILE the automation runs) - without this
-            # check here, any logged-in viewer (who by definition can only
-            # WATCH, see _can_control_radio) could enable Call 1st without
-            # holding the lock and trigger a real PTT/TX on the first
-            # matching decode, even when NO ONE holds the radio.
-            can, why = self._can_control_radio(ws, role)
-            if not can:
-                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
-                return
-            self._auto_call_1st = bool(msg.get("enabled", not self._auto_call_1st))
-            print(f"[autoqso] Call 1st {'ENABLED' if self._auto_call_1st else 'disabled'}")
-            # Clicking this checkbox is an operator action - it counts as
-            # proof of presence on its own (similar to a manual decode
-            # click/TX macro in the frontend), regardless of which
-            # direction it toggles.
-            self._ft8_operator_present = True
-            await self.hub.broadcast({"type": "auto_seq_status",
-                                       "enabled": self._auto_seq_enabled,
-                                       "call1st": self._auto_call_1st,
-                                       "state": self._qso_engine.state,
-                                       "partner": self._qso_engine.partner_call,
-                                       "queue": list(self._qso_engine.queue)})
+                                       "partner": self._qso_engine.partner_call})
 
         elif t == "ft8_timer_expired":
             # The FT8 safety timer (WSJT-X's "Tx Watchdog") expired on the
             # frontend (FT8Timer._stopTX() in wsjtx.js) - the frontend
             # already called WSJTX.haltTx() (aborts the CURRENT
             # transmission), but without THIS flag the automation would
-            # catch the next caller again in a moment despite Call 1st
-            # being on, which made the whole timer useless (it was
-            # supposed to guard the max transmit time, but only aborted at
+            # catch the next caller again in a moment, which made the
+            # whole timer useless (it was supposed to guard the max
+            # transmit time, but only aborted at
             # most one send). _process_auto_qso checks this flag right at
             # the start and ignores everything until ft8_timer_confirm arrives.
             self._ft8_operator_present = False
@@ -6377,12 +6401,11 @@ class App:
             if self._ft8_tx_lock.locked():
                 self._ft8_tx_abort = True
             # Unlock the period — otherwise _send_auto_tx inherits the
-            # period frozen by the PREVIOUS station (see the comment at
-            # _qso_period_locked=False in _advance_auto_qso_queue) and
-            # never switches to the right one for THIS freshly picked
-            # station. Every OTHER path that ends a QSO (auto-complete,
-            # give-up, manual abort, queue advance) already did this — this
-            # manual start was missing it, despite being the most common operator path.
+            # period frozen by the PREVIOUS station and never switches to
+            # the right one for THIS freshly picked station. Every OTHER
+            # path that ends a QSO (auto-complete, give-up, manual abort)
+            # already did this — this manual start was missing it, despite
+            # being the most common operator path.
             self._qso_period_locked = False
             # If the frontend passed the decoded TEXT (the station is
             # answering us), parse it and pass it as initial_decode - then
@@ -6422,27 +6445,11 @@ class App:
                     self._qso_engine.next_tx_action(), partner_decode=_partner_decode,
                     tx_seq=self._reserve_tx_seq()))
 
-        elif t == "ft8_queue_remove":
-            # Remove a station from the "Call 1st" queue (the ✕ button on the chip in the UI).
-            _qcall = (msg.get("call") or "").strip().upper()
-            if _qcall and self._qso_engine.remove_from_queue(_qcall):
-                print(f"[autoqso] Removed {_qcall} from the queue (manual ✕)")
-                await self.hub.broadcast({"type": "auto_qso_queue",
-                                           "queue": list(self._qso_engine.queue)})
-
-        elif t == "ft8_queue_clear":
-            # Empty the whole "Call 1st" queue (the "clear" button in the UI).
-            _n = len(self._qso_engine.queue)
-            self._qso_engine.clear_queue()
-            print(f"[autoqso] Cleared the queue ({_n} stations)")
-            await self.hub.broadcast({"type": "auto_qso_queue",
-                                       "queue": list(self._qso_engine.queue)})
-
         elif t == "ft8_abort_auto_qso":
             # Manual "skip" — the operator doesn't want to wait for the
             # automatic retransmit-limit exhaustion (should_give_up in
             # qso_engine.py), just drops the current station immediately
-            # and moves on to the next one in the Call 1st queue.
+            # and goes back to answering whoever calls next (no queue).
             print(f"[autoqso] Manual abort of the QSO with {self._qso_engine.partner_call}")
             self._qso_engine.abort_qso()
             self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
@@ -6457,7 +6464,6 @@ class App:
             await self.hub.broadcast({"type": "auto_qso_status",
                                        "state": self._qso_engine.state,
                                        "partner": None})
-            await self._advance_auto_qso_queue()
 
         elif t == "ft8_set_tx_period":
             can, why = self._can_control_radio(ws, role)
@@ -6792,7 +6798,7 @@ class App:
         PTT OFF. Run as a separate task (asyncio.create_task), doesn't block the WS loop.
         """
         # Radio lock, a safety net for automation ALREADY IN PROGRESS
-        # (retransmits, QSO continuation, the Call 1st queue) - these calls
+        # (retransmits, QSO continuation) - these calls
         # don't have a single WS "sender" to check, so we compare against
         # the remembered _autoqso_uid (the operator who actually started
         # this QSO/CQ - see "ft8_tx"/"ft8_start_auto_qso" above, where the
@@ -6895,7 +6901,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-26-QSO-73-LOOP-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-26-SMTP-ENCRYPT-EMAIL-LANG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7215,63 +7221,35 @@ class App:
         own_call comes from radio_lock (whoever currently holds the
         radio), NOT self._qso_engine.my_call - that engine is the
         AUTOMATION state machine, and my_call is only ever set from the
-        two places that arm Call 1st / Auto-Sequencing (see the comments
-        at those two assignment sites). A fully manual QSO (macros sent by
-        hand, automation never engaged this session) never touches
-        my_call at all, so it would stay at its startup placeholder
-        forever - meaning AP's highest-value hypothesis ("addressed to MY
-        call") would either never fire or fire against the WRONG
-        callsign. radio_lock["callsign"] is set the moment ANYONE claims
-        the radio (PRZEJMIJ TRX), independent of automation, so AP helps
-        manual QSOs too, not just Call 1st/Auto-Sequencing. partner_call
-        still comes from the QSO engine, since a fully manual QSO has no
-        tracked "partner" concept there at all - the own-call hypothesis
-        (the main value) still applies regardless."""
+        two places that arm auto-answer/CQ (see the comments at those two
+        assignment sites). A fully manual QSO (macros sent by hand,
+        automation never engaged this session) never touches my_call at
+        all, so it would stay at its startup placeholder forever - meaning
+        AP's highest-value hypothesis ("addressed to MY call") would
+        either never fire or fire against the WRONG callsign.
+        radio_lock["callsign"] is set the moment ANYONE claims the radio
+        (PRZEJMIJ TRX), independent of automation, so AP helps manual QSOs
+        too, not just the automated ones. partner_call still comes from
+        the QSO engine, since a fully manual QSO has no tracked "partner"
+        concept there at all - the own-call hypothesis (the main value)
+        still applies regardless."""
         if not self.rust_audio:
             return
         own_call = self.radio_lock.get("callsign") or ""
         if not own_call:
             return  # nobody holds the radio - no QSO in progress, nothing for AP to help with
         try:
+            # queue-based AP hints are deferred on the Rust side anyway
+            # (#[allow(dead_code)] in ap.rs, build_hypotheses doesn't use
+            # them) - and the engine no longer HAS a queue (removed
+            # 2026-08-26), so always pass an empty list here.
             await self.rust_audio.set_ap_hints(
                 own_call,
                 self._qso_engine.partner_call,
-                list(self._qso_engine.queue),
+                [],
             )
         except Exception as e:
             print(f"[ap] hint sync error: {e}", flush=True)
-
-    async def _advance_auto_qso_queue(self):
-        """After a QSO ends or is abandoned: if Call 1st is enabled and
-        the queue isn't empty, starts a QSO with the next station. The
-        caller MUST first put the engine back in IDLE (abort_qso())."""
-        if self._auto_call_1st and self._qso_engine.queue:
-            next_call, next_recv_epoch = self._qso_engine.pop_next_from_queue()
-            print(f"[autoqso] Next station from queue: {next_call}")
-            # NOTE: no initial_decode here (this station replied earlier,
-            # not in the same cycle) — start normally from our Tx1 (grid),
-            # since we don't know whether its earlier message is still
-            # current (it may have changed frequency/disappeared).
-            self._qso_engine.start_qso(next_call)
-            await self.hub.broadcast({"type": "auto_qso_status",
-                                       "state": self._qso_engine.state,
-                                       "partner": next_call})
-            # WITHOUT this, _send_auto_tx inherited self._ft8_tx_period left
-            # over from the PREVIOUS QSO instead of computing the right one
-            # for THIS station — if the parities didn't match, we
-            # transmitted in the partner's window (collision, no reply) on
-            # random every-other auto-advance from the Call 1st queue.
-            # next_recv_epoch is the receive time of the decode that added
-            # this station to the queue (see enqueue_caller/
-            # _period_from_epoch) — can be None if the station entered the
-            # queue before this fix (server restart), in which case
-            # _send_auto_tx safely leaves the period unchanged.
-            self._qso_period_locked = False
-            _partner_decode = ({"recvEpoch": next_recv_epoch}
-                                if next_recv_epoch is not None else None)
-            asyncio.create_task(self._send_auto_tx(self._qso_engine.next_tx_action(),
-                                                    partner_decode=_partner_decode,
-                                                    tx_seq=self._reserve_tx_seq()))
 
     async def _check_retry_or_giveup(self):
         """Bounded retry/give-up timer for 'no reply this period'.
@@ -7296,7 +7274,8 @@ class App:
                 self._autoqso_tx_seq += 1  # see comment at REST /api/ft8/halt
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": "IDLE", "partner": None})
-                await self._advance_auto_qso_queue()
+                # No queue (removed 2026-08-26) - we're just free now and
+                # will answer whoever calls next.
             elif self._last_auto_tx_action:
                 self._qso_engine.note_retry()
                 # FIX (2026-08-25): record_tx_sent() here too, SYNCHRONOUSLY,
@@ -7335,14 +7314,14 @@ class App:
              substitute the real measured SNR (m['snr_db']) as report_or_grid.
           4. Schedule the send (asyncio.create_task on _ft8_tx_sequence) —
              the same, proven path as manual TX (waits for the 15s window).
-          5. If the action is 'enqueue' and we're IDLE and auto_call_1st is
-             enabled -> immediately start_qso with this station (passing
-             parsed as initial_decode, to correctly skip our own Tx1 when
-             the partner already sent grid/report together with the reply).
+          5. If the action is 'new_caller' (someone answered our CQ while
+             we were IDLE) -> immediately start_qso with this station
+             (passing parsed as initial_decode, to correctly skip our own
+             Tx1 when the partner already sent grid/report together with
+             the reply). No queue: a caller while we're busy is ignored.
           6. If qso_complete=True in the action -> schedule logging the QSO
              AFTER sending our final message (not before — the partner
-             needs to get the confirmation), and check the queue for the
-             next station.
+             needs to get the confirmation), then go back to IDLE.
         """
         try:
             # isDxpedition (type 0.1, see unpack_type0_1 in unpack.rs): a Fox
@@ -7406,17 +7385,8 @@ class App:
             if not self._ft8_operator_present:
                 return
 
-            result = self._qso_engine.on_decode(parsed, recv_epoch=m.get("recvEpoch"))
+            result = self._qso_engine.on_decode(parsed)
             if result is None:
-                # UI visibility: on_decode() may have silently added the
-                # station to the Call 1st queue (because we're in another
-                # QSO, so it returned None instead of an 'enqueue' action)
-                # — without this broadcast the operator wouldn't see that
-                # anything happened until the current QSO ended.
-                if parsed.get('call_to') == self._qso_engine.my_call:
-                    await self.hub.broadcast({"type": "auto_qso_queue",
-                                               "queue": list(self._qso_engine.queue),
-                                               "active": self._qso_engine.partner_call})
                 # Real WSJT-X/JTDX resend whatever message matches the
                 # current QSO state on EVERY TX period (process_Auto /
                 # genStdMsgs in mainwindow.cpp) - if the partner hasn't
@@ -7429,37 +7399,30 @@ class App:
                 # sent message and only gives up after a bounded retry
                 # count - JTDX has the same optional feature (default
                 # off, 3-5 tries when enabled); ours is always on because
-                # Call 1st runs unattended and must free up for the next
-                # queued station.
+                # the automation runs unattended and must free up for the
+                # next caller.
                 await self._check_retry_or_giveup()
                 return
 
-            if result.get("action") == "enqueue":
+            if result.get("action") == "new_caller":
                 call_de = result["call_de"]
-                # Someone replied to our CQ - stop the periodic CQ calling
-                # (we're moving into a QSO with this station).
+                # Someone replied to our CQ while we were free (IDLE) -
+                # stop the periodic CQ calling (we're moving into a QSO
+                # with this station) and answer immediately. No queue
+                # (removed 2026-08-26): we're always IDLE here by
+                # construction (the engine only returns 'new_caller' from
+                # ST_IDLE - see on_decode), so start_qso always applies.
                 if self._cq_calling:
                     print(f"[cq] {call_de} replied to CQ - stopping CQ, starting QSO")
                     self._stop_cq_calling()
-                # NOTE: auto-start when IDLE always applies, regardless of
-                # Call 1st. Call 1st ONLY controls whether, after one QSO
-                # ends, the automation moves on by itself to the NEXT
-                # station in the queue (_advance_auto_qso_queue) - that's
-                # an ORDERING decision for multiple simultaneous callers. A
-                # direct call while we're completely idle isn't an
-                # ordering decision at all (there's only one station), so
-                # it shouldn't depend on that setting. Previously: Call 1st
-                # disabled + a call while idle = total silence, reported
-                # live as "the automation doesn't respond".
-                if not self._qso_engine.is_active():
-                    print(f"[autoqso] Auto-starting QSO with {call_de} (idle)")
-                    start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
-                    if start_result and start_result.get("action") == "reply":
-                        await self._dispatch_auto_reply(start_result, m,
-                                                         tx_seq=self._reserve_tx_seq())
-                await self.hub.broadcast({"type": "auto_qso_queue",
-                                           "queue": list(self._qso_engine.queue),
-                                           "active": self._qso_engine.partner_call})
+                print(f"[autoqso] Auto-starting QSO with {call_de} (idle)")
+                start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
+                if start_result and start_result.get("action") == "reply":
+                    await self._dispatch_auto_reply(start_result, m,
+                                                     tx_seq=self._reserve_tx_seq())
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": self._qso_engine.state,
+                                           "partner": self._qso_engine.partner_call})
                 return
 
             if result.get("action") == "partner_busy":
@@ -7472,7 +7435,7 @@ class App:
                 # MSHV multistream station, which legitimately interleaves
                 # replies to several callers within the same pileup and
                 # comes back to us a few periods later. Instantly
-                # abandoning made Call 1st give up on real DXpeditions
+                # abandoning made the automation give up on real DXpeditions
                 # after the very first sighting of them answering someone
                 # else, forcing the operator to work the whole QSO by
                 # hand. Now routed through the SAME bounded retry/give-up
@@ -7513,7 +7476,38 @@ class App:
                     # unattended used to get skipped and QSOs were lost).
                     try:
                         from datetime import datetime as _dtx, timezone as _tzx
-                        _now = _dtx.now(_tzx.utc)
+                        # FIX (2026-08-26, reported: correspondents' logged
+                        # times differ from ours by up to several minutes):
+                        # this used to log qso_date/time_on as the moment
+                        # the QSO COMPLETED (right after sending our final
+                        # 73), not when it STARTED. A QSO takes several
+                        # exchange cycles (SNR report -> R+report -> RRR ->
+                        # 73), so completion time can trail the true start
+                        # by minutes on a slow/QSB'd exchange - exactly the
+                        # gap reported. WSJT-X/JTDX freeze TIME_ON near the
+                        # start of the exchange instead (when the first
+                        # report message is sent, per WSJT-X dev
+                        # discussion: "received grid messages and reports
+                        # will set start time... if start time is not
+                        # already set"). Use the engine's own started_at
+                        # (set in start_qso(), the moment we began this
+                        # exchange) to match that convention.
+                        _start_epoch = self._qso_engine.started_at or _dtx.now(_tzx.utc).timestamp()
+                        _start_dt = _dtx.fromtimestamp(_start_epoch, _tzx.utc)
+                        # time_off: the actual completion moment (right
+                        # after sending our final 73) - distinct from
+                        # time_on on purpose, per ADIF (TIME_ON/TIME_OFF
+                        # are separate fields) and WSJT-X's own Log QSO
+                        # window (separate start/end date-time). Previously
+                        # this wasn't passed at all, so qso_db.add_qso()
+                        # silently defaulted it to time_on - not a
+                        # deliberate "we don't need it", just an oversight.
+                        # (qso_db has no separate qso_date_off column, so a
+                        # QSO that happened to straddle UTC midnight would
+                        # log an end time earlier than the start time -
+                        # accepted: FT8/FT4 exchanges take seconds to a few
+                        # minutes, this can't realistically happen.)
+                        _end_dt = _dtx.now(_tzx.utc)
                         _uid = getattr(self, "_autoqso_uid", None)
                         _freq_hz = int(getattr(self.rig, "freq", 0) or 0)
                         _band = self._get_band_for_freq(_freq_hz) or ""
@@ -7525,8 +7519,9 @@ class App:
                         if _uid:
                             _saved = qso_db.add_qso(_uid, {
                                 "call": self._qso_engine.partner_call,
-                                "qso_date": _now.strftime("%Y%m%d"),
-                                "time_on": _now.strftime("%H%M%S"),
+                                "qso_date": _start_dt.strftime("%Y%m%d"),
+                                "time_on": _start_dt.strftime("%H%M%S"),
+                                "time_off": _end_dt.strftime("%H%M%S"),
                                 "band": _band,
                                 "mode": self._ft8_decode_mode,
                                 "freq": f"{_freq_hz/1e6:.6f}" if _freq_hz else "",
@@ -7546,8 +7541,8 @@ class App:
                             # (POST /api/qsolog, ~line 3864) has always done
                             # this, but this auto-save path (the automation
                             # writing the QSO itself on "73") never did —
-                            # QSOs made via Call 1st / auto-answer never
-                            # reached CloudLog, only ones added by hand.
+                            # QSOs made via auto-answer never reached
+                            # CloudLog, only ones added by hand.
                             asyncio.ensure_future(self._cloudlog_push_qso(_uid, _saved))
                         else:
                             print("[autoqso] WARNING: no operator uid - "
@@ -7563,11 +7558,10 @@ class App:
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": "DONE",
                                                "partner": self._qso_engine.partner_call})
-                    # Let the UI/logging react (e.g. auto-log to the
-                    # journal) before we possibly pick up the next station from the queue.
                     self._qso_engine.abort_qso()  # back to IDLE, partner_call=None
                     self._qso_period_locked = False  # unlock the period for the next QSO
-                    await self._advance_auto_qso_queue()
+                    # No queue (removed 2026-08-26) - we're free again and
+                    # will answer whoever calls next.
                 else:
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,
@@ -7585,8 +7579,28 @@ class App:
         where another task could slip in if the number were reserved only here)."""
         if result.get("needs_measured_report"):
             result = dict(result)  # nie mutuj oryginalnego dict z silnika
-            result["report_or_grid"] = self._format_report(m.get("snr_db", m.get("snr", 0)))
-            self._qso_engine.record_sent_report(result["report_or_grid"])
+            # FIX (reported live 2026-08-26): reuse the ALREADY FROZEN
+            # report if one exists for this QSO, instead of recomputing
+            # from the current decode's SNR every time. needs_measured_report
+            # fires again whenever the partner repeats their grid/report
+            # (they didn't hear our first reply) - qso_engine.py's own
+            # comment at the "repeated call" branch already documents the
+            # intended behavior ("report is already frozen, webapp will
+            # supply the same value - consistently"), but this call site
+            # never actually implemented that: it always overwrote
+            # partner_report_sent with a fresh _format_report(current SNR).
+            # Symptom: on a retry where the partner's SNR reading drifted
+            # between the first and second raw-report exchange, the SECOND
+            # (different) value got both transmitted and logged, while the
+            # partner may have already completed the QSO based on the
+            # FIRST value they actually received - our log then disagreed
+            # with what we actually sent them the first time.
+            _frozen = self._qso_engine.partner_report_sent
+            if _frozen:
+                result["report_or_grid"] = _frozen
+            else:
+                result["report_or_grid"] = self._format_report(m.get("snr_db", m.get("snr", 0)))
+                self._qso_engine.record_sent_report(result["report_or_grid"])
         # Broadcast the currently frozen reports (single source of truth for
         # every caller of this method) so clients update their macro-3
         # preview and log fields to the value actually being transmitted.
@@ -7827,7 +7841,7 @@ class App:
                               f"n_results={msg.get('n_results', 0)}", flush=True)
                     # Refresh AP (a priori) decode hints once per COMPLETED
                     # window (not per-mutation-site - the QSO engine has
-                    # ~15 call sites that touch partner_call/queue, scattering
+                    # ~15 call sites that touch partner_call, scattering
                     # a sync call across all of them is fragile and easy to
                     # miss one; hints only need to be fresh by the START of
                     # the NEXT decode cycle anyway, and this fires exactly
