@@ -223,6 +223,45 @@ def test_no_extending_after_done():
     check(act is None, "Echo RRR po DONE -> cisza")
 
 
+def test_no_loop_after_abort_on_partner_echo():
+    section("Regresja: brak petli 73<->73 po abort_qso() (zgloszenie live 2026-08-26)")
+    # Odtwarza DOKLADNIE sciezke webapp.py: po qso_complete=True webapp.py
+    # woła engine.abort_qso() natychmiast (zeby zwolnic partner_call/queue
+    # dla nastepnej stacji), ZANIM ewentualne echo 73 od korespondenta
+    # (typowe na FT8 - stacja grzecznie powtarza 73) zdazy dotrzec. Bez
+    # poprawki: skoro partner_call=None po abort_qso(), silnik traktowal
+    # to echo jak NOWA stacja wolajaca -> start_qso -> odpowiadal WLASNYM
+    # 73 -> qso_complete=True ZNOWU -> webapp.py loguje duplikat i znow
+    # abort_qso() -> petla bez konca na kazdym kolejnym "73" korespondenta.
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("SP9XYZ", parse_message("CQ SP9XYZ JO90"))
+    _dispatch(eng, "SQ3MZM SP9XYZ -12", snr=-8)
+    act, _ = _dispatch(eng, "SQ3MZM SP9XYZ RR73", snr=-8)  # -> DONE, my 73
+    check(act is not None and act.get("qso_complete"), "RR73 -> nasze 73, qso_complete")
+
+    # webapp.py: QSO zalogowane, natychmiastowy abort_qso() (jak w _process_auto_qso)
+    eng.abort_qso()
+    check(eng.state == ST_IDLE, "Po abort_qso(): IDLE")
+    check(eng.partner_call is None, "Po abort_qso(): brak partnera")
+
+    # Korespondent grzecznie powtarza 73 (echo, nie nowe wolanie) - dociera
+    # PO abort_qso(), zanim jakakolwiek nowa stacja zdazyla sie zglosic.
+    result = eng.on_decode(parse_message("SQ3MZM SP9XYZ 73"))
+    check(result is None, "Echo 73 po abort_qso() -> cisza (NIE nowe QSO)")
+    check(eng.state == ST_IDLE, "Stan pozostaje IDLE (nie CALLING/DONE)")
+    check(eng.partner_call is None, "Partner nadal None (nie wystartowalo nowe QSO)")
+
+    # To samo dla RR73 i RRR jako "echo po abort" - zaden nie powinien
+    # startowac nowego QSO ani trafiac do kolejki Call 1st.
+    result = eng.on_decode(parse_message("SQ3MZM SP9XYZ RR73"))
+    check(result is None, "Echo RR73 po abort_qso() -> cisza")
+    check(eng.queue == [], "RR73 po abort nie trafia do kolejki Call 1st")
+
+    result = eng.on_decode(parse_message("SQ3MZM SP9XYZ RRR"))
+    check(result is None, "Echo RRR po abort_qso() -> cisza")
+    check(eng.queue == [], "RRR po abort nie trafia do kolejki Call 1st")
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # 5. REGRESJA: powtorka wolania partnera (naprawa sesji)
 # ════════════════════════════════════════════════════════════════════════════
@@ -600,6 +639,7 @@ def main():
     test_full_qso_we_answer()
     test_full_qso_we_cq()
     test_no_extending_after_done()
+    test_no_loop_after_abort_on_partner_echo()
     test_repeated_call()
     test_frozen_report()
     test_partner_report_last_value()

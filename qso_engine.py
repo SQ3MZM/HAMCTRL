@@ -584,6 +584,26 @@ class QsoEngine:
         de_base = parsed.get('de_base') or base_call(call_de) if call_de else None
         partner_base = base_call(self.partner_call) if self.partner_call else None
         if de_base != partner_base:
+            # FIX (reported live 2026-08-26): 73/RR73/RRR are QSO-ENDING
+            # confirmations, never a valid QSO-starting message — ignore
+            # them here instead of enqueueing/auto-starting. Without this,
+            # the following loop was possible: partner sends RR73 -> we
+            # reply 73, qso_complete=True -> webapp.py logs the QSO and
+            # calls abort_qso() (state->IDLE, partner_call=None) ->
+            # partner's own echoed "73" (a common FT8 courtesy repeat)
+            # arrives a moment later -> since partner_call is now None,
+            # de_base != partner_base is trivially true, so this branch
+            # treated it as "a NEW station calling us" -> webapp.py called
+            # start_qso(call_de, initial_decode=<the 73>) -> on_decode()
+            # saw is_73 in the freshly-set state CALLING (not DONE) ->
+            # replied with OUR OWN 73 again, qso_complete=True AGAIN ->
+            # webapp.py logged a duplicate QSO and abort_qso()'d again ->
+            # repeat forever on every one of the partner's closing "73"s.
+            # A bare 73/RR73/RRR can only ever be a reply WITHIN an
+            # already-active exchange (handled further below, matched by
+            # de_base == partner_base) — never a fresh opener.
+            if parsed['is_73'] or parsed['is_rr73'] or parsed['is_rrr']:
+                return None
             # Always actually add to the queue (not just signal it) — so
             # that even if webapp.py ignores the returned 'enqueue' and
             # doesn't immediately fire start_qso, the station still isn't
