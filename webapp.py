@@ -6901,7 +6901,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-26-SMTP-ENCRYPT-EMAIL-LANG, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-08-26-QSO-TIMEON-FIRST-CONTACT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7480,19 +7480,33 @@ class App:
                         # times differ from ours by up to several minutes):
                         # this used to log qso_date/time_on as the moment
                         # the QSO COMPLETED (right after sending our final
-                        # 73), not when it STARTED. A QSO takes several
-                        # exchange cycles (SNR report -> R+report -> RRR ->
-                        # 73), so completion time can trail the true start
-                        # by minutes on a slow/QSB'd exchange - exactly the
-                        # gap reported. WSJT-X/JTDX freeze TIME_ON near the
-                        # start of the exchange instead (when the first
-                        # report message is sent, per WSJT-X dev
-                        # discussion: "received grid messages and reports
-                        # will set start time... if start time is not
-                        # already set"). Use the engine's own started_at
-                        # (set in start_qso(), the moment we began this
-                        # exchange) to match that convention.
-                        _start_epoch = self._qso_engine.started_at or _dtx.now(_tzx.utc).timestamp()
+                        # 73), not when it STARTED. WSJT-X/JTDX freeze
+                        # TIME_ON near the start of the exchange instead
+                        # (per WSJT-X dev discussion: "received grid
+                        # messages and reports will set start time... if
+                        # start time is not already set" - i.e. at Tx2/Tx3,
+                        # the first REAL two-way exchange, not the first
+                        # call attempt).
+                        #
+                        # FOLLOW-UP FIX (reported live 2026-08-26: "wolalem
+                        # RI1FJL cale QSO trwa 5min? tyle ile wolalem"):
+                        # the first version of this fix used
+                        # self._qso_engine.started_at, which is set the
+                        # moment WE start CALLING a station (start_qso()) -
+                        # on a busy/weak station that takes several retries
+                        # to even hear us, that's several minutes BEFORE any
+                        # real contact, and got logged as the QSO's start.
+                        # first_contact_at is set instead the first time the
+                        # PARTNER actually responds (see on_decode()) -
+                        # matches WSJT-X's Tx2/Tx3 anchor, not our own
+                        # possibly-long calling/retry period. Falls back to
+                        # started_at (e.g. a QSO ended before any reply ever
+                        # arrived - shouldn't normally reach this qso_complete
+                        # branch at all, but stay defensive) and finally to
+                        # "now" if even that's missing.
+                        _start_epoch = (self._qso_engine.first_contact_at or
+                                         self._qso_engine.started_at or
+                                         _dtx.now(_tzx.utc).timestamp())
                         _start_dt = _dtx.fromtimestamp(_start_epoch, _tzx.utc)
                         # time_off: the actual completion moment (right
                         # after sending our final 73) - distinct from

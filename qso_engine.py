@@ -378,6 +378,17 @@ class QsoEngine:
         self.partner_report_sent = None   # report WE sent to the partner
         self.partner_report_recv = None   # report WE received from the partner
         self.started_at = None
+        # First moment the PARTNER actually responded to us in this QSO
+        # (not when WE started calling them) - see on_decode(), the
+        # "message FROM THE CURRENT QSO PARTNER" branch. Used by webapp.py
+        # for QSO log time_on, matching WSJT-X/JTDX (freezes TIME_ON at
+        # Tx2/Tx3 - the first real exchange - not at the first CQ answer).
+        # FIX (reported live 2026-08-26: "wolalem RI1FJL cale QSO trwa
+        # 5min? tyle ile wolalem" - logged duration included several
+        # minutes of us calling before the partner ever heard us, because
+        # started_at was used instead, anchored to the very first call
+        # attempt/retry).
+        self.first_contact_at = None
         self.last_activity_at = None
         self.last_tx_at = None    # when we LAST sent anything in this QSO
         self.retry_count = 0      # how many times we repeated the last message with no reply
@@ -421,6 +432,7 @@ class QsoEngine:
         self.partner_report_sent = None
         self.partner_report_recv = None
         self.started_at = time.time()
+        self.first_contact_at = None
         self.last_activity_at = self.started_at
         self.last_tx_at = None
         self.retry_count = 0
@@ -436,6 +448,7 @@ class QsoEngine:
         self.partner_grid = None
         self.partner_report_sent = None
         self.partner_report_recv = None
+        self.first_contact_at = None
         self.last_tx_at = None
         self.retry_count = 0
 
@@ -547,6 +560,11 @@ class QsoEngine:
         # counter (see note_retry/should_give_up) — the next silence from
         # them gets a fresh full set of attempts.
         self.last_activity_at = time.time()
+        if self.first_contact_at is None:
+            # The FIRST time the partner actually responds in this QSO -
+            # see the field's docstring in __init__ for why this (not
+            # started_at) is what gets logged as time_on.
+            self.first_contact_at = self.last_activity_at
         self.retry_count = 0
 
         if parsed['is_73']:

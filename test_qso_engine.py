@@ -362,6 +362,60 @@ def test_no_queue_busy_caller_ignored():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# 8b. first_contact_at: logowany czas QSO to PIERWSZA odpowiedz partnera,
+#     nie moment kiedy MY zaczelismy go wolac (naprawa live 2026-08-26:
+#     "wolalem RI1FJL cale QSO trwa 5min? tyle ile wolalem")
+# ════════════════════════════════════════════════════════════════════════════
+def test_first_contact_at_not_calling_start():
+    section("first_contact_at = pierwsza odpowiedz partnera, nie poczatek wolania")
+    import time as _time
+
+    # Scenariusz A: MY wolamy (klik na CQ), partner odpowiada DOPIERO PO
+    # KILKU probach (retransmisjach) - typowe przy slabym sygnale/pileupie.
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("RI1FJL")  # bez initial_decode -> stan CALLING, Tx1 do wyslania
+    check(eng.state == ST_CALLING, "Po start_qso bez initial_decode: CALLING")
+    check(eng.first_contact_at is None,
+          "Zanim partner odpowie: first_contact_at = None (jeszcze nie wiadomo)")
+    check(eng.started_at is not None, "started_at ustawiony od razu (kiedy MY zaczelismy wolac)")
+
+    _time.sleep(0.05)  # symuluje kilka okresow retransmisji bez odpowiedzi
+    _calling_duration_before_reply = _time.time() - eng.started_at
+
+    # Partner W KONCU odpowiada (dopiero teraz, po "kilku minutach" wolania)
+    act, _ = _dispatch(eng, "SQ3MZM RI1FJL JO40", snr=-10)
+    check(act is not None, "Partner odpowiedzial gridem -> akcja")
+    check(eng.first_contact_at is not None, "Po odpowiedzi: first_contact_at ustawiony")
+    check(eng.first_contact_at > eng.started_at,
+          "first_contact_at PO started_at (odpowiedz przyszla PO rozpoczeciu wolania) - "
+          "to jest CEL tej poprawki, nie powinny byc rowne przy realnym opoznieniu")
+    check((eng.first_contact_at - eng.started_at) >= _calling_duration_before_reply * 0.9,
+          "Odstep first_contact_at - started_at odzwierciedla realny czas wolania bez odpowiedzi")
+
+    # first_contact_at NIE zmienia sie na kolejnych wiadomosciach od partnera
+    _first = eng.first_contact_at
+    _dispatch(eng, "SQ3MZM RI1FJL R-05", snr=-10)
+    check(eng.first_contact_at == _first,
+          "first_contact_at zamrozony na PIERWSZYM kontakcie, kolejne wiadomosci go nie zmieniaja")
+
+    # Scenariusz B: partner JUZ odpowiedzial (initial_decode) - first_contact_at
+    # i started_at powinny byc (prawie) rownoczesne, bo nie bylo fazy "samego wolania".
+    eng2 = QsoEngine("SQ3MZM", "JO82")
+    eng2.start_qso("RI1FJL", initial_decode=parse_message("SQ3MZM RI1FJL JO40"))
+    check(eng2.first_contact_at is not None,
+          "start_qso z initial_decode -> first_contact_at ustawiony od razu")
+    check(abs(eng2.first_contact_at - eng2.started_at) < 0.01,
+          "Bez fazy wolania: first_contact_at ~= started_at (ta sama chwila)")
+
+    # Reset miedzy QSO: nowe QSO nie dziedziczy first_contact_at z poprzedniego
+    eng2.abort_qso()
+    check(eng2.first_contact_at is None, "Po abort_qso: first_contact_at wyzerowany")
+    eng2.start_qso("DL1ABC")
+    check(eng2.first_contact_at is None,
+          "Nowe QSO (bez initial_decode): first_contact_at znowu None, nie zostaje ze starego")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # 9. RESET STANU miedzy QSO
 # ════════════════════════════════════════════════════════════════════════════
 def test_reset_between_qso():
@@ -610,6 +664,7 @@ def main():
     test_frozen_report()
     test_partner_report_last_value()
     test_no_queue_busy_caller_ignored()
+    test_first_contact_at_not_calling_start()
     test_reset_between_qso()
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()
