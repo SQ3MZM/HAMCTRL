@@ -380,14 +380,6 @@ async function checkCF() {
   }
 }
 
-async function installCertbot() {
-  window.UI?.showToast(I18n.t('in_toast_installing_certbot'));
-  const h = {'Authorization': `Bearer ${localStorage.getItem('token')||''}`};
-  try {
-    await fetch('/api/tunnel/install-certbot', {method:'POST', headers:h});
-  } catch(e) { window.UI?.showToast('✗ ' + e.message, 'error'); }
-}
-
 async function genCert() {
   await saveTunnelConfig(false);
   window.UI?.showToast(I18n.t('in_toast_generating_cert'));
@@ -411,5 +403,5 @@ async function cleanup() {
   }
 }
 
-window.Tunnel = { load, handleWS, startTunnel, stopTunnel, saveTunnelConfig, checkCF, modeChanged, cleanup, installCertbot, genCert, startAutoRefresh, stopAutoRefresh, copyPublic };
+window.Tunnel = { load, handleWS, startTunnel, stopTunnel, saveTunnelConfig, checkCF, modeChanged, cleanup, genCert, startAutoRefresh, stopAutoRefresh, copyPublic };
 })();

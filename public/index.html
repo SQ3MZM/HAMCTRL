@@ -1936,12 +1936,6 @@
             <span data-i18n="in_your_address_lbl">Twój adres:</span> <span id="tn-duck-preview" style="color:var(--green);">mojradio.duckdns.org</span>
           </div>
           <div style="display:flex;gap:8px;">
-            <button onclick="Tunnel.installCertbot()" data-i18n="in_install_certbot_btn"
-              style="flex:1;font-family:var(--mono);font-size:10px;padding:6px 10px;
-              background:rgba(184,201,143,0.08);border:1px solid var(--green2);
-              border-radius:4px;color:var(--green);cursor:pointer;">
-              ⬇ INSTALUJ CERTBOT
-            </button>
             <button onclick="Tunnel.genCert()" data-i18n="in_gen_cert_btn"
               style="flex:1;font-family:var(--mono);font-size:10px;padding:6px 10px;
               background:rgba(184,201,143,0.08);border:1px solid var(--green2);
@@ -1949,8 +1943,9 @@
               🔒 GENERUJ CERTYFIKAT
             </button>
           </div>
-          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;" data-i18n="in_letsencrypt_note">
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;" data-i18n-html="in_letsencrypt_note">
             Cert Let's Encrypt (90 dni, auto-renew). Wymaga otwartego portu 80 lub 443.
+            Wymaga zainstalowanego <a href="https://www.win-acme.com/" target="_blank" style="color:var(--green);">win-acme</a> (bez instalatora — rozpakuj do C:\win-acme\).
           </div>
         </div>
 
@@ -2590,7 +2585,7 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202608260010"></script>
+<script src="js/i18n.js?v=202609010001"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202608243900"></script>
@@ -2610,7 +2605,7 @@
 <script src="js/admin_status.js?v=202608180002"></script>
 <script src="js/profile_audio.js?v=202608243200"></script>
 <script src="js/relay_admin.js?v=202608180001"></script>
-<script src="js/tunnel.js?v=202608180001"></script>
+<script src="js/tunnel.js?v=202609010001"></script>
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>

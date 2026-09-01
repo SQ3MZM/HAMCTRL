@@ -75,7 +75,7 @@ Source: "dist\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\HAM RADIO CTRL"; Filename: "{app}\{#AppExeName}"
 ; Reset hasla admina (gdy klub zapomni) - uruchamia EXE z flaga
 Name: "{group}\Reset hasla admina"; Filename: "{app}\{#AppExeName}"; Parameters: "--reset-admin"
-; Generowanie certyfikatu Let's Encrypt - certbot wymaga admina. EXE sam
+; Generowanie certyfikatu Let's Encrypt - win-acme wymaga admina. EXE sam
 ; prosi o podniesienie uprawnien (UAC) przy --gen-cert, wiec wystarczy
 ; kliknac skrot i potwierdzic monit. Osobny skrot uruchamiany raz na ~90 dni.
 ; Serwer na co dzien dziala BEZ admina.
@@ -98,7 +98,7 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""H
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""HAM RADIO CTRL Audio"" dir=in action=allow protocol=TCP localport=9400,9401,9443 enable=yes profile=any"; Flags: runhidden waituntilterminated; StatusMsg: "Konfiguracja zapory (audio)..."
 ; Zadanie w Harmonogramie: automatyczne odnawianie certyfikatu Let's Encrypt
 ; co 60 dni (cert wazny 90 dni - odnawiamy z zapasem). Uruchamia --gen-cert
-; z najwyzszymi uprawnieniami (certbot wymaga admina), w tle. Serwer sam
+; z najwyzszymi uprawnieniami (win-acme wymaga admina), w tle. Serwer sam
 ; podchwyci nowy cert przez hot-reload (bez restartu). PELNA bezobslugowosc.
 ; Uruchamiane tylko jesli user wybral zadanie autocert (domyslnie tak).
 Filename: "{sys}\schtasks.exe"; Parameters: "/Create /TN ""HAMCTRL Cert Renewal"" /TR ""\""{app}\{#AppExeName}\"" --gen-cert"" /SC DAILY /MO 60 /RL HIGHEST /F /RU SYSTEM"; Flags: runhidden waituntilterminated; StatusMsg: "Konfiguracja auto-odnawiania certyfikatu..."; Tasks: autocert

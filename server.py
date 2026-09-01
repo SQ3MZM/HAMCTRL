@@ -385,8 +385,9 @@ async def amain():
             _https_port = None
 
     # ── Certificate hot-reload (for 24/7 operation) ──────────────────────────
-    # The server loads the cert at startup. When you renew it (--gen-cert or
-    # certbot's auto-renew), the new file lands on disk, but the running
+    # The server loads the cert at startup. When you renew it (--gen-cert,
+    # manually or via the installer's scheduled task), the new file lands
+    # on disk, but the running
     # server still holds the old one in memory. This task checks every 6h
     # whether the cert file changed and reloads it LIVE
     # (load_cert_chain on the existing SSLContext) - new connections get the

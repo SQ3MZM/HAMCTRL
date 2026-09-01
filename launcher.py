@@ -180,7 +180,7 @@ def _reset_admin():
 def _gen_cert():
     """
     Generate/renew a Let's Encrypt certificate - STANDALONE mode (as admin).
-    Kept separate from the normal server startup: certbot requires admin
+    Kept separate from the normal server startup: win-acme requires admin
     rights, but the server itself does NOT. This way the server runs
     normally (no admin, no Defender warnings), and the cert is generated
     separately roughly every ~90 days with this shortcut.
@@ -192,9 +192,9 @@ def _gen_cert():
     print("  GENERATING LET'S ENCRYPT CERTIFICATE", flush=True)
     print("=" * 56, flush=True)
 
-    # certbot on Windows must run elevated (writes the system cert store).
-    # If we are NOT admin, re-launch this same command through UAC so the user
-    # just clicks "Yes" instead of hitting a cryptic certbot error. This makes
+    # win-acme must run elevated on this setup. If we are NOT admin,
+    # re-launch this same command through UAC so the user just clicks
+    # "Yes" instead of hitting a cryptic win-acme error. This makes
     # the Start-menu shortcut work even without an elevation flag.
     if sys.platform == "win32":
         try:

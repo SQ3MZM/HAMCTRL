@@ -50,9 +50,25 @@ DEFAULT_CFG = {
 }
 
 
+def _safe_exists(p: pathlib.Path) -> bool:
+    """
+    pathlib.Path.exists() raises PermissionError instead of returning False
+    when the containing directory has restrictive ACLs the current token
+    can't even stat() (e.g. a leftover certbot config/live/ tree created
+    under an elevated run, pre-win-acme). Treat "can't tell" as "not there"
+    instead of crashing the caller.
+    """
+    try:
+        return p.exists()
+    except PermissionError:
+        print(f"[tunnel] WARNING: no permission to access {p} "
+              f"(leftover from an earlier elevated cert-gen run?) - treating as missing", flush=True)
+        return False
+
+
 def load_cfg() -> dict:
     """Load the config and decrypt tokens — in memory (self._cfg) we always
-    keep plaintext, since cloudflared/certbot use it directly; only the
+    keep plaintext, since cloudflared/win-acme use it directly; only the
     on-disk file is encrypted (see save_cfg)."""
     try:
         raw = {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
@@ -105,7 +121,7 @@ class TunnelManager:
     def get_status(self) -> dict:
         cert_days = None
         cert = self._cfg.get("certPath", "")
-        if cert and pathlib.Path(cert).exists():
+        if cert and _safe_exists(pathlib.Path(cert)):
             try:
                 from cryptography import x509 as _x509
                 import datetime as _dt
@@ -401,14 +417,21 @@ class TunnelManager:
         cert = self._cfg.get("certPath", "")
         key  = self._cfg.get("keyPath", "")
 
-        # PRIORITY: if a real Let's Encrypt cert exists in live/, use it -
+        # PRIORITY: if a real Let's Encrypt cert exists in pem/, use it -
         # even if the config points to a self-signed one. Otherwise a
         # once-saved self-signed cert would block using LE forever (since
         # "cert exists" = the condition below would be false).
-        le_cert = _DATA / "letsencrypt" / "config" / "live" / fqdn / "fullchain.pem"
-        le_key  = _DATA / "letsencrypt" / "config" / "live" / fqdn / "privkey.pem"
+        #
+        # NOTE: an OLDER C:/.../letsencrypt/config/live/<fqdn>/ tree may
+        # still exist on disk from before the win-acme switch (real
+        # certbot set restrictive ACLs on it that only an elevated token
+        # can even .exists()-check) - _safe_exists() below treats a
+        # PermissionError as "not found" instead of crashing this whole
+        # autostart task, which is what happened live before this fix.
+        le_cert = _DATA / "letsencrypt" / "pem" / f"{fqdn}-chain.pem"
+        le_key  = _DATA / "letsencrypt" / "pem" / f"{fqdn}-key.pem"
         _is_selfsigned = "selfsigned" in str(cert).lower()
-        if le_cert.exists() and le_key.exists() and (not cert or _is_selfsigned or not pathlib.Path(cert).exists()):
+        if _safe_exists(le_cert) and _safe_exists(le_key) and (not cert or _is_selfsigned or not _safe_exists(pathlib.Path(cert))):
             print(f"[tunnel] Using existing Let's Encrypt cert: {le_cert}", flush=True)
             cert = str(le_cert)
             key  = str(le_key)
@@ -416,7 +439,7 @@ class TunnelManager:
             self._cfg["keyPath"]  = key
             save_cfg(self._cfg)
 
-        if not cert or not pathlib.Path(cert).exists():
+        if not cert or not _safe_exists(pathlib.Path(cert)):
             # Try Let's Encrypt
             cert, key = await self._get_letsencrypt_cert(fqdn, domain)
             if cert and key:
@@ -475,7 +498,10 @@ class TunnelManager:
 
         print(f"[tunnel] Let's Encrypt: attempting for {fqdn}", flush=True)
 
-        # Check for an existing certificate in the standard locations
+        # Check for an existing certificate in the standard locations.
+        # C:/Certbot/live is kept for backward compat with installs that
+        # already have a certbot-issued cert on disk from before the
+        # win-acme switch (certbot discontinued Windows support Feb 2024).
         for base in [
             pathlib.Path(f"C:/Certbot/live/{fqdn}"),
             pathlib.Path(f"/etc/letsencrypt/live/{fqdn}"),
@@ -483,16 +509,22 @@ class TunnelManager:
         ]:
             cp = base / "fullchain.pem"
             kp = base / "privkey.pem"
-            if cp.exists() and kp.exists():
+            if _safe_exists(cp) and _safe_exists(kp):
                 print(f"[tunnel] Found cert: {cp}", flush=True)
                 return str(cp), str(kp)
+        _pem_dir = _DATA / "letsencrypt" / "pem"
+        _wacs_cp = _pem_dir / f"{fqdn}-chain.pem"
+        _wacs_kp = _pem_dir / f"{fqdn}-key.pem"
+        if _safe_exists(_wacs_cp) and _safe_exists(_wacs_kp):
+            print(f"[tunnel] Found cert: {_wacs_cp}", flush=True)
+            return str(_wacs_cp), str(_wacs_kp)
 
-        # Running certbot requires Administrator rights on Windows. The server
+        # Running win-acme requires Administrator rights on Windows. The server
         # normally runs WITHOUT admin, so an automatic attempt on every startup
-        # would always fail with "administrative rights" and spam the log. If we
-        # have no existing cert and no admin rights, skip certbot entirely and
-        # fall back to self-signed — the user generates the real cert once via
-        # the elevated "Wygeneruj certyfikat (jako admin)" shortcut.
+        # would always fail and spam the log. If we have no existing cert and
+        # no admin rights, skip win-acme entirely and fall back to self-signed
+        # — the user generates the real cert once via the elevated
+        # "Wygeneruj certyfikat (jako admin)" shortcut.
         if sys.platform == "win32":
             try:
                 import ctypes
@@ -506,193 +538,162 @@ class TunnelManager:
                       flush=True)
                 return "", ""
 
-        # Install certbot if missing
-        certbot = await self._ensure_certbot()
-        print(f"[tunnel] certbot path: {certbot!r}", flush=True)
-        if not certbot:
-            print("[tunnel] certbot unavailable - using self-signed", flush=True)
+        # Install win-acme if missing
+        wacs = await self._ensure_wacs()
+        print(f"[tunnel] win-acme path: {wacs!r}", flush=True)
+        if not wacs:
+            print("[tunnel] win-acme unavailable - using self-signed", flush=True)
             return "", ""
 
-        # Create the DuckDNS hook
-        print(f"[tunnel] creating DuckDNS hook for {duck_domain}", flush=True)
-        hook = self._create_duckdns_hook(duck_domain, duck_token)
-        print(f"[tunnel] hook: {hook}", flush=True)
+        # Create the DuckDNS create/delete scripts win-acme calls for DNS-01
+        print(f"[tunnel] creating DuckDNS scripts for {duck_domain}", flush=True)
+        create_script, delete_script = self._create_duckdns_dns_scripts(duck_domain, duck_token)
+        print(f"[tunnel] scripts: {create_script} / {delete_script}", flush=True)
 
-        # Run certbot
+        # Run win-acme. --store pemfiles writes plain PEM files (like
+        # certbot's certonly) instead of touching the Windows cert store /
+        # IIS bindings, which we don't use.
         cmd = [
-            certbot, "certonly",
-            "--manual", "--preferred-challenges", "dns",
-            "--manual-auth-hook", hook,
-            "--manual-cleanup-hook", hook,
-            "-d", fqdn,
-            "--non-interactive", "--agree-tos",
-            "--email", f"admin@{fqdn}",
-            # --disable-hook-validation: certbot validates the hook by
-            # default before use, which on Windows with paths containing
-            # spaces (Program Files) produces a false error. The hook works
-            # fine anyway - validation is disabled.
-            "--disable-hook-validation",
-            # don't try to bind permissions to the standard locations
-            "--work-dir", str(_DATA / "letsencrypt" / "work"),
-            "--logs-dir", str(_DATA / "letsencrypt" / "logs"),
-            "--config-dir", str(_DATA / "letsencrypt" / "config"),
+            wacs,
+            "--source", "manual",
+            "--host", fqdn,
+            "--validationmode", "dns-01",
+            "--validation", "script",
+            "--dnscreatescript", create_script,
+            "--dnscreatescriptarguments", "{RecordName} {Token}",
+            "--dnsdeletescript", delete_script,
+            "--dnsdeletescriptarguments", "{RecordName} {Token}",
+            "--store", "pemfiles",
+            "--pemfilespath", str(_DATA / "letsencrypt" / "pem"),
+            "--pemfilesname", fqdn,
+            "--accepttos", "--emailaddress", f"admin@{fqdn}",
+            "--closeonfinish", "--notaskscheduler",
         ]
-        print(f"[tunnel] running certbot: {cmd[0]}", flush=True)
-        # Run certbot in a separate thread (Windows subprocess issue)
-        def _run_certbot():
+        print(f"[tunnel] running win-acme: {cmd[0]}", flush=True)
+        # Run win-acme in a separate thread (Windows subprocess issue)
+        def _run_wacs():
             import subprocess
             try:
-                (_DATA / "letsencrypt" / "work").mkdir(parents=True, exist_ok=True)
-                (_DATA / "letsencrypt" / "logs").mkdir(parents=True, exist_ok=True)
-                (_DATA / "letsencrypt" / "config").mkdir(parents=True, exist_ok=True)
-                # Remove stuck certbot instances from previous attempts
-                # ("Another instance of Certbot is already running").
+                (_DATA / "letsencrypt" / "pem").mkdir(parents=True, exist_ok=True)
+                # Remove stuck wacs instances from previous attempts.
                 if sys.platform == "win32":
                     try:
-                        subprocess.run(["taskkill", "/F", "/IM", "certbot.exe"],
+                        subprocess.run(["taskkill", "/F", "/IM", "wacs.exe"],
                                        capture_output=True, timeout=10)
                     except Exception:
                         pass
-                # Remove lock files (.certbot.lock) from certbot's directories
-                for _ld in (_DATA / "letsencrypt" / "work",
-                            _DATA / "letsencrypt" / "config",
-                            _DATA / "letsencrypt" / "logs"):
-                    for _lock in _ld.glob(".certbot.lock"):
-                        try: _lock.unlink()
-                        except Exception: pass
-                print(f"[tunnel] certbot subprocess starting", flush=True)
-                r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=300)
-                print(f"[tunnel] certbot exit={r.returncode}", flush=True)
-                if r.stdout: print(f"[tunnel] certbot out: {r.stdout[-500:]}", flush=True)
-                if r.stderr: print(f"[tunnel] certbot err: {r.stderr[-500:]}", flush=True)
-                # Recognize the most common first-run failure: certbot on Windows
-                # needs elevated (Administrator) rights to write the system cert
-                # store. The raw "exit=1" tells a new club nothing — capture this
-                # case so gen_cert_task can show a clear, actionable message.
+                print(f"[tunnel] win-acme subprocess starting", flush=True)
+                # stdin=DEVNULL: without an explicit valid stdin handle, this
+                # process (and everything it spawns down the chain - cmd.exe,
+                # our .bat scripts, curl.exe) can inherit a broken one and
+                # fail with "Input redirection is not supported" (seen live
+                # from the 'timeout' command inside duckdns_create.bat).
+                r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
+                                    errors='replace', timeout=300, stdin=subprocess.DEVNULL)
+                print(f"[tunnel] win-acme exit={r.returncode}", flush=True)
+                if r.stdout: print(f"[tunnel] win-acme out: {r.stdout[-500:]}", flush=True)
+                if r.stderr: print(f"[tunnel] win-acme err: {r.stderr[-500:]}", flush=True)
+                # Recognize the most common first-run failure: needs elevated
+                # (Administrator) rights. The raw "exit=1" tells a new club
+                # nothing — capture this case so gen_cert_task can show a
+                # clear, actionable message.
                 _err = (r.stderr or "") + (r.stdout or "")
-                if r.returncode != 0 and "administrative rights" in _err.lower():
+                if r.returncode != 0 and ("administrator" in _err.lower() or "elevat" in _err.lower()):
                     self._last_cert_error = (
-                        "Certbot wymaga uprawnien administratora. Uruchom skrot "
+                        "win-acme wymaga uprawnien administratora. Uruchom skrot "
                         "'Wygeneruj certyfikat (jako admin)' z menu Start "
                         "(prawy przycisk → Uruchom jako administrator), albo uruchom "
                         "serwer jako administrator tylko na czas generowania certyfikatu. "
                         "Na co dzien serwer NIE potrzebuje admina.")
                 elif r.returncode != 0:
-                    self._last_cert_error = (r.stderr or "").strip()[-300:] or \
-                        "Certbot zwrocil blad — sprawdz logi konsoli."
+                    self._last_cert_error = (r.stderr or r.stdout or "").strip()[-300:] or \
+                        "win-acme zwrocil blad — sprawdz logi konsoli."
                 else:
                     self._last_cert_error = ""
                 return r.returncode == 0
             except Exception as e:
-                print(f"[tunnel] certbot exception: {e}", flush=True)
+                print(f"[tunnel] win-acme exception: {e}", flush=True)
                 return False
 
         print("[tunnel] run_in_executor START", flush=True)
         try:
-            ok = await asyncio.get_event_loop().run_in_executor(None, _run_certbot)
+            ok = await asyncio.get_event_loop().run_in_executor(None, _run_wacs)
             print(f"[tunnel] run_in_executor DONE ok={ok}", flush=True)
             if ok:
-                cp = (_DATA / "letsencrypt" / "config" / "live" / fqdn / "fullchain.pem")
-                kp = (_DATA / "letsencrypt" / "config" / "live" / fqdn / "privkey.pem")
+                cp = (_DATA / "letsencrypt" / "pem" / f"{fqdn}-chain.pem")
+                kp = (_DATA / "letsencrypt" / "pem" / f"{fqdn}-key.pem")
                 if cp.exists():
                     return str(cp), str(kp)
         except Exception as e:
-            print(f"[tunnel] certbot exception: {e}", flush=True)
+            print(f"[tunnel] win-acme exception: {e}", flush=True)
         return "", ""
 
-    async def _ensure_certbot(self) -> str:
+    async def _ensure_wacs(self) -> str:
         """
-        Find certbot. In the EXE product, certbot is installed MANUALLY by
-        the admin (pip doesn't work inside the EXE). We check PATH + the
-        typical certbot install locations on Windows.
+        Find win-acme (wacs.exe). Certbot discontinued Windows support in
+        Feb 2024, hence win-acme. It has no installer and no pip equivalent
+        — it's a portable, self-contained exe the admin downloads once from
+        win-acme.com and extracts. We check PATH + the typical extraction
+        locations on Windows.
         """
         import shutil
         import pathlib
 
         # 1. PATH (most common)
-        cb = shutil.which("certbot")
-        if cb:
-            print(f"[tunnel] certbot found: {cb}", flush=True)
-            return cb
+        for name in ("wacs", "wacs.exe"):
+            cb = shutil.which(name)
+            if cb:
+                print(f"[tunnel] wacs found: {cb}", flush=True)
+                return cb
 
-        # 2. Typical certbot install locations on Windows
-        #    (installer from certbot.eff.org / EFF Windows installer)
+        # 2. Typical extraction locations on Windows (no installer, admin
+        #    just unzips the portable release)
         win_paths = [
-            pathlib.Path(r"C:\Program Files\Certbot\bin\certbot.exe"),
-            pathlib.Path(r"C:\Program Files (x86)\Certbot\bin\certbot.exe"),
+            pathlib.Path(r"C:\win-acme\wacs.exe"),
+            pathlib.Path(r"C:\Program Files\win-acme\wacs.exe"),
+            pathlib.Path(r"C:\Program Files (x86)\win-acme\wacs.exe"),
         ]
-        # Certbot may also be in Scripts next to some system Python
         for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("APPDATA", "")):
             if base:
-                win_paths.append(pathlib.Path(base) / "Programs" / "Certbot" / "bin" / "certbot.exe")
+                win_paths.append(pathlib.Path(base) / "win-acme" / "wacs.exe")
         for p in win_paths:
             if p.exists():
-                print(f"[tunnel] certbot found: {p}", flush=True)
+                print(f"[tunnel] wacs found: {p}", flush=True)
                 return str(p)
 
-        # 3. Not found. In the EXE we don't try pip (won't work) - give the
-        #    admin clear instructions.
-        if getattr(sys, "frozen", False):
-            print("[tunnel] ============================================", flush=True)
-            print("[tunnel] CERTBOT NOT FOUND", flush=True)
-            print("[tunnel] Let's Encrypt requires certbot to be installed.", flush=True)
-            print("[tunnel] Admin: download the installer from https://certbot.eff.org", flush=True)
-            print("[tunnel]   (choose: Software=None, System=Windows)", flush=True)
-            print("[tunnel] Restart the server after installing.", flush=True)
-            print("[tunnel] Alternative: use a Cloudflare tunnel (no certbot needed).", flush=True)
-            print("[tunnel] ============================================", flush=True)
-            self._error = ("Certbot nie zainstalowany. Pobierz z certbot.eff.org "
-                           "(Software=None, System=Windows) i zrestartuj serwer, "
-                           "albo uzyj Cloudflare tunnel.")
-            return ""
-
-        # 4. Dev mode (not frozen): try pip
-        print("[tunnel] Installing certbot via pip...", flush=True)
-        try:
-            def _pip_install():
-                import subprocess
-                r = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "certbot"],
-                    capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=180)
-                print(f"[tunnel] pip exit={r.returncode}", flush=True)
-                if r.stdout: print(f"[tunnel] pip: {r.stdout[-300:]}", flush=True)
-                if r.stderr: print(f"[tunnel] pip err: {r.stderr[-300:]}", flush=True)
-                return r.returncode == 0
-
-            ok = await asyncio.get_event_loop().run_in_executor(None, _pip_install)
-            if ok:
-                cb = shutil.which("certbot")
-                if cb:
-                    print(f"[tunnel] certbot installed: {cb}", flush=True)
-                    return cb
-                # Windows: certbot may be in Scripts
-                import pathlib
-                scripts = pathlib.Path(sys.executable).parent / "Scripts" / "certbot.exe"
-                if scripts.exists():
-                    print(f"[tunnel] certbot Scripts: {scripts}", flush=True)
-                    return str(scripts)
-        except Exception as e:
-            print(f"[tunnel] pip error: {e}", flush=True)
+        # 3. Not found. There's nothing to auto-install (no pip package, no
+        #    silent installer) — give the admin clear instructions.
+        print("[tunnel] ============================================", flush=True)
+        print("[tunnel] WIN-ACME (wacs.exe) NOT FOUND", flush=True)
+        print("[tunnel] Let's Encrypt requires win-acme to be installed.", flush=True)
+        print("[tunnel] Admin: download the portable zip from https://www.win-acme.com/", flush=True)
+        print("[tunnel]   (no installer - extract wacs.exe to C:\\win-acme\\)", flush=True)
+        print("[tunnel] Restart the server after extracting.", flush=True)
+        print("[tunnel] Alternative: use a Cloudflare tunnel (no win-acme needed).", flush=True)
+        print("[tunnel] ============================================", flush=True)
+        self._error = ("win-acme nie zainstalowany. Pobierz portable zip z win-acme.com "
+                       "(bez instalatora, rozpakuj do C:\\win-acme\\) i zrestartuj "
+                       "serwer, albo uzyj Cloudflare tunnel.")
         return ""
 
-    def _create_duckdns_hook(self, domain: str, token: str) -> str:
+    def _create_duckdns_dns_scripts(self, domain: str, token: str) -> tuple:
         """
-        Create the hook script for the certbot DNS challenge via DuckDNS.
+        Create the create/delete scripts win-acme calls for the DNS-01
+        challenge via DuckDNS (--dnscreatescript / --dnsdeletescript). Unlike
+        certbot's single reused hook, win-acme calls create during
+        validation setup and delete automatically afterwards.
 
-        IMPORTANT: certbot on Windows runs the hook via PowerShell. A path
-        WITH SPACES (e.g. 'C:\\Program Files (x86)\\HAM RADIO CTRL\\')
-        breaks this - PowerShell treats 'C:\\Program' as a command. So the
-        hook MUST be in a directory WITHOUT spaces. We use %TEMP% (or a
-        dedicated C:\\HAMCTRL).
+        IMPORTANT: same path-with-spaces problem as certbot before it — a
+        path like 'C:\\Program Files (x86)\\HAM RADIO CTRL\\' breaks script
+        invocation, so scripts MUST live in a directory WITHOUT spaces.
+        We use C:\\HAMCTRL (or %TEMP% as fallback).
         """
         import tempfile
-        # Directory without spaces: prefer C:\HAMCTRL-tmp, fall back to TEMP
         hook_dir = None
         for cand in (pathlib.Path(r"C:\HAMCTRL"),
                      pathlib.Path(tempfile.gettempdir())):
             try:
                 cand.mkdir(parents=True, exist_ok=True)
-                # Check the path has no spaces
                 if " " not in str(cand):
                     hook_dir = cand
                     break
@@ -701,29 +702,30 @@ class TunnelManager:
         if hook_dir is None:
             hook_dir = _DATA  # last resort (may have spaces)
 
-        if sys.platform == "win32":
-            hook = hook_dir / "duckdns_hook.bat"
-            # WITHOUT -k: curl verifies the duckdns.org cert by default
-            # (publicly trusted, no reason to disable it - see the same
-            # comment at _duckdns_update_ip, which had the identical issue).
-            hook.write_text(
-                f"@echo off\n"
-                f"curl \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=%CERTBOT_VALIDATION%&verbose=true\"\n"
-                f"echo Waiting 120 seconds for DNS propagation...\n"
-                f"timeout /t 120 /nobreak >nul\n",
-                encoding="utf-8",
-            )
-        else:
-            hook = hook_dir / "duckdns_hook.sh"
-            hook.write_text(
-                f"#!/bin/bash\n"
-                f"curl -s \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=$CERTBOT_VALIDATION\"\n"
-                f"echo 'Waiting 120s for DNS propagation...'\n"
-                f"sleep 120\n",
-                encoding="utf-8",
-            )
-            hook.chmod(0o755)
-        return str(hook.absolute())
+        # Called as: duckdns_create.bat {RecordName} {Token} -> %1 %2
+        # WITHOUT -k: curl verifies the duckdns.org cert by default
+        # (publicly trusted, no reason to disable it - see the same
+        # comment at _duckdns_update_ip, which had the identical issue).
+        create = hook_dir / "duckdns_create.bat"
+        create.write_text(
+            f"@echo off\n"
+            f"curl \"https://www.duckdns.org/update?domains={domain}&token={token}&txt=%~2&verbose=true\" <nul\n"
+            f"echo Waiting 120 seconds for DNS propagation...\n"
+            # 'timeout' needs a real console and fails with "Input redirection
+            # is not supported" when launched without one (as here: win-acme
+            # -> cmd.exe -> this script, no console) - use ping as a
+            # console-free sleep instead (standard Windows batch workaround).
+            f"ping -n 121 127.0.0.1 >nul\n",
+            encoding="utf-8",
+        )
+        # DuckDNS has no real "delete a TXT record" - the next update just
+        # overwrites it. The delete script just needs to exist and exit 0.
+        delete = hook_dir / "duckdns_delete.bat"
+        delete.write_text(
+            "@echo off\nrem no cleanup needed for DuckDNS TXT records\n",
+            encoding="utf-8",
+        )
+        return str(create.absolute()), str(delete.absolute())
 
     async def _duckdns_loop(self, domain: str):
         while True:
@@ -746,7 +748,7 @@ class TunnelManager:
 
         cert = self._cfg.get("certPath", "")
         key  = self._cfg.get("keyPath", "")
-        if not cert or not pathlib.Path(cert).exists():
+        if not cert or not _safe_exists(pathlib.Path(cert)):
             cert, key = self._generate_selfsigned(ip)
             if cert and key:
                 self._cfg["certPath"] = cert
@@ -793,7 +795,7 @@ class TunnelManager:
         cert = (self._cfg.get("customCertPath", "") or "").strip() or str(_DATA / "cert.pem")
         key  = (self._cfg.get("customKeyPath", "")  or "").strip() or str(_DATA / "key.pem")
 
-        if not pathlib.Path(cert).exists() or not pathlib.Path(key).exists():
+        if not _safe_exists(pathlib.Path(cert)) or not _safe_exists(pathlib.Path(key)):
             self._error  = (f"Nie znaleziono plikow certyfikatu — umiesc wlasny "
                              f"cert.pem/key.pem pod: {cert}  /  {key}")
             self._status = "error"
@@ -863,16 +865,6 @@ class TunnelManager:
             print(f"[tunnel] Cert error: {e}", flush=True)
             return "", ""
 
-    async def install_certbot_task(self):
-        """Install certbot via pip and notify the UI."""
-        print("[tunnel] install_certbot_task START", flush=True)
-        await self._broadcast_msg("Instaluję certbot...")
-        cb = await self._ensure_certbot()
-        if cb:
-            await self._broadcast_msg(f"✓ certbot zainstalowany: {cb}")
-        else:
-            await self._broadcast_msg("✗ Instalacja certbot nie powiodła się — spróbuj ręcznie: pip install certbot")
-
     async def gen_cert_task(self):
         """Generate a Let's Encrypt certificate for DuckDNS."""
         domain = self._cfg.get("duckDomain", "").strip().replace(".duckdns.org", "")
@@ -905,9 +897,9 @@ class TunnelManager:
             print("[tunnel] (the server loads the cert at startup - it's still holding the old one)", flush=True)
             print("[tunnel] ============================================", flush=True)
         else:
-            # Show the specific reason if we captured one (e.g. certbot needs
+            # Show the specific reason if we captured one (e.g. win-acme needs
             # Administrator rights) — a generic "check the logs" leaves a new
-            # club stuck. _last_cert_error is set in the certbot runner above.
+            # club stuck. _last_cert_error is set in the win-acme runner above.
             _reason = getattr(self, "_last_cert_error", "") or \
                 "Generowanie certyfikatu nie powiodlo sie — sprawdz logi serwera."
             await self._broadcast_msg("✗ " + _reason)

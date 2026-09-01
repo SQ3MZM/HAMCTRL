@@ -95,11 +95,12 @@ it needs to be for a first install. The short version:
   Tunnel (under **INTERNET**) — gives you a working `https://...
   trycloudflare.com` address in seconds, nothing to install.
 - **Your own domain with a real (non-self-signed) certificate**: needs
-  [Certbot](https://certbot.eff.org/) installed separately — HAMCTRL
-  does **not** bundle it. Download the official Windows installer from
-  certbot.eff.org. Generating/renewing the certificate needs
-  Administrator rights (Let's Encrypt requires writing to the system
-  certificate store) — use the **"Wygeneruj certyfikat (jako admin)"
+  [win-acme](https://www.win-acme.com/) installed separately — HAMCTRL
+  does **not** bundle it. Certbot discontinued Windows support in
+  February 2024, so win-acme is the replacement client. It has no
+  installer — download the portable zip and extract `wacs.exe` to
+  `C:\win-acme\`. Generating/renewing the certificate needs
+  Administrator rights — use the **"Wygeneruj certyfikat (jako admin)"
   ("Generate certificate (as admin)")** shortcut created in the Start
   menu; it prompts for elevation (UAC) itself, you don't need to
   right-click it. Renewal afterward is automatic (a scheduled task,
@@ -214,11 +215,12 @@ ponad potrzeby pierwszej instalacji. Wersja skrócona:
   `https://...trycloudflare.com` w kilka sekund, nic nie trzeba
   instalować.
 - **Własna domena z prawdziwym certyfikatem** (nie self-signed):
-  potrzebny osobno zainstalowany [Certbot](https://certbot.eff.org/) —
-  HAMCTRL go **nie** dołącza. Pobierz oficjalny instalator dla Windows
-  ze strony certbot.eff.org. Generowanie/odnawianie certyfikatu wymaga
-  uprawnień administratora (Let's Encrypt zapisuje do systemowego
-  magazynu certyfikatów) — użyj skrótu **"Wygeneruj certyfikat (jako
+  potrzebny osobno zainstalowany [win-acme](https://www.win-acme.com/) —
+  HAMCTRL go **nie** dołącza. Certbot zakończył wsparcie dla Windows w
+  lutym 2024, więc win-acme jest jego następcą. Bez instalatora —
+  pobierz portable zip i rozpakuj `wacs.exe` do `C:\win-acme\`.
+  Generowanie/odnawianie certyfikatu wymaga uprawnień administratora —
+  użyj skrótu **"Wygeneruj certyfikat (jako
   admin)"** w menu Start; sam poprosi o podniesienie uprawnień (UAC),
   nie trzeba klikać prawym przyciskiem. Późniejsze odnawianie jest
   automatyczne (zadanie w Harmonogramie, włączone domyślnie przy

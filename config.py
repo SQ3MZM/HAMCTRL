@@ -108,8 +108,9 @@ def _writable_data_dir() -> "Path":
                           f"(next to EXE -> APPDATA)", flush=True)
                 except Exception as _de:
                     # The private key in Program Files may have been created
-                    # by certbot as admin — reading it without admin rights
-                    # may be blocked. A clear instruction instead of a silent failure.
+                    # by win-acme (or certbot, pre-2026) as admin — reading it
+                    # without admin rights may be blocked. A clear instruction
+                    # instead of a silent failure.
                     print(f"[config] COULD NOT migrate {_dn}/ ({_de}). "
                           f"Copy it manually: '{_src}' -> '{_dst}' "
                           f"(e.g. as administrator).", flush=True)

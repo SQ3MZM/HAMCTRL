@@ -3505,12 +3505,6 @@ class App:
             # event loop (looplag stack pointed at _is_service_installed).
             return 200, await asyncio.to_thread(self.tunnel.check_available)
 
-        if p == "/api/tunnel/install-certbot" and method == "POST":
-            if role != "admin": return 403, {"error": "Tylko admin"}
-            print("[webapp] install-certbot endpoint called", flush=True)
-            asyncio.create_task(self.tunnel.install_certbot_task())
-            return 200, {"ok": True}
-
         if p == "/api/tunnel/gen-cert" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
             asyncio.create_task(self.tunnel.gen_cert_task())
@@ -6901,7 +6895,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-08-26-QSO-TIMEON-FIRST-CONTACT, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-01-WINACME-PERM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7265,6 +7259,25 @@ class App:
         _retry_period_s = 2 * (ft4_encoder.FT4_SLOT_TIME
                                 if self._ft8_decode_mode == "FT4" else 15.0)
         _max_retries = 4
+        # DIAGNOSTIC (added 2026-08-27, reported live: "nadawanie nie jest
+        # zgodne z dekodami tylko 3 razy idzie dobrze przerwa i zdowu
+        # nadajemy" - a retry cycle silently slipped by a full extra period
+        # even though OTHER stations' decodes were arriving throughout).
+        # This function only runs when SOME decode triggers it (see the
+        # docstring/callers) - there's no real clock - so a gap in these
+        # lines directly shows whether the check simply wasn't being
+        # called during the gap (no qualifying decode arrived) vs. was
+        # being called but declined to retry for some other reason (see
+        # the missing-last_auto_tx_action branch below). Logged only once
+        # we're past half the retry window to avoid flooding the log on
+        # every single irrelevant decode right after a fresh transmission.
+        if self._qso_engine.is_active() and self._qso_engine.last_tx_at:
+            _elapsed = time.time() - self._qso_engine.last_tx_at
+            if _elapsed >= _retry_period_s * 0.5:
+                print(f"[autoqso] retry-check: partner={self._qso_engine.partner_call} "
+                      f"elapsed={_elapsed:.1f}s/{_retry_period_s:.0f}s "
+                      f"retry_count={self._qso_engine.retry_count}/{_max_retries} "
+                      f"last_action={'set' if self._last_auto_tx_action else 'MISSING'}")
         if self._qso_engine.should_retransmit(_retry_period_s):
             if self._qso_engine.should_give_up(_max_retries):
                 print(f"[autoqso] {self._qso_engine.partner_call} not "
@@ -7301,6 +7314,19 @@ class App:
                       f"{self._last_auto_tx_action.get('report_or_grid')}")
                 asyncio.create_task(self._send_auto_tx(
                     self._last_auto_tx_action, tx_seq=self._reserve_tx_seq()))
+            else:
+                # DIAGNOSTIC (2026-08-27): should_retransmit() said it's time,
+                # but there's nothing to resend - self._last_auto_tx_action
+                # is only set inside _send_auto_tx, so this fires if a retry
+                # window is hit before the FIRST message of the QSO ever
+                # finished sending. Silent before this print - a retry
+                # decision that produces literally no action and no log line
+                # would look EXACTLY like "the check never ran" from the
+                # outside, which is why this branch needed its own line to
+                # tell the two apart.
+                print(f"[autoqso] retry-check: should_retransmit=True for "
+                      f"{self._qso_engine.partner_call} but _last_auto_tx_action "
+                      f"is not set yet - nothing to resend, skipping")
 
     async def _process_auto_qso(self, m: dict):
         """
