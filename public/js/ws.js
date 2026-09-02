@@ -758,7 +758,20 @@ function handleMessage(msg) {
       window.UI?.updateModeButtons();
       window.UI?.updateVFOBadges?.();  // also update the mode badge
       break;
-    case 'ptt':   S.ptt  = msg.ptt;  window.UI?.updatePTT(); break;
+    case 'ptt':
+      S.ptt = msg.ptt;
+      window.UI?.updatePTT();
+      // A real transmission starting (manual SSB/CW/FT8, OR an automatic
+      // FT8/Hound auto-QSO cycle deciding on its own to send) is proof the
+      // station is actively working, not unattended - reset the FT8
+      // safety timer (WSJT-X "Tx Watchdog") here too, not just on manual
+      // clicks (_selectRow/manual TX macro). FIX (live-seen 2026-09-02):
+      // without this, fully automated CQ/auto-answer operation - the
+      // whole point of the feature - never touched the timer at all
+      // (nobody's clicking anything while it runs itself), so it expired
+      // and blocked the automation on a normal, correctly-working session.
+      if (msg.ptt) window.FT8Timer?.reset();
+      break;
     case 'tuner':
       S.tuner = msg.value;
       document.getElementById('tuner-btn')?.classList.toggle('active', !!msg.value);

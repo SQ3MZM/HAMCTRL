@@ -5983,6 +5983,18 @@ class App:
             report  = (msg.get("report") or "").strip()
             r_flag  = bool(msg.get("rFlag", False))
             audio_freq_override = msg.get("audioFreq")  # None albo Hz
+            # Hound runs its OWN independent state machine client-side
+            # (wsjtx.js's _hound.*) and must never touch self._qso_engine -
+            # FIX (live-seen 2026-09-02): Hound's Tx1 ("FOXCALL MYCALL
+            # MYGRID") looks structurally identical to a normal manual
+            # grid-call to the generic logic below, which used to
+            # auto-start a REGULAR tracked QSO with the Fox's callsign
+            # (is_grid matched MYGRID). When the Fox later sent a plain
+            # (non-combined) RR73, the main engine independently saw it as
+            # its OWN partner's sign-off and replied with an extra, spec-
+            # violating "73" on top of Hound's own correct, silent
+            # completion (see [[ft8_timer_hound_ui_fixes_2026-09-02]]).
+            is_hound = bool(msg.get("isHound", False))
             if not call_to or not call_de or not report:
                 await ws.send_json({"type": "ft8_tx_error", "error": "Brak callTo/callDe/report"})
                 return
@@ -6024,7 +6036,7 @@ class App:
             # If the automation is on and we're sending a grid (Tx2) or a
             # CQ to a specific station — automatically put the engine into
             # CALLING state so the automation can react to the reply without needing a double-click
-            if self._auto_seq_enabled and call_to != "CQ":
+            if self._auto_seq_enabled and call_to != "CQ" and not is_hound:
                 # FIX (reported live 2026-08-24, RI1FJL/MSHV multistream):
                 # this path (manually typing/sending a grid to a NAMED
                 # station, without ever calling CQ or clicking a decoded
@@ -7004,7 +7016,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-02-CROSSBAND-FREQA-ORDER-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-02-HOUND-ENGINE-ISOLATION-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

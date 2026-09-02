@@ -246,6 +246,9 @@ function handleMessage(msg) {
       break;
     case 'ptt':
       S.ptt = !!msg.ptt; renderPTT();
+      // See ws.js's 'ptt' case for why - any real TX (manual or automatic
+      // FT8/Hound) counts as proof of presence for the FT8 safety timer.
+      if (msg.ptt) window.FT8Timer?.reset();
       break;
     case 'radio_lock_state':
       S.lock = { locked: !!msg.locked, user_id: msg.user_id, username: msg.username, callsign: msg.callsign };

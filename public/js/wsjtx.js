@@ -1996,7 +1996,19 @@ function toggleHound(enabled) {
     _hound.foxCall    = foxCall;
     _hound.step       = 1;
     _hound.attempts   = 0;
-    _hound.txFreq     = 1500;   // default calling frequency (within the 1000-4000 range)
+    // Set when the Fox FIRST actually replies to us (step 1->3 below) -
+    // used as TIME_ON for the auto-logged QSO, matching the main auto-QSO
+    // engine's convention (qso_engine.py's first_contact_at: anchor to the
+    // partner's first reply, not to whenever the completing RR73 happens
+    // to arrive - see _houndAutoLog).
+    _hound.firstContactAt = null;
+    // Calling frequency (1000-4000 range per spec) - FIX (live-seen
+    // 2026-09-02): this used to be hardcoded to 1500 and never touched
+    // again, so dragging the TX marker on the waterfall (setTxFreqManual
+    // -> ft8_set_tx_freq -> WSJTXScope's txFreqHz) had zero effect on
+    // Hound - it kept calling on 1500 regardless. Seed it from whatever
+    // TX frequency is already selected instead of a fixed default.
+    _hound.txFreq     = window.WSJTXScope?.getTxFreq() || 1500;
     _hound.lastConfirm = Date.now();
     _houndUpdateUI();
     _houndStartCalling();
@@ -2033,6 +2045,8 @@ function houndStop() {
   // function, so that path is unaffected.
   const _ht = document.getElementById('wj-hound-toggle');
   if (_ht) _ht.checked = false;
+  const _hcb = document.getElementById('wj-hound-confirm-btn');
+  if (_hcb) _hcb.style.display = 'none';
   _houndUpdateUI();
   window.UI?.showToast(I18n.t('wj_toast_hound_off'));
 }
@@ -2040,6 +2054,8 @@ function houndStop() {
 // Operator confirmation every 2 min (protocol requirement)
 function houndConfirm() {
   _hound.lastConfirm = Date.now();
+  const btn = document.getElementById('wj-hound-confirm-btn');
+  if (btn) btn.style.display = 'none';
 }
 
 function _houndCheckConfirm() {
@@ -2049,6 +2065,12 @@ function _houndCheckConfirm() {
     window.UI?.showToast(I18n.t('wj_toast_hound_confirm'), 'error');
     _hound.step = 0;
     _houndUpdateUI();
+    // FIX (live-seen 2026-09-02): this toast used to fire every 30s with
+    // NO way to actually confirm - houndConfirm() existed and was
+    // exported, but nothing in the UI ever called it, so Hound stayed
+    // stuck at step=0 forever once this fired.
+    const btn = document.getElementById('wj-hound-confirm-btn');
+    if (btn) btn.style.display = 'inline-block';
   }
 }
 
@@ -2100,6 +2122,7 @@ function _houndOnDecode(decoded) {
       _hound.step           = 3;
       _hound.attempts        = 0;
       _hound.lastConfirm     = Date.now();
+      _hound.firstContactAt  = _hound.firstContactAt || Date.now();
       _houndUpdateUI();
       _houndSendReport();
       return;
@@ -2127,6 +2150,7 @@ function _houndOnDecode(decoded) {
     _hound.step           = 3;
     _hound.attempts        = 0;
     _hound.lastConfirm     = Date.now();
+    _hound.firstContactAt  = _hound.firstContactAt || Date.now();
     _houndUpdateUI();
     _houndSendReport();
     return;
@@ -2151,8 +2175,12 @@ function _houndOnDecode(decoded) {
 function _houndStartCalling() {
   if (!_hound.active || _hound.step !== 1) return;
   // TX1: "KH1/KH7Z SP3GSK KO02" on freq 1000-4000 Hz. The spec doesn't
-  // mandate changing freq when there's no reply (that's an optional
-  // operator decision) - we retry on the SAME freq as before.
+  // mandate AUTO-changing freq between retries when there's no reply -
+  // but the OPERATOR dragging the TX marker mid-session is exactly the
+  // "optional operator decision" the spec means, so pick up whatever is
+  // currently selected right before each call instead of freezing
+  // whatever was set when Hound started.
+  _hound.txFreq = window.WSJTXScope?.getTxFreq() || _hound.txFreq;
   _hound.lastTxAt = Date.now();
   _houndUpdateUI();
   _houndSendMsg(_hound.foxCall, _myCall, (_myGrid || '').trim(), false, _hound.txFreq);
@@ -2189,7 +2217,19 @@ function _houndAutoLog(foxCall) {
   if (callEl) callEl.value = foxCall;
   if (rstEl)  rstEl.value  = _hound.foxReport || '-99';
   if (rstREl) rstREl.value = _hound.foxReport || '-99';
-  window.QSOLog?.quickLog?.();
+  // TIME_ON anchored to the Fox's FIRST reply (_hound.firstContactAt),
+  // not to right now (when RR73 completes the QSO) - matches the main
+  // auto-QSO engine's logging convention (qso_engine.py's
+  // first_contact_at). Falls back to "now" only if that was somehow
+  // never set (shouldn't happen - QSO completion implies step 3 already
+  // ran, which always sets it).
+  let overrides = {};
+  if (_hound.firstContactAt) {
+    const d = new Date(_hound.firstContactAt);
+    const pad = n => String(n).padStart(2, '0');
+    overrides = { time_on: `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}` };
+  }
+  window.QSOLog?.quickLog?.(overrides);
 }
 
 function _houndSendMsg(callTo, callDe, report, rFlag, audioFreqHz) {
@@ -2204,6 +2244,15 @@ function _houndSendMsg(callTo, callDe, report, rFlag, audioFreqHz) {
     callTo, callDe, report,
     rFlag: !!rFlag,
     audioFreq: audioFreqHz,
+    // Tells the backend NOT to feed this into the main auto-QSO engine
+    // (self._qso_engine) - see the comment at "elif t == ft8_tx" /
+    // isHound check in webapp.py. Hound's own Tx1 ("FOXCALL MYCALL
+    // MYGRID") looks structurally identical to a normal manual grid-call
+    // to that generic handler, which used to auto-start a regular tracked
+    // QSO with the Fox's callsign - so when the Fox later sent a
+    // (non-combined) RR73, the MAIN engine independently replied with its
+    // own extra "73", on top of Hound's own (correct, silent) completion.
+    isHound: true,
   });
 }
 

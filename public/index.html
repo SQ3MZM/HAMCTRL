@@ -525,6 +525,15 @@
       <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"
         style="accent-color:#f90;"> HOUND
     </label>
+    <!-- WSJTX.houndConfirm() istnial i byl eksportowany, ale nic go nigdy
+         nie wolalo - toast "potwierdz obecnosc" (_houndCheckConfirm co
+         30s) wisial bez zadnego przycisku do klikniecia, blokujac Hounda
+         na stale po 2 minutach. Domyslnie ukryty, pokazywany razem z
+         toastem przez _houndCheckConfirm. -->
+    <button id="wj-hound-confirm-btn" onclick="WSJTX.houndConfirm()" style="display:none;
+      color:#f90;border:1px solid #f90;border-radius:2px;padding:1px 6px;
+      background:rgba(255,140,0,0.15);cursor:pointer;font-family:var(--mono);font-size:11px;"
+      data-i18n="wj_hound_confirm_btn">✓ POTWIERDŹ</button>
     <div class="wj-period-switch" id="wj-period-switch" data-i18n-title="wj_period_title" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
       <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
       <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
@@ -2587,10 +2596,10 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609010002"></script>
+<script src="js/i18n.js?v=202609020002"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202609020001"></script>
+<script src="js/ws.js?v=202609020002"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/ui.js?v=202608242600"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
@@ -2612,7 +2621,7 @@
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202609010001"></script>
+<script src="js/wsjtx.js?v=202609020004"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
@@ -2690,7 +2699,7 @@
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>
-<script src="js/qsolog.js?v=202608210002"></script>
+<script src="js/qsolog.js?v=202609020001"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

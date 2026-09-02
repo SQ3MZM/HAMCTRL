@@ -202,6 +202,10 @@
         <label class="m-switch-row-inline m-hound-check">
           <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"> HOUND
         </label>
+        <!-- Ten sam przycisk co desktop (index.html) - WSJTX.houndConfirm()
+             istnial ale nic go nie wolalo, patrz ft8_timer_hound_ui_fixes. -->
+        <button id="wj-hound-confirm-btn" onclick="WSJTX.houndConfirm()" style="display:none;"
+          class="m-btn m-btn-amber m-btn-sm" data-i18n="wj_hound_confirm_btn">✓ POTWIERDŹ</button>
       </div>
       <!-- Elementy Hound ukryte tak samo jak na desktopie (index.html:
            "Ukryte elementy Hound dla JS" - wsjtx.js sam wypelnia/czyta
@@ -531,16 +535,16 @@
 </div>
 
 <script src="js/auth.js?v=202608221000"></script>
-<script src="js/i18n.js?v=202608260010"></script>
+<script src="js/i18n.js?v=202609020002"></script>
 <script src="js/cw.js?v=202608260003"></script>
-<script src="js/wsjtx.js?v=202608260020"></script>
+<script src="js/wsjtx.js?v=202609020004"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/relay_ui.js?v=202609020001"></script>
-<script src="js/qsolog.js?v=202608231200"></script>
+<script src="js/qsolog.js?v=202609020001"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
 <script src="js/mobile_audio.js?v=202609020001"></script>
-<script src="js/mobile.js?v=202609020001"></script>
+<script src="js/mobile.js?v=202609020002"></script>
 </body>
 </html>

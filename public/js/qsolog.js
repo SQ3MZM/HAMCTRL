@@ -540,7 +540,7 @@ function updateRstDefaults(mode) {
   });
 }
 
-async function quickLog() {
+async function quickLog(overrides = {}) {
   const call = document.getElementById('qlog-call')?.value?.trim().toUpperCase();
   if (!call) {
     _setStatus(I18n.t('log_enter_callsign_excl'), 'red');
@@ -553,6 +553,12 @@ async function quickLog() {
   const qso  = {
     call,
     qso_date:  `${now.getUTCFullYear()}${pad(now.getUTCMonth()+1)}${pad(now.getUTCDate())}`,
+    // time_on defaults to "now" (correct for a genuinely manual/quick log
+    // - there's no earlier "first contact" moment to anchor to). Callers
+    // that DO know one (e.g. Hound's auto-log - see _houndAutoLog in
+    // wsjtx.js) pass it via `overrides`, matching the main auto-QSO
+    // engine's convention of anchoring TIME_ON to the partner's first
+    // reply, not to whenever the log call happens to fire.
     time_on:   `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`,
     time_off:  `${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`,
     band:      _freqToBand(S?.freq || 0),
@@ -565,6 +571,7 @@ async function quickLog() {
     my_gridsquare: (window.CurrentUser?.locator || S?.operatorLocator
                    || S?.stationLocator || ''),  // OPERATOR's locator
     comment:   '',
+    ...overrides,
   };
 
   const token = localStorage.getItem('token') || '';
