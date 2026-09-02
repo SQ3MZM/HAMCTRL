@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.5"
+SERVER_VERSION = "2.0.6"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -4374,18 +4374,33 @@ class App:
         # frames per second, so even level 1 caused audible audio hitches when
         # the buffer drained. Opus and scope arrays are already compact, so the
         # bandwidth saving was marginal — not worth blocking the loop. Off.
-        _ws_kwargs = dict(heartbeat=30, compress=False, max_msg_size=8*1024*1024)
-        try:
-            ws = web.WebSocketResponse(writer_limit=128*1024, **_ws_kwargs)
-        except TypeError:
-            ws = web.WebSocketResponse(**_ws_kwargs)
-        await ws.prepare(request)
-
-        # Auth via token query param
+        #
+        # SECURITY FIX (found live 2026-09-02 via an unauthenticated probe
+        # against the public duckdns deployment): auth used to be checked
+        # AFTER ws.prepare() below, with "no/invalid token" silently
+        # falling through to role="viewer" instead of being refused. That
+        # meant ANY anonymous internet client could open this socket with
+        # no token at all and immediately receive the full "init" dump
+        # (operator callsign, STATION locator, live freq/mode/PTT, rig
+        # audio device names, who else is online) plus every subsequent
+        # broadcast (S-meter, waterfall scope frames, rotator position,
+        # TX meters) via self.hub.add(ws) below - a live, continuous,
+        # unauthenticated surveillance feed of the station, confirmed by
+        # directly connecting with no query string at all. Regular WRITE
+        # actions were still correctly gated by role checks elsewhere, so
+        # this was a confidentiality leak, not a control-takeover - but a
+        # real one, and on the public internet, not a lab. Matches how
+        # com_bridge_ws_handler already does it correctly (403 before ever
+        # upgrading to a WebSocket) - the plain /ws endpoint just never got
+        # the same treatment. Auth is now checked and enforced BEFORE
+        # ws.prepare() - an invalid/missing token gets a plain HTTP 403,
+        # no WebSocket upgrade, no data of any kind sent.
         token = request.rel_url.query.get("token", "")
         user = self._check_pw_ver(jwt_verify(token)) if token else None
-        role = (user or {}).get("role", "viewer")
-        uid  = (user or {}).get("id", "")
+        if not user:
+            return web.Response(status=403, text="Unauthorized - missing or invalid token")
+        role = user.get("role", "viewer")
+        uid  = user.get("id", "")
         # FIX: the JWT only ever carries the role from LOGIN time (see the
         # comment at _has_perm) - granting the "admin" GRANULAR permission
         # afterward (Admin panel tab, ADMIN.js "admin" key) made _has_perm()
@@ -4396,9 +4411,16 @@ class App:
         # not a partial one". Re-reading the live user record here (once,
         # per connection) and promoting role locally is far safer than
         # hunting down every "== admin" check in this file individually.
-        u_obj = self.find_user_by_id(uid) or {} if user else {}
+        u_obj = self.find_user_by_id(uid) or {}
         if role != "admin" and u_obj.get("permissions", {}).get("admin"):
             role = "admin"
+
+        _ws_kwargs = dict(heartbeat=30, compress=False, max_msg_size=8*1024*1024)
+        try:
+            ws = web.WebSocketResponse(writer_limit=128*1024, **_ws_kwargs)
+        except TypeError:
+            ws = web.WebSocketResponse(**_ws_kwargs)
+        await ws.prepare(request)
 
         await self.hub.add(ws)
 
@@ -4738,11 +4760,42 @@ class App:
         WebSocket endpoint /hamlib — Hamlib TCP tunnel for remote WSJT-X.
         The client (wsjtx_bridge.py) connects here instead of directly to port 4532.
         Hamlib commands arrive as WS text, responses go back as WS text.
+
+        SECURITY FIX (found live 2026-09-02, same audit as ws_handler):
+        this endpoint had NO authentication at all - anyone on the internet
+        could open it with no token. HamlibSession._can_control() only
+        gates WRITE commands (SET_FREQ/SET_MODE/SET_PTT) behind "is
+        radio_lock currently held by ANYONE", not "is THIS connection the
+        actual lock holder" - so while the legitimate operator is actively
+        using the radio (the normal case, not an edge case), an anonymous
+        client here could inject real control commands and key the radio,
+        confirmed live: the handshake alone succeeds with zero auth
+        (deliberately did NOT send an actual Hamlib command in the live
+        test - the operator held the lock at the time, so it would have
+        actually gone through). Now requires the same ?token= a logged-in
+        session already has, and refuses viewer role - matching
+        com_bridge_ws_handler's existing, correct pattern for the other
+        external-CAT-software bridge.
         """
+        token = request.query.get('token', '')
+        user = self._verify_token(token) if token else None
+        if not user:
+            return web.Response(status=403, text="Unauthorized - missing or invalid token")
+        _role = user.get('role', 'viewer')
+        if _role != 'admin':
+            _u_obj_hl = self.find_user_by_id(user.get('id', '')) or {}
+            if _u_obj_hl.get('permissions', {}).get('admin'):
+                _role = 'admin'
+        if _role == 'viewer':
+            return web.Response(
+                status=403,
+                text="Hamlib bridge access is for operators/admin only. "
+                     "As a viewer, use the web panel.")
+
         ws = web.WebSocketResponse(heartbeat=30, compress=9)
         await ws.prepare(request)
         peer = request.remote
-        print(f"[hamlib-ws] WSJT-X bridge connected: {peer}")
+        print(f"[hamlib-ws] WSJT-X bridge connected: {peer} (user={user.get('username','?')})")
 
         from hamlib_server import HamlibSession
 
@@ -7016,7 +7069,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-02-HOUND-ENGINE-ISOLATION-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-02-SECURITY-WS-AUTH-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
