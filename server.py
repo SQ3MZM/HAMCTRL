@@ -86,6 +86,35 @@ import os as _os
 BIND_HOST = _os.environ.get("HAM_BIND_HOST", "0.0.0.0")
 from webapp import App
 
+@web.middleware
+async def _security_headers_middleware(request, handler):
+    """
+    Adds standard hardening headers to every HTTP response. Found missing
+    entirely during a live security pass 2026-09-02 (curl against the
+    public duckdns deployment showed zero of these on any response).
+    Deliberately does NOT add a Content-Security-Policy here - the
+    frontend relies heavily on inline onclick=/style= attributes
+    throughout (index.html/mobile.html), so a real CSP needs a dedicated
+    audit of what it would break, not a header bolted on blind. These four
+    are safe defaults with no such risk:
+      - X-Content-Type-Options: stops the browser from guessing a
+        different content type than what the server declared (MIME-sniffing).
+      - X-Frame-Options: DENY - this control panel is never meant to be
+        embedded in another site's frame (clickjacking protection).
+      - Referrer-Policy: don't leak the full URL (which can carry a
+        session token in ?token=...) to a third-party site via the
+        Referer header if a link is ever clicked out.
+      - Strict-Transport-Security: the app is HTTPS-only already (see
+        launcher.py) - tells the browser to never even try plain HTTP for
+        this host.
+    """
+    resp = await handler(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
+
 async def amain():
     app = App()
     loop = asyncio.get_running_loop()
@@ -237,7 +266,7 @@ async def amain():
         traceback.print_exc()
         app.hamlib = None
 
-    web_app = web.Application()
+    web_app = web.Application(middlewares=[_security_headers_middleware])
     web_app.router.add_route("GET",    "/ws",           app.ws_handler)
     web_app.router.add_route("GET",    "/hamlib",       app.hamlib_ws_handler)
     web_app.router.add_route("GET",    "/ws/com-bridge", app.com_bridge_ws_handler)
