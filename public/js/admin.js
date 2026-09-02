@@ -390,7 +390,7 @@ function renderRotatorConfig(rots) {
             <option value="1" ${rot.model==='1'?'selected':''}>Dummy (test)</option>
           </select>
         </div>
-        <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label><input type="text" value="${_escapeHtmlAdmin(rot.port||'COM5')}" id="rcfg-port-${i}" placeholder="COM5"></div>
+        <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label><select id="rcfg-port-${i}"></select></div>
         <div class="sg"><label>${I18n.t('cfg_baud_lbl')}</label>
           <select id="rcfg-speed-${i}">
             <option value="600"  ${(rot.speed||'1200')==='600' ?'selected':''}>600</option>
@@ -417,6 +417,11 @@ function renderRotatorConfig(rots) {
       </div>
       <div id="rot-test-result-${i}" style="font-family:var(--mono);font-size:10px;color:var(--dim);padding:3px 2px 0;min-height:14px;"></div>
     </div>`).join('') || `<div style="font-family:var(--mono);font-size:11px;color:var(--dim);padding:12px;">${I18n.t('cfg_no_rotators')}</div>`;
+
+  rots.forEach((rot, i) => {
+    const sel = document.getElementById(`rcfg-port-${i}`);
+    if (sel) window.SerialPorts?.populate(sel, rot.port || `COM${5+i}`);
+  });
 }
 
 let _rotatorsCfg = [];

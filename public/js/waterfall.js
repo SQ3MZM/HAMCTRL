@@ -131,6 +131,9 @@ function handleScopeData(msg) {
   if (msg.filterHz != null) lastMeta.filterHz = msg.filterHz;
   if (msg.scopeMode!= null) lastMeta.scopeMode= msg.scopeMode;
   if (msg.outOfRange!=null) lastMeta.outOfRange = msg.outOfRange;
+  // Collapsed: keep state fresh (so expanding shows current data right
+  // away) but skip the actual canvas draw - nothing is visible anyway.
+  if (collapsed) return;
   drawFrame(msg.data);
   drawAxis();
 }
@@ -140,6 +143,7 @@ function handleFilterWidth(msg) {
   lastMeta.filterHz = msg.hz;
   if (msg.mode) lastMeta.mode = msg.mode;
   if (msg.dataMode != null) lastMeta.dataMode = msg.dataMode;
+  if (collapsed) return;
   drawAxis();
 }
 
@@ -549,8 +553,45 @@ document.addEventListener('fullscreenchange', () => {
   if (typeof resize === 'function') resize();
 });
 
+// Collapse/expand — for rigs with no real CI-V scope (e.g. IC-746 via
+// Hamlib/RigCAT), the perpetual simulated waterfall animation has nothing
+// real to show and is just a distracting moving-color loop. Collapsing
+// hides the 3 canvases (CSS, see .wf-collapsed) AND stops the rAF draw
+// loop (no point animating something invisible) - the tile itself stays
+// in its exact grid slot, so no other tile moves/reflows.
+let collapsed = false;
+
+function applyCollapsed() {
+  const el  = document.querySelector('.tile-wf');
+  const btn = document.getElementById('wf-collapse-btn');
+  if (el) el.classList.toggle('wf-collapsed', collapsed);
+  if (btn) btn.textContent = collapsed ? '+' : '−';
+  if (collapsed) {
+    stop();
+  } else {
+    if (!animFrame) start();
+    resize();
+  }
+}
+
+function toggleCollapse() {
+  collapsed = !collapsed;
+  localStorage.setItem('wf_collapsed', collapsed ? '1' : '0');
+  applyCollapsed();
+}
+
 window.Waterfall = { init, handleScopeData, handleFilterWidth, startScope, updateSourceBadge, stop,
-                     setSpan, setPeakHold, toggleFullscreen, onPowerReset };
+                     setSpan, setPeakHold, toggleFullscreen, toggleCollapse, onPowerReset };
+
+// Restore the collapsed state the user left it in (per-browser, like the
+// span setting below) - runs after init() has had a chance to run
+// (DOMContentLoaded -> init after 300ms) so #wf-collapse-btn exists.
+window.addEventListener('app:ready', () => {
+  if (localStorage.getItem('wf_collapsed') === '1') {
+    collapsed = true;
+    applyCollapsed();
+  }
+});
 document.addEventListener('DOMContentLoaded', () => setTimeout(init, 300));
 
 // Restore the last span the user picked (localStorage, per-browser) —

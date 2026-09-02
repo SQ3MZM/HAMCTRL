@@ -199,7 +199,24 @@ FIRST_RUN    = ENV.get("FIRST_RUN", "0") == "1"
 # environment or VERBOSE=1 in .env when diagnosing.
 VERBOSE      = (os.environ.get("HAM_VERBOSE", ENV.get("VERBOSE", "0")) == "1")
 HAMLIB       = ENV.get("HAMLIB_PATH", "rigctld")
+# HAMLIB_PORT: HAMCTRL's OWN broadcast rigctld EMULATOR (hamlib_server.py) -
+# external apps (WSJT-X, loggers) connect here, N clients at once. This is
+# NOT a real rigctld and does not talk to hardware directly - it operates
+# on the same in-memory self.rig object the rest of the server uses.
 HAMLIB_PORT  = int(ENV.get("HAMLIB_PORT", 4532))
+# RIGCTLD_PORT: the port rigcat.py's OWN real rigctld.exe (talking to the
+# physical radio over a COM port) listens on. MUST be different from
+# HAMLIB_PORT - both defaulted to 4532 until 2026-09-01, which meant
+# rigcat.py's connect() always found port 4532 already bound by HAMCTRL's
+# own broadcast emulator (started earlier at boot) and concluded "a rigctld
+# is already running" - it never spawned the real one, so RigCAT-driven
+# rigs (Hamlib, e.g. non-CI-V/older Icoms) silently never reached the
+# actual hardware: reads returned whatever was last cached in self.rig, and
+# writes recursed back into the emulator's own SET_FREQ/SET_MODE handlers
+# (which call self.rig.set_freq()/set_mode() again) instead of the radio.
+# civ.py never hit this because it talks to the COM port directly over
+# serial, not through this TCP port at all.
+RIGCTLD_PORT = int(ENV.get("RIGCTLD_PORT", 4599))
 RIGCTLD_LOG  = str(Path(__file__).resolve().parent / "rigctld.log")
 
 MIME = {
@@ -211,8 +228,21 @@ MIME = {
 }
 
 # Models with a built-in spectroscope (scope) → direct CI-V mode (control + scope).
-# The rest of the radios (IC-746 etc.) still go through rigctld/RigCAT — unchanged.
 SCOPE_MODELS = {"3073", "3078", "3085", "3068", "3070", "3081"}  # IC-7300/7610/705/9100/7100/9700
+
+# Models driven natively via CI-V (civ.py, direct serial) even WITHOUT a
+# scope - superset of SCOPE_MODELS. Added 2026-09-02 for IC-746 (3023) after
+# rigctld (Hamlib) kept crashing mid-session on this radio (see rigcat.py's
+# _respawn_rigctld) - civ.py talks straight to the serial port, no separate
+# process/TCP hop that can die out from under a live session. Verified
+# against Hamlib's own icom.c (RIG_IS_IC746 branches) before adding a model
+# here - an old-generation Icom like the 746 needs its OWN civ_profiles.py
+# entry with the legacy (no filter byte, no DATA-mode command) mode-set
+# quirks, or civ.py would send frames this radio doesn't understand. Any
+# model in here but not in SCOPE_MODELS gets scope UI/endpoints disabled via
+# its profile's capabilities["scope"]=False (see webapp.py's /api/scope
+# gate), not just a missing scope_max/scope_header_len.
+CIV_NATIVE_MODELS = SCOPE_MODELS | {"3023"}  # + IC-746
 
 HAMLIB_MODELS = {
     "Icom": [

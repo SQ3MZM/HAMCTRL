@@ -44,8 +44,20 @@ function renderRigs(brands, rigs) {
     container.appendChild(buildRigPanel(id, rig, isAdmin));
   });
 
-  // Load audio cards after the DOM has rendered (short delay)
+  // Load audio cards and COM port lists after the DOM has rendered (short delay)
   setTimeout(() => loadAudioCards(), 100);
+  setTimeout(() => loadPortSelects(), 100);
+}
+
+// Populate every radio's COM port <select> with what Windows currently
+// reports. `force` bypasses the client-side cache (used by the ⟳ button).
+async function loadPortSelects(force) {
+  const ids = _rigs.length ? _rigs.map(r => r.id).filter(Boolean) : [1];
+  for (const id of ids) {
+    const rig = _rigs.find(r => r.id === id) || {};
+    const sel = document.getElementById(`cfg-port-${id}`);
+    if (sel) await window.SerialPorts?.populate(sel, rig.port || '', undefined, force);
+  }
 }
 
 function buildRigPanel(id, rig, isAdmin) {
@@ -83,7 +95,10 @@ function buildRigPanel(id, rig, isAdmin) {
         <select id="cfg-model-${id}">${modelOptsFn(rig.model||'3073')}</select>
       </div>
       <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label>
-        <input type="text" id="cfg-port-${id}" value="${rig.port||'COM'+(2+id)}" placeholder="COM3">
+        <div style="display:flex;gap:5px;">
+          <select id="cfg-port-${id}" style="flex:1;font-family:var(--mono);font-size:11px;"></select>
+          <button onclick="Settings.loadPortSelects(true)" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--dim);font-family:var(--mono);font-size:10px;padding:0 8px;cursor:pointer;" title="${I18n.t('cfg_refresh_title')}">⟳</button>
+        </div>
       </div>
       <div class="sg"><label>${I18n.t('cfg_baud_lbl')}</label>
         <select id="cfg-speed-${id}">${speedOpts}</select>
@@ -139,8 +154,7 @@ function buildRigPanel(id, rig, isAdmin) {
         </div>
         <div style="flex:1;min-width:120px;">
           <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">${I18n.t('cfg_dtr_port_lbl')}</div>
-          <input type="text" id="cfg-cw-dtr-port-${id}" placeholder="${I18n.t('cfg_dtr_port_ph')}"
-            style="font-family:var(--mono);font-size:11px;" value="">
+          <select id="cfg-cw-dtr-port-${id}" style="font-family:var(--mono);font-size:11px;width:100%;"></select>
         </div>
       </div>
       <button onclick="Settings._cwKeyerSave(${id})" class="save-btn" style="margin-top:8px;">
@@ -468,17 +482,18 @@ async function _initCwStatus() {
     const d = await fetch('/api/cw/status', {
       headers: {'Authorization': `Bearer ${token}`}
     }).then(r => r.json());
-    document.querySelectorAll('[id^="cfg-cw-dtr-line-"]').forEach(lineEl => {
+    document.querySelectorAll('[id^="cfg-cw-dtr-line-"]').forEach(async lineEl => {
       const id = lineEl.id.replace('cfg-cw-dtr-line-','');
       lineEl.value = (d.method === 'rts') ? 'RTS' : (d.dtrLine || 'DTR');
       const portEl = document.getElementById(`cfg-cw-dtr-port-${id}`);
-      if (portEl && d.dtrPort) portEl.value = d.dtrPort;
+      if (portEl) await window.SerialPorts?.populate(portEl, d.dtrPort || '', I18n.t('cfg_dtr_port_ph'));
     });
   } catch(e) {}
 }
 
 window.Settings = { populateModels, renderRigs, saveRig, connectRig, loadStatus, toggleAudio, loadAudioCards, addRig, removeRig,
   loadAudioDevices: loadAudioCards,
+  loadPortSelects,
   _cwKeyerSave, _initCwStatus,
 };
 

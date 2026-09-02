@@ -114,7 +114,19 @@ async def amain():
         # it - hence the "waterfall stopped working" regression. The
         # backend now enables the scope itself after connecting.
         try:
-            if not app.rig.sim and hasattr(app.rig, "scope_start"):
+            # hasattr(scope_start) alone isn't enough - EVERY CivRig
+            # instance has the method regardless of model.
+            # CIV_NATIVE_MODELS (added 2026-09-02 for IC-746) covers CI-V
+            # radios with NO scope hardware at all - without this check,
+            # startup would issue 0x27 scope commands to a radio that
+            # doesn't understand them (live-seen: "scope requires 115200!"
+            # + "radio REJECTED (NG)" spam on an IC-746 at 19200bd, right
+            # before ALC/PWR/SWR meter reads started failing too - the same
+            # capabilities gate already added to webapp.py's
+            # _on_rig_reconnected() for the reconnect case, missed here for
+            # the initial-startup connect).
+            _has_scope = getattr(app.rig, "profile", {}).get("capabilities", {}).get("scope", False)
+            if not app.rig.sim and _has_scope and hasattr(app.rig, "scope_start"):
                 await asyncio.sleep(1.0)  # give the radio a moment after connect
                 # scope_start does blocking writes to the port (time.sleep) —
                 # run it in a thread so it doesn't freeze the loop on startup (looplag).

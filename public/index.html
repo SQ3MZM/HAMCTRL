@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202608260010">
+<link rel="stylesheet" href="css/style.css?v=202609010002">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -229,8 +229,8 @@
         </div>
         <div style="display:flex;justify-content:center;margin-top:8px;">
           <button id="ptt-btn" class="ptt-btn" data-perm="ptt"
-            onmousedown="UI.setPTT(true)" onmouseup="UI.setPTT(false)"
-            ontouchstart="UI.setPTT(true)" ontouchend="UI.setPTT(false)">PTT</button>
+            onpointerdown="this.setPointerCapture(event.pointerId); UI.setPTT(true)"
+            onpointerup="UI.setPTT(false)" onpointercancel="UI.setPTT(false)">PTT</button>
         </div>
 
         <!-- TRX meter — bargraf kompaktowy, jeden wiersz: NAZWA + pasek + wartosc,
@@ -338,6 +338,8 @@
           </label>
           <span id="wf-source-badge" style="font-family:var(--mono);font-size:9px;color:rgba(200,200,200,0.3);">● SIM</span>
           <span id="smeter-text" style="font-family:var(--mono);font-size:10px;color:var(--green)">S0</span>
+          <button id="wf-collapse-btn" onclick="Waterfall.toggleCollapse()" data-i18n-title="wf_collapse_title" title="Zwiń wodospad (np. gdy radio nie ma scope'a i animacja przeszkadza)"
+            style="font-family:var(--mono);font-size:9px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;width:20px;">−</button>
           <button onclick="Waterfall.toggleFullscreen()" title="Fullscreen (F11 alternate)"
             style="font-family:var(--mono);font-size:9px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;">⛶</button>
         </div>
@@ -2585,23 +2587,24 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609010001"></script>
+<script src="js/i18n.js?v=202609010002"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202608243900"></script>
+<script src="js/ws.js?v=202609020001"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/ui.js?v=202608242600"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
-<script src="js/settings.js?v=202608260005"></script>
+<script src="js/serial_ports.js?v=202609020001"></script>
+<script src="js/settings.js?v=202609020001"></script>
 <script src="js/tx_eq.js?v=202608210003"></script>
 <script src="js/cw_sidetone.js?v=202608210001"></script>
-<script src="js/relay_ui.js?v=202606300001"></script>
+<script src="js/relay_ui.js?v=202609020001"></script>
 <script src="js/dxcluster.js?v=202608180001"></script>
 <script src="js/audio_autodetect.js?v=202608180001"></script>
 <script src="js/com_bridge.js?v=202608180001"></script>
 <script src="js/rotator.js?v=202608210001"></script>
 <script src="js/rotormini.js?v=202608170001"></script>
-<script src="js/admin.js?v=202608210002"></script>
+<script src="js/admin.js?v=202609020001"></script>
 <script src="js/admin_status.js?v=202608180002"></script>
 <script src="js/profile_audio.js?v=202608243200"></script>
 <script src="js/relay_admin.js?v=202608180001"></script>
@@ -2609,11 +2612,11 @@
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202608260020"></script>
+<script src="js/wsjtx.js?v=202609010001"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
-<script src="js/waterfall.js?v=202608210002"></script>
+<script src="js/waterfall.js?v=202609010001"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>

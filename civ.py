@@ -498,16 +498,31 @@ class CivRig:
             self.data_mode = is_data
             return
 
+        # Older Icoms (e.g. IC-746) predate the DATA-mode/filter-byte
+        # extension to the 06 command entirely - Hamlib's own icom.c sends
+        # them a bare "06 <mode>" (icom_set_mode_without_data(), icmode_ext
+        # forced to -1 for RIG_IS_IC746 among others). Sending our 3-byte
+        # "06 <mode> <fil>" to one of these would be a malformed frame the
+        # radio doesn't recognize. Flag lives in the model's civ_profiles.py
+        # entry; defaults to True so every already-verified model (IC-7300
+        # family) is unaffected.
+        _has_fil_byte = self.profile.get("mode_has_filter_byte", True)
         mb = self.mode_rev.get(base_mode, 1)
+        _mode_cmd = bytes([0x06, mb, fb]) if _has_fil_byte else bytes([0x06, mb])
         _mode_resp = await asyncio.to_thread(self._transact,
-                                bytes([0x06, mb, fb]), {0xFB, 0xFA}, 0.4)
+                                _mode_cmd, {0xFB, 0xFA}, 0.4)
         if _mode_resp is None or self._resp_matched_cmd == 0xFA:
             _why = "no ACK (timeout)" if _mode_resp is None else "radio REJECTED (NG)"
-            self.log(f"[civ] set_mode: base mode-set (06 {mb:02X} {fb:02X}) - {_why}")
+            self.log(f"[civ] set_mode: base mode-set ({_mode_cmd.hex(' ')}) - {_why}")
 
         # Turn DATA mode on/off with a separate command (1A 06), independent
         # of the base mode — this is the actual USB<->USB-D switch on the
-        # IC-7300.
+        # IC-7300. Radios whose profile says they don't have this command
+        # at all (see _has_fil_byte comment above - same generation split)
+        # just stay in the base mode; webapp.py already downgrades any
+        # "USB-D" request to plain "USB" before it gets here for those
+        # models, so is_data should never be True in practice, but the
+        # profile check below is the real guard, not that upstream downgrade.
         #
         # FIX (audit 2026-08-26, cross-checked against the official CI-V
         # doc): this command takes TWO data bytes -
@@ -523,7 +538,7 @@ class CivRig:
         # every single USB<->USB-D switch, with the result discarded
         # either way - self.data_mode was set unconditionally regardless
         # of whether the radio actually switched.
-        if is_data != self.data_mode:
+        if self.profile.get("data_mode_supported", True) and is_data != self.data_mode:
             _data_fil_byte = fb if is_data else 0x00
             _data_resp = await asyncio.to_thread(self._transact,
                                     bytes([0x1A, 0x06, 0x01 if is_data else 0x00, _data_fil_byte]),
@@ -1565,29 +1580,108 @@ class CivRig:
         if isinstance(expect, int):
             expect = {expect}
         with self._txlock:
-            self._resp_cmd = expect
-            self._resp_sub = sub
-            self._resp_payload = None
-            self._resp_matched_cmd = None
-            self._resp_ev.clear()
-            try:
-                self._write(payload)
-            except Exception as e:
-                self.log(f"[civ] write error: {e}")
-                self._resp_cmd = None
-                self._resp_sub = None
-                return None
-            got = self._resp_ev.wait(timeout)
+            return self._transact_locked(payload, expect, timeout, sub)
+
+    def _transact_locked(self, payload: bytes, expect, timeout: float, sub: int = None):
+        """Core of _transact(), assuming _txlock is ALREADY held by the
+        caller. Exists so a caller that needs several transactions to
+        happen as one atomic, uninterruptible unit (nothing else on the
+        bus in between) can hold _txlock ONCE across all of them instead
+        of once per transaction - see _read_freq_b_via_vfo_swap, which
+        would otherwise risk another _transact() (the background poller,
+        or a concurrent user freq/PTT action) landing exactly between its
+        "switch to VFO-B" and "switch back to VFO-A" steps."""
+        self._resp_cmd = expect
+        self._resp_sub = sub
+        self._resp_payload = None
+        self._resp_matched_cmd = None
+        self._resp_ev.clear()
+        try:
+            self._write(payload)
+        except Exception as e:
+            self.log(f"[civ] write error: {e}")
             self._resp_cmd = None
             self._resp_sub = None
-            # self._resp_matched_cmd is left set (not cleared here) so a
-            # caller that cares which of 'expect' actually matched (e.g.
-            # 0xFB ok vs 0xFA reject) can read it right after this call
-            # returns - see set_scope_span for why this matters (this was
-            # the ONLY CI-V "set" command in the file that never checked
-            # for a response at all before this fix, so a rejected span
-            # value looked identical to a silently-ignored one).
-            return self._resp_payload if got else None
+            return None
+        got = self._resp_ev.wait(timeout)
+        self._resp_cmd = None
+        self._resp_sub = None
+        # self._resp_matched_cmd is left set (not cleared here) so a
+        # caller that cares which of 'expect' actually matched (e.g.
+        # 0xFB ok vs 0xFA reject) can read it right after this call
+        # returns - see set_scope_span for why this matters (this was
+        # the ONLY CI-V "set" command in the file that never checked
+        # for a response at all before this fix, so a rejected span
+        # value looked identical to a silently-ignored one).
+        return self._resp_payload if got else None
+
+    def _read_freq_b_via_vfo_swap(self) -> int | None:
+        """Fallback VFO-B (inactive VFO) frequency read for radios that
+        don't support CI-V 0x25/0x26 at all (has_vfo_b_read=False in the
+        model's civ_profiles.py entry - e.g. IC-746, confirmed live
+        2026-09-02 via Hamlib's own startup log:
+        "icom_set_x25x26_ability: Hamlib thinks rig does not support
+        x25/x26 command"). Same approach Hamlib itself falls back to for
+        pre-0x25 radios: briefly select VFO-B (07 01), read its frequency
+        with the normal 03 command, then switch back to VFO-A (07 00).
+
+        SAFETY: never called while self.ptt is True (checked by the
+        caller - webapp.py's _is_split_cross_band awaits this only when
+        about to ALLOW a split TX, never during one). The whole 3-step
+        sequence holds _txlock for its entire duration (via
+        _transact_locked, not the public _transact) so no other CI-V
+        transaction - the background poller's own freq read, or a
+        concurrent user action - can land in between and either read
+        VFO-B's frequency believing it's VFO-A's, or (worse) SET a new
+        frequency onto VFO-B while the radio is momentarily parked there.
+        The VFO-A restore step always runs (even if the VFO-B read
+        failed) so the radio is never left parked on VFO-B.
+
+        Returns the VFO-B frequency in Hz, or None if the radio didn't
+        cooperate (caller must treat None as "still unknown" - fail safe,
+        not silently trust a stale value).
+        """
+        if self.ptt or not self._ser:
+            return None
+        self._tx_priority_active = True
+        try:
+            with self._txlock:
+                sel = self._transact_locked(bytes([0x07, 0x01]), {0xFB, 0xFA}, 0.4)
+                if sel is None or self._resp_matched_cmd == 0xFA:
+                    self.log(f"[civ] VFO-B swap-read: couldn't select VFO-B "
+                             f"({'no ACK' if sel is None else 'NG'})")
+                    return None
+                fb = None
+                try:
+                    fp = self._transact_locked(bytes([0x03]), {0x03, 0x00}, 0.4)
+                    if fp and len(fp) >= 4:
+                        fb = bcd_to_freq(fp[:5])
+                except Exception as e:
+                    self.log(f"[civ] VFO-B swap-read: freq read error: {e}")
+                # ALWAYS restore VFO-A, even if the read above failed -
+                # never leave the radio parked on VFO-B.
+                back = self._transact_locked(bytes([0x07, 0x00]), {0xFB, 0xFA}, 0.4)
+                if back is None or self._resp_matched_cmd == 0xFA:
+                    self.log("[civ] VFO-B swap-read: WARNING - couldn't switch back "
+                             "to VFO-A, radio may be left on VFO-B")
+                # ALWAYS log the outcome (not just failures) - live-seen
+                # 2026-09-02: with only failure logging, "no log line at
+                # all" was ambiguous between "silently succeeded" and "ran
+                # but hit an unlogged edge case", making the cross-band
+                # guard impossible to verify from a live log alone.
+                self.log(f"[civ] VFO-B swap-read: result={fb}Hz "
+                         f"({'no freq in response' if fb is None else 'OK'})")
+                return fb
+        finally:
+            self._tx_priority_active = False
+
+    async def get_freq_b_fresh(self) -> int | None:
+        """Async wrapper for _read_freq_b_via_vfo_swap (see its docstring) -
+        for webapp.py's cross-band-split safety check to call right before
+        allowing a split TX on a radio with has_vfo_b_read=False. Not for
+        routine/background polling - each call briefly swaps the radio's
+        active VFO."""
+        return await asyncio.to_thread(self._read_freq_b_via_vfo_swap)
 
     def _reader_loop(self):
         buf = bytearray()
@@ -1732,7 +1826,17 @@ class CivRig:
         ec = self._resp_cmd
         if ec and cmd in ec:
             es = self._resp_sub
-            if es is None or (payload and payload[0] == es):
+            # An NG (0xFA) reply carries NO payload at all, so it can never
+            # match a specific 'sub' (there's nothing to compare) - without
+            # this, a real "Command rejected" response from the radio for a
+            # 15-xx meter read (live-confirmed 2026-09-02 via rigctl on a
+            # real IC-746: TX "15 13", RX "fa" NG) fell through to the
+            # cross-talk branch below and looked identical to a plain
+            # timeout (p=None) in our own logs. Safe to accept unconditionally
+            # here because _txlock serializes _transact() - only ONE
+            # query can ever be waiting at a time, so an ambiguous
+            # payload-less frame can only belong to it.
+            if es is None or not payload or payload[0] == es:
                 self._resp_payload = payload
                 self._resp_matched_cmd = cmd
                 self._resp_ev.set()
@@ -1898,8 +2002,12 @@ class CivRig:
                 # VFO B (inactive VFO): CI-V 25 01 -> response [01, 5B freq BCD]
                 # (per doc p.19-13: "Selected or unselected VFO frequency
                 # settings", 00=selected/active, 01=unselected). Polled
-                # every ~1.2s — changes rarely (split/A-B swap).
-                if n % 4 == 2:
+                # every ~1.2s — changes rarely (split/A-B swap). Older
+                # Icoms (e.g. IC-746, see civ_profiles.py's
+                # "has_vfo_b_read") don't support 0x25/0x26 at all - radio
+                # NGs it every time, so skip the query entirely instead of
+                # spamming the bus/log with a command we already know fails.
+                if n % 4 == 2 and self.profile.get("has_vfo_b_read", True):
                     bp = self._transact(bytes([0x25, 0x01]), {0x25}, 0.3)
                     if bp and len(bp) >= 6 and bp[0] == 0x01:
                         fb = bcd_to_freq(bp[1:6])
@@ -1969,7 +2077,7 @@ class CivRig:
                     # actual commands. The correct command for ALC is
                     # "15 13", with a documented range of 0000=Min to
                     # 0120=Max (NOT 0-241).
-                    ap = self._transact(bytes([0x15, 0x13]), {0x15}, 0.25, sub=0x13)
+                    ap = self._transact(bytes([0x15, 0x13]), {0x15, 0xFA}, 0.25, sub=0x13)
                     if ap and len(ap) >= 3 and ap[0] == 0x13:
                         alc_raw = bcd2(ap[1:3])
                         alc_pct = min(100.0, max(0.0, alc_raw / 120 * 100))
@@ -1986,6 +2094,10 @@ class CivRig:
                                 "pct": min(1.0, alc_raw / 120),
                                 "peak": round(self._alc_peak, 1),
                                 "peakRaw": self._alc_peak_raw}
+                    elif getattr(self, '_alc_fail_logged', 0) < 5:
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] ALC transact fail ({_why}): p={ap.hex() if ap else None}")
+                        self._alc_fail_logged = getattr(self, '_alc_fail_logged', 0) + 1
                     # PWR output. FIX: command "15 14" used to be used here
                     # (that's actually COMP — the speech compressor in dB,
                     # NOT power). The correct command for PO (output power)
@@ -1993,7 +2105,7 @@ class CivRig:
                     # 0000=0%, 0143=50%, 0213=100% (full scale reached
                     # already at raw=213, not 241) — piecewise
                     # interpolation between these points.
-                    pp = self._transact(bytes([0x15, 0x11]), {0x15}, 0.25, sub=0x11)
+                    pp = self._transact(bytes([0x15, 0x11]), {0x15, 0xFA}, 0.25, sub=0x11)
                     if pp and len(pp) >= 3 and pp[0] == 0x11:
                         pwr_raw = bcd2(pp[1:3])
                         _po_points = [(0, 0.0), (143, 50.0), (213, 100.0)]
@@ -2023,8 +2135,12 @@ class CivRig:
                                 "pct": pwr_pct / 100,
                                 "peak": round(self._pwr_peak, 1),
                                 "peakRaw": self._pwr_peak_raw}
+                    elif getattr(self, '_pwr_fail_logged', 0) < 5:
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] PWR transact fail ({_why}): p={pp.hex() if pp else None}")
+                        self._pwr_fail_logged = getattr(self, '_pwr_fail_logged', 0) + 1
                     # SWR
-                    sp = self._transact(bytes([0x15, 0x12]), {0x15}, 0.25, sub=0x12)
+                    sp = self._transact(bytes([0x15, 0x12]), {0x15, 0xFA}, 0.25, sub=0x12)
                     if sp and len(sp) >= 3 and sp[0] == 0x12:
                         swr_raw = bcd2(sp[1:3])
                         # IC-7300 SWR: 0=1.0, 48=1.5, 80=2.0, 120=3.0, 241=50
@@ -2054,6 +2170,10 @@ class CivRig:
                                 "raw": swr_raw,
                                 "value": swr_val,
                                 "pct": min(1.0, swr_raw / 120)}  # scale to SWR=3
+                    elif getattr(self, '_swr_fail_logged', 0) < 5:
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] SWR transact fail ({_why}): p={sp.hex() if sp else None}")
+                        self._swr_fail_logged = getattr(self, '_swr_fail_logged', 0) + 1
                     # Supply voltage (Vd — drain voltage / power amp supply
                     # voltage). Command "15 15" (NOT "15 16" — that's Id,
                     # current, a different meter). Calibration verified
@@ -2068,7 +2188,7 @@ class CivRig:
                     # operates). The wrong points gave, e.g. for a real
                     # 13.8V (raw~157), a reading of ~10.6V — exactly the
                     # kind of low reading that was reported live.
-                    vp = self._transact(bytes([0x15, 0x15]), {0x15}, 0.25, sub=0x15)
+                    vp = self._transact(bytes([0x15, 0x15]), {0x15, 0xFA}, 0.25, sub=0x15)
                     if vp and len(vp) >= 3 and vp[0] == 0x15:
                         v_raw = bcd2(vp[1:3])
                         _vd_points = [(0, 0.0), (13, 10.0), (241, 16.0)]
@@ -2093,6 +2213,14 @@ class CivRig:
                                 "raw": v_raw,
                                 "value": volt,
                                 "pct": volt / 16.0}  # scale to nominal 16V
+                    elif getattr(self, '_volt_fail_logged', 0) < 5:
+                        # Not necessarily a bug - VOLT (15 15) isn't listed
+                        # in every model's CI-V command set (e.g. Hamlib's
+                        # own IC-746 caps don't include it) - an older radio
+                        # may simply not have this meter at all.
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] VOLT transact fail ({_why}, may be unsupported on this model): p={vp.hex() if vp else None}")
+                        self._volt_fail_logged = getattr(self, '_volt_fail_logged', 0) + 1
 
                     # RFPOWER SET level (14 0A) — direct read-back of the
                     # radio's CONFIGURED power ceiling, independent of the

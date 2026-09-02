@@ -120,6 +120,10 @@
       <details class="m-collapsible" open>
         <summary class="m-card-title" data-i18n="m_functions_hdr">Funkcje</summary>
         <div id="rig-features-buttons" class="rf-buttons-row"></div>
+        <!-- Przekazniki (relay_ui.js, reuzyty 1:1 z desktopu - ten sam
+             #relay-buttons id, ten sam /api/relay/state + /api/relay/action;
+             chowa sie samo (display:none) gdy admin nie dodal zadnego). -->
+        <div id="relay-buttons" class="rf-buttons-row" style="display:none;margin-top:8px;"></div>
         <div class="m-select-row">
           <span class="m-sub-lbl" data-i18n="radio_filter_lbl">FILTR (FIL1/2/3 — z menu radia)</span>
           <select id="bw-select" class="m-select" onchange="WS.send({type:'mode', mode:AppState.mode, filterNum: parseInt(this.value)})">
@@ -533,9 +537,10 @@
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
+<script src="js/relay_ui.js?v=202609020001"></script>
 <script src="js/qsolog.js?v=202608231200"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
-<script src="js/mobile_audio.js?v=202608243200"></script>
-<script src="js/mobile.js?v=202608260010"></script>
+<script src="js/mobile_audio.js?v=202609020001"></script>
+<script src="js/mobile.js?v=202609020001"></script>
 </body>
 </html>

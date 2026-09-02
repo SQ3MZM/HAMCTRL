@@ -426,12 +426,18 @@ function _populateBandSelect() {
 }
 
 // Retunes the main radio to the frequency chosen from the band list and
-// sets USB-D mode — ATOMICALLY, a single ft8_qsy command to the server.
+// sets digital-USB mode — ATOMICALLY, a single ft8_qsy command to the server.
 // It used to send freq (debounced 50ms) and mode (immediately)
 // SEPARATELY, which raced on CI-V ("works sometimes, not other times",
 // had to click a few times). Now the server sets mode+freq sequentially,
 // reliably. Permissions and locks (radio_lock, feature_allowed, band) are
 // checked on the backend.
+//
+// mode:'USB-D' below is a REQUEST, not a guarantee - the backend maps it
+// to plain 'USB' for a Hamlib/RigCAT-driven rig (rigctld doesn't know the
+// CI-V-only 'USB-D' token, and some older Icoms like the IC-746 have no
+// digital-mode variant at all). The mode/bandwidth broadcast that follows
+// reflects what was ACTUALLY set - don't assume USB-D in this toast.
 function tuneToBand(hzStr) {
   if (!hzStr) return;
   const hz = parseInt(hzStr, 10);
@@ -446,9 +452,9 @@ function tuneToBand(hzStr) {
     window.UI?.showToast(I18n.t('wj_toast_radio_busy').replace('{holder}', holder), 'error');
     return;
   }
-  // A single atomic command — the server sets USB-D + freq in the right order.
+  // A single atomic command — the server sets digital-USB + freq in the right order.
   WS.send({ type:'ft8_qsy', freq: hz, mode: 'USB-D' });
-  window.UI?.showToast(`${(hz/1e6).toFixed(3)} MHz — USB-D (${_decodeMode})`);
+  window.UI?.showToast(`${(hz/1e6).toFixed(3)} MHz (${_decodeMode})`);
 }
 
 // TX period: the two stations in a QSO transmit alternately in one of two

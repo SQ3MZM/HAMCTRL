@@ -151,6 +151,7 @@ _BAND_13CM = {"13cm": (2320000000, 2450000000, 2320200000)}
 # Zlozone zestawy pasm per typ radia
 _BANDS_HF_6M       = {**_BANDS_HF, **_BAND_6M}
 _BANDS_HF_6M_4M    = {**_BANDS_HF, **_BAND_6M, **_BAND_4M}
+_BANDS_HF_6M_2M    = {**_BANDS_HF, **_BAND_6M, **_BAND_2M}   # IC-746: HF+50+144MHz, BEZ 70cm
 _BANDS_HF_VU       = {**_BANDS_HF, **_BAND_6M, **_BAND_2M, **_BAND_70CM}
 _BANDS_HF_VU_23    = {**_BANDS_HF, **_BAND_6M, **_BAND_2M, **_BAND_70CM, **_BAND_23CM}
 _BANDS_VUSHF       = {**_BAND_2M, **_BAND_70CM, **_BAND_23CM}   # IC-9700
@@ -172,6 +173,62 @@ CIV_PROFILES = {
         "funcs":            dict(_IC7300_FUNCS),
         "func_labels":      dict(_FUNC_LABELS),
         "notes":            "Profil referencyjny — przetestowany na sprzecie.",
+    },
+
+    # ── IC-746 — stary CI-V (BEZ scope, BEZ trybu DATA/USB-D) ────────────────
+    # Dodane 2026-09-02, zeby ominac rigctld/Hamlib (padal w trakcie sesji,
+    # patrz _respawn_rigctld w rigcat.py) - IC-746 jest CI-V, wiec civ.py
+    # moze mowic z nim bezposrednio, TRZEBA jednak innej ramki set_mode.
+    # Zrodlo: oficjalny CI-V reference (adres domyslny 0x56, 19200bd, pasma
+    # HF+50+144MHz bez 70cm - universal-radio.com/qsl.net specs) +
+    # Hamlib rigs/icom/icom.c (RIG_IS_IC746 jest jawnie na liscie radii ze
+    # "icmode_ext = -1" w icom_set_mode_without_data() - komenda 06 <mode>
+    # BEZ trzeciego bajtu filtra, w przeciwienstwie do IC-7300's
+    # 06 <mode> <fil>). Poziomy (0x14 xx) i funkcje (0x16 xx) to ten sam,
+    # stary, uniwersalny zestaw Icoma co IC-7300 (potwierdzone w
+    # icom_defs.h) - stad "levels"/"funcs" ponizej to bezposrednia kopia
+    # IC-7300, NIE zgadywanie.
+    "3023": {
+        "name":             "IC-746",
+        "default_addr":     0x56,
+        "default_baud":     19200,
+        "mode_map":         dict(_BASE_MODE_MAP),
+        "bands":            dict(_BANDS_HF_6M_2M),   # HF + 6m + 2m, BEZ 70cm
+        "scope_max":        160,   # nieuzywane (capabilities.scope=False), placeholder
+        "scope_header_len": 15,    # jw.
+        # power=False: Hamlib's own IC-746 backend (rigs/icom/ic746.c) never
+        # assigns a set_powerstat function at all - CI-V remote power-ON
+        # needs the radio's standby circuit to listen on the bus while
+        # "off", a feature Icom only added starting with later designs.
+        # Leaving power=True here would show a PWR ON/OFF button that's
+        # unverified and likely does nothing on this radio.
+        "capabilities":     {**_BASE_CAPS_CIV, "scope": False, "power": False},
+        "levels":           dict(_IC7300_LEVELS),
+        "funcs":            dict(_IC7300_FUNCS),
+        "func_labels":      dict(_FUNC_LABELS),
+        # Radio-specific quirks czytane przez civ.py::set_mode() - patrz
+        # komentarz tam. Domyslnie (brak klucza) = True, jak IC-7300.
+        "mode_has_filter_byte": False,   # 06 <mode> TYLKO, bez bajtu filtra
+        "data_mode_supported":  False,   # brak 1A 06 (USB-D/DATA) - starsze radio
+        # has_vfo_b_read=False: CI-V 25/26 (odczyt VFO-B/nieaktywnego VFO)
+        # to komenda NOWEJ generacji - Hamlib sam to wykrywa i loguje przy
+        # starcie: "icom_set_x25x26_ability: Hamlib thinks rig does not
+        # support x25/x26 command" (potwierdzone live na tym IC-746, log
+        # 2026-09-02). Bez tej flagi self.freq_b zostaje na starej/domyslnej
+        # wartosci NA STALE (0x25 zawsze NG/timeout) - realna luka
+        # bezpieczenstwa: zabezpieczenie cross-band-split (webapp.py
+        # _is_split_cross_band) porownywalo pasmo na podstawie tej
+        # zamrozonej, falszywej wartosci i nigdy nie wykrywalo prawdziwego
+        # cross-band. Flaga wylacza zarowno zbedny poll 0x25 (radio i tak
+        # go odrzuci) jak i każe cross-band-checkowi failować BEZPIECZNIE
+        # (blokować TX na SPLIT) zamiast ufać nieznanej wartosci.
+        "has_vfo_b_read":       False,
+        "notes":            ("NIEZWERYFIKOWANE na sprzecie (dopiero po tym "
+                              "profilu) - ale komendy sprawdzone zrodlowo w "
+                              "Hamlibie, nie zgadywane. Jesli mode/levels nie "
+                              "dzialaja: sprawdz najpierw czy radio faktycznie "
+                              "ma adres CI-V 0x56 (MENU > SET > CI-V), "
+                              "19200bd."),
     },
 
     # ── IC-7610 ──────────────────────────────────────────────────────────────

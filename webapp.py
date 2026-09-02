@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.3"
+SERVER_VERSION = "2.0.4"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -107,6 +107,7 @@ SERVER_VERSION = "2.0.3"
 GITHUB_REPO = "SQ3MZM/HAMCTRL"
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
+                    CIV_NATIVE_MODELS,
                     MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
@@ -477,11 +478,11 @@ class App:
         # Pick the backend right away based on the saved model in
         # config.json, so we don't needlessly create a RigCAT (rigctld) at
         # startup for a model that's going to go through CivRig
-        # (SCOPE_MODELS) anyway — avoids a serial-port conflict between the
-        # two backends.
+        # (CIV_NATIVE_MODELS) anyway — avoids a serial-port conflict between
+        # the two backends.
         _rigs = self.cfg.get("rigs") or [{}]
         _saved_model = str(_rigs[0].get("model", ""))
-        if _saved_model in SCOPE_MODELS:
+        if _saved_model in CIV_NATIVE_MODELS:
             self.rig = CivRig(self.cfg, self._rig_bcast, log=print)
             print(f"[rig] start backend -> direct CI-V (saved model {_saved_model})")
         else:
@@ -2008,6 +2009,26 @@ class App:
             save_json(USR_F, self.users)
             return 200, {"ok": True}
 
+        # System-wide COM port listing — used by every settings dropdown that
+        # picks a serial port (radio, CW DTR/RTS keyer, rotator), so the
+        # operator selects from what Windows actually sees instead of typing
+        # a port name by hand (source of confusion/typos, esp. with the many
+        # COM ports the CI-V<->CW<->rotator setup can involve at once).
+        # Shares the same 30s cache pattern as the relay port list below —
+        # list_serial_ports() can be slow on Windows.
+        if p == "/api/system/serial-ports" and method == "GET":
+            if not self._has_perm(uid, role, "settings"):
+                return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
+            now = time.time()
+            if not hasattr(self, '_serial_ports_cache') or now - getattr(self, '_serial_ports_cache_time', 0) > 30:
+                try:
+                    self._serial_ports_cache = list_serial_ports() if _RELAY_OK else []
+                except Exception as _pe:
+                    print(f"[system] serial-ports enumeration failed: {_pe}")
+                    self._serial_ports_cache = []
+                self._serial_ports_cache_time = now
+            return 200, {"ok": True, "ports": self._serial_ports_cache}
+
         # ── Relay controller (Arduino SP5IOU) ─────────────────────────────────
         if p == "/api/relay/config" and method == "GET":
             # Config + list of ports to choose from (admin only)
@@ -2910,10 +2931,13 @@ class App:
 
         if p == "/api/rig/connect" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            # Pick the backend by model: scope-capable -> direct CI-V (CivRig),
-            # others -> rigctld (RigCAT). Swaps app.rig on the fly if needed.
+            # Pick the backend by model: any model with a civ_profiles.py
+            # entry (CIV_NATIVE_MODELS - scope-capable OR an older Icom like
+            # the IC-746 with just a verified command set) -> direct CI-V
+            # (CivRig), everything else -> rigctld (RigCAT). Swaps app.rig
+            # on the fly if needed.
             sel_model = str((body or {}).get("model") or "").strip()
-            want_civ  = sel_model in SCOPE_MODELS
+            want_civ  = sel_model in CIV_NATIVE_MODELS
             is_civ    = isinstance(self.rig, CivRig)
             if want_civ != is_civ and sel_model:
                 try: self.rig.close()
@@ -3018,7 +3042,7 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/cw/send" and method == "POST":
-            print(f"[cw] /api/cw/send: method={self.cfg.get('cwMethod','dtr')!r} text={body.get('text','')!r} sim={self.rig.sim} ser={self.rig._ser is not None}", flush=True)
+            print(f"[cw] /api/cw/send: method={self.cfg.get('cwMethod','dtr')!r} text={body.get('text','')!r} sim={self.rig.sim} ser={getattr(self.rig, '_ser', None) is not None}", flush=True)
             if role == "viewer":
                 return 403, {"ok": False, "error": "Brak uprawnien (CW)"}
             if role != "admin" and not self._user_has_lock(uid):
@@ -3033,7 +3057,7 @@ class App:
                 return 200, {"ok": False, "error": "CW zajete — trwa nadawanie, poczekaj"}
             if not self._is_band_allowed():
                 return 403, {"ok": False, "error": "TX zablokowany — pasmo niedozwolone przez admina"}
-            cross, band_a, band_b = self._is_split_cross_band()
+            cross, band_a, band_b = await self._is_split_cross_band()
             if cross:
                 return 403, {"ok": False, "error": f"CW TX zablokowany — split cross-band ({band_a} RX / {band_b} TX). Wylacz split lub ustaw VFO-B na to samo pasmo."}
             text = str(body.get("text", ""))
@@ -3428,8 +3452,14 @@ class App:
             return 200, {"ok": True}
 
         if p.startswith("/api/scope"):
-            # Scope only available in direct CI-V mode (a radio with a spectrum scope).
-            if not isinstance(self.rig, CivRig):
+            # Scope only available in direct CI-V mode AND on a model whose
+            # profile actually claims scope hardware - CIV_NATIVE_MODELS now
+            # also includes CI-V radios with NO scope (e.g. IC-746), so
+            # isinstance(CivRig) alone would let scope endpoints "succeed"
+            # into a radio that never sends 0x27 0x00 data at all.
+            _civ_scope = (isinstance(self.rig, CivRig)
+                          and self.rig.profile.get("capabilities", {}).get("scope", False))
+            if not _civ_scope:
                 return 200, {"ok": False, "sim": True, "running": False,
                              "message": "Scope dostępny tylko dla radia ze scope (IC-7300/7610/705...) "
                                         "w trybie bezpośrednim CI-V. Wybierz taki model i połącz."}
@@ -5025,7 +5055,7 @@ class App:
                 return band
         return None
 
-    def _is_split_cross_band(self) -> tuple[bool, str, str]:
+    async def _is_split_cross_band(self) -> tuple[bool, str, str]:
         """Check whether split is cross-band (VFO-A and VFO-B in different bands).
         Returns (is_cross_band, band_a, band_b) — is_cross_band=True when
         split is active and the bands differ. band_a/b are band names or 'poza pasmem'.
@@ -5034,12 +5064,55 @@ class App:
         transmitting on a different band than the one the ATU tuned for
         can damage the final amplifier or an antenna with the wrong impedance.
         """
+        # DIAGNOSTIC (2026-09-02): live-reported the VFO-B swap-read never
+        # ran despite split being on in the UI - this pins down exactly
+        # what this function sees at call time (split state, driver type,
+        # profile flag) instead of guessing further.
+        print(f"[rig] _is_split_cross_band: split={getattr(self.rig, 'split', None)!r} "
+              f"is_civ={isinstance(self.rig, CivRig)} "
+              f"has_vfo_b_read={self.rig.profile.get('has_vfo_b_read', 'N/A') if isinstance(self.rig, CivRig) else 'N/A (not CivRig)'}",
+              flush=True)
         if not getattr(self.rig, 'split', False):
             return False, '', ''
+        # Capture VFO-A's frequency BEFORE touching anything - FIX
+        # (live-seen 2026-09-02): this used to be read AFTER the VFO-B
+        # swap-read below, so on a has_vfo_b_read=False radio, self.rig.freq
+        # got read back showing VFO-B's frequency instead of VFO-A's
+        # (real report: freq_a=14331000 VFO-A / split target 21MHz, but the
+        # check logged freq_a=21231000 == freq_b - the swap's own read had
+        # already landed in self.rig.freq by the time this ran), making a
+        # genuine cross-band split look like "same band" and pass through
+        # unblocked. Freezing it here, before the swap ever starts, removes
+        # any chance of the swap's own traffic clobbering this value.
         freq_a = self.rig.freq
+        # A radio that can't read VFO-B over CI-V at all (has_vfo_b_read=
+        # False - e.g. IC-746, command 0x25/0x26 is newer-generation-only
+        # and gets NG'd every time) leaves self.rig.freq_b frozen at
+        # whatever it was last (its init default, or stale) - comparing
+        # against THAT would be trusting a value never actually read from
+        # the radio. For these radios do a FRESH read right now, via a
+        # brief VFO-A/B swap (civ.py's get_freq_b_fresh - the same fallback
+        # Hamlib itself uses for pre-0x25 Icoms) instead of trusting the
+        # background-polled value. This only runs right before allowing a
+        # split TX, never continuously, and never while self.ptt is
+        # already True (civ.py's own guard).
+        if isinstance(self.rig, CivRig) and not self.rig.profile.get("has_vfo_b_read", True):
+            fresh_fb = None
+            if hasattr(self.rig, "get_freq_b_fresh"):
+                try:
+                    fresh_fb = await self.rig.get_freq_b_fresh()
+                except Exception as e:
+                    print(f"[rig] get_freq_b_fresh error: {e}", flush=True)
+            if fresh_fb is None:
+                # Radio didn't cooperate - we genuinely don't know band_b,
+                # so refuse to claim "same band" rather than guess.
+                return True, 'nieznane (radio nie odczytuje VFO-B)', 'nieznane (radio nie odczytuje VFO-B)'
+            self.rig.freq_b = fresh_fb
         freq_b = getattr(self.rig, 'freq_b', freq_a)
         band_a = self._get_band_for_freq(freq_a) or 'poza pasmem'
         band_b = self._get_band_for_freq(freq_b) or 'poza pasmem'
+        print(f"[rig] _is_split_cross_band result: freq_a={freq_a} ({band_a}) "
+              f"freq_b={freq_b} ({band_b}) cross={band_a != band_b}", flush=True)
         return (band_a != band_b), band_a, band_b
 
     def _can_control_radio(self, ws, role: str) -> tuple[bool, str]:
@@ -5194,7 +5267,13 @@ class App:
         # attempts (~10s).
         scope_ok = False
         try:
-            if hasattr(self.rig, "scope_start"):
+            # Same capabilities gate as _on_rig_reconnected/server.py's
+            # startup connect - power_toggle itself is already hidden for
+            # a no-scope CIV_NATIVE_MODELS radio (capabilities["power"]
+            # controls the action's very existence), so this is defense in
+            # depth, not the primary guard.
+            _has_scope = getattr(self.rig, "profile", {}).get("capabilities", {}).get("scope", False)
+            if _has_scope and hasattr(self.rig, "scope_start"):
                 for scope_try in range(6):
                     # Remember the frame counter before the attempt
                     cnt_before = getattr(self.rig, "_scope_rx_count", 0)
@@ -5243,7 +5322,16 @@ class App:
         # responding. Without this the waterfall only shows SIM, since
         # _enable_scope was never called (nothing calls the frontend's startScope()).
         try:
-            if not self.rig.sim and hasattr(self.rig, "scope_start"):
+            # hasattr(scope_start) alone isn't enough - EVERY CivRig
+            # instance has the method regardless of model, but
+            # CIV_NATIVE_MODELS now also covers CI-V radios with no scope
+            # hardware at all (e.g. IC-746). Without the capability check,
+            # every reconnect on one of those would issue pointless 0x27
+            # commands the radio doesn't understand and then nag the user
+            # with a "waterfall didn't come back" toast that was never
+            # going to succeed.
+            _has_scope = getattr(self.rig, "profile", {}).get("capabilities", {}).get("scope", False)
+            if not self.rig.sim and _has_scope and hasattr(self.rig, "scope_start"):
                 # scope_start writes to the serial port with time.sleep —
                 # blocking. Calling it directly in the loop froze asyncio
                 # (~100ms, found via looplag). Offloaded to a thread.
@@ -5535,9 +5623,24 @@ class App:
                                      "msg": "⛔ QSY zablokowany — pasmo niedozwolone przez admina",
                                      "level": "error"})
                 return
-            # Digital mode FT8/FT4 on the IC-7300: always USB-D + FIL1
-            # (a project-wide convention, regardless of what came in the message).
-            self.rig.mode = msg.get("mode") or "USB-D"
+            # Digital mode FT8/FT4: always USB (+FIL1 on CI-V) - a project-
+            # wide convention. "USB-D" is Icom CI-V terminology (internal
+            # DATA/DSP mode) - it isn't a real Hamlib mode token, so rigctld
+            # rejects it outright for a RigCAT-driven rig, and some older
+            # Icoms have no digital-mode variant at all, only plain USB (the
+            # IC-746 is CivRig now too, since 2026-09-02, but its profile's
+            # data_mode_supported=False - see civ_profiles.py - for exactly
+            # this reason; confirmed by the user 2026-09-01 while it was
+            # still RigCAT-driven). The frontend always sends mode:'USB-D'
+            # (it can't know which driver/model is active server-side) -
+            # override it to plain USB whenever the active rig doesn't
+            # actually support DATA mode, instead of trusting it blindly.
+            _supports_data_mode = (isinstance(self.rig, CivRig)
+                                    and self.rig.profile.get("data_mode_supported", True))
+            _wanted_mode = msg.get("mode") or "USB-D"
+            if _wanted_mode == "USB-D" and not _supports_data_mode:
+                _wanted_mode = "USB"
+            self.rig.mode = _wanted_mode
             self.rig.filter_num = 1
             if not self.rig.sim:
                 try:
@@ -5606,7 +5709,7 @@ class App:
             # Block TX on a cross-band split — VFO-A and VFO-B on different
             # bands (protects the radio/antenna from transmitting on the wrong band)
             if bool(msg.get("ptt")):
-                cross, band_a, band_b = self._is_split_cross_band()
+                cross, band_a, band_b = await self._is_split_cross_band()
                 if cross:
                     await self.hub.broadcast({"type": "toast",
                         "msg": f"⛔ TX zablokowany — split cross-band ({band_a} RX / {band_b} TX). Wylacz split lub ustaw VFO-B na to samo pasmo.",
@@ -5758,10 +5861,15 @@ class App:
             op = msg.get("op", "")
             if op not in ("swap", "equalize"):
                 return
-            if op == "swap":
-                await self.rig.vfo_swap()
-            else:
-                await self.rig.vfo_equalize()
+            try:
+                if op == "swap":
+                    await self.rig.vfo_swap()
+                else:
+                    await self.rig.vfo_equalize()
+            except Exception as e:
+                print(f"[rig] vfo_op {op!r} error: {e}")
+                await ws.send_json({"type": "toast", "msg": f"⛔ {e}", "level": "error"})
+                return
 
             # After the operation, freq A is freshly read from the radio
             # (07 A0/B0 changes both VFO values) — in sim/fallback,
@@ -5834,6 +5942,7 @@ class App:
                     await self.rig.start_tuner_autotune()
                 except Exception as e:
                     print(f"[rig] start_tuner_autotune error: {e}")
+                    await ws.send_json({"type": "toast", "msg": f"⛔ {e}", "level": "error"})
                     return
             else:
                 self.rig.tuner = True
@@ -6109,7 +6218,7 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
-            cross, band_a, band_b = self._is_split_cross_band()
+            cross, band_a, band_b = await self._is_split_cross_band()
             if cross:
                 await ws.send_json({"type": "toast",
                     "msg": f"⛔ TUNE zablokowany — split cross-band ({band_a} RX / {band_b} TX)",
@@ -6811,7 +6920,7 @@ class App:
             await self.hub.broadcast({"type": "toast", "msg": "⛔ FT8 TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})
             return
         # Block FT8/FT4 on a cross-band split (protects the radio)
-        cross, band_a, band_b = self._is_split_cross_band()
+        cross, band_a, band_b = await self._is_split_cross_band()
         if cross:
             await self.hub.broadcast({"type": "toast",
                 "msg": f"⛔ FT8/FT4 TX zablokowany — split cross-band ({band_a} RX / {band_b} TX). Wylacz split.",
@@ -6895,7 +7004,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-01-WINACME-PERM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-02-CROSSBAND-FREQA-ORDER-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

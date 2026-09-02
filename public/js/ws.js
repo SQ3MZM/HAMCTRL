@@ -1389,12 +1389,25 @@ const _txMic = (() => {
         sampleRate: 48000,
       };
       if (preferredMicId) {
-        audioConstraint.deviceId = { exact: preferredMicId };
+        // FIX (live-seen 2026-09-02): {exact: id} throws OverconstrainedError
+        // - with an EMPTY .message, so both the console line and the toast
+        // showed no actual info ("brak dostepu do mikrofonu: ") - and PTT
+        // was blocked outright - whenever the saved mic id (PROFILE ->
+        // ham_audio_micId) no longer matches a currently connected device
+        // (USB re-enumeration, unplugged headset, different PC). {ideal: id}
+        // asks for the same device when present but falls back to any
+        // working mic instead of hard-failing when it isn't - PTT should
+        // never go silent just because a once-saved mic is gone.
+        audioConstraint.deviceId = { ideal: preferredMicId };
       }
       stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
     } catch (e) {
-      console.warn('[txmic] getUserMedia error:', e.message);
-      window.UI?.showToast('Brak dostepu do mikrofonu: ' + e.message, 'error');
+      // e.message is often EMPTY for OverconstrainedError - e.name/e.constraint
+      // are where the actual reason lives, so log/show those too instead of
+      // a blank "brak dostepu do mikrofonu: " with zero diagnostic value.
+      const _detail = e.constraint ? `${e.name}: ${e.constraint}` : (e.message || e.name || 'nieznany blad');
+      console.warn('[txmic] getUserMedia error:', e.name, e.constraint, e.message);
+      window.UI?.showToast('Brak dostepu do mikrofonu: ' + _detail, 'error');
       return false;
     }
 

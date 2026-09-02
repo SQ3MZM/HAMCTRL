@@ -156,10 +156,16 @@ async function startMicTx() {
   try {
     const preferredMicId = localStorage.getItem('ham_audio_micId') || '';
     const constraint = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000 };
-    if (preferredMicId) constraint.deviceId = { exact: preferredMicId };
+    // {ideal}, not {exact} - see ws.js's desktop _txMic.start() for the same
+    // fix (live-seen 2026-09-02): {exact} hard-fails with an OverconstrainedError
+    // (empty .message) whenever the saved mic id no longer matches a
+    // currently connected device, blocking PTT outright instead of just
+    // falling back to any working mic.
+    if (preferredMicId) constraint.deviceId = { ideal: preferredMicId };
     micStream = await navigator.mediaDevices.getUserMedia({ audio: constraint });
   } catch (e) {
-    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_no_access') + e.message, 'error');
+    const _detail = e.constraint ? `${e.name}: ${e.constraint}` : (e.message || e.name || 'unknown error');
+    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_no_access') + _detail, 'error');
     return false;
   }
   console.log(`[maudio] getUserMedia: ${(performance.now() - _txT0).toFixed(0)}ms`);

@@ -56,7 +56,7 @@ window.RelayUI = (function() {
 
   async function action(relayId) {
     if (!_connected) {
-      window.UI?.toast?.('⛔ Kontroler przekaźników niepodłączony', 'error');
+      window.UI?.showToast?.('⛔ Kontroler przekaźników niepodłączony', 'error');
       return;
     }
     // Optimistic feedback — the button dims
@@ -71,10 +71,10 @@ window.RelayUI = (function() {
       });
       const data = await r.json();
       if (!r.ok || !data.ok) {
-        window.UI?.toast?.('⛔ ' + (data.error || 'Błąd'), 'error');
+        window.UI?.showToast?.('⛔ ' + (data.error || 'Błąd'), 'error');
       }
     } catch(e) {
-      window.UI?.toast?.('⛔ ' + e.message, 'error');
+      window.UI?.showToast?.('⛔ ' + e.message, 'error');
     } finally {
       if (btn) btn.style.opacity = '';
     }

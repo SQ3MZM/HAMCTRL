@@ -538,6 +538,15 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .tile-wf.wf-fullscreen canvas#wf-waterfall { max-height: none !important; flex: 1 !important; }
 .tile-wf.wf-fullscreen canvas#wf-spectrum { height: 120px !important; }
 
+/* ── Waterfall collapsed (np. rig bez CI-V scope'u - IC-746 itp.) ──
+   Ukrywa tylko canvasy - tile-wf zostaje w TYM SAMYM miejscu siatki
+   (grid-column/grid-row bez zmian), wiec zadne inne kafelki sie nie
+   przesuwaja. Naglowek (span/peak/badge/S-metr/przyciski) zostaje
+   widoczny, zeby dalo sie jednym klikiem rozwinac z powrotem. */
+.tile-wf.wf-collapsed canvas#wf-spectrum,
+.tile-wf.wf-collapsed canvas#wf-waterfall,
+.tile-wf.wf-collapsed canvas#wf-axis { display: none; }
+
 /* ── Motywy kolorów (data-theme na <html>) ── */
 /* Domyślny: green-amber (IC-7300 feel) — juz w :root */
 html[data-theme="blue"] {

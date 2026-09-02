@@ -145,6 +145,11 @@ function connect() {
     try { window.CW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] CW.handleWS error:', err); }
     try { window.RotW?.handleWS?.(msg); } catch (err) { console.warn('[mobile] RotW.handleWS error:', err); }
     try { forwardToRadioFunctions(msg); } catch (err) { console.warn('[mobile] RadioFunctions forward error:', err); }
+    // Relay buttons (relay_ui.js) reused verbatim from desktop - it already
+    // refreshes on 'app:ready' + polls every 30s on its own, this just
+    // makes toggles from other clients reflect instantly instead of
+    // waiting for the next poll.
+    try { window.RelayUI?.onWSMessage?.(msg); } catch (err) { console.warn('[mobile] RelayUI.onWSMessage error:', err); }
   };
 }
 
