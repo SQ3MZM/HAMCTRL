@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.7"
+SERVER_VERSION = "2.0.8"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -5238,13 +5238,45 @@ class App:
         Check whether the given action (feature_id) is allowed for a user
         with the given role. Admin always has access (for testing/config).
         Capabilities are checked from the cache (self._caps_cache) if
-        available, otherwise we default to allowing it (fail-open for
-        compatibility) and log a warning — webapp should have already
-        called _refresh_caps_cache() after connecting to the radio.
+        available.
+
+        FIX (found live 2026-09-02 via a permission-test with a real
+        operator account): the docstring here USED TO claim this fails
+        OPEN (allows) when the cache is empty - the actual code does not,
+        it silently treats an empty cache as "this rig supports nothing",
+        so every feature_id (including ptt) returns False. Combined with
+        several call sites (e.g. the 'ptt' WS handler) treating a False
+        result as a SILENT no-op (no toast, no log) - live-confirmed via
+        server console: `[ws] TEXT t='ptt'` with nothing after it, twice,
+        for an operator who otherwise had every right to transmit - this
+        is exactly the "button does nothing, zero feedback" bug pattern.
+        `/api/rig/features` (the panel operators actually look at) always
+        fetches capabilities FRESH from the radio, so it can show a
+        feature as available while this cached check independently, and
+        silently, disagrees - self._caps_cache only gets populated by
+        _refresh_caps_cache(), called after connect/reconnect, so a gap
+        between those events and this check being called (or an exception
+        during a refresh) leaves it looking exactly like "genuinely
+        unsupported". This is a real, if narrow, safety-adjacent gap: a
+        legitimate operator can be left unable to transmit with no
+        explanation. Now: an empty cache is logged loudly (not
+        VERBOSE-gated) and triggers a background refresh so the NEXT check
+        has fresh data - still fails CLOSED for THIS call (a radio-control
+        decision defaults to "no" when we're not sure what it supports,
+        not "yes"), but self-heals and stops being invisible.
         """
         if role == "admin":
             return True
-        caps = getattr(self, "_caps_cache", None) or {"actions": [], "sliders": [], "raw_caps": {}}
+        caps = getattr(self, "_caps_cache", None)
+        if not caps:
+            print(f"[features] _feature_allowed({feature_id!r}, {role!r}): "
+                  f"_caps_cache is empty - refusing (fail-closed) and "
+                  f"kicking off a background refresh", flush=True)
+            try:
+                asyncio.ensure_future(self._refresh_caps_cache())
+            except Exception as e:
+                print(f"[features] background _refresh_caps_cache failed to schedule: {e}", flush=True)
+            caps = {"actions": [], "sliders": [], "raw_caps": {}}
         enabled = self._get_enabled_features(self._current_rig_id())
         eff = effective_features(caps, enabled)
         return bool(eff.get(feature_id, False))
@@ -5584,6 +5616,13 @@ class App:
                 return
             if not self._feature_allowed("freq_set", role):
                 print(f"[rig] freq WS: BLOKADA _feature_allowed (role={role})")
+                # Rate-limited toast (this message fires up to ~20x/s while
+                # dragging the VFO - a naive toast-per-message would spam
+                # the operator instead of informing them).
+                _now_fb = time.time()
+                if _now_fb - getattr(self, "_freq_blocked_toast_at", 0) > 3.0:
+                    self._freq_blocked_toast_at = _now_fb
+                    await ws.send_json({"type": "toast", "msg": "⛔ Zmiana częstotliwości niedostępna dla tego radia", "level": "error"})
                 return
             hz = int(msg.get("freq", self.rig.freq))
             # NOTE (perf): removed the per-freq print — while scrolling
@@ -5602,6 +5641,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("mode_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana trybu niedostępna dla tego radia", "level": "error"})
                 return
             prev_mode = self.rig.mode
             self.rig.mode = msg.get("mode", self.rig.mode)
@@ -5644,6 +5684,7 @@ class App:
                 return
             if not (self._feature_allowed("freq_set", role)
                     and self._feature_allowed("mode_set", role)):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana pasma niedostępna dla tego radia", "level": "error"})
                 return
             # FIX: if an FT8 TX is in flight (PTT keyed) when the band is
             # clicked, the set_freq() write below used to race straight into
@@ -5745,7 +5786,20 @@ class App:
             await self.hub.broadcast({"type": "freq", "freq": hz})
 
         elif t == "ptt":
-            if not self._feature_allowed("ptt", role):
+            # FIX (found live 2026-09-02, see _feature_allowed's docstring):
+            # this used to return silently for BOTH ptt:true and ptt:false
+            # whenever _feature_allowed said no (e.g. an empty/stale
+            # capabilities cache) - no toast, no log, the operator just saw
+            # a PTT button that did nothing. Two changes: (1) only gate the
+            # ON case here, same as the band/lock/cross-band checks right
+            # below - PTT OFF must never be silently swallowed, or a
+            # session that's actually keyed could get stuck transmitting
+            # with no way to release it from this path; (2) tell the
+            # operator why, instead of nothing.
+            if bool(msg.get("ptt")) and not self._feature_allowed("ptt", role):
+                await ws.send_json({"type": "toast",
+                                     "msg": "⛔ PTT niedostępny dla tego radia (sprawdź panel funkcji radia)",
+                                     "level": "error"})
                 return
             # Check whether the user holds the radio — only the active operator or admin may TX
             if bool(msg.get("ptt")) and role != "admin":
@@ -5858,6 +5912,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("split", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Split niedostępny dla tego radia", "level": "error"})
                 return
             self.rig.split  = bool(msg.get("split"))
             self.rig.freq_b = int(msg.get("freqB", self.rig.freq_b))
@@ -5874,6 +5929,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana VFO-B niedostępna dla tego radia", "level": "error"})
                 return
             hz = int(msg.get("freqB", self.rig.freq_b))
             self.rig.freq_b = hz
@@ -5891,6 +5947,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Wybór VFO niedostępny dla tego radia", "level": "error"})
                 return
             vfo = "VFOB" if str(msg.get("vfo", "VFOA")).upper() in ("VFOB", "B") else "VFOA"
             self.rig.vfo = vfo
@@ -5910,6 +5967,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Operacja VFO niedostępna dla tego radia", "level": "error"})
                 return
             op = msg.get("op", "")
             if op not in ("swap", "equalize"):
@@ -5937,6 +5995,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("mode_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Preamp niedostępny dla tego radia", "level": "error"})
                 return
             val = int(msg.get("value", 0))
             if val not in (0, 1, 2):
@@ -5955,6 +6014,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("mode_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Attenuator niedostępny dla tego radia", "level": "error"})
                 return
             val = bool(msg.get("value", False))
             if not self.rig.sim:
@@ -5971,6 +6031,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("mode_set", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Tuner niedostępny dla tego radia", "level": "error"})
                 return
             val = bool(msg.get("value", False))
             if not self.rig.sim:
@@ -5989,6 +6050,7 @@ class App:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
             if not self._feature_allowed("ptt", role):
+                await ws.send_json({"type": "toast", "msg": "⛔ Autotune niedostępny dla tego radia", "level": "error"})
                 return
             if not self.rig.sim:
                 try:
@@ -6007,6 +6069,11 @@ class App:
             lvl = msg.get("param") or msg.get("level", "RFPOWER")
             val = int(msg.get("value", 0))
             if lvl == "RFPOWER" and not self._feature_allowed("tx_power", role):
+                # Rate-limited (this can fire rapidly while dragging a slider)
+                _now_lb = time.time()
+                if _now_lb - getattr(self, "_level_blocked_toast_at", 0) > 3.0:
+                    self._level_blocked_toast_at = _now_lb
+                    await ws.send_json({"type": "toast", "msg": "⛔ Regulacja mocy TX niedostępna dla tego radia", "level": "error"})
                 return
             # Save in state
             if lvl == "AF":      self.rig.af_gain  = val
@@ -6677,6 +6744,22 @@ class App:
 
         # ── WebRTC signaling (offer/answer/ICE) ────────────────────────────
         elif t == "webrtc_offer":
+            # SECURITY FIX (found live 2026-09-02, same audit as ws_handler/
+            # hamlib_ws_handler): this handler had NO permission check at
+            # all - any authenticated user, including a viewer or an
+            # operator NOT holding radio_lock, could send a webrtc_offer
+            # and start streaming real microphone audio into the radio's
+            # TX path, bypassing every check the 'ptt' handler has (this
+            # doesn't even go through it - webrtc_offer starts TX audio
+            # directly). Same gate as manual PTT: only the operator
+            # actually holding the radio (or admin) may do this. This was
+            # flagged as a known gap in an old planning note for the
+            # mobile-audio work but was never actually wired in - found
+            # again independently via a fresh permission audit.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
             if not self.webrtc:
                 await ws.send_json({"type": "webrtc_error", "error": "WebRTC niedostepne na serwerze"})
                 return
@@ -7069,7 +7152,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-02-SECURITY-HEADERS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-02-SECURITY-AUDIT-BATCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

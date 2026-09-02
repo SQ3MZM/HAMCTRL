@@ -20,9 +20,46 @@ for the backend English translation pass.
 """
 
 import asyncio
+import ipaddress
 import re
+import socket
 import time
 from typing import Callable, Optional
+
+
+async def _resolve_and_check_safe(host: str, port: int) -> tuple[bool, str]:
+    """
+    SSRF guard (added 2026-09-02, found via a live permission audit): ANY
+    logged-in user - operator or viewer, no admin gate on this endpoint -
+    can set their OWN DX cluster host/port via /api/dxcluster/config, and
+    /api/dxcluster/connect then makes THE SERVER open a raw TCP connection
+    to it and send a "login" line. Without this check that's a working
+    SSRF primitive: point it at 127.0.0.1:<any local port>, an internal
+    LAN address, or another machine's admin interface, and the server
+    will connect and speak to it on the user's behalf. Resolves the
+    HOSTNAME to its actual IP (not just string-matching "127.0.0.1") so a
+    DNS name that merely points at an internal address is caught too, and
+    checks every address a name resolves to, not just the first.
+    """
+    if not host:
+        return False, "Brak adresu hosta"
+    try:
+        loop = asyncio.get_event_loop()
+        infos = await asyncio.wait_for(
+            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=5.0)
+    except Exception as e:
+        return False, f"Nie mozna rozwiazac adresu {host!r}: {e}"
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False, (f"Adres {host!r} ({ip_str}) wskazuje na siec "
+                            f"prywatna/lokalna - zablokowane")
+    return True, ""
 
 
 # Band prefixes from the IARU table (to place a spot on the waterfall).
@@ -427,6 +464,15 @@ class ClusterManager:
                 "type": "dx_status", "status": status, "message": msg,
             })
             if asyncio.iscoroutine(res): await res
+
+        # SSRF guard - see _resolve_and_check_safe's docstring. Checked
+        # here (not just in webapp.py's /api/dxcluster/config save) so
+        # EVERY path that actually opens the connection is covered,
+        # including the auto_connect-on-login path in ws_handler.
+        _safe, _why = await _resolve_and_check_safe(host, port)
+        if not _safe:
+            await _on_status("error", _why)
+            return None
 
         client = DXClusterClient(host, port, login, password,
                                   on_spot=_on_spot, on_status=_on_status)
