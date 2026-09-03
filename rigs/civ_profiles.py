@@ -43,6 +43,15 @@ _BASE_CAPS_CIV = {
     "vfo_ab":       True,   # Select VFO A/B (0x07 00/01)
     "power":        True,   # Power ON/OFF radia (0x18 01/00)
     "dstar":        False,  # D-STAR (tylko niektore modele)
+    # Dodane 2026-09-03: TUNER i AUTOTUNE faktycznie byly zaimplementowane
+    # w civ.py (set_tuner/start_tuner_autotune) od dawna, ale nigdy nie
+    # mialy wlasnego wpisu tutaj ani w features.py - ich widocznosc dla
+    # zwyklego usera byla przypadkowo podpieta pod mode_set/ptt (patrz
+    # webapp.py, elif t == "tuner"/"tuner_autotune"). Teraz wlasne klucze,
+    # zeby admin mogl je wlaczac/wylaczac niezaleznie w KONFIGURACJA ->
+    # FUNKCJE RADIA, tak jak split.
+    "tuner":        True,   # Tuner ON/OFF (CI-V 1C 01 00/01)
+    "autotune":     True,   # Autotune - cykl dopasowania, generuje TX (CI-V 1C 01 02)
 }
 
 

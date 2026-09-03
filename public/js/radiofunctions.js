@@ -160,13 +160,34 @@ const RadioFunctions = (() => {
       // depend on MONI or fight the duck.
       if (a.id === 'func_mon') {
         btn.id = 'radio-mon-btn';
+        // Restore the visual state across a re-render (e.g. after a live
+        // 'rig_features' update rebuilds every button) - CwSidetone.isEnabled()
+        // is the reliable source of truth here, see the FIX below for why
+        // (NOT TxEq.isMonitorActive(), which a mic-less/mic-denied CW
+        // operator would never reach).
+        if (window.CwSidetone?.isEnabled()) btn.classList.add('active');
         btn.onclick = async () => {
-          // MUST await - toggleMonitor() is async (getUserMedia + AudioContext
-          // setup), and isMonitorActive() right after an un-awaited call
-          // read the state from BEFORE the toggle finished - see the FIX
-          // comment on toggleMonitor() in tx_eq.js.
-          await window.TxEq?.toggleMonitor();
-          window.CwSidetone?.setEnabled(window.TxEq ? window.TxEq.isMonitorActive() : false);
+          // FIX (2026-09-04, live report: "mon wlaczony a na cw cisza
+          // zamiast sluchac swojego sygnalu"): CW sidetone used to be
+          // armed ONLY when TxEq's SSB mic monitor actually managed to
+          // start (isMonitorActive()) - but CW sidetone needs no
+          // microphone at all, it's a tone synthesized locally on
+          // 'cw_tx_start' (see cw_sidetone.js). An operator with no mic
+          // configured, or who never granted mic permission (common for
+          // CW-only use), got getUserMedia failing, monitorActive
+          // staying false forever, and CW sidetone NEVER arming even
+          // though they'd clicked MON "on". CW sidetone now follows the
+          // button's own on/off intent directly; the SSB mic monitor is
+          // still best-effort started/stopped alongside it, exactly as
+          // before, but no longer gates CW sidetone's own state.
+          const turnOn = !window.CwSidetone?.isEnabled();
+          window.CwSidetone?.setEnabled(turnOn);
+          btn.classList.toggle('active', turnOn);
+          if (turnOn) {
+            await window.TxEq?.startMonitor?.();
+          } else {
+            window.TxEq?.stopMonitor?.();
+          }
         };
         _funcBtnEls[a.id] = btn;
         return btn;

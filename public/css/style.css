@@ -946,6 +946,14 @@ body.page-wsjtx-active { overflow: hidden; }
 .vfo-digit.selected { background: rgba(184,201,143,0.18); outline: 1px solid rgba(184,201,143,0.5); text-shadow: 0 0 25px rgba(184,201,143,1); }
 .vfo-sep { color: rgba(184,201,143,0.3); padding: 0 2px; font-size: 36px; line-height: 1; }
 .vfo-sep.sep-mhz { color: rgba(184,201,143,0.5); font-size: 40px; }
+/* Up/down arrow triangles above/below each VFO digit — click bumps that
+   digit's position by one step, same effect as scrolling on it (an
+   alternative for touchscreens/mice where wheel-over-a-digit isn't
+   obvious). */
+.vfo-digit-col { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
+.vfo-arrow { font-size: 9px; line-height: 1; padding: 1px 0; color: rgba(184,201,143,0.3);
+  cursor: pointer; user-select: none; transition: color 0.12s, text-shadow 0.12s; }
+.vfo-arrow:hover { color: rgba(184,201,143,0.95); text-shadow: 0 0 8px rgba(184,201,143,0.7); }
 
 /* ── CHAT (operator chat, embedded in the OPERATORZY panel — chat.js) ── */
 .chat-msg { font-family: var(--mono); font-size: 10px; line-height: 1.4; padding: 3px 5px;
@@ -960,6 +968,11 @@ body.page-wsjtx-active { overflow: hidden; }
 .chat-time { color: var(--dim); font-size: 8px; margin-left: auto; }
 .chat-text { color: var(--text); word-break: break-word; }
 .chat-sys-text { font-style: italic; }
+.chat-badge {
+  position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px;
+  border-radius: 8px; background: var(--red); color: #fff; font-size: 9px;
+  line-height: 15px; text-align: center; padding: 0 3px; font-weight: bold;
+}
 
 /* ── RESPONSIVE ── */
 /* RESPONSYWNOSC: brak @media breakpoints — caly layout jest renderowany w

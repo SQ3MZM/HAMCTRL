@@ -223,14 +223,30 @@ function _updateClock() {
   if (el) el.textContent = s;
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-async function init() {
+// FIX (2026-09-03, live report: "widze usera na FT8 ale inny grid w
+// makro a inny sie nadaje"): _myCall/_myGrid below were only ever set
+// ONCE, here in init() at page load. saveProfile() (index.html) updates
+// window.CurrentUser.callsign after a PROFIL save but NEVER
+// window.CurrentUser.locator - so changing your own locator mid-session
+// left this cached _myGrid stale in the macro PREVIEW, while the
+// backend's auto-QSO engine (which re-reads the account's locator FRESH
+// every time it actually transmits, see webapp.py ~6882) always used
+// the correct, just-saved value - the preview and the real transmission
+// silently disagreed. Factored the derivation out of init() so
+// saveProfile() can call this after a successful save instead of
+// requiring a full page reload to pick up the change.
+function refreshOperatorInfo() {
   _myCall = S?.callsign || window.CurrentUser?.callsign || '';
   _myGrid = window.CurrentUser?.locator || S?.stationLocator || '';
   if (!_myCall && window.CurrentUser) {
     _myCall = window.CurrentUser.callsign || window.CurrentUser.username || '';
   }
   _updateMacroTexts();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  refreshOperatorInfo();
   _startClock();
   try {
     const r = await fetch('/api/wsjtx/status');
@@ -532,6 +548,11 @@ function clearDecodes() {
 let _rxFreqPanelCleared = false;
 function clearRxFreqPanel() {
   _rxFreqPanelCleared = true;
+  // Also drop the "sticky match" tags (see _renderRxFreqPanel) — without
+  // this, the very next render would immediately re-show every
+  // previously-matched entry, since they're marked permanent. The 🗑 here
+  // means "clear the view", so it must actually clear it.
+  for (const d of _decodes) delete d._rxFreqMatched;
   const el = document.getElementById('wj-rx-freq-row');
   if (el) el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
 }
@@ -1150,6 +1171,19 @@ function _renderDecodes() {
 // broadcasts it as wsjtx_decode (is_tx=true) already at the moment of
 // PTT ON (_addDecode triggers this render on every decode), so no
 // separate "live preview" row is needed.
+//
+// STICKY MATCH (2026-09-04, live report: "wszystkie ramki ktore sie tam
+// pokazuja nie moga znikac razem ze zmiana frq ... teraz znikaja dekody
+// jak tylko zmienisz frq"): the proximity check below used to be
+// re-evaluated against the CURRENT rxFreq on EVERY render, so a decode
+// that matched a moment ago would vanish the instant the RX marker moved
+// even slightly — whether from the operator clicking a different signal
+// OR from auto-follow-RX quietly re-centering on the correspondent's
+// drifting audio frequency mid-QSO. Once a decode has matched at least
+// once, it's tagged (d._rxFreqMatched) and stays in this panel
+// permanently from then on (cleared only by clearRxFreqPanel, the 🗑
+// button) — new decodes are still filtered by proximity to the CURRENT
+// marker at the moment they arrive, same as before.
 const RX_FREQ_TOLERANCE_HZ = 8;
 const RX_FREQ_QUEUE_MAX = 20;
 
@@ -1173,9 +1207,12 @@ function _renderRxFreqPanel() {
   // when their deltaFreq is outside RX_FREQ_TOLERANCE_HZ of the RX marker.
   const txHeld = window.WSJTXScope?.isTxFrozen?.();
   const matches = _decodes.filter(d => {
+    if (d._rxFreqMatched) return true;
     if (d.deltaFreq === undefined) return false;
-    if (Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ) return true;
-    return d.is_tx && txHeld;
+    const isMatch = Math.abs(d.deltaFreq - rxFreq) <= RX_FREQ_TOLERANCE_HZ ||
+                     (d.is_tx && txHeld);
+    if (isMatch) d._rxFreqMatched = true;
+    return isMatch;
   });
   if (!matches.length) {
     el.innerHTML = `<div class="wj-empty">${I18n.t('wj_no_rxfreq_signal')}</div>`;
@@ -2395,7 +2432,7 @@ function toggleHideWorked(chk) {
 }
 
 window.WSJTX = {
-  init, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
+  init, refreshOperatorInfo, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
   tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
   updateBeamRow, rotorGoBeam, rotorGoManual, rotorManualClose, rotorManualSubmit,

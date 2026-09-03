@@ -69,11 +69,24 @@ function renderVFO() {
     }
     const step = getDigitStep(i);
     if (!step) return `<span class="vfo-digit" data-idx="${i}" data-step="0">${ch}</span>`;
-    return `<span class="vfo-digit active" data-idx="${i}" data-step="${step}"
-      tabindex="0" title="+/- ${fmtStep(step)}"
-      onkeydown="VFO.keyDigit(event,${step})"
-      onclick="VFO.selectDigit(${step})"
-      >${ch}</span>`;
+    // Up/down arrow triangles above/below each digit (2026-09-04,
+    // requested as an alternative to mouse-wheel scrolling over a
+    // digit — a click affordance, useful on touchscreens too). Same
+    // effect as scrolling: bumps just this digit's position by one
+    // step. The digit span itself keeps its exact previous class/
+    // attributes (data-idx, data-step, click->selectDigit, wheel
+    // handling in _attachDigitListeners) — only wrapped in a column
+    // container with the arrows, so nothing about the existing
+    // wheel/keyboard/select logic needs to change.
+    return `<span class="vfo-digit-col">
+      <span class="vfo-arrow vfo-arrow-up" onclick="VFO.bumpDigit(event,${step},1)" title="+${fmtStep(step)}">▲</span>
+      <span class="vfo-digit active" data-idx="${i}" data-step="${step}"
+        tabindex="0" title="+/- ${fmtStep(step)}"
+        onkeydown="VFO.keyDigit(event,${step})"
+        onclick="VFO.selectDigit(${step})"
+        >${ch}</span>
+      <span class="vfo-arrow vfo-arrow-down" onclick="VFO.bumpDigit(event,${step},-1)" title="-${fmtStep(step)}">▼</span>
+    </span>`;
   }).join('');
 
   // Highlight the currently selected step
@@ -118,11 +131,10 @@ function updateVFODisplay() {
 // DOM element. Solution: ONE global listener in the capture phase on
 // document, which uses elementFromPoint() (correctly accounts for the
 // transform) to identify the digit under the cursor.
-function wheelDigit(e, step) {
-  e.preventDefault();
-  e.stopPropagation();
+// Shared by wheelDigit (mouse-wheel over a digit) and bumpDigit (click on
+// its up/down arrow) — both just bump ONE digit position by +/-1 step.
+function _applyDigitStep(step, dir) {
   if (!_canControl()) { _blockToast(); return; }
-  const dir = e.deltaY < 0 ? 1 : -1;
   const nf = Math.max(100000, S.freq + dir * step);
   S.freq = nf;
   S._localFreqSetAt = Date.now();
@@ -136,6 +148,21 @@ function wheelDigit(e, step) {
   } else {
     window.UI?.sendFreq(nf);
   }
+}
+
+function wheelDigit(e, step) {
+  e.preventDefault();
+  e.stopPropagation();
+  const dir = e.deltaY < 0 ? 1 : -1;
+  _applyDigitStep(step, dir);
+}
+
+// Click on a digit's up/down arrow triangle — same effect as scrolling
+// on that digit, dir is +1 (up arrow) or -1 (down arrow) directly.
+function bumpDigit(e, step, dir) {
+  e.preventDefault();
+  e.stopPropagation();
+  _applyDigitStep(step, dir);
 }
 
 // ── One listener on the #vfo-digits container ─────────────────────────────
@@ -326,6 +353,7 @@ window.VFO = {
   updateVFODisplay,
   renderKnobSVG,
   wheelDigit,
+  bumpDigit,
   keyDigit,
   selectDigit,
   init() {

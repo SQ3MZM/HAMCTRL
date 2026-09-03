@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.13"
+SERVER_VERSION = "2.0.14"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -5685,7 +5685,27 @@ class App:
             # directly and transmit. Adding it here reuses the SAME two
             # checks every other control type already gets below (viewer
             # hard-block + radio_lock-for-everyone-else) with no extra code.
-            "webrtc_offer", "webrtc_stop",
+            #
+            # webrtc_stop is DELIBERATELY NOT in this set (2026-09-03,
+            # live report: "slysze jak mu mikrofon w tle zbiera... jakby
+            # mu mikrofon sie nie rozlaczyl do konca") - it WAS here
+            # originally (added alongside webrtc_offer above without
+            # thinking it through), which is exactly backwards: a STOP
+            # action must never be gated by holding the lock, same
+            # principle already applied everywhere else this session
+            # (ptt:false, ft8_tune_stop). If an operator's radio_lock
+            # expires/gets force-released WHILE their mic is armed, their
+            # browser's webrtc_stop (sent on PTT release or tab close)
+            # was being silently rejected here before ever reaching the
+            # real "elif t == webrtc_stop" handler below - the server-side
+            # WebRTC receiver and TX audio pipeline never got torn down,
+            # left ingesting live ambient microphone audio indefinitely.
+            # Also no longer viewer-blocked, on purpose - a viewer calling
+            # webrtc_stop with no active connection is a harmless no-op
+            # (self.webrtc.close() on an already-closed/None connection),
+            # same "stopping something is never dangerous" reasoning as
+            # ptt:false and ft8_tune_stop elsewhere in this file.
+            "webrtc_offer",
         }
 
         # ── VIEWER: HARD WHITELIST ──────────────────
@@ -6253,10 +6273,13 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
-            if not self._has_perm(uid, role, "freq"):
-                await ws.send_json({"type": "toast", "msg": "⛔ Tuner niedostepny (brak uprawnien)", "level": "error"})
-                return
-            if not self._feature_allowed("mode_set", role):
+            # No per-user permission (2026-09-03, same decision as "split" -
+            # TUNER is a general radio capability, admin-controlled ONLY via
+            # the per-rig static feature whitelist below, not per-operator).
+            # Previously piggybacked on "mode_set" (a rig-capability check
+            # that has nothing to do with tuner) - now checks its own
+            # dedicated "tuner" feature (features.py).
+            if not self._feature_allowed("tuner", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Tuner niedostępny dla tego radia", "level": "error"})
                 return
             val = bool(msg.get("value", False))
@@ -6270,15 +6293,18 @@ class App:
         elif t == "tuner_autotune":
             # {type:'tuner_autotune'} -> CI-V 1C 01 01 + 1C 01 02 (START of
             # the auto-tuning cycle). A one-shot action — generates a short
-            # low-power TX signal. Same permissions as PTT (it actually triggers TX).
+            # low-power TX signal.
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
-            if not self._has_perm(uid, role, "ptt"):
-                await ws.send_json({"type": "toast", "msg": "⛔ Autotune niedostepny (brak uprawnien)", "level": "error"})
-                return
-            if not self._feature_allowed("ptt", role):
+            # No per-user permission (2026-09-03, same decision as "split"/
+            # "tuner" above) - governed only by the per-rig static feature
+            # whitelist. Previously piggybacked on "ptt" (it does trigger a
+            # short TX, but that doesn't mean it should share PTT's
+            # permission - a rig without RigCAT autotune support, or one
+            # the admin wants to keep off, is now its own toggle).
+            if not self._feature_allowed("autotune", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Autotune niedostępny dla tego radia", "level": "error"})
                 return
             if not self.rig.sim:
@@ -7390,7 +7416,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-03-CHAT-AND-SPLIT-FEATURE-ONLY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-04-v2.0.14, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7925,6 +7951,24 @@ class App:
                 await self._check_retry_or_giveup()
                 return
 
+            if result.get("action") == "give_up":
+                # The partner kept transmitting (repeating their grid, or
+                # repeating their own unconfirmed raw report) but never
+                # actually confirmed our report - the engine already
+                # called abort_qso() internally (see
+                # QsoEngine._give_up_stuck_report /
+                # MAX_REPORT_REPEATS), we just do the same bookkeeping as
+                # the silence-based give-up in _check_retry_or_giveup so
+                # the UI/stale-TX guard stay consistent.
+                print(f"[autoqso] {result.get('call_de')} keeps replying but "
+                      f"never confirmed our report after "
+                      f"{qso_engine.MAX_REPORT_REPEATS} tries — abandoning QSO")
+                self._qso_period_locked = False
+                self._autoqso_tx_seq += 1  # see comment at REST /api/ft8/halt
+                await self.hub.broadcast({"type": "auto_qso_status",
+                                           "state": "IDLE", "partner": None})
+                return
+
             if result.get("action") == "new_caller":
                 call_de = result["call_de"]
                 # Someone replied to our CQ while we were free (IDLE) -
@@ -7941,6 +7985,26 @@ class App:
                 if start_result and start_result.get("action") == "reply":
                     await self._dispatch_auto_reply(start_result, m,
                                                      tx_seq=self._reserve_tx_seq())
+                    if start_result.get("qso_complete"):
+                        # FIX (2026-09-03, live report: "nasze rpts jest nie
+                        # wypelniony w logu" / QSOs not ending up in the log
+                        # at all): a QSO can complete on its VERY FIRST
+                        # exchange right here - e.g. our own silence give-up
+                        # timer (MAX_REPORT_REPEATS / should_give_up)
+                        # already abandoned a stalled QSO with this station,
+                        # and their delayed confirmation then arrives and
+                        # gets treated as a fresh 'new_caller' whose first
+                        # message is ALREADY a completing R+report/73/RR73/
+                        # RRR (more likely now that R+report itself
+                        # completes immediately, see the RRR->RR73
+                        # shortcut). This branch used to just dispatch the
+                        # reply and return WITHOUT ever calling the
+                        # qso_complete logging code below (that only lived
+                        # inside the separate "action == reply" handler) -
+                        # the QSO was transmitted correctly but silently
+                        # never written to the log at all.
+                        await self._log_completed_auto_qso(m)
+                        return
                 await self.hub.broadcast({"type": "auto_qso_status",
                                            "state": self._qso_engine.state,
                                            "partner": self._qso_engine.partner_call})
@@ -7973,136 +8037,169 @@ class App:
                 await self._dispatch_auto_reply(result, m, tx_seq=self._reserve_tx_seq())
 
                 if result.get("qso_complete"):
-                    print(f"[autoqso] QSO with {self._qso_engine.partner_call} completed (73)")
-                    # Send the FULL QSO data to pre-fill the logging form
-                    # BEFORE abort_qso() (which resets partner_call/grid/
-                    # reports back to None) — the user must confirm it
-                    # themselves ("+ LOG QSO" button), the automation does
-                    # NOT write directly to the log.
-                    # NOTE: the "R" prefix (e.g. "R-15") is an FT8 protocol
-                    # marker ("acknowledging + here's my report"), NOT part
-                    # of the actual signal report value — strip it before
-                    # putting it in the log field, to keep the standard
-                    # ADIF format.
-                    rst_rcvd = self._qso_engine.partner_report_recv or ""
-                    if rst_rcvd.startswith("R"):
-                        rst_rcvd = rst_rcvd[1:]
-                    rst_sent = self._qso_engine.partner_report_sent or ""
-                    if rst_sent.startswith("R"):
-                        rst_sent = rst_sent[1:]
-                    # AUTO-SAVE the QSO to the operator's log (design
-                    # decision: the automation saves it itself, the operator
-                    # can edit it afterward in MY QSO LOG — instead of
-                    # manual confirmation, which at a club station running
-                    # unattended used to get skipped and QSOs were lost).
-                    try:
-                        from datetime import datetime as _dtx, timezone as _tzx
-                        # FIX (2026-08-26, reported: correspondents' logged
-                        # times differ from ours by up to several minutes):
-                        # this used to log qso_date/time_on as the moment
-                        # the QSO COMPLETED (right after sending our final
-                        # 73), not when it STARTED. WSJT-X/JTDX freeze
-                        # TIME_ON near the start of the exchange instead
-                        # (per WSJT-X dev discussion: "received grid
-                        # messages and reports will set start time... if
-                        # start time is not already set" - i.e. at Tx2/Tx3,
-                        # the first REAL two-way exchange, not the first
-                        # call attempt).
-                        #
-                        # FOLLOW-UP FIX (reported live 2026-08-26: "wolalem
-                        # RI1FJL cale QSO trwa 5min? tyle ile wolalem"):
-                        # the first version of this fix used
-                        # self._qso_engine.started_at, which is set the
-                        # moment WE start CALLING a station (start_qso()) -
-                        # on a busy/weak station that takes several retries
-                        # to even hear us, that's several minutes BEFORE any
-                        # real contact, and got logged as the QSO's start.
-                        # first_contact_at is set instead the first time the
-                        # PARTNER actually responds (see on_decode()) -
-                        # matches WSJT-X's Tx2/Tx3 anchor, not our own
-                        # possibly-long calling/retry period. Falls back to
-                        # started_at (e.g. a QSO ended before any reply ever
-                        # arrived - shouldn't normally reach this qso_complete
-                        # branch at all, but stay defensive) and finally to
-                        # "now" if even that's missing.
-                        _start_epoch = (self._qso_engine.first_contact_at or
-                                         self._qso_engine.started_at or
-                                         _dtx.now(_tzx.utc).timestamp())
-                        _start_dt = _dtx.fromtimestamp(_start_epoch, _tzx.utc)
-                        # time_off: the actual completion moment (right
-                        # after sending our final 73) - distinct from
-                        # time_on on purpose, per ADIF (TIME_ON/TIME_OFF
-                        # are separate fields) and WSJT-X's own Log QSO
-                        # window (separate start/end date-time). Previously
-                        # this wasn't passed at all, so qso_db.add_qso()
-                        # silently defaulted it to time_on - not a
-                        # deliberate "we don't need it", just an oversight.
-                        # (qso_db has no separate qso_date_off column, so a
-                        # QSO that happened to straddle UTC midnight would
-                        # log an end time earlier than the start time -
-                        # accepted: FT8/FT4 exchanges take seconds to a few
-                        # minutes, this can't realistically happen.)
-                        _end_dt = _dtx.now(_tzx.utc)
-                        _uid = getattr(self, "_autoqso_uid", None)
-                        _freq_hz = int(getattr(self.rig, "freq", 0) or 0)
-                        _band = self._get_band_for_freq(_freq_hz) or ""
-                        # Grid: from the QSO if the partner sent it;
-                        # otherwise from the decode cache (their earlier CQ with a grid).
-                        _grid = (self._qso_engine.partner_grid or
-                                 getattr(self, "_call_grid_cache", {}).get(
-                                     (self._qso_engine.partner_call or "").upper(), ""))
-                        if _uid:
-                            _saved = qso_db.add_qso(_uid, {
-                                "call": self._qso_engine.partner_call,
-                                "qso_date": _start_dt.strftime("%Y%m%d"),
-                                "time_on": _start_dt.strftime("%H%M%S"),
-                                "time_off": _end_dt.strftime("%H%M%S"),
-                                "band": _band,
-                                "mode": self._ft8_decode_mode,
-                                "freq": f"{_freq_hz/1e6:.6f}" if _freq_hz else "",
-                                "rst_sent": rst_sent,
-                                "rst_rcvd": rst_rcvd,
-                                "gridsquare": _grid or "",
-                                "my_call": self._qso_engine.my_call or "",
-                                "my_gridsquare": self._qso_engine.my_grid or "",
-                                "source": "auto",
-                            })
-                            print(f"[autoqso] QSO SAVED to log: "
-                                  f"{self._qso_engine.partner_call} {_band} "
-                                  f"{self._ft8_decode_mode}")
-                            await self.hub.broadcast({"type": "qso_logged",
-                                                       "qso": _saved})
-                            # FIX: push to CloudLog. Manual "+ LOG QSO"
-                            # (POST /api/qsolog, ~line 3864) has always done
-                            # this, but this auto-save path (the automation
-                            # writing the QSO itself on "73") never did —
-                            # QSOs made via auto-answer never reached
-                            # CloudLog, only ones added by hand.
-                            asyncio.ensure_future(self._cloudlog_push_qso(_uid, _saved))
-                        else:
-                            print("[autoqso] WARNING: no operator uid - "
-                                  "QSO NOT auto-saved", flush=True)
-                    except Exception as _e:
-                        print(f"[autoqso] QSO auto-save ERROR: {_e}", flush=True)
-                    await self.hub.broadcast({"type": "auto_qso_complete",
-                                               "dxCall": self._qso_engine.partner_call,
-                                               "dxGrid": self._qso_engine.partner_grid or "",
-                                               "rstSent": rst_sent,
-                                               "rstRcvd": rst_rcvd,
-                                               "mode": self._ft8_decode_mode})
-                    await self.hub.broadcast({"type": "auto_qso_status",
-                                               "state": "DONE",
-                                               "partner": self._qso_engine.partner_call})
-                    self._qso_engine.abort_qso()  # back to IDLE, partner_call=None
-                    self._qso_period_locked = False  # unlock the period for the next QSO
-                    # No queue (removed 2026-08-26) - we're free again and
-                    # will answer whoever calls next.
+                    await self._log_completed_auto_qso(m)
                 else:
                     await self.hub.broadcast({"type": "auto_qso_status",
                                                "state": self._qso_engine.state,
                                                "partner": self._qso_engine.partner_call})
         except Exception as e:
             print(f"[autoqso] automation processing ERROR: {e}")
+
+    async def _log_completed_auto_qso(self, m: dict):
+        """
+        Auto-saves a just-completed QSO to the operator's log and
+        broadcasts the completion. Extracted (2026-09-03) so it can be
+        called from BOTH places a QSO can reach qso_complete=True: the
+        normal in-progress exchange (the "reply" action handler in
+        _process_auto_qso, on_decode called directly) AND a QSO that
+        completes on its VERY FIRST decode via start_qso's initial_decode
+        (the "new_caller" handler) - before this extraction, that second
+        path never called this logging code at all, so a QSO completing
+        immediately on its first exchange (more likely now, since the
+        RRR->RR73 shortcut makes an R+report complete right away instead
+        of needing a follow-up round) was transmitted correctly but
+        silently never written to the log.
+        """
+        print(f"[autoqso] QSO with {self._qso_engine.partner_call} completed (73)")
+        # Send the FULL QSO data to pre-fill the logging form
+        # BEFORE abort_qso() (which resets partner_call/grid/
+        # reports back to None) — the user must confirm it
+        # themselves ("+ LOG QSO" button), the automation does
+        # NOT write directly to the log.
+        # NOTE: the "R" prefix (e.g. "R-15") is an FT8 protocol
+        # marker ("acknowledging + here's my report"), NOT part
+        # of the actual signal report value — strip it before
+        # putting it in the log field, to keep the standard
+        # ADIF format.
+        rst_rcvd = self._qso_engine.partner_report_recv or ""
+        if rst_rcvd.startswith("R"):
+            rst_rcvd = rst_rcvd[1:]
+        rst_sent = self._qso_engine.partner_report_sent or ""
+        if not rst_sent:
+            # FIX (2026-09-03, live report: "nasze rpts jest nie
+            # wypelniony w logu, najczesciej kiedy ktos nam odpowie po
+            # jakis czas od naszego podawania raportu"): if our own
+            # silence give-up timer (_check_retry_or_giveup) already
+            # abandoned this QSO and the partner's delayed confirmation
+            # then arrived and resumed it as a fresh "new caller" (see
+            # the new_caller branch above and MAX_REPORT_REPEATS /
+            # should_give_up), THIS engine instance never actually
+            # recorded sending them a report - even though a real one
+            # clearly went out over the air (they're confirming it right
+            # now). A permanently blank RST Sent is worse than a
+            # best-effort value: fall back to the current decode's own
+            # measured SNR, the same source _dispatch_auto_reply uses for
+            # needs_measured_report.
+            rst_sent = self._format_report(m.get("snr_db", m.get("snr", 0)))
+        elif rst_sent.startswith("R"):
+            rst_sent = rst_sent[1:]
+        # AUTO-SAVE the QSO to the operator's log (design
+        # decision: the automation saves it itself, the operator
+        # can edit it afterward in MY QSO LOG — instead of
+        # manual confirmation, which at a club station running
+        # unattended used to get skipped and QSOs were lost).
+        try:
+            from datetime import datetime as _dtx, timezone as _tzx
+            # FIX (2026-08-26, reported: correspondents' logged
+            # times differ from ours by up to several minutes):
+            # this used to log qso_date/time_on as the moment
+            # the QSO COMPLETED (right after sending our final
+            # 73), not when it STARTED. WSJT-X/JTDX freeze
+            # TIME_ON near the start of the exchange instead
+            # (per WSJT-X dev discussion: "received grid
+            # messages and reports will set start time... if
+            # start time is not already set" - i.e. at Tx2/Tx3,
+            # the first REAL two-way exchange, not the first
+            # call attempt).
+            #
+            # FOLLOW-UP FIX (reported live 2026-08-26: "wolalem
+            # RI1FJL cale QSO trwa 5min? tyle ile wolalem"):
+            # the first version of this fix used
+            # self._qso_engine.started_at, which is set the
+            # moment WE start CALLING a station (start_qso()) -
+            # on a busy/weak station that takes several retries
+            # to even hear us, that's several minutes BEFORE any
+            # real contact, and got logged as the QSO's start.
+            # first_contact_at is set instead the first time the
+            # PARTNER actually responds (see on_decode()) -
+            # matches WSJT-X's Tx2/Tx3 anchor, not our own
+            # possibly-long calling/retry period. Falls back to
+            # started_at (e.g. a QSO ended before any reply ever
+            # arrived - shouldn't normally reach this qso_complete
+            # branch at all, but stay defensive) and finally to
+            # "now" if even that's missing.
+            _start_epoch = (self._qso_engine.first_contact_at or
+                             self._qso_engine.started_at or
+                             _dtx.now(_tzx.utc).timestamp())
+            _start_dt = _dtx.fromtimestamp(_start_epoch, _tzx.utc)
+            # time_off: the actual completion moment (right
+            # after sending our final 73) - distinct from
+            # time_on on purpose, per ADIF (TIME_ON/TIME_OFF
+            # are separate fields) and WSJT-X's own Log QSO
+            # window (separate start/end date-time). Previously
+            # this wasn't passed at all, so qso_db.add_qso()
+            # silently defaulted it to time_on - not a
+            # deliberate "we don't need it", just an oversight.
+            # (qso_db has no separate qso_date_off column, so a
+            # QSO that happened to straddle UTC midnight would
+            # log an end time earlier than the start time -
+            # accepted: FT8/FT4 exchanges take seconds to a few
+            # minutes, this can't realistically happen.)
+            _end_dt = _dtx.now(_tzx.utc)
+            _uid = getattr(self, "_autoqso_uid", None)
+            _freq_hz = int(getattr(self.rig, "freq", 0) or 0)
+            _band = self._get_band_for_freq(_freq_hz) or ""
+            # Grid: from the QSO if the partner sent it;
+            # otherwise from the decode cache (their earlier CQ with a grid).
+            _grid = (self._qso_engine.partner_grid or
+                     getattr(self, "_call_grid_cache", {}).get(
+                         (self._qso_engine.partner_call or "").upper(), ""))
+            if _uid:
+                _saved = qso_db.add_qso(_uid, {
+                    "call": self._qso_engine.partner_call,
+                    "qso_date": _start_dt.strftime("%Y%m%d"),
+                    "time_on": _start_dt.strftime("%H%M%S"),
+                    "time_off": _end_dt.strftime("%H%M%S"),
+                    "band": _band,
+                    "mode": self._ft8_decode_mode,
+                    "freq": f"{_freq_hz/1e6:.6f}" if _freq_hz else "",
+                    "rst_sent": rst_sent,
+                    "rst_rcvd": rst_rcvd,
+                    "gridsquare": _grid or "",
+                    "my_call": self._qso_engine.my_call or "",
+                    "my_gridsquare": self._qso_engine.my_grid or "",
+                    "source": "auto",
+                })
+                print(f"[autoqso] QSO SAVED to log: "
+                      f"{self._qso_engine.partner_call} {_band} "
+                      f"{self._ft8_decode_mode}")
+                await self.hub.broadcast({"type": "qso_logged",
+                                           "qso": _saved})
+                # FIX: push to CloudLog. Manual "+ LOG QSO"
+                # (POST /api/qsolog, ~line 3864) has always done
+                # this, but this auto-save path (the automation
+                # writing the QSO itself on "73") never did —
+                # QSOs made via auto-answer never reached
+                # CloudLog, only ones added by hand.
+                asyncio.ensure_future(self._cloudlog_push_qso(_uid, _saved))
+            else:
+                print("[autoqso] WARNING: no operator uid - "
+                      "QSO NOT auto-saved", flush=True)
+        except Exception as _e:
+            print(f"[autoqso] QSO auto-save ERROR: {_e}", flush=True)
+        await self.hub.broadcast({"type": "auto_qso_complete",
+                                   "dxCall": self._qso_engine.partner_call,
+                                   "dxGrid": self._qso_engine.partner_grid or "",
+                                   "rstSent": rst_sent,
+                                   "rstRcvd": rst_rcvd,
+                                   "mode": self._ft8_decode_mode})
+        await self.hub.broadcast({"type": "auto_qso_status",
+                                   "state": "DONE",
+                                   "partner": self._qso_engine.partner_call})
+        self._qso_engine.abort_qso()  # back to IDLE, partner_call=None
+        self._qso_period_locked = False  # unlock the period for the next QSO
+        # No queue (removed 2026-08-26) - we're free again and
+        # will answer whoever calls next.
 
     async def _dispatch_auto_reply(self, result: dict, m: dict, tx_seq: int = None):
         """Substitutes the measured SNR (if required) and schedules

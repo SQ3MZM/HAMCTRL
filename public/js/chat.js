@@ -29,13 +29,46 @@
   // resize handle). The actual message rendering (appendMessage) is
   // identical either way.
   function _isMobile() { return !!document.getElementById('m-chat-modal'); }
+  function _badgeId() { return _isMobile() ? 'm-chat-badge' : 'chat-badge'; }
 
   let _unreadCount = 0;
+  // Desktop only - whether #chat-messages is actually scrolled into view
+  // right now, tracked by IntersectionObserver below (mobile checks
+  // #m-chat-modal's own display state directly instead, see handleWS).
+  let _chatVisibleDesktop = false;
 
   function markRead() {
     _unreadCount = 0;
-    const badge = document.getElementById('m-chat-badge');
+    const badge = document.getElementById(_badgeId());
     if (badge) { badge.hidden = true; badge.textContent = '0'; }
+  }
+
+  // Desktop-only (2026-09-03, live report: the OPERATORZY+CZAT panel needs
+  // scrolling to reach, so a topbar icon+badge was added to flag unread
+  // messages without having to keep glancing down). Tracks whether the
+  // panel is currently on-screen - also correctly goes false when the
+  // operator switches to a different tab (switching tabs just toggles
+  // .page-content's CSS display, which IntersectionObserver reports as
+  // "not intersecting" too, not just page scroll position).
+  function _initVisibilityTracking() {
+    if (_isMobile()) return;
+    const box = document.getElementById('chat-messages');
+    if (!box) return;
+    try {
+      const io = new IntersectionObserver(entries => {
+        _chatVisibleDesktop = entries[0]?.isIntersecting || false;
+        if (_chatVisibleDesktop) markRead();
+      }, { threshold: 0.3 });
+      io.observe(box);
+    } catch (e) { /* IntersectionObserver unsupported - badge just won't auto-clear on scroll, scrollToChat() below still works */ }
+  }
+
+  // Called from the topbar chat icon (desktop only - mobile's icon calls
+  // Mobile.openChat() directly instead). Scrolling the always-visible
+  // panel into view triggers the IntersectionObserver above, which clears
+  // the badge on its own once it's actually in view.
+  function scrollToChat() {
+    document.getElementById('chat-messages')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   // ── WS handler (called from ws.js's default dispatch branch, and from
@@ -52,13 +85,15 @@
     }
     if (msg.type === 'chat_message') {
       appendMessage(msg.message, true);
-      // Unread badge (mobile only - the modal has to be closed for a
-      // message to actually be "unread"; on desktop the panel is always
-      // visible so there's nothing to badge).
-      const modal = document.getElementById('m-chat-modal');
-      if (modal && modal.style.display === 'none') {
+      // Unread badge - only counts while the panel/modal genuinely isn't
+      // visible right now (mobile: modal closed; desktop: scrolled out of
+      // view or on a different tab).
+      const visible = _isMobile()
+        ? document.getElementById('m-chat-modal')?.style.display !== 'none'
+        : _chatVisibleDesktop;
+      if (!visible) {
         _unreadCount++;
-        const badge = document.getElementById('m-chat-badge');
+        const badge = document.getElementById(_badgeId());
         if (badge) { badge.hidden = false; badge.textContent = String(_unreadCount); }
       }
       return;
@@ -161,7 +196,7 @@
   }
 
   // ── Export ───────────────────────────────────────────────────────────────
-  window.Chat = { handleWS, send, markRead };
+  window.Chat = { handleWS, send, markRead, scrollToChat };
 
   // Hook up Enter in the input field + restore the remembered window height.
   document.addEventListener('DOMContentLoaded', () => {
@@ -172,6 +207,7 @@
       });
     }
     _initResize();
+    _initVisibilityTracking();
   });
 
 })();

@@ -50,6 +50,14 @@ FEATURES = [
     {"id": "tx_power",  "label": "Regulacja mocy TX", "icon": "⚡",
      "group": "tx", "backend": "both", "enabled_default": False},
 
+    # ── Tuner (dodane 2026-09-03 - byly wczesniej bez wlasnego wpisu,
+    # widocznosc przypadkowo podpieta pod mode_set/ptt) ────────────────────
+    {"id": "tuner",     "label": "Tuner (ATU) wl/wyl", "icon": "⚙️",
+     "group": "tuner", "backend": "both", "enabled_default": True},
+
+    {"id": "autotune",  "label": "Autotune (generuje TX)", "icon": "🔧",
+     "group": "tuner", "backend": "civ", "enabled_default": True},
+
     # ── Receive / S-meter / scope ───────────────────────────────────────────
     {"id": "smeter",    "label": "Wskaznik S-metr", "icon": "📶",
      "group": "scope", "backend": "both", "enabled_default": True},

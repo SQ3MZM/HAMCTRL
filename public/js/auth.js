@@ -48,12 +48,13 @@ const _DEFAULT_PERMS = {
 };
 
 // Keys with NO per-user permission at all (2026-09-03, explicit decision):
-// "split" is a general radio capability (needed for PTT to work correctly
-// with a split-frequency setup) governed ONLY by the per-rig static
-// feature whitelist (KONFIGURACJA -> FUNKCJE RADIA) - same for every
-// operator, no per-user override. Used below to skip the permsSet check
-// entirely for these keys.
-const FEATURE_ONLY_KEYS = new Set(['split']);
+// general radio capabilities governed ONLY by the per-rig static feature
+// whitelist (KONFIGURACJA -> FUNKCJE RADIA) - same for every operator, no
+// per-user override. "split" was the first (needed for PTT to work
+// correctly with a split-frequency setup); "tuner"/"autotune" followed
+// the same reasoning (they used to piggyback on the unrelated freq/ptt
+// permissions). Used below to skip the permsSet check entirely for these.
+const FEATURE_ONLY_KEYS = new Set(['split', 'tuner', 'autotune']);
 
 // ── Apply permissions to the UI ───────────────────────────────────────────────
 function applyPermissions(user) {
@@ -100,7 +101,10 @@ function applyPermissions(user) {
   // id where one exists (not every data-perm key is a rig capability -
   // cw/rotator/settings/view/admin/band have no FEATURES entry and stay
   // governed by the per-user permission alone).
-  const FEATURE_ID_FOR_PERM = { freq: 'freq_set', mode: 'mode_set', split: 'split', ptt: 'ptt' };
+  const FEATURE_ID_FOR_PERM = {
+    freq: 'freq_set', mode: 'mode_set', split: 'split', ptt: 'ptt',
+    tuner: 'tuner', autotune: 'autotune',
+  };
 
   // data-perm elements — show/hide
   document.querySelectorAll('[data-perm]').forEach(el => {

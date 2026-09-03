@@ -353,6 +353,17 @@ ST_REPORT_SENT = 'REPORT_SENT'    # we sent our report (Tx2/Tx3), waiting for R+
 ST_RRR_SENT = 'RRR_SENT'          # we sent RRR (Tx4), waiting for 73 or a repeat
 ST_DONE = 'DONE'                  # QSO finished (received/sent 73), ready to log
 
+# How many times we'll re-send our own report to a partner who keeps
+# transmitting but never actually confirms it (repeats their grid, or
+# repeats their own raw/unconfirmed report) before giving up on the QSO.
+# Deliberately separate from webapp.py's silence-based retry/give-up
+# timer (_max_retries=4 there) - that one covers TOTAL SILENCE from the
+# partner; this one covers the partner being audibly present and
+# replying, but stuck (never progressing past our report). Live report
+# (2026-09-03): "automat nie powtarzal w kolko raportu do klienta jesli
+# powtorzylismy 3 razy i nam nie potwierdzil powinien nastapic stop".
+MAX_REPORT_REPEATS = 3
+
 
 class QsoEngine:
     """
@@ -392,6 +403,7 @@ class QsoEngine:
         self.last_activity_at = None
         self.last_tx_at = None    # when we LAST sent anything in this QSO
         self.retry_count = 0      # how many times we repeated the last message with no reply
+        self.report_repeat_count = 0  # how many times we've re-sent our report to a stuck (but replying) partner - see MAX_REPORT_REPEATS
 
     # ── QSO management ──────────────────────────────────────────────────────
 
@@ -436,6 +448,7 @@ class QsoEngine:
         self.last_activity_at = self.started_at
         self.last_tx_at = None
         self.retry_count = 0
+        self.report_repeat_count = 0
         if initial_decode is not None:
             return self.on_decode(initial_decode)
         return None
@@ -451,6 +464,16 @@ class QsoEngine:
         self.first_contact_at = None
         self.last_tx_at = None
         self.retry_count = 0
+        self.report_repeat_count = 0
+
+    def _give_up_stuck_report(self):
+        """Abandons the QSO because the partner keeps transmitting but
+        never confirms our report (repeats their grid, or repeats their
+        own unconfirmed raw report) - see MAX_REPORT_REPEATS. Frees us up
+        for the next caller instead of repeating our report forever."""
+        abandoned = self.partner_call
+        self.abort_qso()
+        return {'action': 'give_up', 'call_de': abandoned}
 
     # ── Processing received messages ──────────────────────────────────
 
@@ -617,12 +640,27 @@ class QsoEngine:
             if report.startswith('R'):
                 # "R-12" — the partner CONFIRMS receipt of our report AND
                 # sends its own (which we no longer need to send again).
-                # We reply with RRR.
+                # FIX (2026-09-03, same shortening as the is_rrr branch
+                # above): reply with RR73 (ack + sign-off combined)
+                # instead of a plain RRR, and finish right here instead
+                # of waiting for the partner's own 73/RR73/RRR to come
+                # back. The invariant established above — "if we get
+                # RRR, we send 73, no extra cycle" — applies symmetrically
+                # here too: if WE would have sent RRR, send RR73 and be
+                # done. Shortens the QSO by one whole transmission cycle.
+                # Guard against an echoed repeat of this same R-report
+                # arriving after we're already DONE (partner didn't hear
+                # our RR73 and repeats their R-report) - without this,
+                # each repeat would re-trigger qso_complete and re-send
+                # RR73 forever, same class of bug as the is_73/is_rr73/
+                # is_rrr echo-after-DONE fix above.
+                if self.state == ST_DONE:
+                    return None
                 self.partner_report_recv = report
-                self.state = ST_RRR_SENT
+                self.state = ST_DONE
                 return {'action': 'reply', 'call_to': self.partner_call,
-                        'call_de': self.my_call, 'report_or_grid': 'RRR',
-                        'r_flag': False, 'qso_complete': False}
+                        'call_de': self.my_call, 'report_or_grid': 'RR73',
+                        'r_flag': False, 'qso_complete': True}
             else:
                 # "-12" — the partner's first (raw) report, no R-prefix.
                 # We MUST reply with OUR OWN, MEASURED report (R+our_SNR),
@@ -632,6 +670,18 @@ class QsoEngine:
                 # report_or_grid=None here is deliberate: webapp.py MUST
                 # substitute the real SNR measurement before sending (see
                 # needs_measured_report).
+                # FIX (2026-09-03, live report: "automat nie powtarzal w
+                # kolko raportu do klienta jesli powtorzylismy 3 razy i
+                # nam nie potwierdzil powinien nastapic stop"): if we're
+                # ALREADY in REPORT_SENT (we sent this report before) and
+                # the partner is STILL sending the same raw, unconfirmed
+                # report instead of R+report, they never copied our reply
+                # - re-sending it forever wastes the channel. Give up
+                # after MAX_REPORT_REPEATS such stalls.
+                if self.state == ST_REPORT_SENT:
+                    if self.report_repeat_count >= MAX_REPORT_REPEATS:
+                        return self._give_up_stuck_report()
+                    self.report_repeat_count += 1
                 self.partner_report_recv = report
                 self.state = ST_REPORT_SENT
                 return {'action': 'reply', 'call_to': self.partner_call,
@@ -660,6 +710,15 @@ class QsoEngine:
             # partner_grid (used later to pre-fill the QSO logging form).
             if re.fullmatch(r'[A-R]{2}\d{2}([A-X]{2})?', parsed['extra']):
                 self.partner_grid = parsed['extra']
+            # FIX (2026-09-03, same stall as the raw-report branch above):
+            # if we're ALREADY in REPORT_SENT, this is the partner
+            # repeating their OPENING grid message, not a fresh call -
+            # they never copied our report. Give up after
+            # MAX_REPORT_REPEATS instead of resending forever.
+            if self.state == ST_REPORT_SENT:
+                if self.report_repeat_count >= MAX_REPORT_REPEATS:
+                    return self._give_up_stuck_report()
+                self.report_repeat_count += 1
             self.state = ST_REPORT_SENT
             return {'action': 'reply', 'call_to': self.partner_call,
                     'call_de': self.my_call, 'report_or_grid': None,

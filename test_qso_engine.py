@@ -188,15 +188,12 @@ def test_full_qso_we_cq():
           "start_qso z gridem -> akcja raport (needs_measured)")
     check(eng.state == ST_REPORT_SENT, "Po start z gridem: REPORT_SENT")
 
-    # Partner R-08 -> my RRR
+    # Partner R-08 -> od razu nasze RR73, QSO zakonczone (skracamy o jeden
+    # cykl - nie czekamy juz na osobne 73 partnera, patrz test nizej)
     act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ R-08", snr=-8)
-    check(act is not None and rpt == "RRR", "R-08 partnera -> nasze RRR")
-    check(eng.state == ST_RRR_SENT, "Po R-raporcie: RRR_SENT")
-
-    # Partner 73 -> my 73, DONE
-    act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ 73", snr=-8)
-    check(act is not None and rpt == "73", "73 partnera -> nasze 73")
-    check(eng.state == ST_DONE, "Po 73: DONE")
+    check(act is not None and rpt == "RR73", "R-08 partnera -> nasze RR73 (bez osobnego RRR)")
+    check(act.get("qso_complete"), "QSO oznaczone jako complete od razu po RR73")
+    check(eng.state == ST_DONE, "Po R-raporcie: od razu DONE (nie RRR_SENT)")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -283,9 +280,75 @@ def test_repeated_call():
     act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ JO90", snr=3)
     check(act is not None and rpt == "+03", "Druga powtorka -> nadal +03")
 
-    # Partner w koncu uslyszal -> R-raport -> my RRR (QSO idzie dalej)
+    # Partner w koncu uslyszal -> R-raport -> od razu nasze RR73, koniec QSO
     act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ R+03", snr=3)
-    check(act is not None and rpt == "RRR", "Po R-raporcie -> RRR (QSO postepuje)")
+    check(act is not None and rpt == "RR73", "Po R-raporcie -> RR73 (QSO zakonczone)")
+    check(eng.state == ST_DONE, "Po R-raporcie: DONE")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# REGRESJA: partner powtarza w kolko (grid LUB surowy raport), nigdy nie
+# potwierdza -> automat poddaje sie po MAX_REPORT_REPEATS, nie powtarza
+# raportu w nieskonczonosc (2026-09-03). Live report: "automat nie
+# powtarzal w kolko raportu do klienta jesli powtorzylismy 3 razy i nam
+# nie potwierdzil powinien nastapic stop automatycznie". Przed poprawka
+# retry_count (uzywany przez CISZE - brak jakiejkolwiek odpowiedzi) resetowal
+# sie na KAZDA wiadomosc od partnera, WLACZNIE z bezuzytecznymi powtorkami
+# - wiec automat mogl powtarzac swoj raport w nieskonczonosc, dopoki partner
+# cokolwiek nadawal, nawet jesli nigdy nie potwierdzal.
+# ════════════════════════════════════════════════════════════════════════════
+def test_give_up_after_stuck_report_repeats_grid():
+    section("Regresja: partner w kolko powtarza GRID, nigdy nie potwierdza -> stop po 3 probach")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    act = eng.start_qso("SP9XYZ", parse_message("SQ3MZM SP9XYZ JO90"))
+    check(act is not None, "1. wolanie -> akcja raport")
+    if act.get("needs_measured_report"):
+        eng.record_sent_report(_fmt_report(3))
+    check(eng.state == ST_REPORT_SENT, "Po 1. wolaniu: REPORT_SENT")
+
+    # 3 powtorki grida partnera, nigdy R-raportu -> 1., 2., 3. powtorka nadal
+    # odpowiadamy raportem (repeat_count 1,2,3 wciaz < 3 w momencie sprawdzenia)
+    for i in range(3):
+        act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ JO90", snr=3)
+        check(act is not None and act.get("action") == "reply" and rpt == "+03",
+              f"Powtorka {i+1}/3 grida -> nadal odpowiadamy +03")
+        check(eng.state == ST_REPORT_SENT, f"Po powtorce {i+1}: nadal REPORT_SENT")
+
+    # 4. powtorka (3 realne powtorki juz wykorzystane) -> STOP, nie kolejny raport
+    act = eng.on_decode(parse_message("SQ3MZM SP9XYZ JO90"))
+    check(act is not None and act.get("action") == "give_up",
+          "4. powtorka grida (po 3 nieudanych probach) -> give_up, nie kolejny raport")
+    check(act.get("call_de") == "SP9XYZ", "give_up zawiera porzucanego partnera")
+    check(eng.state == ST_IDLE, "Po give_up: IDLE (wolni dla nastepnej stacji)")
+    check(eng.partner_call is None, "Po give_up: brak partnera (abort_qso wykonany)")
+
+
+def test_give_up_after_stuck_report_repeats_raw_report():
+    section("Regresja: partner w kolko powtarza SUROWY raport (nie R+), nigdy nie potwierdza -> stop po 3 probach")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("SP9XYZ", parse_message("CQ SP9XYZ JO90"))
+    # Pierwszy surowy raport partnera -> nasz raport z r_flag=True (R+raport
+    # w eterze - "R" to osobny bit kodowany przez r_flag, nie prefiks w
+    # samym tekscie report_or_grid, patrz test_full_qso_we_answer wyzej)
+    act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ -12", snr=-8)
+    check(act is not None and act.get("r_flag") is True and rpt == "-08",
+          "1. surowy raport partnera -> nasz raport -08 z r_flag=True")
+    check(eng.state == ST_REPORT_SENT, "Po 1. raporcie: REPORT_SENT")
+
+    # Partner nie uslyszal naszego R+raportu i powtarza SWOJ surowy raport
+    # 3 razy -> wciaz odpowiadamy (repeat_count 1,2,3)
+    for i in range(3):
+        act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ -12", snr=-8)
+        check(act is not None and act.get("action") == "reply",
+              f"Powtorka {i+1}/3 surowego raportu -> nadal odpowiadamy")
+        check(eng.state == ST_REPORT_SENT, f"Po powtorce {i+1}: nadal REPORT_SENT")
+
+    # 4. powtorka -> STOP
+    act = eng.on_decode(parse_message("SQ3MZM SP9XYZ -12"))
+    check(act is not None and act.get("action") == "give_up",
+          "4. powtorka surowego raportu (po 3 probach) -> give_up")
+    check(eng.state == ST_IDLE, "Po give_up: IDLE")
+    check(eng.partner_call is None, "Po give_up: brak partnera")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -522,6 +585,32 @@ def test_rrr_goes_straight_to_73():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# REGRESJA: R-raport partnera -> od razu nasze RR73, bez wlasnego RRR (2026-
+# 09-03). Symetria do testu wyzej, ale w drugim kierunku: to MY dostajemy
+# R+raport od partnera (potwierdzenie naszego raportu + jego wlasny) i to MY
+# decydujemy jak odpowiedziec. Wczesniej wysylalismy wlasne RRR (stan
+# RRR_SENT) i czekalismy na 73/RR73/RRR partnera, zanim w koncu koriczylismy
+# wlasnym 73 - dodatkowy cykl. Zadanie na zywo: "musimy pominac rrr zamienic
+# je od razu na rr73 skrocimy czas lacznosci".
+# ════════════════════════════════════════════════════════════════════════════
+def test_r_report_goes_straight_to_rr73():
+    section("Regresja: R-raport partnera -> od razu nasze RR73 (bez wlasnego RRR)")
+    eng = QsoEngine("SQ3MZM", "JO82")
+    eng.start_qso("SP9XYZ", parse_message("SQ3MZM SP9XYZ JO90"))
+    check(eng.state == ST_REPORT_SENT, "Po starcie z gridem: REPORT_SENT")
+
+    act, rpt = _dispatch(eng, "SQ3MZM SP9XYZ R-08", snr=-8)
+    check(act is not None and rpt == "RR73", "R-raport partnera -> nasze RR73 BEZPOSREDNIO (nie wlasne RRR)")
+    check(act.get("qso_complete"), "QSO oznaczone jako complete od razu po naszym RR73")
+    check(eng.state == ST_DONE, "Po R-raporcie partnera: od razu DONE (nie RRR_SENT)")
+
+    # Ewentualne echo tego R-raportu (partner nie uslyszal naszego RR73 i
+    # powtarza) po DONE -> cisza, nie wysylamy RR73 w kolko.
+    act, _ = _dispatch(eng, "SQ3MZM SP9XYZ R-08", snr=-8)
+    check(act is None, "Echo R-raportu po DONE -> cisza")
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # REGRESJA: partner nadaje juz do kogos innego -> porzucamy wolanie zamiast
 # slepo probowac dalej (naprawa sesji 2026-08-15). Zglaszane na zywo:
 # odpowiedzielismy na CQ, ale zanim partner nas uslyszal, zaczal QSO z inna
@@ -661,6 +750,8 @@ def main():
     test_no_extending_after_done()
     test_no_loop_after_abort_on_partner_echo()
     test_repeated_call()
+    test_give_up_after_stuck_report_repeats_grid()
+    test_give_up_after_stuck_report_repeats_raw_report()
     test_frozen_report()
     test_partner_report_last_value()
     test_no_queue_busy_caller_ignored()
@@ -669,6 +760,7 @@ def main():
     test_retransmit_and_giveup()
     test_call1st_start_with_raw_report()
     test_rrr_goes_straight_to_73()
+    test_r_report_goes_straight_to_rr73()
     test_partner_busy_with_someone_else()
     test_partner_calls_cq_again()
     test_dxpedition_message_not_for_us()
