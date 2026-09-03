@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.11"
+SERVER_VERSION = "2.0.12"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -3053,21 +3053,37 @@ class App:
         # ── Radio features panel (capabilities + admin whitelist) ──────────────
         if p == "/api/rig/features" and method == "GET":
             # FIX (2026-09-03, live report: "user widzi wylaczone przyciski
-            # typu BK-IN"): this used to grant the ADMIN-shaped response
-            # (ALL detected dynamic actions/sliders, including explicitly
-            # DISABLED ones, each tagged with an "enabled" flag for the
-            # config table) to anyone holding the "settings" permission -
-            # not just actual admins. "settings" grants the KONFIGURACJA
-            # tab (audio devices, DTR keyer, etc.) - it was never meant to
-            # also unlock the raw, unfiltered rig-capabilities dump.
-            # radiofunctions.js's regular RADIO-tab panel renders WHATEVER
-            # array it receives with no filtering of its own (that's the
-            # user-view's job, done server-side) - so a "settings"-granted
-            # operator saw every disabled func button (BK-IN, VOX, COMP,
-            # ...) as live, clickable controls on their normal control
-            # panel, not just in the admin config page. Only a real
-            # role=="admin" gets the admin shape now.
-            return 200, await self._get_rig_features(role)
+            # typu BK-IN"), REVISED same day: the first version of this fix
+            # made ONLY role=="admin" ever get the admin-shaped response
+            # (every detected dynamic action/slider, including DISABLED
+            # ones, each tagged with its enabled state - meant for the
+            # config table). That broke a real, intended feature: the user
+            # confirmed "settings" is a DELIBERATE admin-delegated grant -
+            # an operator with it is meant to fully use KONFIGURACJA
+            # (including FUNKCJE RADIA), same as an admin would, not a
+            # narrower "can see their own audio device" permission.
+            #
+            # The actual bug was narrower: radiofunctions.js's regular
+            # RADIO-tab panel (the LIVE control surface) and admin.js's
+            # KONFIGURACJA->FUNKCJE RADIA config table both call this same
+            # endpoint, and the response shape alone tells the frontend
+            # which one it's rendering into - so whichever shape a
+            # settings-holder received leaked into BOTH places at once.
+            # Fixed by making the caller's INTENT explicit instead:
+            # admin.js's config-page fetch now passes ?view=admin (see
+            # loadRigFeatures() in admin.js) - only THAT gets the full
+            # shape for a settings-holding non-admin. radiofunctions.js's
+            # plain fetch (no param) never does, so the live RADIO-tab
+            # panel is now always the filtered view unless the caller is
+            # a real admin (who reasonably sees/can-toggle everything
+            # everywhere anyway, same as before this whole investigation).
+            view_param = query.get("view", "")
+            if isinstance(view_param, list):
+                view_param = view_param[0] if view_param else ""
+            wants_admin_view = (view_param == "admin")
+            _admin_view = "admin" if (role == "admin" or
+                                       (wants_admin_view and self._has_perm(uid, role, "settings"))) else role
+            return 200, await self._get_rig_features(_admin_view)
 
         if p == "/api/rig/features" and method == "POST":
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
@@ -7333,7 +7349,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-03-RIG-FEATURES-ADMIN-LEAK-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-03-RIG-FEATURES-VIEW-PARAM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

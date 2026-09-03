@@ -506,7 +506,14 @@ async function loadRigFeatures() {
   el.innerHTML = I18n.t('settings_loading');
   try {
     const token = localStorage.getItem('token');
-    const r = await fetch('/api/rig/features', {
+    // ?view=admin (2026-09-03): this config page needs the FULL
+    // capabilities dump (every detected action/slider, including
+    // disabled ones) to render its checkboxes - webapp.py now only
+    // returns that shape here, never from the plain RADIO-tab fetch in
+    // radiofunctions.js, so a "settings"-holding non-admin's regular
+    // control panel can't leak every disabled button as a live control
+    // (see the fix comment on GET /api/rig/features).
+    const r = await fetch('/api/rig/features?view=admin', {
       headers: token ? { 'Authorization': `Bearer ${token}` } : {}
     });
     const data = await r.json();
