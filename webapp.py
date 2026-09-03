@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.8"
+SERVER_VERSION = "2.0.9"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -2571,6 +2571,15 @@ class App:
 
         if p == "/api/radio/lock" and method == "POST":
             """Take over the radio (if free, or if you're an admin)."""
+            # FIX (2026-09-03): a viewer could acquire radio_lock - nothing
+            # here checked role at all. Beyond being semantically wrong
+            # ("widz" = read-only), this let a viewer satisfy
+            # _can_control_radio() and reach any WS handler that relies on
+            # it without ALSO being in _CONTROL_TYPES's role-based
+            # hard-block (ft8_tune, ft8_qsy) - see the fix in
+            # _can_control_radio for the full story.
+            if role == "viewer":
+                return 403, {"error": "Widz nie moze przejac radia"}
             u_obj = self.find_user_by_id(uid)
             if not u_obj: return 403, {"error": "Brak konta"}
             if self.radio_lock["user_id"] and self.radio_lock["user_id"] != uid and role != "admin":
@@ -3045,6 +3054,14 @@ class App:
             print(f"[cw] /api/cw/send: method={self.cfg.get('cwMethod','dtr')!r} text={body.get('text','')!r} sim={self.rig.sim} ser={getattr(self.rig, '_ser', None) is not None}", flush=True)
             if role == "viewer":
                 return 403, {"ok": False, "error": "Brak uprawnien (CW)"}
+            # FIX (2026-09-03, same audit as rotator/webrtc_offer): the
+            # granular per-operator "cw" permission (users.json
+            # permissions.cw) was only ever enforced by hiding the CW tile
+            # in the frontend (data-perm="cw") - a direct POST here worked
+            # for ANY non-viewer operator holding the lock, even one the
+            # admin explicitly denied CW access to.
+            if not self._has_perm(uid, role, "cw"):
+                return 403, {"ok": False, "error": "Brak uprawnien (CW)"}
             if role != "admin" and not self._user_has_lock(uid):
                 holder = self.radio_lock["callsign"] or self.radio_lock["username"] or ""
                 msg_err = f"CW zablokowany — radio ma {holder}" if holder else "CW zablokowany — najpierw przejmij radio"
@@ -3250,6 +3267,16 @@ class App:
             # always blocked, everyone else must hold radio_lock (unless admin).
             if role == "viewer":
                 return 403, {"error": "Brak uprawnien (rotator)"}
+            # FIX (2026-09-03): the granular per-operator "rotator"
+            # permission (users.json permissions.rotator, admin-editable
+            # per user) was ONLY ever enforced by hiding the tile in the
+            # frontend (index.html's data-perm="rotator") - a direct POST
+            # here worked regardless, for ANY non-viewer operator, even
+            # one the admin explicitly denied rotator access. Found while
+            # changing that tile to stay visible-but-disabled instead of
+            # hidden (a UI-only hide is not a permission boundary).
+            if not self._has_perm(uid, role, "rotator"):
+                return 403, {"error": "Brak uprawnien (rotator)"}
             if role != "admin" and not self._user_has_lock(uid):
                 holder = self.radio_lock["callsign"] or self.radio_lock["username"] or ""
                 msg_err = f"Rotator zablokowany — radio ma {holder}" if holder else "Rotator zablokowany — najpierw przejmij radio"
@@ -3261,8 +3288,11 @@ class App:
 
         m = re.match(r"^/api/rotator/(\d+)/stop$", p)
         if m and method == "POST":
-            # Same as /position above — see the comment there.
+            # Same as /position above — see the comment there (both the
+            # viewer block and the granular "rotator" permission check).
             if role == "viewer":
+                return 403, {"error": "Brak uprawnien (rotator)"}
+            if not self._has_perm(uid, role, "rotator"):
                 return 403, {"error": "Brak uprawnien (rotator)"}
             if role != "admin" and not self._user_has_lock(uid):
                 holder = self.radio_lock["callsign"] or self.radio_lock["username"] or ""
@@ -4001,6 +4031,14 @@ class App:
             return 200, {"ok": True, **result}
 
         if p == "/api/qsolog/all" and method == "DELETE":
+            # FIX (2026-09-03): granular "log" permission (users.json
+            # permissions.log, labelled "Log QSO - zapis") was never
+            # actually checked anywhere - the QSO log TAB is gated by the
+            # separate "view" permission, so unchecking "log" for an
+            # operator did nothing at all. Applies to every write below
+            # (add/edit/delete/bulk-import), not just this one.
+            if not self._has_perm(uid, role, "log"):
+                return 403, {"error": "Brak uprawnien (log QSO)"}
             target_uid = query.get("user_id") or uid
             if isinstance(target_uid, list): target_uid = target_uid[0]
             # Admin can delete any user's log, a regular user only their own
@@ -4034,6 +4072,8 @@ class App:
 
         if p == "/api/qsolog/bulk" and method == "POST":
             # Bulk import of many QSOs at once
+            if not self._has_perm(uid, role, "log"):
+                return 403, {"ok": False, "error": "Brak uprawnien (log QSO)"}
             qsos_list = body.get("qsos", [])
             if not qsos_list:
                 return 400, {"ok": False, "error": "Brak QSO"}
@@ -4053,6 +4093,8 @@ class App:
 
         if p == "/api/qsolog" and method == "POST":
             # Add a new QSO
+            if not self._has_perm(uid, role, "log"):
+                return 403, {"ok": False, "error": "Brak uprawnien (log QSO)"}
             try:
                 body["source"] = body.get("source", "manual")
                 # FIX: my_call (-> ADIF OPERATOR/STATION_CALLSIGN) used to
@@ -4225,6 +4267,8 @@ class App:
                 return 404, {"error": "QSO nie znalezione"}
 
             if method == "PUT":
+                if not self._has_perm(uid, role, "log"):
+                    return 403, {"ok": False, "error": "Brak uprawnien (log QSO)"}
                 try:
                     # Same fallback as POST /api/qsolog above - update_qso()
                     # unconditionally overwrites my_call with whatever the
@@ -4241,6 +4285,8 @@ class App:
                     return 400, {"ok": False, "error": str(e)}
 
             if method == "DELETE":
+                if not self._has_perm(uid, role, "log"):
+                    return 403, {"ok": False, "error": "Brak uprawnien (log QSO)"}
                 ok = qso_db.delete_qso(uid, qso_id, is_admin=is_admin_user)
                 return (200, {"ok": True}) if ok else (404, {"error": "QSO nie znalezione"})
 
@@ -4520,6 +4566,19 @@ class App:
                 "type": "ft8_fake_split_status",
                 "enabled": self._fake_split_enabled,
                 "targetHz": 1500,
+            }))
+            # FT8 RX on/off state - same reasoning as auto_seq_status above:
+            # a freshly (re)connected client used to default its own RX
+            # button/watchdog to "off" regardless of the real backend
+            # state (which persists across reconnects and can also be
+            # true because a DIFFERENT session turned it on, or false
+            # because the idle watchdog auto-stopped it - see
+            # _stop_wsjtx_auto). The broadcast this mirrors already
+            # existed for every OTHER connected client; this just also
+            # covers the client that is (re)connecting right now.
+            await ws.send_str(json.dumps({
+                "type": "ft8_rx_status",
+                "enabled": self._ft8_rx_enabled,
             }))
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
@@ -5176,6 +5235,16 @@ class App:
         """
         if role == "admin":
             return True, ""
+        # FIX (2026-09-03): found while auditing granular permissions -
+        # this never explicitly refused role=="viewer", relying entirely
+        # on radio_lock never being held by a viewer. That assumption was
+        # false: /api/radio/lock POST didn't block viewer either (fixed
+        # alongside this), so a viewer who acquired the lock could pass
+        # this check and reach any handler that (unlike freq/mode/ptt/etc)
+        # relies solely on _can_control_radio - e.g. ft8_tune/ft8_qsy,
+        # which aren't in _ws_msg's _CONTROL_TYPES role-based hard-block.
+        if role == "viewer":
+            return False, "Widz nie moze sterowac radiem"
         sender = self.online_users.get(ws, {})
         sender_uid = sender.get("user_id", "")
         if not sender_uid:
@@ -5511,6 +5580,11 @@ class App:
 
     async def _ws_msg(self, msg: dict, ws, role: str = "viewer"):
         t = msg.get("type", "")
+        # Used below by the granular per-operator permission checks
+        # (_has_perm) added 2026-09-03 - fetched once here instead of
+        # separately in each handler (several already re-derived this
+        # exact same lookup locally under the name sender_uid).
+        uid = self.online_users.get(ws, {}).get("user_id", "")
 
         # ── Radio Lock: verify the lock for radio-control actions ────────
         # Admin can always. A regular user must be "holding" the radio.
@@ -5614,6 +5688,17 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
+            # FIX (2026-09-03, same audit as rotator/cw/webrtc_offer): the
+            # granular per-operator "freq" permission was never checked
+            # here - only rig capability (_feature_allowed) and radio_lock.
+            # Rate-limited like the capability check below (freq fires up
+            # to ~20x/s while dragging the VFO).
+            if not self._has_perm(uid, role, "freq"):
+                _now_pb = time.time()
+                if _now_pb - getattr(self, "_freq_blocked_toast_at", 0) > 3.0:
+                    self._freq_blocked_toast_at = _now_pb
+                    await ws.send_json({"type": "toast", "msg": "⛔ Zmiana czestotliwosci niedostepna (brak uprawnien)", "level": "error"})
+                return
             if not self._feature_allowed("freq_set", role):
                 print(f"[rig] freq WS: BLOKADA _feature_allowed (role={role})")
                 # Rate-limited toast (this message fires up to ~20x/s while
@@ -5639,6 +5724,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "mode"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana trybu niedostepna (brak uprawnien)", "level": "error"})
                 return
             if not self._feature_allowed("mode_set", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Zmiana trybu niedostępna dla tego radia", "level": "error"})
@@ -5681,6 +5769,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not (self._has_perm(uid, role, "freq") and self._has_perm(uid, role, "mode")):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana pasma niedostepna (brak uprawnien)", "level": "error"})
                 return
             if not (self._feature_allowed("freq_set", role)
                     and self._feature_allowed("mode_set", role)):
@@ -5796,6 +5887,11 @@ class App:
             # session that's actually keyed could get stuck transmitting
             # with no way to release it from this path; (2) tell the
             # operator why, instead of nothing.
+            if bool(msg.get("ptt")) and not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast",
+                                     "msg": "⛔ PTT niedostepny (brak uprawnien)",
+                                     "level": "error"})
+                return
             if bool(msg.get("ptt")) and not self._feature_allowed("ptt", role):
                 await ws.send_json({"type": "toast",
                                      "msg": "⛔ PTT niedostępny dla tego radia (sprawdź panel funkcji radia)",
@@ -5911,6 +6007,16 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
+            # "split" has its OWN dedicated permission key (labelled "Split
+            # VFO A/B" in the admin panel) - distinct from "freq"
+            # ("Strojenie czestotliwosci"). The frontend's SPLIT button was
+            # incorrectly tagged data-perm="freq" (fixed alongside this),
+            # which meant unchecking "Split VFO A/B" for an operator did
+            # literally nothing - only unchecking "freq" hid the button,
+            # for the wrong reason.
+            if not self._has_perm(uid, role, "split"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Split niedostepny (brak uprawnien)", "level": "error"})
+                return
             if not self._feature_allowed("split", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Split niedostępny dla tego radia", "level": "error"})
                 return
@@ -5927,6 +6033,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "freq"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Zmiana VFO-B niedostepna (brak uprawnien)", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Zmiana VFO-B niedostępna dla tego radia", "level": "error"})
@@ -5945,6 +6054,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "freq"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Wybor VFO niedostepny (brak uprawnien)", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Wybór VFO niedostępny dla tego radia", "level": "error"})
@@ -5965,6 +6077,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "freq"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Operacja VFO niedostepna (brak uprawnien)", "level": "error"})
                 return
             if not self._feature_allowed("freq_set", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Operacja VFO niedostępna dla tego radia", "level": "error"})
@@ -6030,6 +6145,9 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
+            if not self._has_perm(uid, role, "freq"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Tuner niedostepny (brak uprawnien)", "level": "error"})
+                return
             if not self._feature_allowed("mode_set", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Tuner niedostępny dla tego radia", "level": "error"})
                 return
@@ -6048,6 +6166,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Autotune niedostepny (brak uprawnien)", "level": "error"})
                 return
             if not self._feature_allowed("ptt", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Autotune niedostępny dla tego radia", "level": "error"})
@@ -6349,6 +6470,9 @@ class App:
             can, why = self._can_control_radio(ws, role)
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast", "msg": "⛔ TUNE niedostepny (brak uprawnien)", "level": "error"})
                 return
             cross, band_a, band_b = await self._is_split_cross_band()
             if cross:
@@ -6760,6 +6884,12 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
+            # FIX (2026-09-03): mic TX also has to respect the granular
+            # "ptt" permission, same as the manual PTT handler - this path
+            # transmits real audio and never went through 'ptt' at all.
+            if not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Mikrofon TX niedostepny (brak uprawnien PTT)", "level": "error"})
+                return
             if not self.webrtc:
                 await ws.send_json({"type": "webrtc_error", "error": "WebRTC niedostepne na serwerze"})
                 return
@@ -7152,7 +7282,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-02-SECURITY-AUDIT-BATCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-03-PERMISSIONS-AUDIT-BATCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -8908,7 +9038,7 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             if client_etag == etag:
                 _headers304 = {"ETag": etag, "Cache-Control": _cc}
                 if _set_ui_cookie:
-                    _headers304["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax"
+                    _headers304["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly"
                 return web.Response(status=304, headers=_headers304)
 
             # Choose the body: gzip if the client accepts it and we have a pre-compressed one
@@ -8923,7 +9053,17 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                 body = gz
                 headers["Content-Encoding"] = "gzip"
             if _set_ui_cookie:
-                headers["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax"
+                # HttpOnly: this cookie is server-read-only (chooses
+                # index.html vs mobile.html), no frontend JS ever reads
+                # document.cookie for it - safe to lock down even though
+                # it holds no sensitive value, no reason to leave it
+                # readable to any injected script. NOT marking it Secure:
+                # the server also serves plain HTTP on BIND_HOST:PORT for
+                # LAN access without a trusted cert (see server.py) -
+                # Secure would silently stop the browser from storing/
+                # sending this cookie there, breaking the mobile/desktop
+                # UI choice for anyone using that URL.
+                headers["Set-Cookie"] = f"ui_pref={_set_ui_cookie}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly"
 
             return web.Response(
                 body=body,

@@ -186,6 +186,12 @@ let _autoSeqEnabled = false;
 let _autoQsoState = 'IDLE';
 let _autoQsoPartner = null;
 
+// Tracks whether FT8Timer (the Tx Watchdog) is currently armed, so
+// _updateWatchdogArmed() (defined below, near _hound) only calls
+// start()/stop() on an actual transition instead of every time an
+// unrelated broadcast happens to repeat the same enabled state.
+let _watchdogArmed = false;
+
 // ── 15s clock ─────────────────────────────────────────────────────────────────
 function _startClock() {
   if (_clockTimer) clearInterval(_clockTimer);
@@ -502,23 +508,17 @@ function toggleOwnRx() {
     btn.classList.toggle('active', _ownRxEnabled);
   }
   // FIX (reported live 2026-08-26: "timer ft8 leci nawet jak zatrzymam
-  // odbior i pojde sobie np na cw"): the FT8 safety timer (Tx Watchdog)
-  // guards against UNATTENDED automated TX - with RX stopped there are no
-  // decodes, so the automation literally cannot answer anyone or
-  // transmit, and the timer has nothing to guard against. It used to arm
-  // once (on the first auto_seq_status after connect) and just run
-  // forever regardless of RX state - this is the actual on/off switch:
-  // stop the countdown the moment RX stops, (re)start it the moment RX
-  // starts, tracking the ONLY thing that determines whether unattended TX
-  // is even possible. Hound layers its own start() on top when armed
-  // while RX is running (see toggleHound); its stop no longer touches
-  // this shared timer (see houndStop) since RX may still be running the
-  // main automation after Hound turns off.
-  if (_ownRxEnabled) {
-    window.FT8Timer?.start();
-  } else {
-    window.FT8Timer?.stop();
-  }
+  // odbior i pojde sobie np na cw"; refined 2026-09-03: "dlaczego timer
+  // dziala skoro tylko slucham"): the FT8 safety timer (Tx Watchdog)
+  // guards against UNATTENDED automated TX. RX being on is NECESSARY for
+  // that (no decodes = nothing to auto-answer) but NOT SUFFICIENT - an
+  // operator can have RX on purely to listen, with auto-answer
+  // (_autoSeqEnabled) and Hound both off, in which case no automated TX
+  // can fire at all and the watchdog has nothing to guard against. This
+  // used to arm on RX alone; now delegated to _updateWatchdogArmed()
+  // (see near _hound below), which also factors in whether any actual
+  // automation is armed.
+  _updateWatchdogArmed();
 }
 
 function clearDecodes() {
@@ -656,6 +656,30 @@ function _onAutoSeqStatus(msg) {
   if (msg.state !== undefined) _autoQsoState = msg.state;
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
   _renderAutoQsoPanel();
+  _updateWatchdogArmed();
+}
+
+// FIX (2026-09-03, found while chasing the "watchdog runs even though
+// I'm only listening" report): the backend has ALWAYS broadcast this on
+// every RX enable/disable (webapp.py's "ft8_rx_enable" handler,
+// `{"type": "ft8_rx_status", "enabled": ...}`) - the frontend simply had
+// NO handler for it, so _ownRxEnabled (and the RX button, and the
+// watchdog arm/disarm decision in _updateWatchdogArmed) were 100% local
+// state that could silently drift from the real backend state: after a
+// page reload/reconnect, after the radio_lock watchdog auto-stops RX on
+// idle (see the "AUTO-STOP" print near _ft8_rx_owner_uid), or whenever a
+// SECOND browser tab/session changed it. Backend also sends this once
+// right after "init" for a freshly (re)connected client (see ws_handler)
+// specifically to cover the reconnect case.
+function _onRxStatus(msg) {
+  if (msg.enabled === undefined || msg.enabled === _ownRxEnabled) return;
+  _ownRxEnabled = !!msg.enabled;
+  const btn = document.getElementById('wj-own-rx-btn');
+  if (btn) {
+    btn.textContent = _ownRxEnabled ? I18n.t('wj_own_rx_stop') : I18n.t('wj_own_rx_start');
+    btn.classList.toggle('active', _ownRxEnabled);
+  }
+  _updateWatchdogArmed();
 }
 
 function _onAutoQsoStatus(msg) {
@@ -838,6 +862,7 @@ function handleWS(msg) {
     case 'ft8_waterfall': window.WSJTXScope?.onWaterfallData(msg); break;
     case 'ft8_tx_freq':   window.WSJTXScope?.onTxFreqUpdate(msg); break;
     case 'ft8_fake_split_status': _onFakeSplitStatus(msg); break;
+    case 'ft8_rx_status':  _onRxStatus(msg); break;
     case 'ft8_rx_freq':   window.WSJTXScope?.onRxFreqUpdate(msg); _renderRxFreqPanel(); break;
     case 'ft8_tx_period':    _onTxPeriodUpdate(msg); break;
     case 'ft8_decode_mode':  _onDecodeModeUpdate(msg); break;
@@ -1354,11 +1379,29 @@ function updateBeamRow() {
   _updateRotorButtons();
 }
 
+// FIX (2026-09-03, follow-up to the main ROTATOR tile's data-perm-disable
+// fix): this mini rotor widget in the FT8 tab posts to the same
+// /api/rotator/{id}/position the main tile uses, so the backend's
+// "rotator" permission check already blocks it - but these buttons never
+// checked the permission on the frontend, only whether a rotator device
+// exists (_rotorId). A user without rotator permission saw clickable
+// SP/LP/manual buttons that would 403 on click instead of being
+// disabled up front like every other rotator control. NOT using plain
+// data-perm-disable here (auth.js runs that ONCE on login) because
+// _updateRotorButtons() itself re-runs on every live rotator_update
+// broadcast and would just re-enable the button again, ignoring
+// permission - so the permission check has to live inside this function.
+function _hasRotorPerm() {
+  const u = window.CurrentUser;
+  if (!u) return false;  // permission state not loaded yet - fail closed
+  return u.role === 'admin' || !!(u.permissions && u.permissions.rotator);
+}
+
 function _updateRotorButtons() {
   const spBtn = document.getElementById('wj-rotor-sp-btn');
   const lpBtn = document.getElementById('wj-rotor-lp-btn');
   const manBtn = document.getElementById('wj-rotor-manual-btn');
-  const has = _rotorId != null;
+  const has = _rotorId != null && _hasRotorPerm();
   if (spBtn) spBtn.disabled = !has || _beamSpAz == null;
   if (lpBtn) lpBtn.disabled = !has || _beamLpAz == null;
   if (manBtn) manBtn.disabled = !has;
@@ -1963,6 +2006,26 @@ const _hound = {
   lastTxAt:       0,        // time of the last Hound message sent (for per-cycle retry)
 };
 
+// Single source of truth for whether the Tx Watchdog (FT8Timer) should be
+// counting down: RX must be on (a precondition - no decodes, nothing to
+// auto-answer) AND at least one form of automated TX must actually be
+// armed (auto-answer or Hound) - RX alone, with both of those off, is
+// pure listening and has nothing for the watchdog to guard against.
+// Called from toggleOwnRx, _onAutoSeqStatus, toggleHound and houndStop
+// so all four ways this can change stay in sync; only calls start()/
+// stop() on an actual transition (guarded by _watchdogArmed) so it's
+// safe to call unconditionally on every status broadcast.
+function _updateWatchdogArmed() {
+  const shouldBeArmed = _ownRxEnabled && (_autoSeqEnabled || _hound.active);
+  if (shouldBeArmed && !_watchdogArmed) {
+    _watchdogArmed = true;
+    window.FT8Timer?.start();
+  } else if (!shouldBeArmed && _watchdogArmed) {
+    _watchdogArmed = false;
+    window.FT8Timer?.stop();
+  }
+}
+
 const HOUND_SHIFT_HZ = 300;   // spec: an R+rpt retry shifts 300Hz higher/lower
 const HOUND_CYCLE_MS = { FT8: 15000, FT4: 7500 };
 
@@ -2012,7 +2075,7 @@ function toggleHound(enabled) {
     _hound.lastConfirm = Date.now();
     _houndUpdateUI();
     _houndStartCalling();
-    window.FT8Timer?.start();  // Start the safety timer
+    _updateWatchdogArmed();  // Hound is now armed - (re)start the safety timer
     // Internal Hound timer — checks confirmation every 30s
     clearInterval(_hound.timer);
     _hound.timer = setInterval(_houndCheckConfirm, 30000);
@@ -2037,12 +2100,14 @@ function houndStop() {
   _hound.attempts = 0;
   clearInterval(_hound.timer);
   clearInterval(_hound.cycleTimer);
-  // Deliberately does NOT stop FT8Timer: the watchdog is a single shared
-  // timer for ALL automated TX (see _onAutoSeqStatus) - regular
-  // auto-answer keeps running after Hound turns off, so stopping it here
-  // would leave that automation transmitting unattended with no cap.
-  // Watchdog EXPIRY calls stop() itself (in _tick) before calling this
-  // function, so that path is unaffected.
+  // The watchdog is a single shared timer for ALL automated TX -
+  // _updateWatchdogArmed() re-evaluates whether auto-answer is still
+  // armed now that Hound is off: if it is, the timer keeps running
+  // (regular auto-answer shouldn't transmit unattended with no cap just
+  // because Hound stopped); if not, it stops. Watchdog EXPIRY calls
+  // stop() itself (in _tick) before calling this function, so
+  // _updateWatchdogArmed() there is a harmless no-op (already disarmed).
+  _updateWatchdogArmed();
   const _ht = document.getElementById('wj-hound-toggle');
   if (_ht) _ht.checked = false;
   const _hcb = document.getElementById('wj-hound-confirm-btn');

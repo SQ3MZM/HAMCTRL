@@ -92,11 +92,15 @@ async def _security_headers_middleware(request, handler):
     Adds standard hardening headers to every HTTP response. Found missing
     entirely during a live security pass 2026-09-02 (curl against the
     public duckdns deployment showed zero of these on any response).
-    Deliberately does NOT add a Content-Security-Policy here - the
+    Deliberately does NOT add script-src/style-src to the CSP below - the
     frontend relies heavily on inline onclick=/style= attributes
-    throughout (index.html/mobile.html), so a real CSP needs a dedicated
-    audit of what it would break, not a header bolted on blind. These four
-    are safe defaults with no such risk:
+    throughout (201+838 in index.html, 48+30 in mobile.html, counted
+    2026-09-03), so locking those two directives down would mean
+    rewriting every single one to addEventListener/CSS classes first -
+    a real, dedicated refactor, not a header bolted on blind. The four
+    CSP directives actually shipped below don't touch inline
+    scripts/styles at all, so they carry none of that risk. These are
+    all safe defaults with no such risk:
       - X-Content-Type-Options: stops the browser from guessing a
         different content type than what the server declared (MIME-sniffing).
       - X-Frame-Options: DENY - this control panel is never meant to be
@@ -107,12 +111,26 @@ async def _security_headers_middleware(request, handler):
       - Strict-Transport-Security: the app is HTTPS-only already (see
         launcher.py) - tells the browser to never even try plain HTTP for
         this host.
+      - Content-Security-Policy (added 2026-09-03, the safe subset only):
+        object-src 'none' blocks <object>/<embed>/<applet> (this app uses
+        none); base-uri 'self' stops an injected <base> tag from
+        hijacking every relative URL/script src on the page (verified no
+        <base> tag is used legitimately); form-action 'self' stops a
+        compromised page from redirecting a form submit to an attacker
+        domain (verified no form here submits externally);
+        frame-ancestors 'none' is the modern equivalent of the
+        X-Frame-Options above. None of these four restrict script-src or
+        style-src, so none of them touch the inline onclick=/style=
+        attributes mentioned above - zero risk of breaking existing UI.
     """
     resp = await handler(request)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    resp.headers.setdefault("Content-Security-Policy",
+                             "object-src 'none'; base-uri 'self'; "
+                             "form-action 'self'; frame-ancestors 'none'")
     return resp
 
 async def amain():

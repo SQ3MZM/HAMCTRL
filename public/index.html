@@ -296,7 +296,7 @@
              zawsze widoczne (CI-V 07 B0/A0/0F, patrz UI.vfoSwap/vfoCopy/toggleSplit) -->
         <button class="rf-btn" onclick="UI.vfoSwap()" data-perm="freq" data-i18n-title="vfoab_title" title="Zamien VFO A i B (CI-V 07 B0)">A↔B</button>
         <button class="rf-btn" onclick="UI.vfoCopy()" data-perm="freq" data-i18n-title="vfoa2b_title" title="Skopiuj A do B (CI-V 07 A0)">A→B</button>
-        <button class="rf-btn" id="split-btn" onclick="UI.toggleSplit()" data-perm="freq" title="Split VFO A/B (CI-V 0F)">SPLIT</button>
+        <button class="rf-btn" id="split-btn" onclick="UI.toggleSplit()" data-perm="split" title="Split VFO A/B (CI-V 0F)">SPLIT</button>
         <span style="width:1px;height:16px;background:var(--border2);margin:0 2px;"></span>
         <!-- TUNER (toggle ON/OFF, CI-V 1C 01 00/01) i AUTOTUNE (jednorazowy
              cykl dopasowania, CI-V 1C 01 02 — generuje krotki TX) -->
@@ -350,7 +350,22 @@
     </div><!-- /tile-wf -->
 
     <!-- ═══════════════════════════════ ROTATOR ════════════════════════════════ -->
-    <div class="tile tile-rotator" id="rot-side-panel" data-perm="rotator" style="display:flex;flex-direction:column;">
+    <!-- FIX (2026-09-03, reported live: "jak nie ma pozwolenia na rotor to
+         widnieje pusta ramka w jego miejscu"): this tile used to be
+         data-perm="rotator" (display:none for anyone lacking the granular
+         permission). .tile-rotator is explicitly placed at grid-column:4
+         (style.css) - that column track is always reserved by
+         grid-template-columns regardless of whether anything occupies it,
+         so hiding the tile left a blank column-shaped gap instead of the
+         layout reflowing. Now the tile always shows; the interactive
+         controls inside use data-perm-disable (same grayed-out/disabled
+         pattern as PTT/VFO/freq elsewhere) instead of hiding the whole
+         panel. The server-side gate on the actual rotator API calls is
+         what enforces this now (see /api/rotator/*/position and /stop) -
+         see the comment there, this permission was previously ONLY
+         enforced by hiding this tile, not by the backend.
+    -->
+    <div class="tile tile-rotator" id="rot-side-panel" style="display:flex;flex-direction:column;">
 
       <div class="tile-header">
         <span>ROTATOR</span>
@@ -371,15 +386,15 @@
         <div>
           <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;" data-i18n="rotator_target_lbl">CEL (stopnie lub lokator)</div>
           <input id="rot-target-inp" type="text" class="rot-target-inp" data-i18n-placeholder="rotator_target_placeholder" placeholder="272 lub KO02"
-            style="text-transform:uppercase;"
+            style="text-transform:uppercase;" data-perm-disable="rotator"
             onkeydown="if(event.key==='Enter')RotW.go()"
             oninput="RotW.onInput()">
           <div id="rot-target-preview" style="font-family:var(--mono);font-size:9px;color:var(--green);margin-top:3px;min-height:13px;"></div>
         </div>
 
         <div class="rot-btns" style="margin-top:6px;">
-          <button class="rot-go-btn" onclick="RotW.go()">▶ START</button>
-          <button class="rot-stop-btn" onclick="RotW.stop()">■ STOP</button>
+          <button class="rot-go-btn" onclick="RotW.go()" data-perm-disable="rotator">▶ START</button>
+          <button class="rot-stop-btn" onclick="RotW.stop()" data-perm-disable="rotator">■ STOP</button>
         </div>
       </div>
 
@@ -543,7 +558,11 @@
       <div id="wj-clock-s" style="font-family:var(--mono);font-size:18px;color:#fff;min-width:22px;text-align:right;">0</div>
     </div>
     <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
-    <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;"
+    <!-- max-width+ellipsis (2026-09-03): d.text (the FT8 message being
+         waited on) has no length cap from the backend - without this, a
+         long message could grow this pill wide enough to push the
+         toolbar row below (TUNE/HIDE WORKED/own-RX) into wrapping. -->
+    <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
          data-i18n-title="wj_tx_wait_title" title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
     <div style="flex:1"></div>
     <div style="display:flex;gap:6px;margin-left:12px;">
@@ -575,7 +594,11 @@
         <button onclick="WSJTX.resetPaletteAdjust()" data-i18n-title="wj_reset_palette_title" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
       </div>
       <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" data-i18n-title="wj_tune_title" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
-      <button onclick="WSJTX.clearDecodes()" class="wj-btn" data-i18n="wj_clear_btn">WYCZYŚĆ</button>
+      <!-- Removed the standalone WYCZYŚĆ button (2026-09-03): it called
+           the exact same WSJTX.clearDecodes() as the 🗑 icon next to Band
+           Activity's header below - fully redundant, and freeing this
+           slot helps this toolbar row not wrap when #wj-tx-wait-status
+           (the "TX za Xs" pill, right side of the row above) grows long. -->
       <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" data-i18n-title="wj_hide_worked_title" title="Ukryj stacje już zaliczone w logu QSO">
         <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)"
           style="accent-color:var(--amber);cursor:pointer;">
@@ -2596,12 +2619,12 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609020002"></script>
+<script src="js/i18n.js?v=202609030002"></script>
 <script src="js/auth.js?v=202606260002"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202609020002"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
-<script src="js/ui.js?v=202608242600"></script>
+<script src="js/ui.js?v=202609030001"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/serial_ports.js?v=202609020001"></script>
 <script src="js/settings.js?v=202609020001"></script>
@@ -2621,7 +2644,7 @@
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202609020004"></script>
+<script src="js/wsjtx.js?v=202609030003"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202606220002"></script>
 <script src="js/vfo.js?v=202606250005"></script>
@@ -3330,6 +3353,20 @@ function debounceSave() {
   // na kazdym ekranie — zmienia sie tylko OGOLNY rozmiar (skala).
   const REF_W = 1440;
   const REF_H = 1080;
+  // MIN_SCALE (2026-09-03): scale used to be totally unbounded
+  // (vw/REF_W with no floor) - already-small baseline labels (many
+  // 8-11px in this UI) shrink right along with everything else, so a
+  // narrower-than-typical window (e.g. a snapped/half-screen browser,
+  // ~900-1000px) pushed scale down toward ~0.6-0.7, rendering some
+  // labels at an unreadable ~5-6 physical px with no fallback. Below
+  // this floor we stop shrinking further and let the body (now wider
+  // than the viewport, per the width line below) overflow horizontally
+  // instead - nothing here sets overflow-x:hidden, so the browser's
+  // normal horizontal scrollbar takes over, same safety-valve pattern
+  // already used for vertical overflow above REF_H. 0.75 = the scale at
+  // a 1080px-wide viewport, comfortably below any normal desktop/laptop
+  // width mentioned in the comment above (1366-1920px).
+  const MIN_SCALE = 0.75;
   const el = document.getElementById('app-scale');
   if (!el) return;
 
@@ -3347,7 +3384,7 @@ function debounceSave() {
     // zamierzonego. Strona moze byc wyzsza niz viewport — wtedy po prostu
     // przewija sie wertykalnie (body.height ustawiane nizej), co jest
     // normalne i oczekiwane.
-    const scale = vw / REF_W;
+    const scale = Math.max(MIN_SCALE, vw / REF_W);
 
     el.style.transform = `scale(${scale})`;
 

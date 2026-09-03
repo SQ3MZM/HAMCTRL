@@ -707,14 +707,44 @@ function setPage(name) {
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
+// FIX (2026-09-03): this used to just overwrite the single #toast
+// element's text/timer on every call - a second toast arriving before
+// the first one's duration elapsed silently cut the first one off
+// before the operator could read it. Got measurably more likely the
+// same day this was found: this session added many new permission-
+// denied toasts (freq/mode/ptt/split/cw/log/rotor), several of which
+// can plausibly fire back-to-back (e.g. reconnect + a blocked action).
+// Now queues: a toast that arrives while one is showing waits its turn
+// instead of stomping on it. Capped at 4 pending so a pathological burst
+// can't back up into a long delayed parade of stale messages - excess
+// oldest-queued (not yet shown) toasts are dropped, keeping the most
+// recent ones.
+let _toastQueue = [];
+let _toastShowing = false;
+
 function showToast(msg, type = 'info') {
   const el = document.getElementById('toast');
   if (!el) return;
-  el.textContent = msg;
-  el.className   = 'toast show ' + type;
+  _toastQueue.push({ msg, type });
+  if (_toastQueue.length > 4) _toastQueue.splice(0, _toastQueue.length - 4);
+  if (!_toastShowing) _drainToastQueue();
+}
+
+function _drainToastQueue() {
+  const el = document.getElementById('toast');
+  const next = el && _toastQueue.shift();
+  if (!next) { _toastShowing = false; return; }
+  _toastShowing = true;
+  el.textContent = next.msg;
+  el.className   = 'toast show ' + next.type;
   clearTimeout(el._timer);
-  const duration = (type === 'error' || type === 'warning') ? 4500 : 2800;
-  el._timer = setTimeout(() => el.classList.remove('show'), duration);
+  const duration = (next.type === 'error' || next.type === 'warning') ? 4500 : 2800;
+  el._timer = setTimeout(() => {
+    el.classList.remove('show');
+    // Match the CSS fade (transition: all 0.25s) so the next toast
+    // visibly re-appears instead of instantly swapping text mid-fade.
+    setTimeout(_drainToastQueue, 250);
+  }, duration);
 }
 
 

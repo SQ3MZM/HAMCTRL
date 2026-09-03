@@ -56,14 +56,33 @@ function fmtFreq(hz) {
   return `${i}.${d.slice(0, 3)}.${d.slice(3)} MHz`;
 }
 
+// Queueing fix - same reasoning as ui.js's showToast (desktop), kept in
+// sync for mobile parity: a second toast used to silently cut off
+// whatever was currently showing instead of waiting its turn.
+let _toastQueue = [];
+let _toastShowing = false;
+
 function showToast(msg, level) {
   const el = document.getElementById('m-toast');
   if (!el) return;
-  el.textContent = msg;
-  el.className = 'm-toast' + (level === 'error' ? ' error' : '');
+  _toastQueue.push({ msg, level });
+  if (_toastQueue.length > 4) _toastQueue.splice(0, _toastQueue.length - 4);
+  if (!_toastShowing) _drainToastQueue();
+}
+
+function _drainToastQueue() {
+  const el = document.getElementById('m-toast');
+  const next = el && _toastQueue.shift();
+  if (!next) { _toastShowing = false; return; }
+  _toastShowing = true;
+  el.textContent = next.msg;
+  el.className = 'm-toast' + (next.level === 'error' ? ' error' : '');
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
+  toastTimer = setTimeout(() => {
+    el.hidden = true;
+    setTimeout(_drainToastQueue, 250);
+  }, 3500);
 }
 // wsjtx.js/cw.js report errors via window.UI?.showToast(...) — without
 // this shim those calls silently no-op (optional-chained) and FT8/CW
@@ -281,7 +300,7 @@ function handleMessage(msg) {
       // _CONTROL_TYPES set (webapp.py ~5150) — webrtc_offer (mic TX) is
       // one of them. Normal PTT already pre-checks canControl() before
       // ever sending, so this mostly matters as a defense-in-depth path.
-      showToast(msg.message || 'Radio zablokowane', 'error');
+      showToast(msg.message || I18n.t('m_radio_locked_generic'), 'error');
       break;
     case 'webrtc_answer':
       window.MobileAudio?.onAnswer?.(msg);
