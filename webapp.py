@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.12"
+SERVER_VERSION = "2.0.13"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -163,6 +163,11 @@ from rigs.features import (FEATURES, effective_features, features_for_admin,
 # mobile redirects (deliberately excludes iPad/Android tablets, which
 # have enough screen for the desktop UI's scale-to-fit).
 _MOBILE_UA_RE = re.compile(r'Mobi|iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Opera Mini|IEMobile')
+
+# Operator chat (session-only, see App._chat_history) - ring buffer size
+# and the per-message length cap (matches the input's maxlength in the HTML).
+_CHAT_HISTORY_MAX = 150
+_CHAT_MSG_MAX_LEN = 500
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET HUB (aiohttp)
@@ -524,6 +529,10 @@ class App:
         self.rust_audio = None  # set by server.py when ham_audio.exe is available
         self._rig_power_on = True  # radio power state — updated by power_toggle
         self._ft8_tx_abort = False
+        # Operator chat - session-only by design (no persistence layer),
+        # a simple in-memory ring buffer capped at _CHAT_HISTORY_MAX
+        # messages, see "chat_send" below. Cleared on every server restart.
+        self._chat_history: list[dict] = []
         self._ft8_rx_enabled = False
         # Who started WSJT-X (uid) — needed for auto-stop on disconnect or
         # when the radio is released. Doesn't matter for multiple users
@@ -1111,7 +1120,7 @@ class App:
     # explicitly set to false.
     _DEFAULT_PERMS = {
         "ptt": True, "rfPower": True, "rfGain": True, "mode": True,
-        "band": True, "freq": True, "split": True, "cw": True,
+        "band": True, "freq": True, "cw": True,
         "rotator": True, "log": True, "settings": False, "admin": False,
     }
 
@@ -4647,6 +4656,15 @@ class App:
                 "type": "ft8_rx_status",
                 "enabled": self._ft8_rx_enabled,
             }))
+            # Chat history - session-only (self._chat_history is an
+            # in-memory ring buffer, see the chat_send handler below), so
+            # a freshly (re)connected client needs this snapshot to see
+            # anything said before they joined/reloaded - same pattern as
+            # the other init-time snapshots above.
+            await ws.send_str(json.dumps({
+                "type": "chat_init",
+                "history": self._chat_history,
+            }))
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     data = msg.data
@@ -5731,6 +5749,31 @@ class App:
             await ws.send_json({"type": "pong", "t": msg.get("t", 0)})
             return
 
+        # ── Operator chat (session-only - see App._chat_history) ───────────
+        # Deliberately open to EVERY role, including viewer - this is plain
+        # communication between whoever is watching/operating right now,
+        # not a radio-control action, so it doesn't go through
+        # _CONTROL_TYPES/_has_perm at all.
+        if t == "chat_send":
+            text = str(msg.get("text", "")).strip()[:_CHAT_MSG_MAX_LEN]
+            if not text:
+                return
+            import datetime as _dt_chat
+            sender = self.online_users.get(ws, {})
+            chat_msg = {
+                "type":      "text",
+                "username":  sender.get("username", "?"),
+                "callsign":  sender.get("callsign", ""),
+                "role":      sender.get("role", role),
+                "text":      text,
+                "timestamp": _dt_chat.datetime.utcnow().isoformat() + "Z",
+            }
+            self._chat_history.append(chat_msg)
+            if len(self._chat_history) > _CHAT_HISTORY_MAX:
+                del self._chat_history[:-_CHAT_HISTORY_MAX]
+            await self.hub.broadcast({"type": "chat_message", "message": chat_msg})
+            return
+
         # ── Subscription channels — the client adds/removes channels when switching tabs
         if t == "subscribe":
             channels = msg.get("channels", [])
@@ -6074,16 +6117,14 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
-            # "split" has its OWN dedicated permission key (labelled "Split
-            # VFO A/B" in the admin panel) - distinct from "freq"
-            # ("Strojenie czestotliwosci"). The frontend's SPLIT button was
-            # incorrectly tagged data-perm="freq" (fixed alongside this),
-            # which meant unchecking "Split VFO A/B" for an operator did
-            # literally nothing - only unchecking "freq" hid the button,
-            # for the wrong reason.
-            if not self._has_perm(uid, role, "split"):
-                await ws.send_json({"type": "toast", "msg": "⛔ Split niedostepny (brak uprawnien)", "level": "error"})
-                return
+            # "split" is DELIBERATELY not gated by a per-user permission
+            # (2026-09-03, explicit decision) - it's a general radio
+            # capability (needed for PTT to work correctly with a
+            # split-frequency setup), governed ONLY by the per-rig static
+            # feature whitelist below (KONFIGURACJA -> FUNKCJE RADIA),
+            # same as it works for every other operator. An earlier
+            # version of this fix added a per-user "split" permission
+            # check here - reverted per that decision.
             if not self._feature_allowed("split", role):
                 await ws.send_json({"type": "toast", "msg": "⛔ Split niedostępny dla tego radia", "level": "error"})
                 return
@@ -7349,7 +7390,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-03-RIG-FEATURES-VIEW-PARAM-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-03-CHAT-AND-SPLIT-FEATURE-ONLY, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

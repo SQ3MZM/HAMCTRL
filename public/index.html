@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202609010002">
+<link rel="stylesheet" href="css/style.css?v=202609030001">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -473,7 +473,16 @@
         </div>
 
         <!-- Lista zalogowanych -->
-        <div id="op-list" style="overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:3px;max-height:200px;">
+        <!-- max-height shrunk 200px->90px (2026-09-03, live report: "musze
+             przewijac strone"): CZAT was added below this same tile
+             (see further down) and the combined height pushed the whole
+             RADIO page past the viewport, forcing a page-level scroll
+             just to reach the chat input. 200px assumed many operators
+             online at once - for a small station that's rarely true, and
+             this list already scrolls internally (overflow-y) beyond
+             whatever fits, so nothing is actually lost, just less wasted
+             space when there are only 2-3 people online. -->
+        <div id="op-list" style="overflow-y:auto;padding:4px 6px;display:flex;flex-direction:column;gap:3px;max-height:90px;">
           <!-- wypełniane przez RadioLock._renderOpPanel() -->
         </div>
 
@@ -509,6 +518,25 @@
             padding:3px;cursor:pointer;">
             ⚡ WYMUŚ (admin)
           </button>
+        </div>
+
+        <!-- CZAT — wątek wiadomości operatorów, tylko sesja (znika po
+             restarcie serwera, patrz App._chat_history w webapp.py).
+             Wysokość regulowana przeciąganiem #chat-messages (ten sam
+             wzorzec co dekoder CW, patrz deepcw.js::_initCwScaling) —
+             domyślnie kompaktowa, żeby nie spychać przycisków TRX powyżej. -->
+        <div style="border-top:1px solid var(--border);display:flex;flex-direction:column;">
+          <div class="tile-header" style="font-size:9px;letter-spacing:2px;">
+            <span data-i18n="chat_hdr">CZAT</span>
+          </div>
+          <div id="chat-messages" style="height:90px;min-height:50px;max-height:400px;overflow:auto;resize:vertical;padding:4px 6px;display:flex;flex-direction:column;gap:5px;"></div>
+          <div style="display:flex;gap:4px;padding:4px 6px;border-top:1px solid var(--border);">
+            <input id="chat-input" type="text" maxlength="500" data-i18n-placeholder="chat_input_ph" placeholder="Wiadomość..."
+              style="flex:1;font-family:var(--mono);font-size:11px;padding:5px 8px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);border-radius:3px;">
+            <button onclick="Chat.send()"
+              style="background:rgba(184,201,143,0.12);border:1px solid var(--green2);color:var(--green);
+              font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;cursor:pointer;">➤</button>
+          </div>
         </div>
       </div>
     </div><!-- /tile-cw -->
@@ -2619,8 +2647,8 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609030002"></script>
-<script src="js/auth.js?v=202609030002"></script>
+<script src="js/i18n.js?v=202609030003"></script>
+<script src="js/auth.js?v=202609030004"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202609020002"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
@@ -2636,7 +2664,7 @@
 <script src="js/com_bridge.js?v=202608180001"></script>
 <script src="js/rotator.js?v=202608210001"></script>
 <script src="js/rotormini.js?v=202608170001"></script>
-<script src="js/admin.js?v=202609030002"></script>
+<script src="js/admin.js?v=202609030003"></script>
 <script src="js/admin_status.js?v=202608180002"></script>
 <script src="js/profile_audio.js?v=202608243200"></script>
 <script src="js/relay_admin.js?v=202608180001"></script>
@@ -2646,7 +2674,7 @@
 <script src="js/beamheading.js?v=202607230001"></script>
 <script src="js/wsjtx.js?v=202609030004"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
-<script src="js/chat.js?v=202606220002"></script>
+<script src="js/chat.js?v=202609030003"></script>
 <script src="js/vfo.js?v=202606250005"></script>
 <script src="js/waterfall.js?v=202609010001"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">

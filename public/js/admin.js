@@ -18,7 +18,13 @@ const PERM_DEFS = [
   { key: 'mode',     get label() { return I18n.t('perm_mode'); },     group: 'radio'  },
   { key: 'band',     get label() { return I18n.t('perm_band'); },     group: 'radio'  },
   { key: 'freq',     get label() { return I18n.t('perm_freq'); },     group: 'radio'  },
-  { key: 'split',    get label() { return I18n.t('perm_split'); },    group: 'radio'  },
+  // NOTE (2026-09-03): deliberately NO per-user 'split' entry - the user
+  // decided split should be governed ONLY by the per-rig static feature
+  // whitelist in KONFIGURACJA -> FUNKCJE RADIA (features.py's FEATURES),
+  // not by an additional per-operator checkbox here. It briefly had a
+  // checkbox (#perm-split) that was then removed again - see auth.js's
+  // applyPermissions() for how the SPLIT button's visibility is actually
+  // decided now (static feature only, permission check bypassed).
   { key: 'cw',       get label() { return I18n.t('perm_cw'); },       group: 'radio'  },
   { key: 'rotator',  get label() { return I18n.t('perm_rotator'); },  group: 'sprzet' },
   { key: 'log',      get label() { return I18n.t('perm_log'); },      group: 'system' },
@@ -37,7 +43,7 @@ const PERM_DEFS = [
 
 const DEFAULT_PERMS = {
   ptt:true, rfPower:true, rfGain:true, mode:true, band:true,
-  freq:true, split:true, cw:true, rotator:true, log:true, settings:false, admin:false,
+  freq:true, cw:true, rotator:true, log:true, settings:false, admin:false,
 };
 
 // ── Users ─────────────────────────────────────────────────────────────────────

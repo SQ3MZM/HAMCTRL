@@ -947,10 +947,19 @@ body.page-wsjtx-active { overflow: hidden; }
 .vfo-sep { color: rgba(184,201,143,0.3); padding: 0 2px; font-size: 36px; line-height: 1; }
 .vfo-sep.sep-mhz { color: rgba(184,201,143,0.5); font-size: 40px; }
 
-/* ── CHAT ── */
-.chat-msg { font-family: var(--mono); font-size: 12px; line-height: 1.6; }
-.chat-msg .chat-who { color: var(--green); }
-.chat-msg .chat-ts  { color: var(--dim); font-size: 10px; }
+/* ── CHAT (operator chat, embedded in the OPERATORZY panel — chat.js) ── */
+.chat-msg { font-family: var(--mono); font-size: 10px; line-height: 1.4; padding: 3px 5px;
+  border-radius: 3px; background: transparent; }
+.chat-msg.chat-mine { background: rgba(184,201,143,0.06); }
+.chat-msg.chat-system { display: flex; align-items: center; gap: 5px; color: var(--dim);
+  font-size: 9px; padding: 1px 5px; }
+.chat-header { display: flex; align-items: center; gap: 4px; margin-bottom: 1px; }
+.chat-role-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.chat-user { font-weight: bold; }
+.chat-call { color: var(--dim); font-size: 9px; }
+.chat-time { color: var(--dim); font-size: 8px; margin-left: auto; }
+.chat-text { color: var(--text); word-break: break-word; }
+.chat-sys-text { font-style: italic; }
 
 /* ── RESPONSIVE ── */
 /* RESPONSYWNOSC: brak @media breakpoints — caly layout jest renderowany w

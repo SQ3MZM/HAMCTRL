@@ -169,6 +169,7 @@ function connect() {
     // makes toggles from other clients reflect instantly instead of
     // waiting for the next poll.
     try { window.RelayUI?.onWSMessage?.(msg); } catch (err) { console.warn('[mobile] RelayUI.onWSMessage error:', err); }
+    try { window.Chat?.handleWS?.(msg); } catch (err) { console.warn('[mobile] Chat.handleWS error:', err); }
   };
 }
 
@@ -804,6 +805,23 @@ function closeSettings() {
   if (modal) modal.style.display = 'none';
 }
 
+function openChat() {
+  const modal = document.getElementById('m-chat-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  window.Chat?.markRead?.();
+  // Scroll straight to the newest message (top - see chat.js) and focus
+  // the input so typing works immediately without an extra tap.
+  const box = document.getElementById('chat-messages');
+  if (box) box.scrollTop = 0;
+  document.getElementById('chat-input')?.focus();
+}
+
+function closeChat() {
+  const modal = document.getElementById('m-chat-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('app:ready', () => {
   // cw.js's sendText() fills {MYCALL} from window.AppState.callsign —
@@ -842,6 +860,7 @@ connect();
 window.Mobile = {
   toggleLock, vfoSelect, vfoSwap, vfoEqualize, toggleSplit,
   toggleRxAudio, openSettings, closeSettings, setMicDevice,
+  openChat, closeChat,
   closeFreqEdit, saveFreqEdit,
   showToast, // mobile_audio.js reuses this for its own error toasts
 };

@@ -430,6 +430,38 @@ input, textarea { font-family: inherit; }
 }
 .m-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
+/* ── CZAT (2026-09-03) ── */
+.m-chat-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px;
+  border-radius: 8px; background: var(--red); color: #fff; font-size: 9px;
+  line-height: 15px; text-align: center; padding: 0 3px; font-weight: bold;
+}
+.m-chat-modal-box { max-width: 420px; display: flex; flex-direction: column; max-height: 80vh; }
+.m-chat-messages {
+  flex: 1; min-height: 200px; max-height: 50vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 5px; margin: 8px 0;
+  padding: 6px; background: var(--panel2); border-radius: 6px;
+}
+.m-chat-input-row { display: flex; gap: 6px; margin-bottom: 10px; }
+.m-chat-input-row .m-text-input { flex: 1; }
+
+/* Message rendering (chat.js's appendMessage - shared verbatim with
+   desktop, see style.css's own "CHAT" section for the desktop copy of
+   these same classes). mobile.html doesn't load style.css at all, so
+   these need their own definitions here too. */
+.chat-msg { font-family: var(--mono); font-size: 11px; line-height: 1.4; padding: 4px 6px;
+  border-radius: 4px; background: transparent; }
+.chat-msg.chat-mine { background: rgba(184,201,143,0.08); }
+.chat-msg.chat-system { display: flex; align-items: center; gap: 5px; color: var(--dim);
+  font-size: 10px; padding: 2px 6px; }
+.chat-header { display: flex; align-items: center; gap: 4px; margin-bottom: 1px; }
+.chat-role-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.chat-user { font-weight: bold; }
+.chat-call { color: var(--dim); font-size: 10px; }
+.chat-time { color: var(--dim); font-size: 9px; margin-left: auto; }
+.chat-text { color: var(--text); word-break: break-word; }
+.chat-sys-text { font-style: italic; }
+
 /* Slightly wider treatment for tablets/landscape phones, still one column */
 @media (min-width: 600px) {
   .m-main { max-width: 560px; }

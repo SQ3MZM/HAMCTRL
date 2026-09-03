@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#1a1c19">
 <title>HAMCTRL Mobile</title>
-<link rel="stylesheet" href="css/mobile.css?v=202608260010">
+<link rel="stylesheet" href="css/mobile.css?v=202609030001">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 </head>
 <body>
@@ -27,6 +27,11 @@
     <span id="user-role" class="m-role"></span>
     <button id="m-audio-btn" class="m-icon-btn" onclick="Mobile.toggleRxAudio()" data-i18n-title="m_audio_btn_title" title="Dźwięk (odsłuch)">🔇</button>
     <button class="m-icon-btn" onclick="I18n.toggle()" data-i18n-title="m_lang_toggle_title" title="Zmień język / Change language">🌐</button>
+    <!-- Czat (2026-09-03) — pełnoekranowy modal zamiast stałego panelu jak
+         na desktopie (za mało miejsca żeby trzymać go otwartym cały czas
+         obok reszty UI). Badge pokazuje liczbę nieprzeczytanych wiadomości
+         przyszłych, gdy modal jest zamknięty — patrz chat.js. -->
+    <button class="m-icon-btn" onclick="Mobile.openChat()" data-i18n-title="chat_hdr" title="Czat" style="position:relative;">💬<span id="m-chat-badge" class="m-chat-badge" hidden>0</span></button>
     <button class="m-icon-btn" onclick="Mobile.openSettings()" data-i18n-title="m_settings_title" title="Ustawienia telefonu">⋮</button>
     <button class="m-logout" onclick="Auth.logout()" data-i18n="m_logout_btn">Wyloguj</button>
   </div>
@@ -487,6 +492,25 @@
   </div>
 </div>
 
+<!-- CZAT — pełnoekranowy modal. #chat-messages/#chat-input mają CELOWO
+     te same id co na desktopie (index.html), żeby chat.js dzialal
+     niezmieniony na obu platformach (ten sam wzorzec co wsjtx.js/cw.js/
+     rotormini.js/radiolock.js gdzie indziej w tym projekcie) - tylko
+     "shell" wokol jest inny (modal zamiast stalego panelu). -->
+<div id="m-chat-modal" class="m-modal" style="display:none" onclick="if(event.target===this) Mobile.closeChat()">
+  <div class="m-modal-box m-chat-modal-box">
+    <div class="m-card-title" data-i18n="chat_hdr">CZAT</div>
+    <div id="chat-messages" class="m-chat-messages"></div>
+    <div class="m-chat-input-row">
+      <input id="chat-input" type="text" maxlength="500" class="m-text-input" data-i18n-placeholder="chat_input_ph" placeholder="Wiadomość…">
+      <button class="m-btn m-btn-sm" onclick="Chat.send()">➤</button>
+    </div>
+    <div class="m-modal-actions">
+      <button class="m-btn m-btn-sm" onclick="Mobile.closeChat()" data-i18n="m_close_btn">Zamknij</button>
+    </div>
+  </div>
+</div>
+
 <!-- Ręczne wpisanie częstotliwości — przytrzymanie #m-freq/#m-freq-other
      (initFreqEditGestures w mobile.js) otwiera ten modal dla VFO A/B. -->
 <div id="m-freq-edit-modal" class="m-modal" style="display:none">
@@ -534,17 +558,18 @@
   </div>
 </div>
 
-<script src="js/auth.js?v=202609030002"></script>
-<script src="js/i18n.js?v=202609030002"></script>
+<script src="js/auth.js?v=202609030004"></script>
+<script src="js/i18n.js?v=202609030003"></script>
 <script src="js/cw.js?v=202608260003"></script>
 <script src="js/wsjtx.js?v=202609030004"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
+<script src="js/chat.js?v=202609030003"></script>
 <script src="js/radiofunctions.js?v=202608241100"></script>
 <script src="js/relay_ui.js?v=202609020001"></script>
 <script src="js/qsolog.js?v=202609020001"></script>
 <script src="js/rotormini.js?v=202608231600"></script>
 <script src="js/mobile_audio.js?v=202609020001"></script>
-<script src="js/mobile.js?v=202609030003"></script>
+<script src="js/mobile.js?v=202609030004"></script>
 </body>
 </html>
