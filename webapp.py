@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.9"
+SERVER_VERSION = "2.0.10"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -1104,6 +1104,17 @@ class App:
             save_json(USR_F, self.users)
             print("[secrets] encrypted CloudLog/QRZ/HamQTH/DX-Cluster credentials in users.json", flush=True)
 
+    # Mirrors admin.js's DEFAULT_PERMS (the set a NEW user gets, and what
+    # the admin-panel checkboxes fall back to for a user object that has
+    # no "permissions" dict at all) - used below ONLY for a key that is
+    # entirely ABSENT from a user's stored permissions, never for a key
+    # explicitly set to false.
+    _DEFAULT_PERMS = {
+        "ptt": True, "rfPower": True, "rfGain": True, "mode": True,
+        "band": True, "freq": True, "split": True, "cw": True,
+        "rotator": True, "log": True, "settings": False, "admin": False,
+    }
+
     def _has_perm(self, uid: str, role: str, key: str) -> bool:
         """Admin always has access. Otherwise check the granular permission
         (permissions[key] in users.json, set from the user-edit form).
@@ -1111,11 +1122,37 @@ class App:
         /api/auth/login) - it does NOT carry permissions, so the full,
         current user record must be re-read from self.users instead of
         relying on the decoded token (which could be stale after an admin
-        changes permissions without the user logging in again)."""
+        changes permissions without the user logging in again).
+
+        FIX (2026-09-03, found live right after the granular-permission
+        audit shipped: "zwykly user nie widzi buttona splitu"): a key that
+        is entirely ABSENT from a user's stored permissions dict used to
+        be treated identically to one explicitly set to False - denied.
+        That's correct for a key that was ALREADY being enforced (an
+        admin who wanted it denied would have unchecked it, which DOES
+        save an explicit False), but wrong for a key like "split" that
+        this session just started enforcing for the first time: it had
+        no real effect before today (the SPLIT button was gated by
+        "freq" instead), so most existing accounts never got an explicit
+        permissions.split value saved at all - "never set" here means
+        "nobody ever made a decision about this", not "denied". Now: a
+        key present in the dict (True OR False) is trusted as-is: an
+        absent key falls back to _DEFAULT_PERMS, the same default a
+        brand-new user gets (matches admin.js's own `u?.permissions ||
+        DEFAULT_PERMS` fallback intent, just applied per-key instead of
+        only when the whole dict is missing)."""
         if role == "admin":
             return True
         u = self.find_user_by_id(uid)
-        return bool((u or {}).get("permissions", {}).get(key))
+        perms = (u or {}).get("permissions", {})
+        if key in perms:
+            return bool(perms[key])
+        # Fallback only covers the keys DEFAULT_PERMS actually defines
+        # (the ones with this migration concern) - an unlisted key (e.g.
+        # relay_N, which correctly defaults to False/not-granted unless
+        # explicitly given - see /api/relay/action's own check) stays
+        # denied by default, not silently opened.
+        return self._DEFAULT_PERMS.get(key, False)
 
     def find_user_by_email(self, email: str) -> dict | None:
         return next((u for u in self.users
@@ -7282,7 +7319,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-03-PERMISSIONS-AUDIT-BATCH, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-03-PERMISSIONS-DEFAULT-FALLBACK-FIX, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

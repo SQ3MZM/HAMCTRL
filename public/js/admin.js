@@ -57,7 +57,10 @@ function renderUsers(users) {
   const ROLE_COLORS = { admin:'var(--amber)', operator:'var(--green)', viewer:'var(--dim)' };
 
   tbody.innerHTML = users.map(u => {
-    const perms = u.permissions || DEFAULT_PERMS;
+    // Same per-key merge as the edit-modal fix above - a badge list
+    // built from an all-or-nothing fallback would drop badges for keys
+    // an existing user's record simply never set (e.g. "split").
+    const perms = { ...DEFAULT_PERMS, ...(u.permissions || {}) };
     const permBadges = PERM_DEFS
       .filter(p => perms[p.key])
       .map(p => `<span style="font-family:var(--mono);font-size:9px;background:rgba(184,201,143,0.08);
@@ -148,8 +151,18 @@ function _openModal(u) {
   // exist.
   _renderRelayPerms(u?.permissions || {});
 
-  // Set the permission checkboxes
-  const perms = u?.permissions || DEFAULT_PERMS;
+  // Set the permission checkboxes. FIX (2026-09-03): this used to be
+  // all-or-nothing (u.permissions if the object exists AT ALL, else the
+  // whole DEFAULT_PERMS) - for an existing user missing just ONE key
+  // (e.g. "split", which only started being enforced this session) it
+  // showed that single checkbox as unchecked, misleading the admin into
+  // thinking someone had deliberately denied it. Merge per-key instead -
+  // any key actually present in the stored record (true or false) wins,
+  // a genuinely absent one falls back to the default. Saving this form
+  // now (even with no changes) also migrates the user's stored record to
+  // have an explicit value for every key, matching webapp.py's
+  // _has_perm/auth.js's applyPermissions fallback so all three agree.
+  const perms = { ...DEFAULT_PERMS, ...(u?.permissions || {}) };
   PERM_DEFS.forEach(p => {
     const cb = document.getElementById('perm-' + p.key);
     if (cb) cb.checked = !!perms[p.key];

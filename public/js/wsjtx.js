@@ -1394,7 +1394,13 @@ function updateBeamRow() {
 function _hasRotorPerm() {
   const u = window.CurrentUser;
   if (!u) return false;  // permission state not loaded yet - fail closed
-  return u.role === 'admin' || !!(u.permissions && u.permissions.rotator);
+  if (u.role === 'admin') return true;
+  const p = u.permissions || {};
+  // "rotator" absent entirely (not explicitly false) falls back to true,
+  // matching the same DEFAULT_PERMS fallback used in auth.js/webapp.py -
+  // see the "zwykly user nie widzi buttona splitu" fix for why a missing
+  // key must not be treated as a denial.
+  return 'rotator' in p ? !!p.rotator : true;
 }
 
 function _updateRotorButtons() {
