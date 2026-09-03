@@ -26,7 +26,7 @@
 ; (to inny numer niz znacznik [build] BUILD-YYYY-MM-DD-... w logu startowym,
 ; ktory zmienia sie prawie na kazdy commit i sluzy do potwierdzenia ze EXE
 ; spakowal najnowszy kod - nie do publicznego wersjonowania).
-#define AppVersion "2.0.10"
+#define AppVersion "2.0.11"
 #define AppPublisher "Franek (Claude.ai) & SQ3MZM Tom"
 #define AppExeName "HAM-RADIO-CTRL.exe"
 #define AppURL "https://github.com/SQ3MZM/HAMCTRL"
