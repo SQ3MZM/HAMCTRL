@@ -103,6 +103,8 @@ class AudioStream:
         # zero power/ALC, nothing goes out on the air). Set by webapp for
         # the duration of an FT8/FT4 transmission.
         self.bulk_tx = False
+        # SSB mic AGC state (see _apply_agc_ssb) - reset per TX session in start_tx.
+        self._agc_gain = 1.0
         self._webrtc_thread = None
         self._tx_dec    = None
         self._webm_buf  = b""
@@ -350,6 +352,7 @@ class AudioStream:
             if idx is not None: kw["output_device_index"] = idx
             self._tx_stream = pa.open(**kw)
             self.tx_active = True; self.tx_frames = 0; self.tx_frames_received = 0
+            self._agc_gain = 1.0  # fresh AGC state each TX session, not carried over from the last one
             self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True, name="audio-tx")
             self._tx_thread.start()
             self._webrtc_thread = threading.Thread(target=self._webrtc_playback_loop, daemon=True, name="audio-tx-webrtc")
@@ -402,6 +405,62 @@ class AudioStream:
             try: self._webrtc_pcm_queue.put_nowait(pcm)
             except: pass
 
+    # ── SSB TX mic AGC ─────────────────────────────────────────────────
+    # Alternative to the flat "txVolumeSsb" multiplier: instead of one
+    # global number that has to compromise between a quiet mic (too weak
+    # -> under-drives ALC) and a loud mic (too hot -> pegs ALC), the gain
+    # is tracked and adjusted frame-by-frame from the signal's own level.
+    # Selected via the admin-only global config key "txGainModeSsb"
+    # ("manual" default | "agc") - deliberately NOT a per-operator toggle
+    # and NOT the browser's native getUserMedia autoGainControl (which
+    # behaves differently across the many different browsers an operator
+    # might be using) - runs entirely server-side regardless of the client.
+    _AGC_TARGET_RMS  = 13000.0  # ~-8 dBFS target (int16 full scale 32767) - raised
+                                 # 2026-09-04 9000->11500->13000 after live reports
+                                 # (first: too weak with a normal mic even on AGC;
+                                 # second: barely any pumping heard at 11500, asked
+                                 # for still more loudness) - a further modest step,
+                                 # not a jump to the limit, since this still hasn't
+                                 # been checked against a real ALC meter/second RX.
+    _AGC_NOISE_FLOOR = 150.0    # below this RMS treat as silence/noise - hold gain, don't boost it up
+    _AGC_MIN_GAIN    = 0.3
+    _AGC_MAX_GAIN    = 8.0      # same ceiling as the manual multiplier
+    _AGC_ATTACK      = 0.5      # fraction of the gap closed per 20ms frame when REDUCING gain (loud signal)
+    _AGC_RELEASE     = 0.03     # ...when RAISING gain (quiet signal) - slow on purpose, fast release audibly "pumps"
+    # Soft-knee limiter, applied AFTER the RMS-based gain above: the AGC gain
+    # only tracks the AVERAGE level frame-to-frame, so a single sharp
+    # syllable within a frame can still poke well above the target before
+    # the average catches up. Instead of relying on the final hard clip
+    # (harsh square-wave clipping = splatter/distortion on air), samples
+    # above _AGC_LIMIT_THRESHOLD are smoothly compressed toward
+    # _AGC_LIMIT_CEILING with tanh (asymptotic, never actually reaches the
+    # ceiling) - lets the average level (target RMS above) sit higher
+    # without individual peaks driving ALC/clipping.
+    _AGC_LIMIT_THRESHOLD = 23500.0
+    _AGC_LIMIT_CEILING   = 30000.0  # stays under int16 full scale (32767) with margin
+
+    def _soft_limit(self, arr):
+        mag = np.abs(arr)
+        over = mag > self._AGC_LIMIT_THRESHOLD
+        if not np.any(over):
+            return arr
+        span = self._AGC_LIMIT_CEILING - self._AGC_LIMIT_THRESHOLD
+        compressed = self._AGC_LIMIT_THRESHOLD + span * np.tanh((mag - self._AGC_LIMIT_THRESHOLD) / span)
+        return np.where(over, np.sign(arr) * compressed, arr)
+
+    def _apply_agc_ssb(self, arr):
+        """arr: float32 PCM samples for one ~20ms frame. Returns the
+        gain-adjusted, peak-limited array; self._agc_gain persists across
+        frames/calls."""
+        rms = float(np.sqrt(np.mean(arr * arr))) if arr.size else 0.0
+        if rms > self._AGC_NOISE_FLOOR:
+            desired = max(self._AGC_MIN_GAIN, min(self._AGC_MAX_GAIN, self._AGC_TARGET_RMS / rms))
+            rate = self._AGC_ATTACK if desired < self._agc_gain else self._AGC_RELEASE
+            self._agc_gain += (desired - self._agc_gain) * rate
+        # else: below the noise floor (silence/breath) - hold the current
+        # gain rather than chasing it, so pauses don't get boosted to max.
+        return self._soft_limit(arr * self._agc_gain)
+
     def _webrtc_playback_loop(self):
         """Thread that plays PCM from the WebRTC queue out to the sound card."""
         print("[audio] WebRTC playback thread start")
@@ -438,33 +497,31 @@ class AudioStream:
                 # this split a single slider would have to compromise
                 # between two such different signals, making it hard to
                 # hit the right ALC.
-                _vol_key = "txVolume" if self.bulk_tx else "txVolumeSsb"
-                # FIX: fallback defaults must match the UI slider defaults
-                # (index.html #cfg-tx-volume value="4", #cfg-tx-volume-ssb
-                # value="1") when the key was never actually saved to
-                # config.json (fresh install, or the settings page was
-                # never opened/saved). This used to fall back to 1.0 for
-                # BOTH — harmless for SSB (a real mic is already close to
-                # full scale) but for FT8 it left the encoder's
-                # deliberately quiet base tone (amplitude=0.12, see
-                # ft8_encoder.py) at only 0.12x1.0 = 12% of full scale:
-                # too weak to reach the radio's ALC threshold at all.
-                # Reported live: ALC pinned at 0%, PO/PWR reading capped
-                # around 30% even with RF POWER set to 100% on the radio —
-                # not a meter bug, just under-driven audio.
-                _vol_default = 4.0 if self.bulk_tx else 1.0
-                vol_scale = min(float(self.cfg.get(_vol_key, _vol_default)), 8.0)
-                if vol_scale != 1.0:
-                    try:
-                        import numpy as np
+                if not self.bulk_tx and self.cfg.get("txGainModeSsb", "manual") == "agc":
+                    # SSB mic, admin selected AGC mode - see _apply_agc_ssb.
+                    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+                    arr = np.clip(self._apply_agc_ssb(arr), -32768, 32767).astype(np.int16)
+                    pcm = arr.tobytes()
+                else:
+                    _vol_key = "txVolume" if self.bulk_tx else "txVolumeSsb"
+                    # FIX: fallback defaults must match the UI slider defaults
+                    # (index.html #cfg-tx-volume value="4", #cfg-tx-volume-ssb
+                    # value="1") when the key was never actually saved to
+                    # config.json (fresh install, or the settings page was
+                    # never opened/saved). This used to fall back to 1.0 for
+                    # BOTH — harmless for SSB (a real mic is already close to
+                    # full scale) but for FT8 it left the encoder's
+                    # deliberately quiet base tone (amplitude=0.12, see
+                    # ft8_encoder.py) at only 0.12x1.0 = 12% of full scale:
+                    # too weak to reach the radio's ALC threshold at all.
+                    # Reported live: ALC pinned at 0%, PO/PWR reading capped
+                    # around 30% even with RF POWER set to 100% on the radio —
+                    # not a meter bug, just under-driven audio.
+                    _vol_default = 4.0 if self.bulk_tx else 1.0
+                    vol_scale = min(float(self.cfg.get(_vol_key, _vol_default)), 8.0)
+                    if vol_scale != 1.0:
                         arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
                         arr = np.clip(arr * vol_scale, -32768, 32767).astype(np.int16)
-                        pcm = arr.tobytes()
-                    except ImportError:
-                        import array
-                        arr = array.array('h'); arr.frombytes(pcm)
-                        for i in range(len(arr)):
-                            arr[i] = max(-32768, min(32767, int(arr[i] * vol_scale)))
                         pcm = arr.tobytes()
                 self._tx_stream.write(pcm, exception_on_underflow=False)
                 self.tx_frames += 1

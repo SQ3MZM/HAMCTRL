@@ -71,21 +71,22 @@ function renderVFO() {
     if (!step) return `<span class="vfo-digit" data-idx="${i}" data-step="0">${ch}</span>`;
     // Up/down arrow triangles above/below each digit (2026-09-04,
     // requested as an alternative to mouse-wheel scrolling over a
-    // digit — a click affordance, useful on touchscreens too). Same
-    // effect as scrolling: bumps just this digit's position by one
-    // step. The digit span itself keeps its exact previous class/
-    // attributes (data-idx, data-step, click->selectDigit, wheel
-    // handling in _attachDigitListeners) — only wrapped in a column
-    // container with the arrows, so nothing about the existing
-    // wheel/keyboard/select logic needs to change.
+    // digit — a click affordance, useful on touchscreens too). NOTE:
+    // deliberately NO onclick with a baked-in step here — see
+    // _attachDigitListeners's click handler below, which identifies
+    // the digit the same way the wheel handler already does (real
+    // click position vs getBoundingClientRect, same off-by-one fix).
+    // A baked-in step was tried first and reported broken exactly
+    // like the old wheel bug (arrow over one digit bumped the next
+    // one over) for the same underlying reason.
     return `<span class="vfo-digit-col">
-      <span class="vfo-arrow vfo-arrow-up" onclick="VFO.bumpDigit(event,${step},1)" title="+${fmtStep(step)}">▲</span>
+      <span class="vfo-arrow vfo-arrow-up" data-dir="1" title="+${fmtStep(step)}">▲</span>
       <span class="vfo-digit active" data-idx="${i}" data-step="${step}"
         tabindex="0" title="+/- ${fmtStep(step)}"
         onkeydown="VFO.keyDigit(event,${step})"
         onclick="VFO.selectDigit(${step})"
         >${ch}</span>
-      <span class="vfo-arrow vfo-arrow-down" onclick="VFO.bumpDigit(event,${step},-1)" title="-${fmtStep(step)}">▼</span>
+      <span class="vfo-arrow vfo-arrow-down" data-dir="-1" title="-${fmtStep(step)}">▼</span>
     </span>`;
   }).join('');
 
@@ -157,24 +158,53 @@ function wheelDigit(e, step) {
   _applyDigitStep(step, dir);
 }
 
-// Click on a digit's up/down arrow triangle — same effect as scrolling
-// on that digit, dir is +1 (up arrow) or -1 (down arrow) directly.
-function bumpDigit(e, step, dir) {
-  e.preventDefault();
-  e.stopPropagation();
-  _applyDigitStep(step, dir);
-}
-
 // ── One listener on the #vfo-digits container ─────────────────────────────
 // Instead of attaching listeners to every digit individually (which caused
 // an off-by-one due to DOM/forEach ordering), we use ONE listener on the
 // container. e.target always points at the element under the cursor —
 // we identify the digit reliably and read its data-step.
 let _digitListenerAttached = false;
+// Identifies which digit column a screen X coordinate is really over —
+// same bounding-rect matching + "-1" offset compensation as the wheel
+// handler below (see its comment for the transform:scale explanation).
+// Used by the arrow click handler, which had the exact same off-by-one
+// symptom the wheel handler was originally fixed for (2026-09-04).
+function _digitColumnAt(container, x) {
+  const digits2 = Array.from(container.querySelectorAll('.vfo-digit.active'));
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  digits2.forEach(function(el, i) {
+    const r = el.getBoundingClientRect();
+    if (x >= r.left && x <= r.right) {
+      const cx = (r.left + r.right) / 2;
+      const dist = Math.abs(x - cx);
+      if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+    }
+  });
+  if (bestIdx > 0) return digits2[bestIdx - 1];
+  if (bestIdx === 0) return digits2[0];
+  return null;
+}
 function _attachDigitListeners() {
   if (_digitListenerAttached) return;
   const container = document.getElementById('vfo-digits');
   if (!container) return;
+  // Click on an up/down arrow triangle — deliberately re-derives the
+  // digit from the real click position (like the wheel handler) rather
+  // than trusting a step value baked into the arrow at render time.
+  container.addEventListener('click', function(e) {
+    const arrow = e.target.closest('.vfo-arrow');
+    if (!arrow) return;
+    const digit = _digitColumnAt(container, e.clientX);
+    if (!digit) return;
+    const s = parseInt(digit.dataset.step);
+    if (!s) return;
+    const dir = parseInt(arrow.dataset.dir);
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    _applyDigitStep(s, dir);
+  }, { capture: true });
   container.addEventListener('wheel', function(e) {
     // We don't use e.target — it's wrong because of transform:scale (off by 1 digit).
     // getBoundingClientRect() always returns the correct screen
@@ -353,7 +383,6 @@ window.VFO = {
   updateVFODisplay,
   renderKnobSVG,
   wheelDigit,
-  bumpDigit,
   keyDigit,
   selectDigit,
   init() {

@@ -950,9 +950,19 @@ body.page-wsjtx-active { overflow: hidden; }
    digit's position by one step, same effect as scrolling on it (an
    alternative for touchscreens/mice where wheel-over-a-digit isn't
    obvious). */
-.vfo-digit-col { display: inline-flex; flex-direction: column; align-items: center; line-height: 1; }
+/* min-width matches .vfo-digit's own min-width — locks each column to a
+   fixed, non-overlapping slot in the row, so an arrow is always centered
+   over its OWN digit and never visually bleeds toward a neighbor
+   (reported live: clicking the arrow shown over one digit changed a
+   DIFFERENT, adjacent one instead). letter-spacing:-1px is set on the
+   #vfo-digits row itself (inline style) for the bare digit characters —
+   reset to normal here so it doesn't also compress/shift the arrow
+   glyphs relative to their column. */
+.vfo-digit-col { display: inline-flex; flex-direction: column; align-items: center;
+  line-height: 1; min-width: 30px; letter-spacing: normal; }
 .vfo-arrow { font-size: 9px; line-height: 1; padding: 1px 0; color: rgba(184,201,143,0.3);
-  cursor: pointer; user-select: none; transition: color 0.12s, text-shadow 0.12s; }
+  cursor: pointer; user-select: none; transition: color 0.12s, text-shadow 0.12s;
+  width: 100%; text-align: center; }
 .vfo-arrow:hover { color: rgba(184,201,143,0.95); text-shadow: 0 0 8px rgba(184,201,143,0.7); }
 
 /* ── CHAT (operator chat, embedded in the OPERATORZY panel — chat.js) ── */

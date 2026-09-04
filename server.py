@@ -181,6 +181,17 @@ async def amain():
                 print("[rig] scope auto-enabled after connecting to the radio", flush=True)
         except Exception as e:
             print(f"[rig] auto scope_start error: {e}", flush=True)
+        # Force the radio's own MON (CI-V 0x45, "Monitor sidetone TX") OFF
+        # on the initial connect too - mirrors the same defensive call in
+        # webapp.py's _on_rig_reconnected() (2026-09-04), which only covers
+        # later reconnects, not this separate first-connect-at-startup path.
+        # See that call site for the full rationale.
+        try:
+            if not app.rig.sim and hasattr(app.rig, "set_func"):
+                await app.rig.set_func("MON", False)
+                print("[rig] MON forced OFF on initial connect (defensive)", flush=True)
+        except Exception as e:
+            print(f"[rig] MON force-off on initial connect error: {e}", flush=True)
 
     asyncio.create_task(_initial_rig_connect())
     app.init_rotators()

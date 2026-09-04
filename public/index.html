@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202609040001">
+<link rel="stylesheet" href="css/style.css?v=202609040002">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -1424,6 +1424,14 @@
             <span id="cfg-tx-volume-val" style="width:35px;font-size:11px">4x</span>
           </div>
         </div>
+        <div class="sg" style="grid-column:1/-1;"><label><span data-i18n="cfg_gain_mode_ssb_lbl">Tryb wzmocnienia mikrofonu SSB</span>
+          <span style="color:var(--dim);font-size:9px;" data-i18n="cfg_gain_mode_ssb_sublabel">(globalne, dotyczy wszystkich operatorów — wybierz jedno z dwóch)</span></label>
+          <select id="cfg-tx-gain-mode-ssb" style="flex:1;font-family:var(--mono);font-size:11px;"
+            onchange="_txGainModeSsbToggle()">
+            <option value="manual" data-i18n="cfg_gain_mode_manual_opt">Stały mnożnik (suwak obok)</option>
+            <option value="agc" data-i18n="cfg_gain_mode_agc_opt">AGC (auto-wyrównanie poziomu)</option>
+          </select>
+        </div>
         <div class="sg" style="grid-column:1/-1;"><label><span data-i18n="cfg_txvol_ssb_lbl">TX Volume SSB (mnożnik mikrofonu → radio)</span>
           <span style="color:var(--dim);font-size:9px;" data-i18n="cfg_txvol_ssb_sublabel">(osobny od FT8/FT4 — inna charakterystyka sygnału, łatwiej trafić w ALC)</span></label>
           <div style="display:flex;align-items:center;gap:8px;flex:1">
@@ -2658,10 +2666,10 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609030003"></script>
+<script src="js/i18n.js?v=202609040001"></script>
 <script src="js/auth.js?v=202609030005"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202609020002"></script>
+<script src="js/ws.js?v=202609040001"></script>
 <script src="js/radiofunctions.js?v=202609040002"></script>
 <script src="js/ui.js?v=202609030001"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
@@ -2686,7 +2694,7 @@
 <script src="js/wsjtx.js?v=202609040001"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202609030004"></script>
-<script src="js/vfo.js?v=202609040001"></script>
+<script src="js/vfo.js?v=202609040003"></script>
 <script src="js/waterfall.js?v=202609010001"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal-box" style="min-width:280px;max-width:360px;">
@@ -3580,7 +3588,25 @@ async function _audioDeviceLoad() {
       tvSsb.value = d.txVolumeSsb;
       if (tvSsbVal) tvSsbVal.textContent = d.txVolumeSsb + 'x';
     }
+    const gm = document.getElementById('cfg-tx-gain-mode-ssb');
+    if (gm && (d.txGainModeSsb === 'manual' || d.txGainModeSsb === 'agc')) {
+      gm.value = d.txGainModeSsb;
+    }
+    _txGainModeSsbToggle();
   } catch(e) {}
+}
+
+// Tryb "agc" i suwak TX Volume SSB są wzajemnie wykluczające się (either/or) -
+// gdy AGC wybrane, suwak jest tylko wygaszony wizualnie (żeby nie wyglądał,
+// jakby wciąż coś robił), sama wartość zostaje w configu nietknięta na
+// wypadek powrotu do trybu "manual".
+function _txGainModeSsbToggle() {
+  const gm = document.getElementById('cfg-tx-gain-mode-ssb');
+  const tvSsb = document.getElementById('cfg-tx-volume-ssb');
+  if (!gm || !tvSsb) return;
+  const isAgc = gm.value === 'agc';
+  tvSsb.disabled = isAgc;
+  tvSsb.style.opacity = isAgc ? '0.4' : '1';
 }
 
 async function _audioDeviceSave() {
@@ -3591,10 +3617,11 @@ async function _audioDeviceSave() {
   const tv = tvEl ? parseFloat(tvEl.value) : null;
   const tvSsbEl = document.getElementById('cfg-tx-volume-ssb');
   const tvSsb = tvSsbEl ? parseFloat(tvSsbEl.value) : null;
+  const gainModeSsb = document.getElementById('cfg-tx-gain-mode-ssb')?.value || 'manual';
   const st = document.getElementById('cfg-audio-status');
   if (st) st.textContent = I18n.t('cfg_saving');
   try {
-    const payload = {rxDevice: rx, txDevice: tx, bitrate: br};
+    const payload = {rxDevice: rx, txDevice: tx, bitrate: br, txGainModeSsb: gainModeSsb};
     if (tv !== null && !isNaN(tv)) payload.txVolume = tv;
     if (tvSsb !== null && !isNaN(tvSsb)) payload.txVolumeSsb = tvSsb;
     const r = await fetch('/api/audio/config', {

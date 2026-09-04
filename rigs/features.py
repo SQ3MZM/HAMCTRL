@@ -47,6 +47,12 @@ FEATURES = [
     {"id": "tx_power",  "label": "Regulacja mocy TX", "icon": "⚡",
      "group": "tx", "backend": "both", "enabled_default": False},
 
+    {"id": "tuner",     "label": "Tuner (ATU) wl/wyl", "icon": "⚙️",
+     "group": "tuner", "backend": "both", "enabled_default": True},
+
+    {"id": "autotune",  "label": "Autotune (generuje TX)", "icon": "🔧",
+     "group": "tuner", "backend": "civ", "enabled_default": True},
+
     # ── Odbior / S-metr / scope ─────────────────────────────────────────────
     {"id": "smeter",    "label": "Wskaznik S-metr", "icon": "📶",
      "group": "scope", "backend": "both", "enabled_default": True},

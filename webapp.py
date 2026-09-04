@@ -97,7 +97,7 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.14"
+SERVER_VERSION = "2.0.15"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -1305,6 +1305,15 @@ class App:
             vol = min(float(self.cfg.get("audio", {}).get("txVolume", 1.0)), 8.0)
             amp_scale = 0.6 * vol
 
+            # bulk_tx=True here (mirrors the FT8/FT4 TX sequence) keeps this
+            # synthesized tuning tone on the flat-multiplier path in
+            # _webrtc_playback_loop instead of the SSB mic AGC path (added
+            # 2026-09-04, see txGainModeSsb) - AGC is for the live
+            # microphone signal only, a constant-amplitude tone has nothing
+            # for it to normalize and would just override the intended
+            # amp_scale above with its own target level.
+            self.audio.bulk_tx = True
+
             while samples_sent < total_samples and not self._tune_stop:
                 chunk = bytearray()
                 for _ in range(chunk_size):
@@ -1336,6 +1345,8 @@ class App:
                 except: pass
             await self.hub.broadcast({"type": "ptt", "ptt": False})
             await self.hub.broadcast({"type": "tune_status", "active": False})
+        finally:
+            self.audio.bulk_tx = False  # restore anti-lag / SSB-mic path for whatever transmits next
 
     async def _relay_connect_task(self):
         """Connect to the Arduino relay controller in the background."""
@@ -3716,6 +3727,7 @@ class App:
             _py_audio = self.cfg.get("audio", {})
             _py_txvol = float(_py_audio.get("txVolume", 4.0))
             _py_txvol_ssb = float(_py_audio.get("txVolumeSsb", 1.0))
+            _py_gain_mode_ssb = _py_audio.get("txGainModeSsb", "manual")
             # Devices ALWAYS come from the Python config (not from Rust/not
             # from self.audio) — Python is the source of truth for saved
             # settings, in BOTH branches below. FIX: the fallback branch
@@ -3737,6 +3749,7 @@ class App:
                         if _txd: status["tx_device"] = _txd
                         status["txVolume"] = _py_txvol       # overwrite with the value from config.json (FT8/FT4)
                         status["txVolumeSsb"] = _py_txvol_ssb  # separate multiplier for the SSB microphone
+                        status["txGainModeSsb"] = _py_gain_mode_ssb
                         return 200, status
                 except Exception as e:
                     print(f"[audio] Rust status error: {e}", flush=True)
@@ -3746,6 +3759,7 @@ class App:
                 if _txd: _st["tx_device"] = _txd
                 _st["txVolume"] = _py_txvol
                 _st["txVolumeSsb"] = _py_txvol_ssb
+                _st["txGainModeSsb"] = _py_gain_mode_ssb
             return 200, _st
 
         if p == "/api/audio/detect" and method == "GET":
@@ -4379,6 +4393,7 @@ class App:
             br = body.get("bitrate", 24000)
             tv = body.get("txVolume")
             tv_ssb = body.get("txVolumeSsb")
+            gain_mode_ssb = body.get("txGainModeSsb")
             if "audio" not in self.cfg: self.cfg["audio"] = {}
             if rx is not None: self.cfg["audio"]["rxDevice"] = rx
             if tx is not None: self.cfg["audio"]["txDevice"] = tx
@@ -4388,6 +4403,9 @@ class App:
                 self.audio.cfg = self.cfg["audio"]
             if tv_ssb is not None:
                 self.cfg["audio"]["txVolumeSsb"] = float(tv_ssb)
+                self.audio.cfg = self.cfg["audio"]
+            if gain_mode_ssb in ("manual", "agc"):
+                self.cfg["audio"]["txGainModeSsb"] = gain_mode_ssb
                 self.audio.cfg = self.cfg["audio"]
             save_json(CFG_F, self.cfg)
             # When Rust is active — send the new devices to ham_audio
@@ -5594,6 +5612,24 @@ class App:
                 print(f"[rig] CW keying restored on reconnect: method={method_cw!r} BK-IN=True", flush=True)
         except Exception as e:
             print(f"[rig] CW keying restore on reconnect error: {e}", flush=True)
+        # Force the radio's own MON (CI-V 0x45, "Monitor sidetone TX") OFF
+        # on every (re)connect - 2026-09-04, reported live: an operator
+        # heard their own SSB TX audio come back on RX with HAMCTRL's
+        # software MON toggle off. Software MON no longer touches this real
+        # radio function at all any more (radiofunctions.js's func_mon is
+        # now a purely client-side self-monitor, see [[ssb_mic_agc_2026-09-04]])
+        # so nothing else ever manages it - if it was ever left ON (earlier
+        # testing, a manual front-panel press), it stays stuck that way
+        # forever with no code path to turn it back off. Belt-and-suspenders:
+        # the front panel itself showed MONI off when checked live, so this
+        # wasn't confirmed as the actual root cause, but it's a harmless,
+        # one-line safety net regardless.
+        try:
+            if not self.rig.sim and hasattr(self.rig, "set_func"):
+                await self.rig.set_func("MON", False)
+                print("[rig] MON forced OFF on reconnect (defensive)", flush=True)
+        except Exception as e:
+            print(f"[rig] MON force-off on reconnect error: {e}", flush=True)
         rig_id = self._current_rig_id()
         enabled     = self._get_enabled_features(rig_id)
         enabled_dyn = self._get_enabled_dynamic(rig_id)
@@ -7416,7 +7452,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-04-v2.0.14, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-04-TXAUDIODUCK-DIAGNOSTIC-LOGS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

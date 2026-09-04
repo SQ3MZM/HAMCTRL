@@ -120,7 +120,13 @@ function initAudioContext() {
     // wsjtx.js (ft8_tx_status).
     window.setTxAudioDuck = function(on) {
       const g = window._masterGain;
-      if (!g) return;
+      // TEMP DIAGNOSTIC (2026-09-04) - live report: operator hears their
+      // own SSB TX voice on RX regardless of MON on/off. Need hard data on
+      // whether this duck actually fires and whether _masterGain even
+      // exists at call time before guessing further - remove once resolved.
+      console.log('[duck] setTxAudioDuck called:', {on, hasMasterGain: !!g,
+        currentGain: g ? g.gain.value : '(no masterGain)'});
+      if (!g) { console.warn('[duck] NO _masterGain yet - duck is a no-op!'); return; }
       if (window._duckUnmuteTimer) {
         clearTimeout(window._duckUnmuteTimer);
         window._duckUnmuteTimer = null;
@@ -128,6 +134,7 @@ function initAudioContext() {
       if (on) {
         if (window._duckPrevGain == null) window._duckPrevGain = g.gain.value;
         g.gain.value = 0.0;
+        console.log('[duck] MUTED - gain set to 0.0, will restore to', window._duckPrevGain);
       } else if (window._duckPrevGain != null) {
         // FIX: un-muting used to happen the INSTANT PTT went off. With MONI
         // enabled the radio's own TX audio rides the RX stream, which sits
@@ -143,9 +150,12 @@ function initAudioContext() {
           window._duckUnmuteTimer = null;
           if (window._duckPrevGain != null) {
             g.gain.value = window._duckPrevGain;
+            console.log('[duck] RESTORED gain to', window._duckPrevGain, 'after', delayMs, 'ms delay');
             window._duckPrevGain = null;
           }
         }, delayMs);
+      } else {
+        console.log('[duck] unmute requested but _duckPrevGain was already null - nothing to restore');
       }
     };
 
