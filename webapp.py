@@ -4655,6 +4655,22 @@ class App:
                 "enabled": self._auto_seq_enabled,
                 "state": self._qso_engine.state,
                 "partner": self._qso_engine.partner_call,
+                # FIX (2026-09-05, reported live: "automat nie odpowiada
+                # wolajacym, dziala tylko manualnie"): _ft8_operator_present
+                # is set False by "ft8_timer_expired" (the Tx Watchdog) and
+                # only ever set back True by an explicit "ft8_timer_confirm"
+                # from a client. FT8Timer's "expired, waiting for
+                # confirmation" state is 100% local JS module state - if the
+                # WS reconnects (page reload, network blip, laptop
+                # sleep/wake) BEFORE the operator clicks confirm, the
+                # frontend comes back with a fresh, un-expired timer showing
+                # nothing wrong, while the backend silently ignores every
+                # automatic reply forever (manual ft8_start_auto_qso never
+                # checked this flag, so clicking a row kept working - hence
+                # "works only manually"). Included here so a freshly
+                # (re)connected client can immediately re-show the confirm
+                # prompt instead of hiding a state the backend never forgot.
+                "operatorPresent": self._ft8_operator_present,
             }))
             await ws.send_str(json.dumps({
                 "type": "ft8_fake_split_status",
@@ -6872,7 +6888,8 @@ class App:
             await self.hub.broadcast({"type": "auto_seq_status",
                                        "enabled": True,
                                        "state": self._qso_engine.state,
-                                       "partner": self._qso_engine.partner_call})
+                                       "partner": self._qso_engine.partner_call,
+                                       "operatorPresent": self._ft8_operator_present})
 
         elif t == "ft8_timer_expired":
             # The FT8 safety timer (WSJT-X's "Tx Watchdog") expired on the
@@ -7452,7 +7469,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-04-TXAUDIODUCK-DIAGNOSTIC-LOGS, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-09-05-FT8-OPERATOR-PRESENT-SYNC, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 

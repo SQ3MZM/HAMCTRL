@@ -22,7 +22,7 @@
 
   <div class="nav-tabs">
     <button class="tab-btn active" onclick="UI.setPage('radio')" data-i18n="tab_radio">RADIO</button>
-    <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="settings" data-i18n="tab_settings">USTAWIENIA</button>
+    <button class="tab-btn" onclick="UI.setPage('settings')" data-perm="view" data-i18n="tab_settings">USTAWIENIA</button>
     <button class="tab-btn" onclick="UI.setPage('profile')" data-perm="view" id="tab-profile" data-i18n="tab_profile">👤 PROFIL</button>
     <button class="tab-btn" onclick="UI.setPage('log')" data-perm="view" id="tab-log" data-i18n="tab_log">LOG QSO</button>
     <button class="tab-btn" onclick="UI.setPage('config')" data-perm="settings" id="tab-config" data-i18n="tab_config">KONFIGURACJA</button>
@@ -1833,8 +1833,15 @@
       </div>
     </div>
 
-    <!-- WIRTUALNE RADIO — emulacja rigctld dla zewnętrznych programów -->
-    <div class="box">
+    <!-- WIRTUALNE RADIO — emulacja rigctld dla zewnętrznych programów.
+         GLOBALNE/wspoldzielone (3 porty TCP dla calej stacji, nie per-user)
+         - w odroznieniu od CLOUDLOG/QRZ/HamQTH powyzej (kazde per-uid w
+         users.json). USTAWIENIA jest teraz widoczna dla kazdego usera
+         (data-perm="view" na zakladce), wiec ten JEDEN blok potrzebuje
+         wlasnego gate'u "settings" (backend juz i tak wymaga go w
+         /api/hamlib/config - to tylko dopasowanie widocznosci do tego,
+         co i tak jest wymuszane). -->
+    <div class="box" data-perm="settings">
       <div class="box-header" data-i18n="settings_virtual_radio_hdr">WIRTUALNE RADIO — ZEWNĘTRZNE PROGRAMY</div>
       <div data-i18n-html="settings_virtual_radio_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);border-bottom:1px solid var(--border);line-height:2;">
         Emulacja <b>Hamlib NET rigctl</b> (rigctld) — 3 niezależne serwery TCP.<br>
@@ -2691,7 +2698,7 @@
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202609040001"></script>
+<script src="js/wsjtx.js?v=202609050001"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/chat.js?v=202609030004"></script>
 <script src="js/vfo.js?v=202609040003"></script>

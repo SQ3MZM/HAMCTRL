@@ -678,6 +678,10 @@ function _onAutoSeqStatus(msg) {
   if (msg.partner !== undefined) _autoQsoPartner = msg.partner;
   _renderAutoQsoPanel();
   _updateWatchdogArmed();
+  // See the comment at FT8Timer.forceExpired() - the backend may already
+  // be sitting in "operator not confirmed" from before this page
+  // (re)connected.
+  if (msg.operatorPresent === false) window.FT8Timer?.forceExpired();
 }
 
 // FIX (2026-09-03, found while chasing the "watchdog runs even though
@@ -2025,7 +2029,23 @@ window.FT8Timer = (() => {
                    : 'var(--green)';
   }
 
-  return { init, start, stop, confirm, reset };
+  // FIX (2026-09-05): forces the "expired, waiting for confirmation" UI
+  // (confirm button + toast) even though THIS page never saw the timer
+  // count down - used when the backend reports operatorPresent=false on
+  // (re)connect (see _onAutoSeqStatus), meaning some EARLIER session's
+  // timer expired and was never confirmed. Without this, a fresh
+  // page load/reconnect shows a perfectly normal-looking timer while the
+  // backend silently ignores every automatic reply forever.
+  function forceExpired() {
+    if (_expired) return;
+    stop();
+    _expired = true;
+    const btn = document.getElementById('ft8-timer-confirm');
+    if (btn) btn.style.display = 'inline-block';
+    window.UI?.showToast(I18n.t('wj_toast_timer_expired'), 'error');
+  }
+
+  return { init, start, stop, confirm, reset, forceExpired };
 })();
 
 // ── Fox / Hound mode ─────────────────────────────────────────────────────────
