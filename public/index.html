@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<link rel="stylesheet" href="css/style.css?v=202609040002">
+<link rel="stylesheet" href="css/style.css?v=202609060001">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -597,6 +597,17 @@
       <div id="wj-clock-s" style="font-family:var(--mono);font-size:18px;color:#fff;min-width:22px;text-align:right;">0</div>
     </div>
     <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
+    <!-- MUTE (2026-09-06, live request: "jeden lubi sluchac dekodow
+         nadawania, drugiemu to przeszkadza, per user") — per-operator
+         speaker mute, DIGI ONLY (confirmed live: musi dzialac wylacznie
+         gdy radio faktycznie jest w trybie digi - USB-D/PKTUSB na tym
+         IC-7300 - i nie tykac SSB/CW, ktore maja juz swoj wlasny przycisk
+         MON). Zaimplementowane w AudioControls (ws.js), zeby dzielic ten
+         sam _masterGain co RX VOL, ale sprawdza aktualny tryb radia przed
+         wyciszeniem. -->
+    <button id="wj-mute-btn" onclick="AudioControls.toggleRxMute()"
+      title="Wycisz dzwiek RX na digi (FT8/FT4) — nie dotyka SSB/CW"
+      style="background:none;border:1px solid var(--border);border-radius:3px;color:var(--dim);font-size:14px;line-height:1;padding:3px 8px;cursor:pointer;margin-left:8px;">🔊</button>
     <!-- max-width+ellipsis (2026-09-03): d.text (the FT8 message being
          waited on) has no length cap from the backend - without this, a
          long message could grow this pill wide enough to push the
@@ -1040,7 +1051,7 @@
           <thead>
             <tr style="background:var(--panel2);border-bottom:1px solid var(--border);">
               <th class="log-th" style="width:28px;text-align:center;">
-                <input type="checkbox" onclick="QSOLog.selectAll(this)" data-i18n-title="log_select_all_title" title="Zaznacz wszystkie"
+                <input type="checkbox" onclick="QSOLog.selectAll(this)" data-i18n-title="log_select_all_title" title="Zaznacz wszystkie (tylko ta strona)"
                   style="width:13px;height:13px;cursor:pointer;accent-color:var(--red);">
               </th>
               <th class="log-th" onclick="QSOLog.sort('date')" style="cursor:pointer;" data-i18n-title="log_sort_date_title" title="Sortuj po dacie" data-i18n="log_th_date">DATA ↕</th>
@@ -2673,10 +2684,10 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609040001"></script>
+<script src="js/i18n.js?v=202609060001"></script>
 <script src="js/auth.js?v=202609030005"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202609040002"></script>
+<script src="js/ws.js?v=202609060001"></script>
 <script src="js/radiofunctions.js?v=202609040002"></script>
 <script src="js/ui.js?v=202609030001"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
@@ -2776,7 +2787,7 @@
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>
-<script src="js/qsolog.js?v=202609020001"></script>
+<script src="js/qsolog.js?v=202609060001"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────

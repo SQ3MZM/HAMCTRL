@@ -513,13 +513,14 @@ def worked_before(user_id: str, call: str, band: str = None, mode: str = None) -
     }
 
 
-def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **filters) -> dict:
+def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None,
+              unbounded: bool = False, **filters) -> dict:
     """
     List QSOs with filtering, sorting, and pagination.
 
     filters:
         page    int  (default 1)
-        per     int  (default 50, max 200)
+        per     int  (default 50, max 200 unless unbounded=True)
         sort    str  (default 'qso_date')
         dir     str  'asc'|'desc' (default 'desc')
         from    str  YYYY-MM-DD
@@ -527,6 +528,18 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
         call    str  (partial match)
         band    str
         mode    str
+
+    unbounded: skips the 200-row cap. That cap protects the PAGINATED
+    /api/qsolog list endpoint (a client could otherwise request an
+    absurd page size directly via the URL) - export_adif/export_csv are
+    server-side-only callers that never take "per" from client input
+    (webapp.py's export handler strips it from the allowed filter set),
+    so they opt in here to get the FULL matching set instead of silently
+    being clamped to the same 200 the paginated view uses. FIX
+    (2026-09-06, live report: "mam 30 tys QSO w logu, eksport dal tylko
+    200") - export_adif/export_csv already passed per=999999 intending
+    "no limit", but this function clamped it right back down to 200
+    regardless, because both callers shared the exact same cap.
     """
     conn   = _get_conn()
     # query may be a MultiDict (aiohttp) — take the first value
@@ -534,7 +547,10 @@ def list_qsos(user_id: str, is_admin: bool = False, filter_uid: str = None, **fi
         v = filters.get(key, default)
         return v[0] if isinstance(v, list) else v
     page   = max(1, int(_get("page", 1)))
-    per    = min(200, max(1, int(_get("per", 50))))
+    if unbounded:
+        per = max(1, int(_get("per", 50)))
+    else:
+        per = min(200, max(1, int(_get("per", 50))))
     sort   = _get("sort", "qso_date")
     direction = "DESC" if str(_get("dir", "desc")).lower() != "asc" else "ASC"
 
@@ -654,7 +670,7 @@ def worked_calls(user_id: str, is_admin: bool = False,
 
 def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
     """Export QSOs to ADIF format (.adi)."""
-    data   = list_qsos(user_id, is_admin, per=999999, **filters)
+    data   = list_qsos(user_id, is_admin, per=999999, unbounded=True, **filters)
     qsos   = data["qsos"]
     now    = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -739,7 +755,7 @@ def export_adif(user_id: str, is_admin: bool = False, **filters) -> str:
 
 def export_csv(user_id: str, is_admin: bool = False, **filters) -> str:
     """Export QSOs to CSV."""
-    data = list_qsos(user_id, is_admin, per=999999, **filters)
+    data = list_qsos(user_id, is_admin, per=999999, unbounded=True, **filters)
     qsos = data["qsos"]
 
     out  = io.StringIO()
@@ -763,7 +779,7 @@ def export_edi(user_id: str, is_admin: bool = False, **filters) -> str:
     Export QSOs to REG1TEST format (.edi) — the standard for VHF/UHF contests.
     EDI (Electronic Data Interchange) format per IARU Region 1.
     """
-    data = list_qsos(user_id, is_admin, per=999999, **filters)
+    data = list_qsos(user_id, is_admin, per=999999, unbounded=True, **filters)
     qsos = data["qsos"]
 
     # Get station data from the first QSO

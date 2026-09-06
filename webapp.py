@@ -6549,6 +6549,21 @@ class App:
                           f"partner={self._qso_engine.partner_call}) before CQ")
                     self._qso_engine.abort_qso()
                     self._autoqso_tx_seq += 1  # see the comment at REST /api/ft8/halt
+                # FIX (2026-09-06, reported live: "czasem CQ leci o 0:00, a
+                # odpowiedz automatu dopiero o 0:45" - a full extra period
+                # (30s) late instead of the normal 0:30). Every OTHER path
+                # that ends a QSO (auto-complete at line ~8253, give-up at
+                # 7860/8019, manual abort at 6639/7009/3677, manual call to
+                # a station at 6955) already unlocks _qso_period_locked -
+                # starting a fresh CQ was the one path that didn't. If the
+                # PREVIOUS QSO had locked the period (e.g. to 2), that stale
+                # lock survived into the new CQ, so when someone answers,
+                # _send_auto_tx's "if not _qso_period_locked" guard (see
+                # _period_from_epoch) skips recomputing the period from
+                # THIS caller's actual recvEpoch and keeps the old, now
+                # WRONG parity - our reply then waits for the next
+                # occurrence of that wrong period, one full period late.
+                self._qso_period_locked = False
                 # Also abort any in-flight TX sequencer
                 if self._ft8_tx_lock.locked():
                     self._ft8_tx_abort = True

@@ -203,6 +203,8 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .audio-toggle-btn:hover { color: var(--green); border-color: var(--green2); }
 
+#wj-mute-btn.active { color: var(--red); border-color: var(--red) !important; background: rgba(217,119,106,0.1); }
+
 /* ── Czarne obwodki na przyciskach/sliderach ──
    Paleta sage jest spokojna/naturalna — czarna obwodka 1px na elementach
    interaktywnych (przyciski, select, range input) daje wyrazna definicje

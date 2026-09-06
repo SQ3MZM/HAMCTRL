@@ -743,7 +743,25 @@ function _parseADIF(text) {
 
 // ── Bulk selection and deletion ────────────────────────────────────────────
 function selectAll(chk) {
-  document.querySelectorAll('.qso-chk').forEach(el => el.checked = chk.checked);
+  const boxes = document.querySelectorAll('.qso-chk');
+  boxes.forEach(el => el.checked = chk.checked);
+  // FIX (2026-09-06, live report: "po zaznaczeniu ALL QSO eksportuje tylko
+  // 50") — this checkbox only reaches rows CURRENTLY IN THE DOM, i.e. one
+  // page (_perPage=50), not the whole (possibly filtered) log. _exportFetch
+  // then sees non-empty selectedIds and exports exactly those checked rows
+  // (Priority 1) instead of falling through to the whole-log/filter export
+  // (Priority 2) - correct behavior for "export just what I checked", but
+  // silently wrong for an operator who read "select all" as "my entire
+  // log" and expected a full export. Since there's no code fix that can
+  // make a page-scoped checkbox mean two different things at once, warn
+  // at the moment of the mistake instead - export itself still does
+  // exactly what it always did (respects an explicit selection).
+  if (chk.checked && boxes.length < _total) {
+    window.UI?.showToast(
+      I18n.t('log_select_all_page_warning')
+        .replace('{shown}', boxes.length).replace('{total}', _total),
+      'error');
+  }
 }
 
 async function deleteSelected() {

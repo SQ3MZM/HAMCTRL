@@ -618,6 +618,7 @@ function handleMessage(msg) {
       S.connected = msg.connected ?? S.connected;
       S.sim       = msg.sim       ?? S.sim;
       window.UI?.updateTelemetry();
+      window.AudioControls?.syncRxGainToMode?.();  // digi MUTE gate — see ws.js
       break;
 
     case 'level_value':
@@ -757,6 +758,7 @@ function handleMessage(msg) {
       }
       window.UI?.updateModeButtons();
       window.UI?.updateVFOBadges?.();  // also update the mode badge
+      window.AudioControls?.syncRxGainToMode?.();  // digi MUTE gate — see ws.js
       break;
     case 'ptt':
       S.ptt = msg.ptt;
@@ -1021,9 +1023,33 @@ window.AudioControls = (function() {
     } catch(e) { return 70; }
   }
 
-  function setRxVol(pct) {
-    _rxVol = Math.max(0, Math.min(100, pct)) / 100;
-    if (window._masterGain) window._masterGain.gain.value = _rxVol * 0.9;
+  // A mode string counts as "digi" only for the IC-7300 DATA sub-modes
+  // actually used for FT8/FT4 on this station (USB-D/LSB-D/PKTUSB/PKTLSB -
+  // confirmed live 2026-09-06) - NOT plain USB, which this station also
+  // uses for ordinary SSB voice. Matches the same "-D"/"PKT" convention
+  // dxcluster.js already uses to spot digital-mode spots.
+  function _isDigiMode(mode) {
+    if (!mode) return false;
+    const m = mode.toUpperCase();
+    return m.endsWith('-D') || m === 'PKTUSB' || m === 'PKTLSB' || m === 'DATA' || m === 'PKT';
+  }
+
+  // Applies the actual audible gain, folding in mute — the slider/localStorage
+  // still remember the pre-mute volume (_rxVol), only the OUTPUT is forced to
+  // 0 while muted, so unmuting restores exactly where the user left it.
+  //
+  // RX MUTE (below) is scoped to DIGI ONLY (2026-09-06, explicit live
+  // requirement: "ten przycisk ma tylko pracowac w zakladce ft8/wjstx i nie
+  // dotykac ssb i cw" - SSB/CW already have their own audio control, MON/
+  // mic monitor, and must never go silent because of this button). So the
+  // mute only actually takes effect while the radio's CURRENT mode is a
+  // digi sub-mode - checked here, on every call, using the live
+  // AppState.mode (kept in sync by the 'mode'/'telemetry' WS handlers
+  // below, which both re-run this after updating S.mode).
+  function _applyRxGain() {
+    const muteActive = _rxMuted && _isDigiMode(window.AppState?.mode);
+    const gain = muteActive ? 0 : _rxVol * 0.9;
+    if (window._masterGain) window._masterGain.gain.value = gain;
     // BELT AND SUSPENDERS (2026-08-24): reported live - masterGain.gain
     // confirmed set to 0 (via window._debugAudio()) while RX audio kept
     // playing at full volume regardless. The RX <audio> element (see
@@ -1033,7 +1059,12 @@ window.AudioControls = (function() {
     // - it was never being set, so it stayed at its default (1.0) no
     // matter what masterGain did. Setting it directly here guarantees
     // control regardless of the exact interaction between the two.
-    if (window._rxAudioEl) window._rxAudioEl.volume = _rxVol;
+    if (window._rxAudioEl) window._rxAudioEl.volume = muteActive ? 0 : _rxVol;
+  }
+
+  function setRxVol(pct) {
+    _rxVol = Math.max(0, Math.min(100, pct)) / 100;
+    _applyRxGain();
     const el = document.getElementById('rx-vol-val');
     if (el) el.textContent = pct + '%';
     const sl = document.getElementById('rx-vol-slider');
@@ -1042,9 +1073,56 @@ window.AudioControls = (function() {
     try { localStorage.setItem(_rxVolKey(), pct); } catch(e) {}
   }
 
+  // ── RX MUTE (2026-09-06, live request: "jeden lubi sluchac dekodow,
+  // drugiemu to przeszkadza, per user") — a per-operator speaker mute.
+  // Deliberately applied at the _masterGain stage (same one setRxVol uses),
+  // which is the SINGLE shared RX audio path for SSB/CW/FT8 alike (the
+  // radio doesn't know or care what mode decodes its audio) - so one
+  // button covers every mode, not just the FT8/WSJT-X panel it was
+  // requested from. Persisted per-user like RX VOL (own speaker
+  // preference, not a station-wide setting).
+  let _rxMuted = false;
+
+  function _rxMuteKey() {
+    const uid = window.AppState?.my_uid || window.CurrentUser?.id || 'default';
+    return `rxMuted_${uid}`;
+  }
+
+  function _loadRxMuted() {
+    try { return localStorage.getItem(_rxMuteKey()) === '1'; } catch(e) { return false; }
+  }
+
+  function setRxMuted(muted) {
+    _rxMuted = !!muted;
+    _applyRxGain();
+    const btn = document.getElementById('wj-mute-btn');
+    if (btn) {
+      btn.textContent = _rxMuted ? '🔇' : '🔊';
+      btn.classList.toggle('active', _rxMuted);
+      btn.title = _rxMuted
+        ? 'Odblokuj dzwiek RX na digi (FT8/FT4)'
+        : 'Wycisz dzwiek RX na digi (FT8/FT4) — nie dotyka SSB/CW';
+    }
+    try { localStorage.setItem(_rxMuteKey(), _rxMuted ? '1' : '0'); } catch(e) {}
+  }
+
+  function toggleRxMute() {
+    setRxMuted(!_rxMuted);
+  }
+
+  // Re-evaluates the mute gate against the CURRENT radio mode without
+  // changing the operator's on/off choice — called from the 'mode' and
+  // 'telemetry' WS handlers below whenever S.mode changes, so switching
+  // from digi to SSB/CW (or back) takes effect immediately instead of only
+  // on the next button click.
+  function syncRxGainToMode() {
+    _applyRxGain();
+  }
+
   function initRxVol() {
     const saved = _loadRxVol();
     setRxVol(saved);
+    setRxMuted(_loadRxMuted());
   }
 
   // ── VU meter — live measurement of the TX microphone level ──────────────────
@@ -1117,7 +1195,8 @@ window.AudioControls = (function() {
   }, 200);
 
   // Public API
-  return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain };
+  return { setTxGain, setRxVol, startVU, stopVU, initRxVol, initTxGain,
+            toggleRxMute, setRxMuted, isRxMuted: () => _rxMuted, syncRxGainToMode };
 })();
 
 // ── RX audio over WebRTC ─────────────────────────────────────────────────
