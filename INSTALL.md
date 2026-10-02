@@ -109,6 +109,19 @@ it needs to be for a first install. The short version:
   / Logger32 alongside HAMCTRL: requires
   [com0com](https://com0com.sourceforge.net/) on the client machine.
 
+### 7. Optional: relay board (antenna switch, amplifier bypass, anything else you wire up)
+
+The **ADMIN -> PRZEKAŹNIKI ARDUINO** panel drives 8 relays over a
+serial text protocol (originally designed by Marcin Boboli, SP5IOU,
+emulating the SDR220 relay set). What each relay is physically wired to
+is entirely up to you — antenna switching, PA bypass, anything.
+
+The Arduino firmware is bundled with HAMCTRL at
+[`arduino/relay_sp5iou/`](arduino/relay_sp5iou/) — see that folder's own
+README for the pin map, flashing instructions and the protocol. Flash it
+to any Arduino with 8 free digital outputs, wire up an 8-channel relay
+module, then enable it in **ADMIN** and pick the COM port.
+
 ### Troubleshooting
 
 - **Browser keeps warning about the certificate on every visit**: normal
@@ -228,6 +241,20 @@ ponad potrzeby pierwszej instalacji. Wersja skrócona:
 - **Mostek wirtualnych portów COM** do uruchomienia CW Skimmer / Ham
   Radio Deluxe / Logger32 równolegle z HAMCTRL: wymaga
   [com0com](https://com0com.sourceforge.net/) na komputerze klienckim.
+
+### 7. Opcjonalnie: płytka przekaźnikowa (przełącznik antenowy, bypass wzmacniacza, cokolwiek innego)
+
+Panel **ADMIN -> PRZEKAŹNIKI ARDUINO** steruje 8 przekaźnikami przez
+protokół tekstowy po porcie szeregowym (oryginalny projekt Marcina
+Boboli, SP5IOU, emulujący zestaw przekaźników SDR220). Do czego
+fizycznie podłączysz każdy przekaźnik — przełącznik antenowy, bypass
+wzmacniacza, cokolwiek — to już Twoja sprawa.
+
+Firmware na Arduino jest dołączony do HAMCTRL w
+[`arduino/relay_sp5iou/`](arduino/relay_sp5iou/) — pełny opis pinów,
+instrukcja wgrywania i protokół w README tego folderu. Wgraj na
+dowolne Arduino z 8 wolnymi wyjściami cyfrowymi, podłącz 8-kanałowy
+moduł przekaźnikowy, potem włącz w **ADMIN** i wybierz port COM.
 
 ### Rozwiązywanie problemów
 
