@@ -9344,7 +9344,37 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                 headers=headers,
             )
         else:
-            # SPA fallback
+            # DIAGNOSTIC (2026-09-21, reported live: "co ~7 dni caly uklad
+            # sie rozjezdza, strona robi sie biala, wszystkie zakladki znikaja
+            # - ale strona logowania jest OK" - no logs were saved to confirm
+            # a cause). login.html has its CSS inline and needs no other
+            # file - index.html/mobile.html depend on public/css/style.css
+            # and public/js/*.js loading correctly, which is consistent with
+            # "only the main app is affected". The app is a PyInstaller
+            # ONEFILE build (see hamctrl.spec, runtime_tmpdir=None) and
+            # PUBLIC resolves under sys._MEIPASS, i.e. a fresh
+            # %TEMP%\_MEIxxxxxx\public each run (config.py) - if that folder
+            # or a file in it ever goes missing while the server keeps
+            # running (e.g. a Temp-folder cleanup sweeping files whose mtime
+            # is frozen at extraction time - Windows Storage Sense's default
+            # "temporary files unused for N days" policy is a candidate),
+            # THIS branch fires for every request for a missing .css/.js
+            # file. Logged so the next occurrence is visible right in the
+            # app's own console window (console=True in hamctrl.spec)
+            # without needing separately-saved logs.
+            print(f"[static] MISSING FILE: {path} (resolved: {fpath}) - "
+                  f"expected under PUBLIC={PUBLIC}", flush=True)
+            # A real static-asset request (has a file extension) must never
+            # be masked as index.html's HTML: a browser's strict MIME-type
+            # checking silently refuses to apply a stylesheet or run a
+            # script that comes back as text/html, which is exactly how one
+            # vanished file turns into a fully white, unstyled page with no
+            # visible error anywhere. Only fall back to index.html for a
+            # genuine client-side route (no extension) - the frontend has no
+            # such routes today, but this keeps a deep-link refresh working
+            # if that ever changes.
+            if "." in fpath.name:
+                return web.Response(status=404, text="Not Found")
             idx = PUBLIC / "index.html"
             if idx.is_file():
                 return web.Response(body=idx.read_bytes(), content_type="text/html")

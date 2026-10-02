@@ -154,7 +154,27 @@ exe = EXE(
     strip=False,
     upx=False,            # UPX moze psuc niektore DLL - wylaczone dla stabilnosci
     upx_exclude=[],
-    runtime_tmpdir=None,
+    # FIX (2026-09-21, live report: "co ~7 dni caly uklad sie rozjezdza,
+    # strona robi sie biala" na serwerze pracujacym 24/7). Domyslnie
+    # (runtime_tmpdir=None) PyInstaller onefile rozpakowuje public/ (css,
+    # js, index.html...) do losowego folderu pod %TEMP%\_MEIxxxxxx przy
+    # KAZDYM starcie i zostawia go tam bez modyfikacji przez caly czas
+    # dzialania serwera - dokladnie profil plikow, ktore Windows Storage
+    # Sense (domyslne czyszczenie %TEMP%, opcja "co tydzien") albo inny
+    # czyszczacz dysku kasuje jako "nieuzywane". config.py juz od dawna
+    # swiadomie trzyma DANE UZYTKOWNIKA (config.json/users.json/qso.db)
+    # poza %TEMP% z dokladnie tego samego powodu ("User data ... MUST be
+    # persistent and writable - next to the EXE, not in PyInstaller's temp
+    # folder") - ten sam rozumowanie nigdy nie zostalo zastosowane do
+    # WLASNEGO folderu rozpakowania onefile, co jest luka ktora ten fix
+    # zamyka. %APPDATA%\HAMCTRL juz istnieje i jest sprawdzone (tam zyje
+    # m.in. qso.db z 30k+ QSO) - _runtime obok tego jest tak samo trwale,
+    # zawsze zapisywalne bez podnoszenia uprawnien (w przeciwienstwie do
+    # katalogu obok EXE w Program Files) i POZA zasiegiem sprzatania
+    # %TEMP%. Windows bootloader PyInstallera rozwija %APPDATA% w tym
+    # polu (w przeciwienstwie do POSIX, patrz PyInstaller --runtime-tmpdir
+    # docs) - zweryfikowane dzialajacym buildem.
+    runtime_tmpdir=r"%APPDATA%\HAMCTRL\_runtime",
     console=True,         # KONSOLA WIDOCZNA - user widzi logi/bledy serwera
     disable_windowed_traceback=False,
     argv_emulation=False,

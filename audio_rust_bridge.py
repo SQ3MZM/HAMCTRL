@@ -143,6 +143,7 @@ class RustAudioBridge:
         self._watchdog_task = None
         self._restart_count = 0      # consecutive QUICK (<5s) unexpected exits — crash-loop guard
         self._last_start_at = 0.0
+        self._slow_retry    = False  # True once the fast guard gave up and we fell back to a patient retry
 
     async def start(self, hub=None, cfg: dict = None):
         self._hub = hub
@@ -332,7 +333,7 @@ class RustAudioBridge:
         # unmonitored until some unrelated future start() call happened to
         # run again.
         while True:
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(30.0 if self._slow_retry else 2.0)
             if self._stopping:
                 return
             proc = self._proc
@@ -343,13 +344,35 @@ class RustAudioBridge:
                 self._restart_count += 1
             else:
                 self._restart_count = 0
-            if self._restart_count >= 5:
+                self._slow_retry = False  # a run that actually stuck - back to normal fast monitoring
+            if self._restart_count >= 5 and not self._slow_retry:
+                # FIX (2026-09-21, live report: "po zaniku pradu audio nie
+                # wstaje, radio sie budzi ale nie ma audio na www, konsola
+                # mowi ze jest rust zaladowany" - a 24/7 unattended station).
+                # This guard used to `return` here, PERMANENTLY stopping the
+                # watchdog until a human manually restarted the whole
+                # server. It exists to stop hammering a genuinely-broken
+                # device, but 5 quick strikes (<5s each, ~25s total) is
+                # nowhere near enough headroom for a real power outage: the
+                # radio's own USB Audio CODEC (audio.rs run_rx_thread) can
+                # legitimately take longer than that to re-enumerate after
+                # power returns, and a full PC reboot means Windows itself
+                # may still be finishing its own USB stack init. Giving up
+                # forever here turned a recoverable, temporary hardware
+                # delay into a permanent outage - exactly backwards for a
+                # station meant to run 24/7 unattended. Now it falls back to
+                # a much slower cadence (every 30s, see the sleep above)
+                # instead of stopping - patient enough not to hammer truly
+                # dead hardware, but it always recovers on its own once the
+                # device is actually ready, with no manual restart required.
                 print(f"[audio_bridge] ham_audio.exe exited {self._restart_count} times in a row "
-                      f"within 5s of starting — giving up auto-restart (crash loop guard). "
-                      f"Check the exe/device manually.", flush=True)
-                return
+                      f"within 5s of starting - switching to a slow retry (every 30s) instead of "
+                      f"giving up; will recover automatically once the audio device is ready",
+                      flush=True)
+                self._slow_retry = True
             print(f"[audio_bridge] ham_audio.exe exited unexpectedly (ran {ran_for:.1f}s) "
-                  f"— restarting automatically", flush=True)
+                  f"— restarting automatically"
+                  + (" (slow retry mode)" if self._slow_retry else ""), flush=True)
             await self.start(self._hub, self._cfg)
 
     async def stop(self):
