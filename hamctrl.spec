@@ -22,11 +22,25 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 BASE = Path(os.getcwd())
 
-# ── scipy: zbierz WSZYSTKO (podmoduly, dane, binaria) ─────────────────────────
-# scipy.stats/scipy.signal maja duzo dynamicznych importow i plikow danych
-# ktorych PyInstaller nie lapie sam. collect_all rozwiazuje "NameError obj"
-# i "DLL load failed" ze scipy.
-_scipy_datas, _scipy_binaries, _scipy_hidden = collect_all("scipy")
+# ── scipy: tylko to, co faktycznie uzywane ────────────────────────────────────
+# FIX (2026-10-05, zgloszenie: "soft ma 400mb, trzeba zejsc z wagi"): cala
+# baza kodu uzywa WYLACZNIE scipy.special.erf (ft8_encoder.py/ft4_encoder.py,
+# ksztaltowanie impulsu GFSK) i scipy.signal.resample_poly (tamze, resampling
+# PCM 12k->48k) - zweryfikowane grepem po calym repo. collect_all("scipy")
+# pakowal CALY pakiet (115 MB na dysku: stats, sparse, spatial, optimize,
+# integrate, ndimage, cluster...), z czego ponizsze dwa submoduly to ulamek.
+# Zawezone do dwoch faktycznie importowanych poddrzew - ten sam mechanizm
+# (zbiera dynamiczne importy/pliki danych ktorych PyInstaller sam nie zlapie,
+# stad historyczny powod uzycia collect_all zamiast zwyklego importu), tylko
+# scopowany. Jesli po tej zmianie build/test pokaze "NameError"/"DLL load
+# failed" z innego zakatka scipy - NIE poszerzac z powrotem na caly pakiet
+# od razu, dopisac dokladnie ten brakujacy submodul (np. "scipy.fft", jesli
+# resample_poly lazy-importuje je wewnetrznie).
+_scipy_datas, _scipy_binaries, _scipy_hidden = collect_all("scipy.signal")
+_scipy_sp_datas, _scipy_sp_binaries, _scipy_sp_hidden = collect_all("scipy.special")
+_scipy_datas    += _scipy_sp_datas
+_scipy_binaries += _scipy_sp_binaries
+_scipy_hidden   += _scipy_sp_hidden
 _numpy_datas, _numpy_binaries, _numpy_hidden = collect_all("numpy")
 
 # onnxruntime (DeepCW) ma natywne DLL-e — bez collect_all PyInstaller ich nie
@@ -117,6 +131,19 @@ excludes = [
     "tkinter", "matplotlib", "PyQt5", "PyQt6", "PySide2", "PySide6",
     "pytest", "IPython", "notebook", "jupyter", "pandas",
     "PIL",  # jesli nie uzywasz Pillow po stronie serwera
+    # FIX (2026-10-05, zgloszenie: "soft ma 400mb"): ten srodowisko Pythona
+    # ma zainstalowany caly, niezwiazany z HAMCTRL stos ML/NLP (torch samo
+    # w sobie 528 MB na dysku) - prawdopodobnie do innego projektu na tym
+    # samym komputerze. onnxruntime (uzywany tu tylko do prostej inferencji
+    # DeepCW) ma WEWNATRZ SIEBIE opcjonalne/delayed sciezki importu do
+    # narzedzi quantization/profiling, ktore z kolei odwoluja sie do torch/
+    # transformers/itd. - PyInstaller, nie wiedzac ze te sciezki nigdy nie
+    # wykonaja sie w runtime HAMCTRL, zbieral je "na wszelki wypadek".
+    # Zweryfikowane grepem po calym repo - zero realnych importow ponizszych
+    # pakietow w kodzie HAMCTRL. Razem to byl prawdopodobnie najwiekszy
+    # pojedynczy skladnik 400 MB, wiekszy niz samo scipy.
+    "torch", "transformers", "sklearn", "scikit-learn", "nltk", "sympy",
+    "huggingface_hub", "networkx", "einops", "accelerate", "hf_xet",
 ]
 
 block_cipher = None
