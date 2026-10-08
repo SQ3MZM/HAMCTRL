@@ -4123,9 +4123,11 @@ class App:
         if p == "/api/qsolog/all" and method == "DELETE":
             # FIX (2026-09-03): granular "log" permission (users.json
             # permissions.log, labelled "Log QSO - zapis") was never
-            # actually checked anywhere - the QSO log TAB is gated by the
-            # separate "view" permission, so unchecking "log" for an
-            # operator did nothing at all. Applies to every write below
+            # actually checked anywhere - the QSO log TAB's data-perm="view"
+            # just means "visible to every authenticated user, no per-user
+            # gate" (it is NOT a real, admin-manageable permission - see
+            # auth.js's _REAL_PERM_KEYS), so unchecking "log" for an operator
+            # did nothing at all. Applies to every write below
             # (add/edit/delete/bulk-import), not just this one.
             if not self._has_perm(uid, role, "log"):
                 return 403, {"error": "Brak uprawnien (log QSO)"}

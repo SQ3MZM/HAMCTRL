@@ -65,6 +65,29 @@ pub type SharedMixer  = Arc<Mixer>;
 pub type AudioTx      = broadcast::Sender<AudioFrame>;
 pub type AudioRx      = broadcast::Receiver<AudioFrame>;
 
+// FIX: a bare TcpListener::bind(...).expect(...) used to panic the whole
+// process immediately if the port was still in TIME_WAIT - exactly the
+// situation right after audio_rust_bridge.py's watchdog kills and restarts
+// this same exe on a crash. That turned one crash into a crash-restart-crash
+// loop until the OS released the port on its own. Retry with a short backoff
+// before giving up for real (a persistently-busy port, e.g. wrong config or
+// another process holding it, still panics - just not on the very first try).
+async fn bind_with_retry(addr: &str, label: &str) -> TcpListener {
+    const ATTEMPTS: u32 = 10;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+    for attempt in 1..=ATTEMPTS {
+        match TcpListener::bind(addr).await {
+            Ok(listener) => return listener,
+            Err(e) if attempt < ATTEMPTS => {
+                warn!("bind {} ({}) failed, retry {}/{}: {}", label, addr, attempt, ATTEMPTS, e);
+                tokio::time::sleep(DELAY).await;
+            }
+            Err(e) => panic!("bind {} ({}) failed after {} attempts: {}", label, addr, ATTEMPTS, e),
+        }
+    }
+    unreachable!()
+}
+
 fn main() {
     // Manual runtime build instead of #[tokio::main] to raise
     // thread_keep_alive above tokio's default 10s. The FT8 decode window is
@@ -162,8 +185,8 @@ async fn async_main() {
         )
     };
 
-    let ctrl_listener = TcpListener::bind(&ctrl_addr).await.expect("bind ctrl");
-    let ws_listener   = TcpListener::bind(&ws_addr).await.expect("bind ws");
+    let ctrl_listener = bind_with_retry(&ctrl_addr, "ctrl").await;
+    let ws_listener   = bind_with_retry(&ws_addr, "ws").await;
 
     info!("Control TCP  : {}", ctrl_addr);
     info!("Audio WS     : {}", ws_addr);
@@ -176,7 +199,7 @@ async fn async_main() {
     }
 
     if let Some(tls_acceptor) = ssl_ctx {
-        let wss_listener = TcpListener::bind(&wss_addr).await.expect("bind wss");
+        let wss_listener = bind_with_retry(&wss_addr, "wss").await;
         let atx3    = audio_tx.clone();
         let atx_lo3 = audio_tx_lo.clone();
         let mix3 = mixer.clone();

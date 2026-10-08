@@ -56,6 +56,18 @@ const _DEFAULT_PERMS = {
 // permissions). Used below to skip the permsSet check entirely for these.
 const FEATURE_ONLY_KEYS = new Set(['split', 'tuner', 'autotune']);
 
+// Real per-user permission keys, derived from _DEFAULT_PERMS instead of a
+// second hand-maintained list - a data-perm value NOT in this set (e.g.
+// "view", "admin" handled separately above) is assumed to need no per-user
+// check and fails OPEN below. A second, independently-typed copy of this
+// list used to live inline at the data-perm check (and nowhere near
+// data-perm-disable's check a few lines down) - exactly the kind of drift
+// that already caused the SPLIT button and pa_reset (GSK) bugs: add a new
+// key to _DEFAULT_PERMS/admin.js's PERM_DEFS and forget this copy, and the
+// new permission's data-perm elements silently show for EVERYONE instead of
+// being denied. Deriving it here means that can't happen again.
+const _REAL_PERM_KEYS = new Set(Object.keys(_DEFAULT_PERMS));
+
 // ── Apply permissions to the UI ───────────────────────────────────────────────
 function applyPermissions(user) {
   if (!user) return;
@@ -119,7 +131,7 @@ function applyPermissions(user) {
     // for FEATURE_ONLY_KEYS (e.g. "split", see above), which have no
     // per-user permission at all.
     const permAllowed = FEATURE_ONLY_KEYS.has(required) || permsSet.has(required) ||
-      !['ptt','cw','band','mode','freq','rotator','settings','log'].includes(required);
+      !_REAL_PERM_KEYS.has(required);
     // Check the admin's per-rig static-feature whitelist. Fails OPEN
     // while features haven't loaded yet (avoids a flash-of-hidden-content
     // before RadioFunctions' first fetch completes) - reapplyPermissions()

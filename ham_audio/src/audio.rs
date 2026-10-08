@@ -467,9 +467,15 @@ fn _run_tx_inner(
     let device = if device_name.is_empty() {
         host.default_output_device().ok_or("No default output device")?
     } else {
-        host.output_devices()?
+        match host.output_devices()?
             .find(|d| d.name().map(|n| n.contains(&device_name)).unwrap_or(false))
-            .unwrap_or_else(|| host.default_output_device().unwrap())
+        {
+            Some(d) => d,
+            None => {
+                warn!("[audio] TX device '{}' not found, falling back to default", device_name);
+                host.default_output_device().ok_or("No default output device")?
+            }
+        }
     };
 
     info!("[audio] TX: {}", device.name().unwrap_or_default());

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 use super::ap::ApHints;
 use super::buffer::Ft8Buffer;
@@ -210,7 +210,18 @@ async fn run_loop(
                 }
             }
 
-            let results = decode_handle.await.unwrap_or_default();
+            // unwrap_or_default() used to swallow a panic inside decode_ft8/
+            // decode_ft4 completely silently - the log just showed "decoded
+            // 0 messages", indistinguishable from a genuinely empty/quiet
+            // window. Log the JoinError so a decoder panic is visible in the
+            // same log operators actually check.
+            let results = match decode_handle.await {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("[ft8dec] decode task panicked: {}", e);
+                    Vec::new()
+                }
+            };
             let elapsed = t0.elapsed().as_secs_f32();
             println!("[ft8dec] decoded {} messages in {:.2}s", results.len(), elapsed);
 

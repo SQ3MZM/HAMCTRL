@@ -253,8 +253,11 @@
         <button id="ft8-timer-confirm" class="m-btn m-btn-amber m-btn-sm" onclick="FT8Timer.confirm()" style="display:none" data-i18n="m_confirm_presence">Potwierdzam obecność</button>
       </div>
       <div class="m-ft8-actions">
-        <button id="wj-autoqso-skip" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ft8" onclick="WSJTX.skipAutoQso()" style="display:none" data-i18n="m_skip_qso_btn">Pomiń QSO</button>
-        <button id="wj-halt-tx-btn" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ft8" onclick="WSJTX.haltTx()">STOP TX</button>
+        <button id="wj-autoqso-skip" class="m-btn m-btn-red m-btn-sm" data-perm-disable="ptt" onclick="WSJTX.skipAutoQso()" style="display:none" data-i18n="m_skip_qso_btn">Pomiń QSO</button>
+        <!-- No data-perm-disable: HALT TX is a stop action (same rule as
+             ptt:false/ft8_tune_stop/webrtc_stop - never gate a stop), and
+             matches desktop's wj-halt-tx-btn which has no gate either. -->
+        <button id="wj-halt-tx-btn" class="m-btn m-btn-red m-btn-sm" onclick="WSJTX.haltTx()">STOP TX</button>
       </div>
     </section>
 
@@ -266,27 +269,27 @@
         onblur="WSJTX.searchDxCall(this.value)">
       <div class="m-card-title" style="margin-top:10px;" data-i18n="m_tx_macros_hdr">Makra TX</div>
       <div class="wsjtx-tx-grid m-tx-grid">
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx1" data-perm-disable="ft8" onclick="WSJTX.sendTx(1)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx1" data-perm-disable="ptt" onclick="WSJTX.sendTx(1)">
           <span class="wj-tx-num m-tx-btn-lbl">F1</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx1-text">CQ {MYCALL} {GRID}</span>
         </button>
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx2" data-perm-disable="ft8" onclick="WSJTX.sendTx(2)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx2" data-perm-disable="ptt" onclick="WSJTX.sendTx(2)">
           <span class="wj-tx-num m-tx-btn-lbl">F2</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx2-text">{DXCALL} {MYCALL} {GRID}</span>
         </button>
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx3" data-perm-disable="ft8" onclick="WSJTX.sendTx(3)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx3" data-perm-disable="ptt" onclick="WSJTX.sendTx(3)">
           <span class="wj-tx-num m-tx-btn-lbl">F3</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx3-text">{DXCALL} {MYCALL} R{REPORT}</span>
         </button>
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx4" data-perm-disable="ft8" onclick="WSJTX.sendTx(4)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx4" data-perm-disable="ptt" onclick="WSJTX.sendTx(4)">
           <span class="wj-tx-num m-tx-btn-lbl">F4</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx4-text">{DXCALL} {MYCALL} RRR</span>
         </button>
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx5" data-perm-disable="ft8" onclick="WSJTX.sendTx(5)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx5" data-perm-disable="ptt" onclick="WSJTX.sendTx(5)">
           <span class="wj-tx-num m-tx-btn-lbl">F5</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx5-text">{DXCALL} {MYCALL} 73</span>
         </button>
-        <button class="wj-tx-btn m-tx-btn" id="wj-tx6" data-perm-disable="ft8" onclick="WSJTX.sendTx(6)">
+        <button class="wj-tx-btn m-tx-btn" id="wj-tx6" data-perm-disable="ptt" onclick="WSJTX.sendTx(6)">
           <span class="wj-tx-num m-tx-btn-lbl">F6</span>
           <span class="wj-tx-text m-tx-btn-txt" id="wj-tx6-text">{DXCALL} RR73</span>
         </button>

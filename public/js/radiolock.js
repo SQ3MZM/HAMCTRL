@@ -11,6 +11,15 @@ let _state = { locked: false, user_id: null, username: null, callsign: null,
                timeout_min: 20, requests: [], online: [] };
 const S = window.AppState;
 
+// Callsign/username/uid come from other users' profiles (or WS messages they
+// trigger) and land here via innerHTML - escape before interpolating, same
+// fix already applied once in qsolog.js for the same reason.
+function _esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ── Pobierz/przetwórz stan z WS lub API ──────────────────────────────────────
 function handleWS(msg) {
   if (msg.locked !== undefined)  _state.locked      = msg.locked;
@@ -52,7 +61,7 @@ function _showRequestToast(callsign, fromUid) {
       📻 PROŚBA O RADIO
     </div>
     <div style="color:var(--text);font-size:13px;margin-bottom:14px;">
-      <b>${callsign}</b> prosi o dostęp do TRX
+      <b>${_esc(callsign)}</b> prosi o dostęp do TRX
     </div>
     <div style="display:flex;gap:8px;">
       <button onclick="window.OpPanel.releaseRadio();document.getElementById('radio-request-toast')?.remove();"
@@ -60,7 +69,7 @@ function _showRequestToast(callsign, fromUid) {
         border-radius:4px;color:var(--green);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✓ ODDAJ RADIO
       </button>
-      <button onclick="window.OpPanel.rejectRequest('${fromUid}');document.getElementById('radio-request-toast')?.remove();"
+      <button onclick="window.OpPanel.rejectRequest('${_esc(fromUid)}');document.getElementById('radio-request-toast')?.remove();"
         style="flex:1;padding:8px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
         border-radius:4px;color:var(--red);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✗ ODRZUĆ
@@ -158,7 +167,7 @@ function _renderOpPanel() {
         border:1px solid ${isActive ? 'var(--border2)' : 'transparent'};">
         <span style="font-size:14px;">${isActive ? '🎙' : '👤'}</span>
         <span style="font-family:var(--mono);font-size:10px;color:${isMe ? 'var(--green)' : 'var(--text)'};flex:1;">
-          ${u.callsign || u.username}${isMe ? ' ◀' : ''}
+          ${_esc(u.callsign || u.username)}${isMe ? ' ◀' : ''}
         </span>
         ${isActive ? `<span style="font-family:var(--mono);font-size:8px;color:var(--green);letter-spacing:1px;">TRX</span>` : ''}
       </div>`;
@@ -174,7 +183,7 @@ function _renderOpPanel() {
     } else if (isHolder) {
       status.innerHTML = `<span style="color:var(--green)">${I18n.t('you_have_trx')}</span>`;
     } else {
-      status.innerHTML = `<span style="color:var(--amber)">🔒 ${_state.callsign || _state.username || '?'}</span>`;
+      status.innerHTML = `<span style="color:var(--amber)">🔒 ${_esc(_state.callsign || _state.username || '?')}</span>`;
     }
   }
 

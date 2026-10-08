@@ -1690,6 +1690,16 @@ class CivRig:
                 data = self._ser.read(512)
             except Exception as e:
                 self.log(f"[civ] reader read error: {e}")
+                # Same recovery path as _handle_dead_port() (repeated write
+                # failures) - without this the reader thread just died here
+                # forever, self.sim/self.connected never flipped, and
+                # _reconnect_loop (which only runs while self.sim is True)
+                # never started. _poller_loop kept running against the dead
+                # self._ser, silently failing every transact() in a loop,
+                # with no visible sign beyond one log line until a manual
+                # restart. One bad read (e.g. a momentary USB/power drop)
+                # must not be a permanent loss of radio control.
+                self._handle_dead_port()
                 break
             if not data:
                 continue
