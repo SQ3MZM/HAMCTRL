@@ -18,6 +18,26 @@ import threading
 import webbrowser
 import os
 
+# CRITICAL, must run before ANY print() anywhere in this process (server.py,
+# webapp.py, civ.py, ...): when stdout/stderr aren't a real Windows console -
+# redirected to a log file, piped, run under a service wrapper/NSSM, a
+# scheduled task with output capture, or even just `> log.txt` - Python falls
+# back to the OEM/ANSI codepage (e.g. cp1250) instead of UTF-8. Any print()
+# with a box-drawing character, emoji or accented letter then raises
+# UnicodeEncodeError, which is UNCAUGHT at the top level and kills the whole
+# server outright (found live 2026-10-08 while redirecting this EXE's output
+# to a file for a build smoke-test - the crash hit server.py's own startup
+# banner, a plain, unconditional print() every single startup reaches).
+# Interactive use from a real console (the normal way an operator runs this)
+# was never affected - only output redirection was. errors='replace' means a
+# future stray Unicode character degrades to a replacement glyph in the log
+# instead of crashing the process.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 
 def _pause_if_interactive():
     """input("Press Enter to close...") but only when there's actually a

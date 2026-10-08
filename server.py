@@ -495,6 +495,22 @@ async def amain():
     except:
         local_ip = "127.0.0.1"
 
+    # One-line startup self-test. Before this, the only way to know whether
+    # CI-V/audio actually came up was reading the full startup log on the
+    # server's own console - not something a remote operator can do without
+    # RDP/SSH. _initial_rig_connect() above is fire-and-forget (not awaited),
+    # so this waits a few seconds to give it (and a slow "radio was off,
+    # wakeup" retry) a real chance to finish before checking.
+    async def _startup_self_test():
+        await asyncio.sleep(4.0)
+        rig_ok   = bool(app.rig.connected and not app.rig.sim)
+        audio_ok = bool(app.rust_audio and getattr(app.rust_audio, "_connected", False))
+        status = "OK" if (rig_ok and audio_ok) else "WARNING"
+        print(f"[selftest] {status}: CI-V {'connected' if rig_ok else 'NOT connected'}, "
+              f"audio bridge {'connected' if audio_ok else 'NOT connected (PyAudio fallback)'}",
+              flush=True)
+    asyncio.create_task(_startup_self_test())
+
     print(f"""
 ╔══════════════════════════════════════════════╗
 ║   Ham Radio Control v2.5  [Python+aiohttp]  ║

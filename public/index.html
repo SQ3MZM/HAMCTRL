@@ -34,6 +34,7 @@
 
   <div class="status-row">
     <span id="sim-badge" style="display:none;background:rgba(212,168,87,0.2);color:var(--amber);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(212,168,87,0.4);">SIM</span>
+    <span id="rig-disconnected-badge" style="display:none;background:rgba(217,119,106,0.15);color:var(--red);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(217,119,106,0.4);"></span>
     <div class="indicator"><div class="dot" id="ptt-dot"></div><span id="ptt-label" style="font-family:var(--mono);font-size:11px;">RX</span></div>
     <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
     <span id="user-role" class="role-badge"></span>
@@ -2794,6 +2795,16 @@
 window.HamlibUI = {
   _data: [],
 
+  // s.label is an admin-typed value="..." attribute - hamlib_ui.js's own
+  // _esc() already covers this field, but THIS inline block is what
+  // actually runs (it redefines window.HamlibUI right after hamlib_ui.js
+  // loads, shadowing it entirely) - fix applied here too.
+  _esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
+
   async load() {
     try {
       const r = await fetch('/api/hamlib/status');
@@ -2837,7 +2848,7 @@ window.HamlibUI = {
             <div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-bottom:3px;">
               NAZWA / OPIS
             </div>
-            <input type="text" id="hamlib-label-${i}" value="${s.label || ''}"
+            <input type="text" id="hamlib-label-${i}" value="${this._esc(s.label || '')}"
               placeholder="np. WSJT-X, Log4OM, CW Skimmer"
               style="width:100%;font-family:var(--mono);font-size:11px;
               background:var(--panel3);border:1px solid var(--border);

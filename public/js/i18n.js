@@ -53,6 +53,9 @@ window.I18N_STRINGS = {
     rotator_target_placeholder: "272 lub KO02",
     no_connections: "Brak połączeń",
 
+    // Radio disconnected-duration badge (status row, next to SIM)
+    rig_disconnected_badge: "rozłączone",
+
     // RadioLock (TRX lock panel — buttons + dynamic status text)
     radio_free: "🔓 RADIO WOLNE",
     you_have_trx: "🎙 MASZ TRX",
@@ -1017,6 +1020,9 @@ window.I18N_STRINGS = {
     rcvd_title: "RST received",
     rotator_target_placeholder: "272 or KO02",
     no_connections: "No connections",
+
+    // Radio disconnected-duration badge (status row, next to SIM)
+    rig_disconnected_badge: "disconnected",
 
     // RadioLock (TRX lock panel — buttons + dynamic status text)
     radio_free: "🔓 RADIO FREE",

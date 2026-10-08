@@ -214,6 +214,13 @@ class CivRig:
         self.sim       = True
         self.last_err  = ""
         self.last_msg  = ""
+        # Epoch seconds since we last fell into sim/disconnected, or None
+        # while actually connected. The only previous signal of a CI-V
+        # drop was a server-console log line the remote operator never
+        # sees - this feeds a small "disconnected for Xs" badge in the UI
+        # (see _start_sim()/_open() where it's set/cleared+broadcast, and
+        # ws.js/ui.js's rig_disconnected handling).
+        self._disconnected_since = None
         self.rigctld_path  = "(tryb bezposredni CI-V)"
         self.rigctld_found = True   # rigctld isn't used, but the UI expects this
 
@@ -1352,6 +1359,9 @@ class CivRig:
             return self._start_sim()
 
         self.connected = True
+        if self._disconnected_since is not None:
+            self._disconnected_since = None
+            self.bcast({"type": "rig_disconnected", "since": None})
         self.last_err = ""
         self.last_msg = (f"{getattr(self,'_rig_name','Radio')} (CI-V bezposredni) {self.port} "
                          f"{self.speed}bd — {self.freq}Hz {self.mode}")
@@ -2368,6 +2378,9 @@ class CivRig:
     def _start_sim(self) -> bool:
         self.sim = True
         self.connected = False
+        if self._disconnected_since is None:
+            self._disconnected_since = time.time()
+            self.bcast({"type": "rig_disconnected", "since": self._disconnected_since})
         self.scope_running = True
         if not self.last_msg:
             self.last_msg = "Tryb bezposredni CI-V — SYMULACJA scope (brak sprzetu COM)"

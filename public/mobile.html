@@ -22,6 +22,10 @@
 
 <header class="m-topbar">
   <div class="m-conn"><span id="m-conn-dot" class="m-dot"></span><span id="m-conn-label" data-i18n="m_conn_connecting">łączenie...</span></div>
+  <!-- Radio (CI-V) disconnected-duration badge - distinct from m-conn above,
+       which only reflects the WS link to the SERVER, not the server's own
+       CI-V link to the radio (those can be up/down independently). -->
+  <span id="m-rig-disconnected-badge" style="display:none;background:rgba(217,119,106,0.15);color:#d9776a;font-size:10px;padding:2px 6px;border-radius:3px;font-family:monospace;border:1px solid rgba(217,119,106,0.4);"></span>
   <div class="m-user">
     <span id="callsign-display">--</span>
     <span id="user-role" class="m-role"></span>

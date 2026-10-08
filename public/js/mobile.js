@@ -218,6 +218,8 @@ function handleMessage(msg) {
       if (typeof msg.split === 'boolean') S.split = msg.split;
       if (msg.vfo) S.vfo = msg.vfo;
       if (typeof msg.ptt === 'boolean') S.ptt = msg.ptt;
+      S.rigDisconnectedSince = msg.rigDisconnectedSince ?? null;
+      updateRigDisconnectBadge();
       renderFreq(); updateModeActive(); updateBandActive(); updateVfoActive(); renderSplit(); renderPTT();
       window.RadioFunctions?.syncStates?.({ vfo: S.vfo, split: S.split });
       if (typeof msg.rigPowerOn === 'boolean') {
@@ -253,6 +255,10 @@ function handleMessage(msg) {
         const sel = document.getElementById('bw-select');
         if (sel) sel.value = String(msg.filterNum);
       }
+      break;
+    case 'rig_disconnected':
+      S.rigDisconnectedSince = msg.since ?? null;
+      updateRigDisconnectBadge();
       break;
     case 'smeter':
       S.sMeter = msg.value ?? 0; renderMeters();
@@ -332,6 +338,33 @@ function updateConnUI() {
   const label = document.getElementById('m-conn-label');
   dot.className = 'm-dot' + (S.connected ? ' ok' : '');
   label.textContent = S.connected ? I18n.t('m_conn_connected') : I18n.t('m_conn_connecting');
+}
+
+// "Radio disconnected for Xs" badge - mobile equivalent of ui.js's
+// updateDisconnectBadge. Distinct from S.connected/updateConnUI above,
+// which is only the WS link to the server - the server's own CI-V link to
+// the radio can drop while the WS stays up (exactly the case this is for:
+// a CI-V read error used to kill radio control silently, with no visible
+// sign on either desktop or mobile beyond a server-console log line).
+let _mRigDisconnTicker = null;
+function updateRigDisconnectBadge() {
+  const badge = document.getElementById('m-rig-disconnected-badge');
+  if (!badge) return;
+  if (!S.rigDisconnectedSince) {
+    badge.style.display = 'none';
+    if (_mRigDisconnTicker) { clearInterval(_mRigDisconnTicker); _mRigDisconnTicker = null; }
+    return;
+  }
+  const render = () => {
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000 - S.rigDisconnectedSince));
+    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
+    const pad = n => String(n).padStart(2, '0');
+    const dur = h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    badge.textContent = `⚠ ${I18n.t('rig_disconnected_badge')} ${dur}`;
+  };
+  render();
+  badge.style.display = 'inline';
+  if (!_mRigDisconnTicker) _mRigDisconnTicker = setInterval(render, 1000);
 }
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
@@ -730,9 +763,11 @@ function saveFreqEdit() {
 // ── QSO log ──────────────────────────────────────────────────────────────────
 function renderLogRow(q) {
   const time = (q.time_on || '').slice(0, 5);
+  // call/band/mode are operator-typed QSO fields (not just radio-derived) -
+  // same unescaped-innerHTML gap already fixed once in desktop's qsolog.js.
   return `<div class="m-log-item">
-    <span class="m-log-call">${q.call || ''}</span>
-    <span class="m-log-meta">${q.band || ''} ${q.mode || ''} ${time}</span>
+    <span class="m-log-call">${esc(q.call || '')}</span>
+    <span class="m-log-meta">${esc(q.band || '')} ${esc(q.mode || '')} ${time}</span>
   </div>`;
 }
 

@@ -557,6 +557,7 @@ function handleMessage(msg) {
         sim:       msg.sim       ?? false,
         tuner:     msg.tuner     ?? false,
         connected: msg.connected ?? false,
+        rigDisconnectedSince: msg.rigDisconnectedSince ?? null,
         models:    msg.models    || {},
         // CRITICAL: the backend (webapp.py) NEVER sends a "bands" key in
         // the init message — the band list arrives separately via
@@ -619,6 +620,14 @@ function handleMessage(msg) {
       S.sim       = msg.sim       ?? S.sim;
       window.UI?.updateTelemetry();
       window.AudioControls?.syncRxGainToMode?.();  // digi MUTE gate — see ws.js
+      break;
+
+    case 'rig_disconnected':
+      // civ.py _start_sim()/_open() - fires right away on a CI-V drop or
+      // reconnect, independent of telemetry (which stops entirely while
+      // disconnected - see ui.js's updateDisconnectBadge).
+      S.rigDisconnectedSince = msg.since ?? null;
+      window.UI?.updateDisconnectBadge?.();
       break;
 
     case 'level_value':

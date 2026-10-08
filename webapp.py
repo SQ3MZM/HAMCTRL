@@ -4624,6 +4624,7 @@ class App:
                 "rotators": [r.state() for r in self.rotators],
                 "sim": self.rig.sim,
                 "connected": self.rig.connected,
+                "rigDisconnectedSince": getattr(self.rig, "_disconnected_since", None),
                 "rigPowerOn": self._rig_power_on,
                 "models": HAMLIB_MODELS,
                 "rigs":   self.cfg.get("rigs", []),

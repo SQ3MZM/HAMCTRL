@@ -65,7 +65,7 @@ async function _loadAdminUsers() {
     // /api/users returns the array directly
     const users = Array.isArray(data) ? data : (data.users || []);
     sel.innerHTML = `<option value="">${I18n.t('log_filter_all_users')}</option>` +
-      users.map(u => `<option value="${u.id}">${u.callsign || u.username}</option>`).join('');
+      users.map(u => `<option value="${u.id}">${_esc(u.callsign || u.username)}</option>`).join('');
   } catch(e) { console.warn('[qsolog] loadAdminUsers:', e); }
 }
 

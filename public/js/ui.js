@@ -6,6 +6,12 @@
 
 const S = window.AppState;
 
+// Memory names are free-typed by the user (via textPrompt) - escape before
+// innerHTML, same convention as the rest of the project.
+function _esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── Formatting ────────────────────────────────────────────────────────────────
 function fmtFreq(hz) {
   if (hz >= 1e6) {
@@ -31,6 +37,35 @@ function updateConnectionStatus(on) {
   if (dot)   dot.className   = 'dot ' + (on ? 'green' : 'red');
   if (label) label.textContent = on ? 'ONLINE' : 'OFFLINE';
   if (sim)   sim.style.display = S.sim ? 'inline' : 'none';
+  updateDisconnectBadge();
+}
+
+// "Radio disconnected for Xs" badge — before this, the only sign of a CI-V
+// drop (dead port, momentary USB/power blip) was a line in the server's own
+// console, invisible to a remote operator. S.rigDisconnectedSince (epoch
+// seconds, or null while connected) arrives via 'init' and the dedicated
+// 'rig_disconnected' WS message (civ.py's _start_sim()/_open()). Runs its
+// own 1s ticker instead of piggybacking on telemetry broadcasts, which stop
+// entirely while disconnected (that's the whole problem this fixes).
+let _disconnTicker = null;
+function updateDisconnectBadge() {
+  const badge = document.getElementById('rig-disconnected-badge');
+  if (!badge) return;
+  if (!S.rigDisconnectedSince) {
+    badge.style.display = 'none';
+    if (_disconnTicker) { clearInterval(_disconnTicker); _disconnTicker = null; }
+    return;
+  }
+  const render = () => {
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000 - S.rigDisconnectedSince));
+    const h = Math.floor(elapsed / 3600), m = Math.floor((elapsed % 3600) / 60), s = elapsed % 60;
+    const pad = n => String(n).padStart(2, '0');
+    const dur = h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+    badge.textContent = `⚠ ${I18n.t('rig_disconnected_badge')} ${dur}`;
+  };
+  render();
+  badge.style.display = 'inline';
+  if (!_disconnTicker) _disconnTicker = setInterval(render, 1000);
 }
 
 // ── Frequency ─────────────────────────────────────────────────────────────────
@@ -609,7 +644,7 @@ function renderMemories() {
     <li class="memory-item" onclick="UI.gotoFreq(${m.freq},'${m.mode}')">
       <span class="memory-freq">${fmtFreq(m.freq)}</span>
       <span class="memory-mode">${m.mode}</span>
-      <span class="memory-name">${m.name || ''}</span>
+      <span class="memory-name">${_esc(m.name || '')}</span>
       <button class="memory-del" onclick="event.stopPropagation();UI.deleteMemory(${i})">×</button>
     </li>`).join('');
 }
@@ -774,7 +809,7 @@ function fullRefresh() {
   const rigSel = document.getElementById('active-rig-select');
   if (rigSel) {
     if (S.rigs.length > 1) {
-      rigSel.innerHTML = S.rigs.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+      rigSel.innerHTML = S.rigs.map(r => `<option value="${r.id}">${_esc(r.name)}</option>`).join('');
       rigSel.style.display = '';
     } else {
       // Only 1 radio — hide the selector, no point choosing
@@ -1104,7 +1139,7 @@ document.addEventListener('wheel', (e) => {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 window.UI = {
-  updateConnectionStatus, updateFreqDisplay, updateModeButtons, updatePTT,
+  updateConnectionStatus, updateDisconnectBadge, updateFreqDisplay, updateModeButtons, updatePTT,
   updateSMeter, updateTelemetry, fullRefresh, updateFreqB, updateVFOBadges,
   setPage, showToast, tune, sendFreq, gotoFreq, vfoSelect,
   editVfoB, wheelVfoB, applyRadioLockUI,

@@ -9,6 +9,15 @@ let _brands = {};   // Hamlib model cache
 let _rigs   = [];   // radio config cache
 const BAUDS = ['1200','2400','4800','9600','19200','38400','57600','115200'];
 
+// rig.name is a free-typed attribute value (value="...") - escape quotes too,
+// not just text content. This name is later shown to every operator (not
+// just admins) in ui.js's rig selector - same injection class as that fix.
+function _esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function buildModelOptions(sel, brands, current) {
   sel.innerHTML = '';
   Object.entries(brands).forEach(([brand, models]) => {
@@ -89,7 +98,7 @@ function buildRigPanel(id, rig, isAdmin) {
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
       <div class="sg"><label>${I18n.t('cfg_name_lbl')}</label>
-        <input type="text" id="cfg-name-${id}" value="${rig.name||''}" placeholder="np. IC-7300">
+        <input type="text" id="cfg-name-${id}" value="${_esc(rig.name||'')}" placeholder="np. IC-7300">
       </div>
       <div class="sg" style="grid-column:1/-1"><label>${I18n.t('cfg_model_hamlib_lbl')}</label>
         <select id="cfg-model-${id}">${modelOptsFn(rig.model||'3073')}</select>

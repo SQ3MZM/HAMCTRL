@@ -9,6 +9,13 @@
 
 let rotators = [];
 
+// rot.name is admin-typed free text (KONFIGURACJA, already escaped on the
+// edit side in admin.js) but was shown here, to every operator, unescaped -
+// same injection class as ui.js's rig-name fix.
+function _esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── Maidenhead locator → coordinates ─────────────────────────────────────────
 function locatorToLatLon(loc) {
   loc = loc.toUpperCase().trim();
@@ -122,7 +129,7 @@ function buildCard(rot) {
   return `
   <div class="rot-card box" id="rot-card-${rot.id}">
     <div class="box-header">
-      <span>${rot.name || 'Rotator'}</span>
+      <span>${_esc(rot.name || 'Rotator')}</span>
       <div style="display:flex;gap:6px;align-items:center;">
         <span style="font-family:var(--mono);font-size:10px;color:${ok?(sim?'var(--amber)':'var(--green)'):'var(--red)'}">
           ${ok ? (sim ? '⚠ SIM' : '✓ OK') : '✗ OFFLINE'}
