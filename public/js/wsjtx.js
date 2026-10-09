@@ -929,7 +929,12 @@ function _updateStatus(d) {
     else if (_status.decoding)  { pill.textContent=I18n.t('wj_decoding_status');  pill.className='wsjtx-status-pill decoding'; }
     else                        { pill.textContent='● ONLINE';     pill.className='wsjtx-status-pill online'; }
   }
-  document.getElementById('wj-tx-indicator').style.display = _status.transmit ? '' : 'none';
+  // mobile.html has no #wj-tx-indicator (desktop-only element) - this used
+  // to throw unconditionally there, aborting init()'s try block before it
+  // could reach the status-pill/decode-counter code right below (both
+  // silently never ran on mobile as a result).
+  const txIndicator = document.getElementById('wj-tx-indicator');
+  if (txIndicator) txIndicator.style.display = _status.transmit ? '' : 'none';
 
   if (d.freq) {
     // NOTE: wj-freq has TWO independent update sources — this (from an

@@ -44,6 +44,19 @@ let toastTimer = null;
 
 function myUid() { return window.CurrentUser?.id ?? null; }
 function iHaveLock() { return S.lock.locked && S.lock.user_id === myUid(); }
+
+// Mirrors S.lock onto window.AppState.radio_lock too - shared modules
+// reused verbatim on mobile (wsjtx.js's tuneToBand(), used by the FT8/FT4
+// band-frequency selector) read the lock from window.AppState.radio_lock
+// (desktop's ws.js convention), not from this file's own private S.lock.
+// Missing this meant tuneToBand() always saw an undefined lock and
+// silently refused ("radio busy" toast, zero WS traffic) for every
+// non-admin mobile user - looked exactly like the band selector did
+// nothing (admins bypass that check entirely, so this never showed up
+// testing as admin).
+function _syncLockToAppState() {
+  window.AppState.radio_lock = { ...S.lock };
+}
 function isAdmin() { return window.CurrentUser?.role === 'admin'; }
 function canControl() { return iHaveLock() || isAdmin(); }
 
@@ -278,6 +291,7 @@ function handleMessage(msg) {
       break;
     case 'radio_lock_state':
       S.lock = { locked: !!msg.locked, user_id: msg.user_id, username: msg.username, callsign: msg.callsign };
+      _syncLockToAppState();
       renderLock(); renderLockedControls();
       window.OpPanel?.handleWS?.(msg);
       break;
@@ -871,6 +885,7 @@ window.addEventListener('app:ready', () => {
   initFreqEditGestures();
   fetch('/api/radio/state').then(r => r.json()).then(d => {
     S.lock = { locked: !!d.locked, user_id: d.user_id, username: d.username, callsign: d.callsign };
+    _syncLockToAppState();
     renderLock(); renderLockedControls();
   }).catch(() => {});
   // CW.loadMacros() runs on its own (cw.js has its own 'app:ready' listener).
