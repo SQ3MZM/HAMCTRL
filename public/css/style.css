@@ -14,8 +14,8 @@
   --panel:   #20231e;
   --panel2:  #262a23;
   --panel3:  #2e332b;
-  --border:  rgba(184,201,143,0.14);
-  --border2: rgba(184,201,143,0.30);
+  --border:  rgba(var(--green-rgb),0.14);
+  --border2: rgba(var(--green-rgb),0.30);
   --green:   #b8c98f;
   --green2:  #7a8f5a;
   --amber:   #d4a857;
@@ -26,66 +26,30 @@
      aktywne, kciuki sliderow, znaczniki — zapewnia kontrast na jasnym
      tle akcentu (--green/--amber). */
   --on-accent: #14160f;
+  /* Rozpakowane R,G,B (bez "rgba()") dla --green/--green2/--amber/--red -
+     pozwala inline-stylom i regulkom nizej budowac rgba(var(--green-rgb),
+     ALPHA) zamiast wpisywac na sztywno "184,201,143" itp. Dodane
+     2026-10-15: masowe podmienianie literalow na te zmienne to byl
+     wlasciwy fix na "kolory... malo widoczne" w jasnym motywie — bez
+     tego dziesiatki tel/obwodek odznak w ogole nie reagowaly na motyw. */
+  --green-rgb:  184,201,143;
+  --green2-rgb: 122,143,90;
+  --amber-rgb:  212,168,87;
+  --red-rgb:    217,119,106;
+  /* Rowek miernikow (S-metr/TX-metr) — celowo ciemniejszy niz --panel w
+     OBU motywach (wyglada jak wnetrze fizycznego wskaznika), nie po
+     prostu var(--panel3). */
+  --meter-track: #060806;
+  /* --fg: uzywany w kilku inline-stylach (COM Bridge, PROFIL audio TEST,
+     itp.) - domyslnie = --text, chyba ze konkretny motyw (np.
+     amber-classic nizej) jawnie go nadpisuje. Bez tej linii --fg byl
+     NIGDZIE niezdefiniowany poza amber-classic, wiec w kazdym innym
+     motywie/trybie po prostu dziedziczyl --text przez CSS fallback -
+     dzialalo przypadkiem, ale jawna definicja jest jasniejsza i bezpieczniejsza. */
+  --fg: var(--text);
   --mono:    'Share Tech Mono', monospace;
   --display: 'Orbitron', sans-serif;
   --ui:      'Inter', sans-serif;
-}
-
-/* ── Jasny motyw (dzien/noc, approved 2026-10-15) ─────────────────────────
-   Live report: "na tym co jest slabo widac" (niektore teksty/panele slabo
-   widoczne) - niekt orzy userzy wola jasne tlo. Zachowujemy TA SAMA
-   tozsamosc kolorystyczna ("natural sage": szalwiowa zielen / bursztyn /
-   czerwien) - zmieniaja sie TYLKO neutralne kolory tla/tekstu (--bg,
-   --panel, --text, --dim, --border), PRZELACZANE przez toggle w theme.js
-   (localStorage 'ham_theme', jak PL/EN w i18n.js) - domyslnie ciemny
-   (obecny wyglad, bez zmian dla kogos kto nic nie kliknie).
-   Akcenty (--green/--green2/--amber/--red) dostaja NIECO ciemniejsze/
-   bardziej nasycone odcienie tej samej barwy niz w ciemnym motywie -
-   te same, pastelowe wartosci z ciemnego motywu mialyby ZA MALY kontrast
-   na jasnym tle (dokladnie ten sam problem widocznosci co user zglasza,
-   tylko w nowym miejscu).
-   UWAGA (znane ograniczenie): sporo odznak/plakietek w index.html ma
-   WPISANY NA SZTYWNO kolor tla (np. "background:rgba(212,168,87,0.2)"
-   zamiast var(--amber)) - te tla NIE zmienia sie w jasnym motywie (zostaja
-   w odcieniu dobranym pod ciemne tlo), tylko sam tekst (ktory juz uzywa
-   var(--amber) itp.) sie przelacza - drobna kosmetyczna niespojnosc,
-   zaakceptowana zamiast przepisywania dziesiatek inline-stylow. Wodospad/
-   scope/kompas rotora (canvas, nie CSS) CELOWO zostaja ciemne w obu
-   motywach - to wykresy RF, nie tekst, i tak jest w kazdym programie SDR. */
-:root[data-theme="light"] {
-  --bg:      #eeeae0;
-  --panel:   #faf8f2;
-  --panel2:  #f1ede2;
-  --panel3:  #e6e1d2;
-  --border:  rgba(74,88,54,0.16);
-  --border2: rgba(74,88,54,0.32);
-  --green:   #4f6b34;
-  --green2:  #3a4f26;
-  --amber:   #8a5f10;
-  --red:     #a03b2e;
-  --dim:     rgba(38,40,28,0.55);
-  --text:    #22241c;
-  --on-accent: #fdfcf6;
-}
-@media (prefers-color-scheme: light) {
-  /* Tylko gdy user NIGDY nie kliknal przelacznika (brak zapisu w
-     localStorage) - JS (theme.js) i tak ustawia data-theme explicite na
-     starcie, wiec to tylko fallback zanim JS zdazy sie wykonac. */
-  :root:not([data-theme]) {
-    --bg:      #eeeae0;
-    --panel:   #faf8f2;
-    --panel2:  #f1ede2;
-    --panel3:  #e6e1d2;
-    --border:  rgba(74,88,54,0.16);
-    --border2: rgba(74,88,54,0.32);
-    --green:   #4f6b34;
-    --green2:  #3a4f26;
-    --amber:   #8a5f10;
-    --red:     #a03b2e;
-    --dim:     rgba(38,40,28,0.55);
-    --text:    #22241c;
-    --on-accent: #fdfcf6;
-  }
 }
 
 html {
@@ -103,7 +67,7 @@ html {
   background: #0d0f0e;
   scrollbar-gutter: stable;
 }
-html[data-theme="light"] { background: #d8d3c2; }
+html[data-mode="light"] { background: #d8d3c2; }
 
 body {
   background: var(--bg);
@@ -182,7 +146,7 @@ body::after {
 /* white-space:nowrap + flex-shrink:0 — bez tego logo lamalo sie na 3 linie
    i bylo ucinane zamiast zostac w calosci na jednej linii. */
 .logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); white-space: nowrap; flex-shrink: 0; }
-.logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(184,201,143,0.4); }
+.logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(var(--green-rgb),0.4); }
 /* flex:1 1 auto + min-width:0 — nav-tabs takes whatever width is left
    between the logo and the status row/logout, and flex-wrap lets its OWN
    buttons drop to a second (or third) line when that's not enough, instead
@@ -194,7 +158,7 @@ body::after {
   letter-spacing: 1px; transition: all 0.2s; flex-shrink: 0;
 }
 .tab-btn:hover  { color: var(--text); background: var(--panel2); }
-.tab-btn.active { color: var(--green); background: rgba(184,201,143,0.08); border: 1px solid var(--border2); }
+.tab-btn.active { color: var(--green); background: rgba(var(--green-rgb),0.08); border: 1px solid var(--border2); }
 /* flex-shrink:0 + flex-wrap - the status row's badges/indicators/toggles
    don't shrink gracefully (icons, fixed-width badges), so it keeps its
    natural size and wraps onto its own second line rather than letting the
@@ -203,9 +167,9 @@ body::after {
 .status-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; flex-shrink: 0; }
 .indicator  { display: flex; align-items: center; gap: 5px; }
 .dot        { width:8px; height:8px; border-radius:50%; background:var(--dim); }
-.dot.green  { background:var(--green); box-shadow:0 0 8px rgba(184,201,143,0.7); animation:blink 2s ease-in-out infinite; }
-.dot.red    { background:var(--red);   box-shadow:0 0 8px rgba(217,119,106,0.7); }
-.dot.amber  { background:var(--amber); box-shadow:0 0 8px rgba(212,168,87,0.7); animation:blink 0.5s ease-in-out infinite; }
+.dot.green  { background:var(--green); box-shadow:0 0 8px rgba(var(--green-rgb),0.7); animation:blink 2s ease-in-out infinite; }
+.dot.red    { background:var(--red);   box-shadow:0 0 8px rgba(var(--red-rgb),0.7); }
+.dot.amber  { background:var(--amber); box-shadow:0 0 8px rgba(var(--amber-rgb),0.7); animation:blink 0.5s ease-in-out infinite; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
 .logout-btn {
   background: none; border: 1px solid var(--border); border-radius: 4px;
@@ -245,7 +209,7 @@ input[type="range"].rf-range {
 }
 input[type="range"].rf-range::-webkit-slider-thumb {
   -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%;
-  background: var(--green); cursor: pointer; box-shadow: 0 0 4px rgba(184,201,143,0.4);
+  background: var(--green); cursor: pointer; box-shadow: 0 0 4px rgba(var(--green-rgb),0.4);
 }
 
 /* ── Kompaktowe kafelki sliderow (dynamiczne, RadioFunctions) ── */
@@ -287,13 +251,13 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .audio-toggle-btn {
   width: 100%; margin-top: 4px; padding: 7px;
-  background: rgba(184,201,143,0.06); border: 1px solid var(--border); border-radius: 3px;
+  background: rgba(var(--green-rgb),0.06); border: 1px solid var(--border); border-radius: 3px;
   color: var(--dim); font-family: var(--mono); font-size: 11px; cursor: pointer; letter-spacing: 1px;
   transition: all 0.15s;
 }
 .audio-toggle-btn:hover { color: var(--green); border-color: var(--green2); }
 
-#wj-mute-btn.active { color: var(--red); border-color: var(--red) !important; background: rgba(217,119,106,0.1); }
+#wj-mute-btn.active { color: var(--red); border-color: var(--red) !important; background: rgba(var(--red-rgb),0.1); }
 
 /* ── Czarne obwodki na przyciskach/sliderach ──
    Paleta sage jest spokojna/naturalna — czarna obwodka 1px na elementach
@@ -392,8 +356,8 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .mode-btn:hover  { border-color: var(--border2); color: var(--text); }
 .band-btn:hover  { border-color: var(--border2); color: var(--text); }
-.mode-btn.active { background: rgba(184,201,143,0.12); border-color: var(--green); color: var(--green); }
-.band-btn.active { background: rgba(212,168,87,0.10); border-color: var(--amber); color: var(--amber); }
+.mode-btn.active { background: rgba(var(--green-rgb),0.12); border-color: var(--green); color: var(--green); }
+.band-btn.active { background: rgba(var(--amber-rgb),0.10); border-color: var(--amber); color: var(--amber); }
 
 /* Szybki Log QSO */
 .qso-form {
@@ -408,11 +372,11 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .form-row input { flex: 1; }
 .log-btn {
   width: 100%; margin-top: auto;
-  background: rgba(184,201,143,0.12); border: 1px solid var(--green2); border-radius: 4px;
+  background: rgba(var(--green-rgb),0.12); border: 1px solid var(--green2); border-radius: 4px;
   color: var(--green); font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
   padding: 8px; cursor: pointer; transition: all 0.15s;
 }
-.log-btn:hover { background: rgba(184,201,143,0.2); }
+.log-btn:hover { background: rgba(var(--green-rgb),0.2); }
 
 /* ── VFO ── */
 .vfo-display {
@@ -430,10 +394,10 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .freq-big {
   font-family: var(--display); font-size: 44px; font-weight: 900;
   color: var(--green); letter-spacing: -1px; line-height: 1;
-  text-shadow: 0 0 20px rgba(184,201,143,0.5), 0 0 40px rgba(184,201,143,0.2);
+  text-shadow: 0 0 20px rgba(var(--green-rgb),0.5), 0 0 40px rgba(var(--green-rgb),0.2);
   cursor: pointer; user-select: none;
 }
-.freq-big:hover { text-shadow: 0 0 30px rgba(184,201,143,0.8), 0 0 60px rgba(184,201,143,0.3); }
+.freq-big:hover { text-shadow: 0 0 30px rgba(var(--green-rgb),0.8), 0 0 60px rgba(var(--green-rgb),0.3); }
 .freq-unit { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 3px; }
 
 /* Kroki strojenia */
@@ -445,14 +409,14 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .step-btn:hover  { background: var(--panel3); border-color: var(--green); color: var(--green); }
 .step-btn:active { transform: scale(0.95); }
-.step-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.1); }
+.step-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.1); }
 
 .go-btn {
-  background: rgba(184,201,143,0.1); border: 1px solid var(--green2); border-radius: 4px;
+  background: rgba(var(--green-rgb),0.1); border: 1px solid var(--green2); border-radius: 4px;
   color: var(--green); font-family: var(--mono); font-size: 14px; padding: 6px 13px;
   cursor: pointer; flex-shrink: 0; transition: all 0.15s;
 }
-.go-btn:hover { background: rgba(184,201,143,0.2); }
+.go-btn:hover { background: rgba(var(--green-rgb),0.2); }
 
 /* ── S-METER ── */
 .smeter-wrap { padding: 8px 14px 9px; }
@@ -461,18 +425,18 @@ input[type="range"].rf-range::-webkit-slider-thumb {
   font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 4px; padding: 0 2px;
 }
 .smeter-bar-wrap {
-  position: relative; height: 25px; background: #060806;
+  position: relative; height: 25px; background: var(--meter-track);
   border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
 }
 .smeter-fill {
   height: 100%; width: 100%; border-radius: 2px;
-  background: linear-gradient(90deg,#7a8f5a 0%,#7a8f5a 55%,#d4a857 55%,#d4a857 75%,#d9776a 75%,#d9776a 100%);
+  background: linear-gradient(90deg,var(--green2) 0%,var(--green2) 55%,var(--amber) 55%,var(--amber) 75%,var(--red) 75%,var(--red) 100%);
   clip-path: inset(0 100% 0 0); transition: clip-path 0.1s ease;
 }
 .smeter-value {
   font-family: var(--display); font-size: 13px; font-weight: 700;
   color: var(--green); margin-top: 3px;
-  text-shadow: 0 0 8px rgba(184,201,143,0.3);
+  text-shadow: 0 0 8px rgba(var(--green-rgb),0.3);
 }
 
 /* ── TX Meter (ALC/PWR/SWR/VOLT) — bargraf kompaktowy pod S-metrem ──
@@ -495,7 +459,7 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .txmeter-bar-col { flex: 0 0 50%; display: flex; flex-direction: column; gap: 1px; }
 .txmeter-bar-wrap {
-  position: relative; height: 12px; background: #060806;
+  position: relative; height: 12px; background: var(--meter-track);
   border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
 }
 .txmeter-fill {
@@ -506,13 +470,13 @@ input[type="range"].rf-range::-webkit-slider-thumb {
      ciaglym ruchu miedzy odczytami zamiast skoku + zamrożenia (co dawalo
      wrazenie "szarpanego" bargrafu przy krotszym 0.12s). */
   transition: width 0.28s linear;
-  background: linear-gradient(90deg, #7a8f5a 0%, #d4a857 60%, #d9776a 85%);
+  background: linear-gradient(90deg, var(--green2) 0%, var(--amber) 60%, var(--red) 85%);
 }
 /* Kolor bargrafów wg metra */
-.txmeter-fill.alc  { background: linear-gradient(90deg, #4a7a9a 0%, #d4a857 70%, #d9776a 90%); }
-.txmeter-fill.pwr  { background: linear-gradient(90deg, #7a8f5a 0%, #b8c98f 55%, #d4a857 75%, #d9776a 90%); }
-.txmeter-fill.swr  { background: linear-gradient(90deg, #7a8f5a 0%, #7a8f5a 40%, #d4a857 60%, #d9776a 80%); }
-.txmeter-fill.volt { background: linear-gradient(90deg, #d9776a 0%, #d4a857 40%, #7a8f5a 70%); }
+.txmeter-fill.alc  { background: linear-gradient(90deg, #4a7a9a 0%, var(--amber) 70%, var(--red) 90%); }
+.txmeter-fill.pwr  { background: linear-gradient(90deg, var(--green2) 0%, var(--green) 55%, var(--amber) 75%, var(--red) 90%); }
+.txmeter-fill.swr  { background: linear-gradient(90deg, var(--green2) 0%, var(--green2) 40%, var(--amber) 60%, var(--red) 80%); }
+.txmeter-fill.volt { background: linear-gradient(90deg, var(--red) 0%, var(--amber) 40%, var(--green2) 70%); }
 /* Podzialka pod paskiem — pozycjonowanie absolutne (left:%), bo punkty SWR
    (1.0/1.5/2.0/3.0) NIE sa rownomiernie rozstawione w skali procentowej
    (patrz civ.py: pct = min(1.0, swr_raw/120), nieliniowe wzgledem wartosci). */
@@ -538,18 +502,18 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 .ptt-btn:hover  { border-color: var(--green); color: var(--green); }
 .ptt-btn.active {
-  background: rgba(217,119,106,0.2); border-color: var(--red); color: var(--red);
-  box-shadow: 0 0 20px rgba(217,119,106,0.3); animation: ptt-pulse 0.8s ease-in-out infinite;
+  background: rgba(var(--red-rgb),0.2); border-color: var(--red); color: var(--red);
+  box-shadow: 0 0 20px rgba(var(--red-rgb),0.3); animation: ptt-pulse 0.8s ease-in-out infinite;
 }
 .ptt-btn.crossband-blocked,
 .ptt-btn:disabled {
-  background: rgba(217,119,106,0.05); border-color: rgba(217,119,106,0.35);
-  color: rgba(217,119,106,0.55); cursor: not-allowed;
+  background: rgba(var(--red-rgb),0.05); border-color: rgba(var(--red-rgb),0.35);
+  color: rgba(var(--red-rgb),0.55); cursor: not-allowed;
   box-shadow: none; animation: none;
 }
 .ptt-btn.crossband-blocked:hover,
 .ptt-btn:disabled:hover {
-  border-color: rgba(217,119,106,0.35); color: rgba(217,119,106,0.55);
+  border-color: rgba(var(--red-rgb),0.35); color: rgba(var(--red-rgb),0.55);
 }
 
 /* Radio readonly mode — user nie ma TRX lock, moze tylko ogladac.
@@ -599,12 +563,12 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 /* Wyraznie oznaczmy panel OPERATORZY zeby user wiedzial gdzie kliknac PRZEJMIJ */
 .radio-readonly #op-list {
   border: 1px solid var(--amber);
-  background: rgba(212,168,87,0.05);
+  background: rgba(var(--amber-rgb),0.05);
   animation: readonly-highlight 2.5s ease-in-out infinite;
 }
 @keyframes readonly-highlight {
-  0%,100% { box-shadow: 0 0 0 rgba(212,168,87,0); }
-  50%     { box-shadow: 0 0 12px rgba(212,168,87,0.35); }
+  0%,100% { box-shadow: 0 0 0 rgba(var(--amber-rgb),0); }
+  50%     { box-shadow: 0 0 12px rgba(var(--amber-rgb),0.35); }
 }
 /* Odblokuj przyciski PRZEJMIJ/POPROŚ/ODDAJ zeby user mogl przejac radio */
 .radio-readonly #op-btn-take,
@@ -659,7 +623,94 @@ html[data-theme="amber-classic"] {
   --fg:     #ffb84d;
   --text:   #ffdba0;
 }
-@keyframes ptt-pulse { 0%,100%{box-shadow:0 0 20px rgba(217,119,106,0.3)} 50%{box-shadow:0 0 35px rgba(217,119,106,0.6)} }
+
+/* ── Jasny motyw (dzien/noc, approved 2026-10-15) ─────────────────────────
+   Live report: "na tym co jest slabo widac" (niektore teksty/panele slabo
+   widoczne) - niektorzy userzy wola jasne tlo. Zachowujemy TA SAMA
+   tozsamosc kolorystyczna ("natural sage": szalwiowa zielen / bursztyn /
+   czerwien) dla motywu DOMYSLNEGO - zmieniaja sie neutralne kolory tla/
+   tekstu (--bg, --panel*, --text, --dim, --border*) ORAZ akcenty (--green/
+   --green2/--amber/--red, przeliczone na ciemniejsze/bardziej nasycone
+   odcienie tej samej barwy - te same pastelowe wartosci z ciemnego motywu
+   mialyby ZA MALY kontrast na jasnym tle, czyli dokladnie ten sam problem
+   widocznosci co user zglasza, tylko w nowym miejscu).
+   PRZELACZANE przez toggle w theme.js, atrybut data-mode (NIE data-theme!)
+   - localStorage 'ham_theme', jak PL/EN w i18n.js - domyslnie ciemny
+   (obecny wyglad, bez zmian dla kogos kto nic nie kliknie).
+   FIX KRYTYCZNY (2026-10-15, live report "przestaly dzialac kolory
+   bursztyn/crt"): ten blok pierwotnie uzywal TEGO SAMEGO atrybutu
+   data-theme co blok "Motywy kolorow" nad tym komentarzem (blue/mono/
+   amber-classic, wybierane w PROFIL -> UI.setTheme, zapisywane w
+   localStorage per-user jako "theme_<uid>") - obie funkcje (jasny/ciemny
+   motyw i wybor wariantu koloru) walczyly o jeden atrybut na <html> i sie
+   nawzajem nadpisywaly (theme.js'owy MutationObserver non-stop resetowal
+   wybrany przez usera wariant z powrotem na light/dark). Rozdzielone na
+   dwa niezalezne atrybuty: data-theme = wariant koloru (ui.js), data-mode
+   = jasny/ciemny (theme.js) - teraz moga dzialac jednoczesnie.
+   Ten blok jest CELOWO PO blokach wariantow kolorow wyzej (ta sama
+   specificznosc selektora :root[attr], remis idzie do kolejnosci w
+   pliku) - w trybie jasnym kazdy wariant koloru (blue/mono/amber-classic)
+   wraca do czytelnej domyslnej palety zamiast zostawiac blade kolory
+   dobrane pod ciemne tlo nieczytelne na jasnym - to jedyny rozsadny
+   kompromis bez recznego dostrajania osobnej jasnej wersji kazdego z 3
+   wariantow.
+   UWAGA (znane ograniczenie): sporo odznak/plakietek w index.html ma
+   WPISANY NA SZTYWNO kolor tla (np. "background:rgba(var(--amber-rgb),0.2)"
+   zamiast var(--amber)) - te tla NIE zmienia sie w jasnym motywie (zostaja
+   w odcieniu dobranym pod ciemne tlo), tylko sam tekst (ktory juz uzywa
+   var(--amber) itp.) sie przelacza - drobna kosmetyczna niespojnosc,
+   zaakceptowana zamiast przepisywania dziesiatek inline-stylow. Wodospad/
+   scope/kompas rotora (canvas, nie CSS) CELOWO zostaja ciemne w obu
+   motywach - to wykresy RF, nie tekst, i tak jest w kazdym programie SDR. */
+:root[data-mode="light"] {
+  --bg:      #eeeae0;
+  --panel:   #faf8f2;
+  --panel2:  #f1ede2;
+  --panel3:  #e6e1d2;
+  --border:  rgba(74,88,54,0.16);
+  --border2: rgba(74,88,54,0.32);
+  --green:   #4f6b34;
+  --green2:  #3a4f26;
+  --amber:   #8a5f10;
+  --red:     #a03b2e;
+  --dim:     rgba(38,40,28,0.55);
+  --text:    #22241c;
+  --on-accent: #fdfcf6;
+  --fg:      var(--text);
+  --green-rgb:  79,107,52;
+  --green2-rgb: 58,79,38;
+  --amber-rgb:  138,95,16;
+  --red-rgb:    160,59,46;
+  --meter-track: #3a362c;
+}
+@media (prefers-color-scheme: light) {
+  /* Tylko gdy user NIGDY nie kliknal przelacznika (brak zapisu w
+     localStorage) - JS (theme.js) i tak ustawia data-mode explicite na
+     starcie, wiec to tylko fallback zanim JS zdazy sie wykonac. */
+  :root:not([data-mode]) {
+    --bg:      #eeeae0;
+    --panel:   #faf8f2;
+    --panel2:  #f1ede2;
+    --panel3:  #e6e1d2;
+    --border:  rgba(74,88,54,0.16);
+    --border2: rgba(74,88,54,0.32);
+    --green:   #4f6b34;
+    --green2:  #3a4f26;
+    --amber:   #8a5f10;
+    --red:     #a03b2e;
+    --dim:     rgba(38,40,28,0.55);
+    --text:    #22241c;
+    --on-accent: #fdfcf6;
+    --fg:      var(--text);
+    --green-rgb:  79,107,52;
+    --green2-rgb: 58,79,38;
+    --amber-rgb:  138,95,16;
+    --red-rgb:    160,59,46;
+    --meter-track: #3a362c;
+  }
+}
+
+@keyframes ptt-pulse { 0%,100%{box-shadow:0 0 20px rgba(var(--red-rgb),0.3)} 50%{box-shadow:0 0 35px rgba(var(--red-rgb),0.6)} }
 
 /* ── PANEL FUNKCJI RADIA (VFO A/B, func toggle) ── */
 .tile-rigfeatures { padding: 0; }
@@ -694,7 +745,7 @@ html[data-theme="amber-classic"] {
 .rf-btn-power { color: var(--green); }
 .rf-btn-power:hover { border-color: var(--red); color: var(--red); }
 .rf-btn-power.active {
-  background: rgba(217,119,106,0.15); border-color: var(--red); color: var(--red);
+  background: rgba(var(--red-rgb),0.15); border-color: var(--red); color: var(--red);
 }
 /* Zachowane dla kompatybilnosci wstecznej */
 .btn-vfo-select, .btn-func-toggle, .btn-power-toggle { padding: 6px 15px; border-radius: 4px; border: 1px solid var(--border2); background: var(--panel2); color: var(--dim); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.1s; }
@@ -702,7 +753,7 @@ html[data-theme="amber-classic"] {
 .btn-vfo-select.active, .btn-func-toggle.active { background: rgba(110,231,150,0.15); border-color: var(--green); color: var(--green); }
 .btn-power-toggle { color: var(--green); }
 .btn-power-toggle:hover { border-color: var(--red); }
-.btn-power-toggle.active { background: rgba(217,119,106,0.15); border-color: var(--red); color: var(--red); }
+.btn-power-toggle.active { background: rgba(var(--red-rgb),0.15); border-color: var(--red); color: var(--red); }
 
 /* ── WATERFALL ── */
 .wf-header {
@@ -725,12 +776,12 @@ html[data-theme="amber-classic"] {
 }
 .rot-btns { display: flex; gap: 4px; }
 .rot-go-btn {
-  flex: 1; background: rgba(184,201,143,0.1); border: 1px solid var(--green2);
+  flex: 1; background: rgba(var(--green-rgb),0.1); border: 1px solid var(--green2);
   border-radius: 3px; color: var(--green); font-family: var(--mono); font-size: 12px;
   padding: 9px; cursor: pointer; letter-spacing: 1px; transition: all 0.15s;
 }
 .rot-stop-btn {
-  flex: 1; background: rgba(217,119,106,0.08); border: 1px solid rgba(217,119,106,0.3);
+  flex: 1; background: rgba(var(--red-rgb),0.08); border: 1px solid rgba(var(--red-rgb),0.3);
   border-radius: 3px; color: var(--red); font-family: var(--mono); font-size: 10px;
   padding: 7px; cursor: pointer; letter-spacing: 1px; transition: all 0.15s;
 }
@@ -748,7 +799,7 @@ html[data-theme="amber-classic"] {
   min-height: 38px; max-height: 52px; overflow: hidden;
   display: flex; flex-direction: column; gap: 2px; position: relative;
 }
-.cw-macro-card:hover { border-color: var(--green2); background: rgba(184,201,143,0.06); }
+.cw-macro-card:hover { border-color: var(--green2); background: rgba(var(--green-rgb),0.06); }
 .cw-macro-card.empty { border-style: dashed; opacity: 0.5; }
 .cw-macro-card.empty:hover { opacity: 0.8; }
 .cw-macro-header {
@@ -868,7 +919,7 @@ input[type="text"], input[type="number"], input[type="password"], input[type="em
   color: var(--green); font-family: var(--mono); font-size: 12px; padding: 7px 10px;
   outline: none; width: 100%; transition: border-color 0.2s;
 }
-input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 4px rgba(184,201,143,0.15); }
+input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 4px rgba(var(--green-rgb),0.15); }
 input::placeholder { color: var(--dim); }
 
 /* ── TOAST ── */
@@ -942,15 +993,15 @@ body.page-wsjtx-active { overflow: hidden; }
 .sg { display: flex; flex-direction: column; gap: 5px; }
 .sg label { font-family: var(--mono); font-size: 13px; color: var(--dim); letter-spacing: 1px; }
 .save-btn {
-  background: rgba(184,201,143,0.12); border: 1px solid var(--green2); border-radius: 4px;
+  background: rgba(var(--green-rgb),0.12); border: 1px solid var(--green2); border-radius: 4px;
   color: var(--green); font-family: var(--mono); font-size: 14px; letter-spacing: 1.5px;
   padding: 11px; cursor: pointer; width: 100%; transition: all 0.15s;
 }
-.save-btn:hover { background: rgba(184,201,143,0.2); }
+.save-btn:hover { background: rgba(var(--green-rgb),0.2); }
 
 /* ── ADMIN ── */
 .admin-btn {
-  background: rgba(184,201,143,0.1); border: 1px solid var(--green2); border-radius: 4px;
+  background: rgba(var(--green-rgb),0.1); border: 1px solid var(--green2); border-radius: 4px;
   color: var(--green); font-family: var(--mono); font-size: 10px; padding: 4px 10px; cursor: pointer;
 }
 .admin-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
@@ -976,7 +1027,7 @@ body.page-wsjtx-active { overflow: hidden; }
   background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
   padding: 2px;
 }
-.tw-list.tw-drag-over { border-color: var(--green); background: rgba(184,201,143,0.05); }
+.tw-list.tw-drag-over { border-color: var(--green); background: rgba(var(--green-rgb),0.05); }
 .tw-item {
   display: flex; justify-content: space-between; align-items: center;
   padding: 5px 8px; font-family: var(--mono); font-size: 10px; color: var(--text);
@@ -985,7 +1036,7 @@ body.page-wsjtx-active { overflow: hidden; }
 }
 .tw-item:last-child { border-bottom: none; }
 .tw-item:hover { background: var(--panel2); }
-.tw-item.tw-selected { background: rgba(184,201,143,0.12); color: var(--green); border-color: rgba(184,201,143,0.2); }
+.tw-item.tw-selected { background: rgba(var(--green-rgb),0.12); color: var(--green); border-color: rgba(var(--green-rgb),0.2); }
 .tw-item[draggable="true"]:active { opacity: 0.5; }
 .tw-sub { font-size: 8px; color: var(--dim); letter-spacing: 0.5px; flex-shrink: 0; }
 .tw-buttons {
@@ -998,7 +1049,7 @@ body.page-wsjtx-active { overflow: hidden; }
   cursor: pointer; text-align: center; letter-spacing: 0.5px; white-space: nowrap;
   transition: all 0.1s;
 }
-.tw-btn:hover { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.06); }
+.tw-btn:hover { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.06); }
 .tw-hint { font-family: var(--mono); font-size: 8px; color: var(--dim); text-align: center; padding-top: 2px; }
 
 
@@ -1034,10 +1085,10 @@ body.page-wsjtx-active { overflow: hidden; }
 /* ── VFO CYFRY (zachowane z oryginalnego) ── */
 .vfo-digit { display: inline-block; min-width: 30px; text-align: center; border-radius: 4px; padding: 0 2px; transition: background 0.12s, color 0.15s; }
 .vfo-digit.active { cursor: ns-resize; }
-.vfo-digit.active:hover { background: rgba(184,201,143,0.12); text-shadow: 0 0 20px rgba(184,201,143,1); }
-.vfo-digit.selected { background: rgba(184,201,143,0.18); outline: 1px solid rgba(184,201,143,0.5); text-shadow: 0 0 25px rgba(184,201,143,1); }
-.vfo-sep { color: rgba(184,201,143,0.3); padding: 0 2px; font-size: 36px; line-height: 1; }
-.vfo-sep.sep-mhz { color: rgba(184,201,143,0.5); font-size: 40px; }
+.vfo-digit.active:hover { background: rgba(var(--green-rgb),0.12); text-shadow: 0 0 20px rgba(var(--green-rgb),1); }
+.vfo-digit.selected { background: rgba(var(--green-rgb),0.18); outline: 1px solid rgba(var(--green-rgb),0.5); text-shadow: 0 0 25px rgba(var(--green-rgb),1); }
+.vfo-sep { color: rgba(var(--green-rgb),0.3); padding: 0 2px; font-size: 36px; line-height: 1; }
+.vfo-sep.sep-mhz { color: rgba(var(--green-rgb),0.5); font-size: 40px; }
 /* Up/down arrow triangles above/below each VFO digit — click bumps that
    digit's position by one step, same effect as scrolling on it (an
    alternative for touchscreens/mice where wheel-over-a-digit isn't
@@ -1052,15 +1103,15 @@ body.page-wsjtx-active { overflow: hidden; }
    glyphs relative to their column. */
 .vfo-digit-col { display: inline-flex; flex-direction: column; align-items: center;
   line-height: 1; min-width: 30px; letter-spacing: normal; }
-.vfo-arrow { font-size: 9px; line-height: 1; padding: 1px 0; color: rgba(184,201,143,0.3);
+.vfo-arrow { font-size: 9px; line-height: 1; padding: 1px 0; color: rgba(var(--green-rgb),0.3);
   cursor: pointer; user-select: none; transition: color 0.12s, text-shadow 0.12s;
   width: 100%; text-align: center; }
-.vfo-arrow:hover { color: rgba(184,201,143,0.95); text-shadow: 0 0 8px rgba(184,201,143,0.7); }
+.vfo-arrow:hover { color: rgba(var(--green-rgb),0.95); text-shadow: 0 0 8px rgba(var(--green-rgb),0.7); }
 
 /* ── CHAT (operator chat, embedded in the OPERATORZY panel — chat.js) ── */
 .chat-msg { font-family: var(--mono); font-size: 10px; line-height: 1.4; padding: 3px 5px;
   border-radius: 3px; background: transparent; }
-.chat-msg.chat-mine { background: rgba(184,201,143,0.06); }
+.chat-msg.chat-mine { background: rgba(var(--green-rgb),0.06); }
 .chat-msg.chat-system { display: flex; align-items: center; gap: 5px; color: var(--dim);
   font-size: 9px; padding: 1px 5px; }
 .chat-header { display: flex; align-items: center; gap: 4px; margin-bottom: 1px; }
@@ -1403,11 +1454,11 @@ body.page-wsjtx-active { overflow: hidden; }
 
 /* Tryby cyfrowe (USB-D, LSB-D, PKTUSB, PKTLSB) — wyróżnienie */
 .mode-btn-digital {
-  border-color: rgba(212,168,87,0.4) !important;
+  border-color: rgba(var(--amber-rgb),0.4) !important;
   color: var(--amber) !important;
 }
 .mode-btn-digital.active {
-  background: rgba(212,168,87,0.15) !important;
+  background: rgba(var(--amber-rgb),0.15) !important;
   border-color: var(--amber) !important;
   color: var(--amber) !important;
 }

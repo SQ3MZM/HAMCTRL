@@ -4,17 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
-<!-- Dzien/noc: ustaw data-theme PRZED zaladowaniem CSS/reszty strony, zeby
-     nie bylo widac blysku zlego motywu przy starcie (patrz theme.js). -->
+<!-- Dzien/noc: ustaw data-mode PRZED zaladowaniem CSS/reszty strony, zeby
+     nie bylo widac blysku zlego motywu przy starcie (patrz theme.js).
+     UWAGA: data-mode (jasny/ciemny), NIE data-theme — data-theme to
+     ZUPELNIE INNA, wczesniejsza funkcja (wybor wariantu koloru blue/mono/
+     amber-classic w PROFIL, patrz UI.setTheme w ui.js) na tym samym
+     elemencie <html>. Uzycie tego samego atrybutu dla obu kolidowalo i
+     psulo wybor wariantu koloru (live report 2026-10-15: "przestaly
+     dzialac kolory bursztyn/crt"). -->
 <script>
   (function () {
     try {
       const saved = localStorage.getItem('ham_theme');
-      document.documentElement.setAttribute('data-theme', (saved === 'light' || saved === 'dark') ? saved : 'dark');
-    } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+      document.documentElement.setAttribute('data-mode', (saved === 'light' || saved === 'dark') ? saved : 'dark');
+    } catch (e) { document.documentElement.setAttribute('data-mode', 'dark'); }
   })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=202610152302">
+<link rel="stylesheet" href="css/style.css?v=202610161000">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -49,8 +55,8 @@
   </div>
 
   <div class="status-row">
-    <span id="sim-badge" style="display:none;background:rgba(212,168,87,0.2);color:var(--amber);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(212,168,87,0.4);">SIM</span>
-    <span id="rig-disconnected-badge" style="display:none;background:rgba(217,119,106,0.15);color:var(--red);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(217,119,106,0.4);"></span>
+    <span id="sim-badge" style="display:none;background:rgba(var(--amber-rgb),0.2);color:var(--amber);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--amber-rgb),0.4);">SIM</span>
+    <span id="rig-disconnected-badge" style="display:none;background:rgba(var(--red-rgb),0.15);color:var(--red);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--red-rgb),0.4);"></span>
     <div class="indicator"><div class="dot" id="ptt-dot"></div><span id="ptt-label" style="font-family:var(--mono);font-size:11px;">RX</span></div>
     <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
     <span id="user-role" class="role-badge"></span>
@@ -172,8 +178,8 @@
             <option value="1">ATT ON</option>
           </select>
         </div>
-        <button id="tx-mic-btn" class="audio-toggle-btn" data-perm="ptt" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(217,119,106,0.3);color:var(--dim);"
-          onclick="this.removeAttribute('data-i18n'); WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(217,119,106,0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
+        <button id="tx-mic-btn" class="audio-toggle-btn" data-perm="ptt" data-i18n="tx_mic_start" style="margin-top:4px;border-color:rgba(var(--red-rgb),0.3);color:var(--dim);"
+          onclick="this.removeAttribute('data-i18n'); WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(var(--red-rgb),0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
           🎤 Nadawanie TX — mikrofon
         </button>
         <!-- TX GAIN z dynamicznym VU metrem -->
@@ -224,19 +230,19 @@
         <!-- Ukryte elementy zachowane dla JS (updateVFOBadges) -->
         <span id="badge-vfoa" style="display:none;"></span>
         <span id="badge-vfob" style="display:none;"></span>
-        <span id="badge-split" style="display:none;" class="vfo-badge" style="border-color:rgba(212,168,87,0.4);color:var(--amber);cursor:pointer;" onclick="UI.toggleSplit()">SPLIT</span>
-        <span id="badge-rx" class="vfo-badge" style="border-color:rgba(184,201,143,0.3);background:rgba(184,201,143,0.1);color:var(--green);">RX</span>
-        <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(217,119,106,0.4);background:rgba(217,119,106,0.15);color:var(--red);">TX</span>
+        <span id="badge-split" style="display:none;" class="vfo-badge" style="border-color:rgba(var(--amber-rgb),0.4);color:var(--amber);cursor:pointer;" onclick="UI.toggleSplit()">SPLIT</span>
+        <span id="badge-rx" class="vfo-badge" style="border-color:rgba(var(--green-rgb),0.3);background:rgba(var(--green-rgb),0.1);color:var(--green);">RX</span>
+        <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(var(--red-rgb),0.4);background:rgba(var(--red-rgb),0.15);color:var(--red);">TX</span>
         <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">WS</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" data-i18n-title="ws_badge_title" title="Opoznienie polaczenia sterujacego (ping/pong) — NIE opoznienie samego audio. Kliknij aby odswiezyc." style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
         <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">AUDIO</span><span id="badge-audio-latency" class="vfo-badge" data-i18n-title="audio_badge_title" title="Rzeczywiste opoznienie odsluchu RX: ile audio jest zbuforowane miedzy odbiorem z serwera a odtworzeniem. Cel adaptacyjny 180-300ms (rosnie po niedoborach, opada gdy lacze spokojne), twardy limit 400ms." style="border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
-        <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(212,168,87,0.15);border:1px solid rgba(212,168,87,0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
-        <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(184,201,143,0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
+        <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(var(--amber-rgb),0.15);border:1px solid rgba(var(--amber-rgb),0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
+        <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
       </div>
 
       <!-- Cyfry VFO A -->
       <div class="vfo-display">
         <div style="display:flex;align-items:baseline;gap:6px;">
-          <div id="vfo-digits" style="display:flex;align-items:center;gap:1px;font-family:var(--display);font-size:44px;font-weight:900;color:var(--green);text-shadow:0 0 25px rgba(184,201,143,0.4);cursor:default;user-select:none;letter-spacing:-1px;"></div>
+          <div id="vfo-digits" style="display:flex;align-items:center;gap:1px;font-family:var(--display);font-size:44px;font-weight:900;color:var(--green);text-shadow:0 0 25px rgba(var(--green-rgb),0.4);cursor:default;user-select:none;letter-spacing:-1px;"></div>
           <span style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">MHz</span>
         </div>
         <!-- Kroki strojenia -->
@@ -258,7 +264,7 @@
             <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">VFO-B</span>
             <span id="freq-b-display" style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--dim);">14.200.000</span>
             <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">MHz</span>
-            <span id="vfo-b-split-label" style="display:none;font-family:var(--mono);font-size:9px;color:var(--amber);background:rgba(212,168,87,0.1);border:1px solid rgba(212,168,87,0.3);padding:1px 5px;border-radius:2px;">TX</span>
+            <span id="vfo-b-split-label" style="display:none;font-family:var(--mono);font-size:9px;color:var(--amber);background:rgba(var(--amber-rgb),0.1);border:1px solid rgba(var(--amber-rgb),0.3);padding:1px 5px;border-radius:2px;">TX</span>
           </span>
         </div>
         <!-- RIT / ΔTX (clarifier, CI-V 0x21) — admin-only, approved 2026-10-15.
@@ -493,7 +499,7 @@
             border-radius:3px;color:#4cf;font-family:var(--mono);font-size:10px;
             padding:2px 7px;cursor:pointer;">◈ RX</button>
           <button onclick="CW.stopCW()" title="STOP" data-perm-disable="ptt"
-            style="background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 7px;cursor:pointer;">■</button>
+            style="background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.4);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 7px;cursor:pointer;">■</button>
         </div>
       </div>
       <!-- APF (Audio Peak Filter) — admin-only, approved 2026-10-15,
@@ -539,7 +545,7 @@
           style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;padding:5px 8px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);border-radius:3px;"
           onkeydown="if(event.key==='Enter')CW.sendCustom()">
         <button onclick="CW.sendCustom()" data-perm-disable="ptt"
-          style="background:rgba(184,201,143,0.12);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;cursor:pointer;">TX</button>
+          style="background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;cursor:pointer;">TX</button>
       </div>
 
       <div class="tile-divider"></div>
@@ -572,20 +578,20 @@
           </div>
           <div style="display:flex;gap:4px;">
             <button id="op-btn-take" onclick="RadioLock.lockRadio()" data-i18n="take_trx_btn"
-              style="flex:1;background:rgba(184,201,143,0.1);border:1px solid var(--green2);
+              style="flex:1;background:rgba(var(--green-rgb),0.1);border:1px solid var(--green2);
               border-radius:3px;color:var(--green);font-family:var(--mono);font-size:10px;
               padding:5px;cursor:pointer;letter-spacing:1px;">
               ▶ PRZEJMIJ TRX
             </button>
             <button id="op-btn-release" onclick="RadioLock.releaseRadio()" data-i18n="release_trx_btn"
-              style="flex:1;display:none;background:rgba(217,119,106,0.08);
-              border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);
+              style="flex:1;display:none;background:rgba(var(--red-rgb),0.08);
+              border:1px solid rgba(var(--red-rgb),0.3);border-radius:3px;color:var(--red);
               font-family:var(--mono);font-size:10px;padding:5px;cursor:pointer;">
               ✕ ODDAJ TRX
             </button>
           </div>
           <button id="op-btn-request" onclick="RadioLock.requestRadio()" data-i18n="request_trx_btn"
-            style="display:none;background:rgba(212,168,87,0.08);border:1px solid rgba(212,168,87,0.3);
+            style="display:none;background:rgba(var(--amber-rgb),0.08);border:1px solid rgba(var(--amber-rgb),0.3);
             border-radius:3px;color:var(--amber);font-family:var(--mono);font-size:10px;
             padding:5px;cursor:pointer;letter-spacing:1px;">
             🙋 POPROŚ O TRX
@@ -613,7 +619,7 @@
             <input id="chat-input" type="text" maxlength="500" data-i18n-placeholder="chat_input_ph" placeholder="Wiadomość..."
               style="flex:1;font-family:var(--mono);font-size:11px;padding:5px 8px;background:var(--input-bg,#0a0a0a);border:1px solid var(--border);color:var(--fg);border-radius:3px;">
             <button onclick="Chat.send()"
-              style="background:rgba(184,201,143,0.12);border:1px solid var(--green2);color:var(--green);
+              style="background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);color:var(--green);
               font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:3px;cursor:pointer;">➤</button>
           </div>
         </div>
@@ -833,7 +839,7 @@
     <div class="wsjtx-tx-panel" id="wj-autoqso-panel">
       <div class="wj-panel-title" style="display:flex;align-items:center;">
         <span data-i18n="wj_autoqso_hdr">AUTOMATYKA QSO</span>
-        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(184,201,143,0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
+        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(var(--green-rgb),0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
         <div style="flex:1"></div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;">
@@ -1061,8 +1067,8 @@
             IMPORT ADIF
             <input type="file" accept=".adi,.adif" style="display:none;" onchange="QSOLog.importADIF(this)">
           </label>
-          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.deleteSelected()" data-i18n="log_delete_selected_btn">USUŃ ZAZNACZONE</button>
-          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.15);border-color:var(--red);color:var(--red);font-weight:bold;" onclick="QSOLog.deleteAll()" data-i18n="log_delete_all_btn">⚠ KASUJ CAŁY LOG</button>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(var(--red-rgb),0.1);border-color:rgba(var(--red-rgb),0.3);color:var(--red);" onclick="QSOLog.deleteSelected()" data-i18n="log_delete_selected_btn">USUŃ ZAZNACZONE</button>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(var(--red-rgb),0.15);border-color:var(--red);color:var(--red);font-weight:bold;" onclick="QSOLog.deleteAll()" data-i18n="log_delete_all_btn">⚠ KASUJ CAŁY LOG</button>
         </div>
       </div>
 
@@ -1109,7 +1115,7 @@
         </div>
         <div style="display:flex;gap:6px;align-items:flex-end;">
           <button class="save-btn" style="padding:5px 14px;" onclick="QSOLog.load()" data-i18n="log_search_btn">SZUKAJ</button>
-          <button class="save-btn" style="padding:5px 14px;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.clearFilters()" data-i18n="log_clear_btn">WYCZYŚĆ</button>
+          <button class="save-btn" style="padding:5px 14px;background:rgba(var(--red-rgb),0.1);border-color:rgba(var(--red-rgb),0.3);color:var(--red);" onclick="QSOLog.clearFilters()" data-i18n="log_clear_btn">WYCZYŚĆ</button>
         </div>
       </div>
 
@@ -1239,7 +1245,7 @@
 
     <div style="display:flex;gap:8px;margin-top:16px;">
       <button class="save-btn" style="flex:1;" onclick="QSOLog.saveQSO()" data-i18n="log_save_qso_btn">ZAPISZ QSO</button>
-      <button class="save-btn" style="flex:0 0 auto;background:rgba(217,119,106,0.1);border-color:rgba(217,119,106,0.3);color:var(--red);" onclick="QSOLog.closeModal()" data-i18n="common_cancel_btn">ANULUJ</button>
+      <button class="save-btn" style="flex:0 0 auto;background:rgba(var(--red-rgb),0.1);border-color:rgba(var(--red-rgb),0.3);color:var(--red);" onclick="QSOLog.closeModal()" data-i18n="common_cancel_btn">ANULUJ</button>
     </div>
   </div>
 </div>
@@ -1455,7 +1461,7 @@
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button onclick="AudioAutoDetect.rescan()" data-i18n="cfg_rescan_btn"
-            style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+            style="font-family:var(--mono);font-size:10px;padding:5px 12px;background:rgba(var(--green-rgb),0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
             🔍 SKANUJ PONOWNIE
           </button>
           <button onclick="AudioAutoDetect.toggleExpert()" data-i18n="cfg_expert_mode_btn"
@@ -1648,7 +1654,7 @@
           </div>
         </div>
 
-        <div data-i18n-html="cfg_combridge_note" style="padding:10px 12px;background:rgba(184,201,143,0.06);border-left:3px solid var(--green2);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
+        <div data-i18n-html="cfg_combridge_note" style="padding:10px 12px;background:rgba(var(--green-rgb),0.06);border-left:3px solid var(--green2);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.7;margin-bottom:12px;">
           <b style="color:var(--fg);">Masz 2 niezależne porty</b> — możesz uruchomić dwie aplikacje jednocześnie
           (np. CW Skimmer na COM11 i HRD na COM21). Nie kolidują ze sobą ani z serwerem.<br>
           <span style="color:var(--amber);">Uwaga:</span> numery COM na Twoim komputerze mogą się różnić —
@@ -1670,7 +1676,7 @@
 
         <!-- Link do pobrania EXE -->
         <a href="/download/com-bridge" download data-i18n="cfg_combridge_download_btn"
-           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
+           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
           ⬇️ POBIERZ MOST COM (Windows .exe)
         </a>
         <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;" data-i18n="cfg_combridge_winreq">
@@ -1819,7 +1825,7 @@
         </div>
 
         <a href="/download/com-bridge" download data-i18n="settings_combridge_download"
-           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
+           style="display:flex;align-items:center;justify-content:center;gap:8px;padding:12px;background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);border-radius:6px;color:var(--green);text-decoration:none;font-family:var(--mono);font-size:12px;font-weight:bold;">
           ⬇️ POBIERZ MOST COM (Windows)
         </a>
         <div data-i18n="settings_combridge_winreq" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:6px;">
@@ -2126,7 +2132,7 @@
           <div style="display:flex;gap:8px;">
             <button onclick="Tunnel.genCert()" data-i18n="in_gen_cert_btn"
               style="flex:1;font-family:var(--mono);font-size:10px;padding:6px 10px;
-              background:rgba(184,201,143,0.08);border:1px solid var(--green2);
+              background:rgba(var(--green-rgb),0.08);border:1px solid var(--green2);
               border-radius:4px;color:var(--green);cursor:pointer;">
               🔒 GENERUJ CERTYFIKAT
             </button>
@@ -2184,7 +2190,7 @@
           <span id="tn-cf-stale" style="color:var(--amber);display:none;"></span>
           <span id="tn-cf-svc" style="color:var(--amber);display:none;" data-i18n="in_cf_svc_active">⚠ Usługa Windows aktywna</span>
           <button onclick="Tunnel.cleanup()" data-i18n="wj_clear_btn" style="margin-left:auto;font-family:var(--mono);font-size:10px;
-            padding:3px 12px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
+            padding:3px 12px;background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.3);
             border-radius:3px;color:var(--red);cursor:pointer;">🗑 WYCZYŚĆ</button>
           <button onclick="Tunnel.checkCF()" data-i18n="in_check_btn" style="font-family:var(--mono);font-size:10px;
             padding:3px 12px;background:var(--panel3);border:1px solid var(--border2);
@@ -2194,11 +2200,11 @@
         <!-- Akcja i autostart w jednym rzędzie -->
         <div style="display:flex;gap:8px;align-items:center;">
           <button id="tn-start-btn" onclick="Tunnel.startTunnel()" data-i18n="in_start_btn"
-            style="flex:1;background:rgba(184,201,143,0.12);border:1px solid var(--green2);border-radius:5px;color:var(--green);font-family:var(--mono);font-size:12px;padding:12px;cursor:pointer;letter-spacing:1px;font-weight:bold;">
+            style="flex:1;background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);border-radius:5px;color:var(--green);font-family:var(--mono);font-size:12px;padding:12px;cursor:pointer;letter-spacing:1px;font-weight:bold;">
             ▶ URUCHOM
           </button>
           <button onclick="Tunnel.stopTunnel()" data-i18n="in_stop_btn"
-            style="background:rgba(217,119,106,0.08);border:1px solid rgba(217,119,106,0.3);border-radius:5px;color:var(--red);font-family:var(--mono);font-size:12px;padding:12px 20px;cursor:pointer;">
+            style="background:rgba(var(--red-rgb),0.08);border:1px solid rgba(var(--red-rgb),0.3);border-radius:5px;color:var(--red);font-family:var(--mono);font-size:12px;padding:12px 20px;cursor:pointer;">
             ■ ZATRZYMAJ
           </button>
           <label style="display:flex;align-items:center;gap:6px;padding:0 10px;font-family:var(--mono);font-size:10px;color:var(--dim);cursor:pointer;white-space:nowrap;">
@@ -2226,11 +2232,11 @@
         <span style="width:1px;height:16px;background:var(--border);margin:0 4px;"></span>
 
         <button id="dx-connect-btn" onclick="DXCluster.connect()" data-i18n="dx_connect_btn"
-          style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
+          style="font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(var(--green-rgb),0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;letter-spacing:1px;">
           ▶ POŁĄCZ
         </button>
         <button id="dx-disconnect-btn" onclick="DXCluster.disconnect()" style="display:none;
-          font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);color:var(--red);border-radius:3px;cursor:pointer;letter-spacing:1px;" data-i18n="dx_disconnect_btn">
+          font-family:var(--mono);font-size:10px;padding:3px 10px;background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.4);color:var(--red);border-radius:3px;cursor:pointer;letter-spacing:1px;" data-i18n="dx_disconnect_btn">
           ✕ ROZŁĄCZ
         </button>
         <button onclick="DXCluster.toggleConfig()" data-i18n-title="dx_config_title" title="Pokaż/ukryj konfigurację" data-i18n="dx_config_btn"
@@ -2470,7 +2476,7 @@
             .then(() => UI.showToast(I18n.t('adm_timeout_saved')))" data-i18n="adm_save_timeout_btn">
           ZAPISZ TIMEOUT
         </button>
-        <button class="save-btn" style="margin-left:8px;background:rgba(217,119,106,0.08);border-color:rgba(217,119,106,0.3);color:var(--red);"
+        <button class="save-btn" style="margin-left:8px;background:rgba(var(--red-rgb),0.08);border-color:rgba(var(--red-rgb),0.3);color:var(--red);"
           onclick="RadioLock.forceRelease()" data-i18n="adm_force_release_btn">
           ⚡ WYMUŚ ZWOLNIENIE RADIA
         </button>
@@ -2628,7 +2634,7 @@
     </div>
 
     <div id="dx-spot-error" style="display:none;margin-top:8px;padding:6px 10px;
-         background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);
+         background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.4);
          border-radius:3px;font-family:var(--mono);font-size:10px;color:var(--red);"></div>
 
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
@@ -2637,7 +2643,7 @@
                border:1px solid var(--border);color:var(--dim);border-radius:3px;cursor:pointer;
                letter-spacing:1px;">ANULUJ</button>
       <button id="dx-spot-send-btn" onclick="DXCluster.sendSpot()"
-        style="font-family:var(--mono);font-size:10px;padding:6px 16px;background:rgba(184,201,143,0.12);
+        style="font-family:var(--mono);font-size:10px;padding:6px 16px;background:rgba(var(--green-rgb),0.12);
                border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;
                letter-spacing:1px;font-weight:600;">📤 WYŚLIJ SPOT</button>
     </div>
@@ -2774,7 +2780,7 @@
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
 <script src="js/i18n.js?v=202610150001"></script>
-<script src="js/theme.js?v=202610152302"></script>
+<script src="js/theme.js?v=202610161000"></script>
 <script src="js/auth.js?v=202609030005"></script>
 <script src="js/state.js?v=202606180504"></script>
 <script src="js/ws.js?v=202610150001"></script>
@@ -2922,7 +2928,7 @@ window.HamlibUI = {
             letter-spacing:1px;">${s.running ? '● AKTYWNY' : '○ ZATRZYMANY'}</span>
           ${s.clients > 0
             ? `<span style="font-family:var(--mono);font-size:9px;color:var(--amber);
-                background:rgba(212,168,87,0.1);padding:1px 6px;border-radius:10px;">
+                background:rgba(var(--amber-rgb),0.1);padding:1px 6px;border-radius:10px;">
                 ${s.clients} klient${s.clients > 1 ? 'ów' : ''} połączony</span>`
             : ''}
           <span style="flex:1"></span>
@@ -3533,20 +3539,20 @@ function debounceSave() {
   // na kazdym ekranie — zmienia sie tylko OGOLNY rozmiar (skala).
   const REF_W = 1440;
   const REF_H = 1080;
-  // MIN_SCALE (2026-09-03): scale used to be totally unbounded
-  // (vw/REF_W with no floor) - already-small baseline labels (many
-  // 8-11px in this UI) shrink right along with everything else, so a
-  // narrower-than-typical window (e.g. a snapped/half-screen browser,
-  // ~900-1000px) pushed scale down toward ~0.6-0.7, rendering some
-  // labels at an unreadable ~5-6 physical px with no fallback. Below
-  // this floor we stop shrinking further and let the body (now wider
-  // than the viewport, per the width line below) overflow horizontally
-  // instead - nothing here sets overflow-x:hidden, so the browser's
-  // normal horizontal scrollbar takes over, same safety-valve pattern
-  // already used for vertical overflow above REF_H. 0.75 = the scale at
-  // a 1080px-wide viewport, comfortably below any normal desktop/laptop
-  // width mentioned in the comment above (1366-1920px).
-  const MIN_SCALE = 0.75;
+  // MIN_SCALE history: a 0.75 floor was added 2026-09-03 so baseline
+  // 8-11px labels wouldn't shrink past ~5-6 physical px on a narrow
+  // window - but that traded away the thing users actually wanted more:
+  // live report 2026-10-15 ("resize tez nie dziala, po zmniejszeniu
+  // przegladarka dostaje paski do przesuwania a powinno sie zawsze
+  // miescic w oknie") confirmed the floor is what was causing the
+  // horizontal scrollbar/"sliding" feel on a shrunk window - below
+  // 1080px wide, scale stopped shrinking and the page started
+  // overflowing sideways instead. Dropped to 0.2 - low enough to never
+  // actually engage on any real window size, kept only as a last-resort
+  // guard against scale hitting 0 (undrawable) on a pathological vw.
+  // Shrinking all the way down with the window, text size and all, is
+  // the explicitly requested behavior now, not a fallback to avoid.
+  const MIN_SCALE = 0.2;
   const el = document.getElementById('app-scale');
   if (!el) return;
 
