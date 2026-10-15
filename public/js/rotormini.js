@@ -74,16 +74,30 @@ function drawCompass(az, taz, moving) {
   // Direction HINT (dotted blue) - a typed-in suggestion, not a real
   // command (see _hintAz above). Drawn before the real target/pointer so
   // it never visually competes with them.
+  // FIX (2026-10-15, live report "nie widze podpowiedzi"): at this
+  // widget's real on-screen size (205px canvas, not a zoomed screenshot)
+  // a 1.5px dotted line + 3px dot was nearly invisible against the busy
+  // RADIO tab - thickened the line/dot and added the actual degree number
+  // next to it (more useful anyway: the operator wants the number to set
+  // the rotor to, not just a rough direction).
   if (_hintAz != null) {
     const hr=(_hintAz-90)*Math.PI/180;
-    ctx.save(); ctx.setLineDash([2,3]);
+    ctx.save(); ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(cx,cy);
     ctx.lineTo(cx+Math.cos(hr)*(R-16), cy+Math.sin(hr)*(R-16));
-    ctx.strokeStyle='rgba(100,180,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.strokeStyle='rgba(120,195,255,0.9)'; ctx.lineWidth=2.5; ctx.stroke();
     ctx.restore();
     const hx=cx+Math.cos(hr)*(R-16), hy=cy+Math.sin(hr)*(R-16);
-    ctx.beginPath(); ctx.arc(hx,hy,3,0,Math.PI*2);
-    ctx.fillStyle='rgba(100,180,255,0.8)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(hx,hy,5,0,Math.PI*2);
+    ctx.fillStyle='rgba(120,195,255,1)'; ctx.shadowBlur=6; ctx.shadowColor='rgba(120,195,255,0.9)'; ctx.fill();
+    ctx.shadowBlur=0;
+    // Degree label, placed just short of the dot (toward the center) so
+    // it always stays inside the canvas regardless of angle - placing it
+    // further OUT than the dot clipped off-canvas at diagonal angles.
+    const lx=cx+Math.cos(hr)*(R-32), ly=cy+Math.sin(hr)*(R-32);
+    ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(120,195,255,1)';
+    ctx.fillText(Math.round(_hintAz)+'°', lx, ly);
   }
 
   // Target line (dashed)
