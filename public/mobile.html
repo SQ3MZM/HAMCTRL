@@ -411,7 +411,7 @@
       <div class="m-qlog-row">
         <input type="text" id="qlog-call" class="m-text-input" placeholder="CALL"
           onkeydown="if(event.key==='Enter')QSOLog.quickLog()"
-          oninput="QSOLog.checkQuickLogWorkedBefore(this.value)">
+          oninput="QSOLog.checkQuickLogWorkedBefore(this.value);QSOLog.updateQuickLogHint()">
       </div>
       <div class="m-qlog-row">
         <div class="m-qlog-field">
@@ -424,7 +424,8 @@
         </div>
         <div class="m-qlog-field">
           <span class="m-sub-lbl">GRID</span>
-          <input type="text" id="qlog-grid" class="m-text-input" placeholder="KO02" maxlength="8">
+          <input type="text" id="qlog-grid" class="m-text-input" placeholder="KO02" maxlength="8"
+            oninput="QSOLog.updateQuickLogHint()">
         </div>
       </div>
       <button class="m-btn m-btn-amber m-btn-sm" onclick="QSOLog.quickLog()">+ LOG QSO</button>
@@ -568,6 +569,7 @@
 <script src="js/auth.js?v=202609030005"></script>
 <script src="js/i18n.js?v=202609060001"></script>
 <script src="js/cw.js?v=202608260003"></script>
+<script src="js/beamheading.js?v=202607230001"></script>
 <script src="js/wsjtx.js?v=202609050001"></script>
 <script src="js/wsjtx_scope.js?v=202608242200"></script>
 <script src="js/radiolock.js?v=202608242100"></script>

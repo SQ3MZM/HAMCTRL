@@ -12,6 +12,20 @@ let _taz     = 0;      // target
 let _moving  = false;
 let _myLoc   = 'KO02';
 
+// Direction HINT - a suggestion only, typed into #rot-target-inp (this
+// widget's own input, right next to the VFO in the RADIO tab) or into the
+// RADIO tab's quick-log bar (#qlog-call/#qlog-grid, via qsolog.js's
+// _updateQuickLogHint -> RotorMini.setHint). Separate from _taz (the real
+// commanded target) - drawn as its own dotted marker in drawCompass, and
+// cleared the moment the rotor actually starts moving (see updateUI) so it
+// can never linger looking like a still-pending suggestion.
+let _hintAz  = null;
+
+function setHint(az) {
+  _hintAz = (az == null || isNaN(az)) ? null : az;
+}
+function clearHint() { _hintAz = null; }
+
 // Local interpolation
 let _azDisp  = 0;      // currently displayed angle
 let _azPrev  = 0;      // previous position from the server
@@ -55,6 +69,21 @@ function drawCompass(az, taz, moving) {
     const r=(d-90)*Math.PI/180, rr=R-21;
     ctx.fillStyle = red?'rgba(224,82,82,0.9)':'rgba(76,219,106,0.55)';
     ctx.fillText(l, cx+Math.cos(r)*rr, cy+Math.sin(r)*rr);
+  }
+
+  // Direction HINT (dotted blue) - a typed-in suggestion, not a real
+  // command (see _hintAz above). Drawn before the real target/pointer so
+  // it never visually competes with them.
+  if (_hintAz != null) {
+    const hr=(_hintAz-90)*Math.PI/180;
+    ctx.save(); ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(hr)*(R-16), cy+Math.sin(hr)*(R-16));
+    ctx.strokeStyle='rgba(100,180,255,0.6)'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.restore();
+    const hx=cx+Math.cos(hr)*(R-16), hy=cy+Math.sin(hr)*(R-16);
+    ctx.beginPath(); ctx.arc(hx,hy,3,0,Math.PI*2);
+    ctx.fillStyle='rgba(100,180,255,0.8)'; ctx.fill();
   }
 
   // Target line (dashed)
@@ -142,6 +171,10 @@ function parseTarget(input) {
     const az=locToAz(input,_myLoc);
     if (az!=null) return {az,label:input+' → '+az+'°'};
   }
+  // Otherwise treat it as a callsign - same BeamHeading lookup rotator.js's
+  // own target field and the FT8 quick-log use.
+  const h = window.BeamHeading?.headingFor(input, '');
+  if (h) return {az:h.azimuth,label:input+' → '+h.azimuth+'°'};
   return null;
 }
 
@@ -172,6 +205,10 @@ function updateUI(rot) {
   _taz     = parseFloat(rot.target_az ?? _taz ?? 0);
   const wasMoving = _moving;
   _moving  = !!rot.moving;
+
+  // The rotor is actually moving now (from ANY command) - a lingering
+  // hint would read as "go here next" when it's really just stale input.
+  if (_moving) _hintAz = null;
 
   // When the rotator stops — reset the speed and jump to the exact position
   if (wasMoving && !_moving) {
@@ -209,6 +246,7 @@ function onInput() {
   const t=parseTarget(inp.value);
   if (t) { prv.textContent='→ '+t.label; prv.style.color='var(--green)'; }
   else   { prv.textContent=inp.value?'⚠ nieprawidłowy format':''; prv.style.color='var(--dim)'; }
+  setHint(t ? t.az : null);
 }
 
 async function go() {
@@ -263,7 +301,7 @@ async function init() {
   } catch(e) { const p=document.getElementById('rot-side-panel'); if(p) p.style.display='none'; }
 }
 
-window.RotW      = {init,handleWS,go,stop,onInput};
+window.RotW      = {init,handleWS,go,stop,onInput,setHint,clearHint};
 window.RotorMini = window.RotW;
 
 window.addEventListener('app:ready', () => setTimeout(init,300));

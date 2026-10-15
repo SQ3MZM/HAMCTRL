@@ -593,6 +593,9 @@ async function quickLog(overrides = {}) {
       callEl.style.borderColor = '';
       document.getElementById('qlog-grid').value = '';
       callEl.focus();
+      // Programmatic clear above doesn't fire 'input' - without this the
+      // dial's direction hint would keep pointing at the station just logged.
+      _updateQuickLogHint();
       // If we're on the LOG page — refresh the table
       if (document.getElementById('page-log')?.classList.contains('active')) load();
     } else {
@@ -848,6 +851,20 @@ async function checkWorkedBefore() {
   }, 500);
 }
 
+// Direction hint on the MINI rotor dial (rotormini.js, next to the VFO in
+// the RADIO tab - same tile as this quick-log bar, on both desktop and
+// mobile) from the quick-log bar's own fields (#qlog-call/#qlog-grid).
+// Same BeamHeading lookup rotormini.js's own target field and the FT8
+// quick-log use. Synchronous, no debounce needed (pure client-side calc).
+function _updateQuickLogHint() {
+  const call = document.getElementById('qlog-call')?.value.trim().toUpperCase() || '';
+  const grid = document.getElementById('qlog-grid')?.value.trim().toUpperCase() || '';
+  if (!call && !grid) { window.RotorMini?.clearHint?.(); return; }
+  const h = window.BeamHeading?.headingFor(call, grid);
+  if (h) window.RotorMini?.setHint?.(h.azimuth);
+  else window.RotorMini?.clearHint?.();
+}
+
 // Same idea as checkWorkedBefore() above, but for the always-visible
 // quick-log bar (#qlog-call): highlights the CALL text itself in red
 // instead of a separate badge (there's no room for one in that single
@@ -900,6 +917,7 @@ window.QSOLog = {
   loadAdminUsers: _loadAdminUsers,
   checkWorkedBefore,
   checkQuickLogWorkedBefore,
+  updateQuickLogHint: _updateQuickLogHint,
 };
 
 })();

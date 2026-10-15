@@ -1,13 +1,15 @@
 /**
- * rotator.js (frontend) — rotator control panel
+ * rotator.js (frontend) — rotator control panel for the big ROTOR tab.
  * - Clickable SVG compass
  * - Type a 4/6-char locator, degrees, or a callsign → compute azimuth → go
  * - Preset directions N/NE/E...
- * - Direction HINT: typing (without hitting go) draws a dotted suggestion
- *   line on the dial, separate from the real target/needle. Same hint also
- *   appears here when typed into the FT8 quick-log (wsjtx.js's
- *   updateBeamRow calls Rotator.setHint/clearHint). Clears itself once the
- *   rotor actually starts moving, from ANY command - see updateCard.
+ * - Direction HINT: typing into this tab's own target field (without
+ *   hitting go) draws a dotted suggestion line on THIS dial, separate from
+ *   the real target/needle, cleared once the rotor actually starts moving
+ *   (any command) - see updateCard. The RADIO tab's quick-log bar and the
+ *   FT8 quick-log show the SAME kind of hint, but on the separate mini
+ *   compass next to the VFO (rotormini.js's own setHint/clearHint, not
+ *   this file's) - that's the dial actually visible alongside them.
  */
 (function() {
 'use strict';
