@@ -3109,6 +3109,48 @@ class App:
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, await self._set_rig_features(body or {})
 
+        # ── Advanced radio settings (admin-only, per explicit user decision
+        # 2026-10-15) — modulation input, AGC mode, VOX fine-tuning, NB
+        # depth/width, APF, TX delay (see rigs/civ_profiles.py's _IC7300_ADV
+        # for the full list). Gated the SAME way KONFIGURACJA already is
+        # ("settings" = a deliberate admin-delegated grant, see the long
+        # comment on /api/rig/features GET above) - not a new permission key.
+        if p == "/api/rig/adv" and method == "GET":
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
+            adv_spec = self.rig.profile.get("adv", {})
+            values = {}
+            for key in adv_spec:
+                values[key] = await self.rig.get_adv(key)
+            return 200, {"ok": True, "values": values, "spec": adv_spec}
+
+        if p == "/api/rig/adv" and method == "POST":
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
+            key = str(body.get("key", ""))
+            if key.upper() not in self.rig.profile.get("adv", {}):
+                return 400, {"error": f"Nieznane ustawienie: {key}"}
+            ok = await self.rig.set_adv(key, body.get("value"))
+            if not ok:
+                return 200, {"ok": False, "error": "Radio odrzucilo komende (NG) lub nie odpowiedzialo"}
+            return 200, {"ok": True}
+
+        # ── RIT / ΔTX (clarifier) — same admin-only gate as above ───────────
+        if p == "/api/rig/rit" and method == "GET":
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
+            return 200, {"ok": True, **await self.rig.get_rit()}
+
+        if p == "/api/rig/rit" and method == "POST":
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
+            ok = True
+            if "hz" in body:
+                ok = ok and await self.rig.set_rit_hz(int(body["hz"]))
+            if "ritOn" in body:
+                ok = ok and await self.rig.set_rit_enabled(bool(body["ritOn"]))
+            if "dtxOn" in body:
+                ok = ok and await self.rig.set_dtx_enabled(bool(body["dtxOn"]))
+            if not ok:
+                return 200, {"ok": False, "error": "Radio odrzucilo komende (NG) lub nie odpowiedzialo"}
+            return 200, {"ok": True, **await self.rig.get_rit()}
+
         # ── CW Keyer (DTR/RTS keying - CAT/cmd-17 retired 2026-08-26) ───────
         # Frontend (cw.js) calls:
         #   POST /api/cw/send    {text, vars} -> sends text as CW (DTR/RTS)
@@ -4626,6 +4668,7 @@ class App:
                 "connected": self.rig.connected,
                 "rigDisconnectedSince": getattr(self.rig, "_disconnected_since", None),
                 "rigPowerOn": self._rig_power_on,
+                "ovf": getattr(self.rig, "ovf", False),
                 "models": HAMLIB_MODELS,
                 "rigs":   self.cfg.get("rigs", []),
                 "modes":  ["USB","LSB","AM","FM","CW","CW-R","RTTY","RTTY-R","USB-D","LSB-D","PKTUSB","PKTLSB"],

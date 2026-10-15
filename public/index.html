@@ -106,6 +106,7 @@
             <option value="PWR">PWR</option>
             <option value="SWR">SWR</option>
             <option value="VOLT">VOLT</option>
+            <option value="ID">ID</option>
           </select>
         </div>
       </div>
@@ -173,6 +174,17 @@
         <!-- wypelniane przez radiofunctions.js -->
       </div>
 
+      <!-- Ustawienia zaawansowane CI-V — tylko admin / "settings" (approved
+           2026-10-15), wypelniane przez advradio.js -->
+      <div class="rf-section" data-perm="settings">
+        <div class="rf-section-title" data-i18n="adv_agc_hdr">AGC</div>
+        <div id="adv-agc"></div>
+      </div>
+      <div class="rf-section" data-perm="settings">
+        <div class="rf-section-title" data-i18n="adv_vox_hdr">VOX</div>
+        <div id="adv-vox"></div>
+      </div>
+
     </div><!-- /tile-left -->
 
     <!-- ═══════════════════════════════ VFO ════════════════════════════════════ -->
@@ -220,6 +232,19 @@
             <span id="vfo-b-split-label" style="display:none;font-family:var(--mono);font-size:9px;color:var(--amber);background:rgba(212,168,87,0.1);border:1px solid rgba(212,168,87,0.3);padding:1px 5px;border-radius:2px;">TX</span>
           </span>
         </div>
+        <!-- RIT / ΔTX (clarifier, CI-V 0x21) — admin-only, approved 2026-10-15.
+             See advradio.js (AdvRadio.ritSetHz/ritToggle) + GET/POST /api/rig/rit. -->
+        <div id="rit-row" data-perm="settings" style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">RIT/ΔTX</span>
+          <button id="rit-on-btn" class="rf-btn" onclick="AdvRadio.ritToggle('ritOn')" title="RIT ON/OFF (CI-V 21 01)">RIT</button>
+          <button id="dtx-on-btn" class="rf-btn" onclick="AdvRadio.ritToggle('dtxOn')" title="ΔTX ON/OFF — clarifier wplywa tez na TX (CI-V 21 02)">ΔTX</button>
+          <input id="rit-hz-input" type="number" step="10" value="0"
+            style="width:64px;font-family:var(--mono);font-size:11px;text-align:right;
+            background:var(--panel3);border:1px solid var(--border2);color:var(--text);
+            padding:3px 6px;border-radius:3px;"
+            onchange="AdvRadio.ritSetHz(this.value)">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">Hz</span>
+        </div>
       </div>
 
       <!-- S-meter + PTT -->
@@ -233,6 +258,12 @@
         <div class="smeter-bar-wrap"><div class="smeter-fill" id="smeter-fill"></div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
           <span id="smeter-value" class="smeter-value">S 0</span>
+          <!-- OVF (ADC/front-end overflow indicator, CI-V 15 07) - the
+               radio's own overdrive warning, otherwise invisible to a
+               remote operator (no physical panel to glance at). -->
+          <span id="ovf-badge" style="display:none;background:rgba(224,82,82,0.15);color:var(--red);
+            font-size:10px;padding:2px 7px;border-radius:3px;font-family:var(--mono);
+            border:1px solid rgba(224,82,82,0.4);letter-spacing:1px;">OVF</span>
         </div>
         <div style="display:flex;justify-content:center;margin-top:8px;">
           <button id="ptt-btn" class="ptt-btn" data-perm="ptt"
@@ -435,6 +466,12 @@
           <button onclick="CW.stopCW()" title="STOP" data-perm-disable="ptt"
             style="background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.4);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 7px;cursor:pointer;">■</button>
         </div>
+      </div>
+      <!-- APF (Audio Peak Filter) — admin-only, approved 2026-10-15,
+           wypelniane przez advradio.js (#adv-apf). -->
+      <div data-perm="settings" style="padding:2px 8px 4px;border-bottom:1px solid var(--border);flex-shrink:0;">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="adv_apf_hdr">APF</div>
+        <div id="adv-apf"></div>
       </div>
       <div id="cw-macros-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:6px 8px;flex-shrink:0;">
         <!-- F1 -->
@@ -1526,6 +1563,27 @@
       </div>
       <div style="padding:0 12px 12px;" id="rig-features-config-list" data-i18n="settings_loading">Ładowanie...</div>
       <div style="padding:0 12px 12px;"><button class="save-btn" onclick="Admin.saveRigFeatures()" data-i18n="cfg_save_rig_features_btn">ZAPISZ FUNKCJE RADIA</button></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         Ustawienia zaawansowane CI-V (admin-only, approved 2026-10-15) —
+         wypelniane generycznie przez advradio.js z rigs/civ_profiles.py's
+         "adv" table (GET/POST /api/rig/adv). Zmiana dziala na zywo na
+         podlaczonym radiu.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="box">
+      <div class="box-header"><span data-i18n="adv_mod_hdr">WEJŚCIE MODULACJI (USB/ACC/LAN, DATA MOD)</span></div>
+      <div style="padding:4px 12px 12px;" id="adv-mod"></div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span data-i18n="adv_nb_hdr">NB (NOISE BLANKER) — GŁĘBOKOŚĆ / SZEROKOŚĆ</span></div>
+      <div style="padding:4px 12px 12px;" id="adv-nb"></div>
+    </div>
+
+    <div class="box">
+      <div class="box-header"><span data-i18n="adv_txdelay_hdr">TX DELAY — sekwencja PTT (wzmacniacz / przekaźnik antenowy)</span></div>
+      <div style="padding:4px 12px 12px;" id="adv-txdelay"></div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════════
@@ -2686,12 +2744,13 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202609060001"></script>
+<script src="js/i18n.js?v=202610150001"></script>
 <script src="js/auth.js?v=202609030005"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202609060001"></script>
+<script src="js/ws.js?v=202610150001"></script>
 <script src="js/radiofunctions.js?v=202609040002"></script>
-<script src="js/ui.js?v=202609030001"></script>
+<script src="js/ui.js?v=202610150001"></script>
+<script src="js/advradio.js?v=202610150001"></script>
 <script src="js/radiolock.js?v=202608242100"></script>
 <script src="js/serial_ports.js?v=202609020001"></script>
 <script src="js/settings.js?v=202609020001"></script>

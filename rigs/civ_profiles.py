@@ -126,6 +126,70 @@ _FUNC_LABELS = {
     "MON":  "MON (Monitor sidetone TX)",
 }
 
+# ── Advanced ("admin-only") radio settings — IC-7300 ────────────────────────
+# Deeper CI-V commands beyond the generic Set Level (0x14)/Set Func (0x16)
+# tables above - decided 2026-10-15 (user request) to gate these behind the
+# admin role (webapp.py checks this on every endpoint that reads/writes one
+# of these, not per-rig-whitelist like the generic levels/funcs above):
+# modulation input source/level, AGC behavior, VOX fine-tuning, noise
+# blanker depth/width, APF, and TX sequencing delay (relevant for amplifier/
+# antenna-relay keying, see the GSK fork's Sosny PA-controller work).
+# Source: official Icom "CI-V REFERENCE GUIDE HF/50MHz TRANSCEIVER 7300MK2"
+# (command table, cmd 0x1A sub 0x05 "SET > ..." menu-item area + cmds 0x14/
+# 0x16) - verified against the PDF directly, not guessed.
+#
+# Each entry's "cmd" is the FULL byte sequence up to (not including) the
+# data bytes - civ.py's get_adv/set_adv send this as-is for a read, or with
+# the encoded value appended for a write, and validate a read reply's
+# echoed address bytes (cmd[1:]) before trusting the data that follows.
+#
+#   kind "enum":      1 data byte, the raw value IS the UI value (0-based
+#                      index into "labels"); "n" = how many valid values.
+#   kind "range":      1 data byte, raw clamped to "rawmax" (default 255,
+#                      set explicitly below for every entry whose real menu
+#                      range is smaller - the radio's own menu limit, not
+#                      just a UI nicety: an out-of-range raw byte is a
+#                      command the radio would reject anyway), UI value =
+#                      raw + "offset" (default 0), scaled by "scale"
+#                      (default 1) if given.
+#   kind "bcd2pct":    2-byte BCD 0000-0255, UI value = fraction 0.0-1.0.
+#   kind "bcd2range":  2-byte BCD 0000-0255, UI value = "min".."max" (linear).
+_IC7300_ADV = {
+    "AGC_MODE":     {"cmd": [0x16, 0x12],             "kind": "enum", "n": 3,
+                      "labels": ["FAST", "MID", "SLOW"]},
+    "VOX_GAIN":     {"cmd": [0x14, 0x16],             "kind": "bcd2pct"},
+    "ANTI_VOX":     {"cmd": [0x14, 0x17],             "kind": "bcd2pct"},
+    # 00~20 (decimal) = 0.0~2.0s in 0.1s steps
+    "VOX_DELAY":    {"cmd": [0x1A, 0x05, 0x02, 0x67], "kind": "range", "scale": 0.1, "rawmax": 20},
+    # 00~09 = DEPTH 1~10 (offset by 1 so the UI shows the real 1-10 scale)
+    "NB_DEPTH":     {"cmd": [0x1A, 0x05, 0x02, 0x65], "kind": "range", "offset": 1, "rawmax": 9},
+    "NB_WIDTH":     {"cmd": [0x1A, 0x05, 0x02, 0x66], "kind": "bcd2range", "min": 1, "max": 100},
+    # Main APF enable + bandwidth - CI-V 16 32 (NOT under 1A 05), needed
+    # alongside APF_TYPE/APF_LEVEL below for APF to do anything at all.
+    "APF_MODE":     {"cmd": [0x16, 0x32],             "kind": "enum", "n": 4,
+                      "labels": ["OFF", "WIDE", "MID", "NAR"]},
+    "APF_TYPE":     {"cmd": [0x1A, 0x05, 0x02, 0x69], "kind": "enum", "n": 2,
+                      "labels": ["SHARP", "SOFT"]},
+    "APF_LEVEL":    {"cmd": [0x1A, 0x05, 0x02, 0x70], "kind": "range", "rawmax": 6},  # 00~06 = 0~6dB
+    # TX Delay per band - relevant for amp/antenna-relay PTT sequencing.
+    # 00~05 = OFF/10/15/20/25/30ms
+    "TX_DELAY_HF":  {"cmd": [0x1A, 0x05, 0x00, 0x29], "kind": "enum", "n": 6,
+                      "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
+    "TX_DELAY_50M": {"cmd": [0x1A, 0x05, 0x00, 0x30], "kind": "enum", "n": 6,
+                      "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
+    "TX_DELAY_70M": {"cmd": [0x1A, 0x05, 0x00, 0x31], "kind": "enum", "n": 6,
+                      "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
+    # Modulation input level per connector (0-100%)
+    "MOD_USB":      {"cmd": [0x1A, 0x05, 0x00, 0x81], "kind": "bcd2pct"},
+    "MOD_ACC":      {"cmd": [0x1A, 0x05, 0x00, 0x82], "kind": "bcd2pct"},
+    "MOD_LAN":      {"cmd": [0x1A, 0x05, 0x00, 0x83], "kind": "bcd2pct"},
+    # Which input actually feeds modulation in non-data vs data(-D) modes
+    "DATA_OFF_MOD": {"cmd": [0x1A, 0x05, 0x00, 0x84], "kind": "enum", "n": 6,
+                      "labels": ["MIC", "USB", "ACC", "MIC+USB", "MIC+ACC", "LAN"]},
+    "DATA_MOD":     {"cmd": [0x1A, 0x05, 0x00, 0x85], "kind": "enum", "n": 6,
+                      "labels": ["MIC", "USB", "ACC", "MIC+USB", "MIC+ACC", "LAN"]},
+}
+
 
 # ── Pasma per model radia ────────────────────────────────────────────────────
 # Kazde radio obejmuje inny zakres pasm. IC-7300 to HF + 6m (bez VHF/UHF),
@@ -181,6 +245,12 @@ CIV_PROFILES = {
         "levels":           dict(_IC7300_LEVELS),
         "funcs":            dict(_IC7300_FUNCS),
         "func_labels":      dict(_FUNC_LABELS),
+        # Admin-only advanced settings (1A 05 menu tree + 14/16 extras) -
+        # NOT copied to IC-746 below: that's a much older radio generation
+        # (no scope, no DATA/USB-D mode per its own profile notes) and this
+        # modern per-menu-item CI-V addressing almost certainly doesn't
+        # exist on it at all.
+        "adv":              dict(_IC7300_ADV),
         "notes":            "Profil referencyjny — przetestowany na sprzecie.",
     },
 

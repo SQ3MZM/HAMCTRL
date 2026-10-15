@@ -160,6 +160,8 @@ class CivRig:
         self.attenuator = False
         # Antenna Tuner (1C 01): False=OFF (bypass), True=ON (in the chain)
         self.tuner = False
+        # OVF (15 07): ADC/front-end overflow indicator (read-only)
+        self.ovf = False
         self.bw        = 2400
         self.data_mode = False   # DATA mode (USB-D/LSB-D), from 1A 06 — affects the filter table
         self.ptt       = False
@@ -1174,6 +1176,155 @@ class CivRig:
         byte0 = hi              # 0x00, 0x01, or 0x02 (BCD == binary for 0-2)
         byte1 = ((lo // 10) << 4) | (lo % 10)
         return bytes([byte0, byte1])
+
+    @staticmethod
+    def _int_to_bcd4(v: int) -> bytes:
+        """0-9999 -> 2-byte BCD (4 packed decimal digits), e.g. a RIT
+        offset in Hz. Unlike _int_to_bcd2 above (hardcoded to the 0-255
+        'Set Level' convention), this covers the full 4-digit range RIT
+        and a few other commands use. Inverse of bcd2()."""
+        v = max(0, min(9999, int(v)))
+        d0, d1, d2, d3 = (v // 1000) % 10, (v // 100) % 10, (v // 10) % 10, v % 10
+        return bytes([(d0 << 4) | d1, (d2 << 4) | d3])
+
+    # ── Advanced ("admin-only") radio settings ──────────────────────────────
+    # Generic engine for rigs/civ_profiles.py's per-model "adv" table (CI-V
+    # commands beyond the Set Level/Set Func tables above - modulation
+    # input, AGC mode, VOX fine-tuning, NB depth/width, APF, TX delay). See
+    # that table's own docstring for the exact format of each "kind".
+    # webapp.py gates every caller of get_adv/set_adv to the admin role -
+    # civ.py itself doesn't know about users/permissions, same separation
+    # of concerns as every other control in this file.
+    async def get_adv(self, key: str):
+        spec = self.profile.get("adv", {}).get(key.upper())
+        if spec is None or self.sim or not self._ser:
+            return None
+        return await asyncio.to_thread(self._read_adv, spec)
+
+    def _read_adv(self, spec: dict):
+        cmd = spec["cmd"]
+        sub = cmd[1]
+        p = self._transact(bytes(cmd), {cmd[0]}, 0.3, sub=sub)
+        if not p or p[0] != sub:
+            return None
+        # 1A 05 xx xx commands carry 2 extra address bytes beyond [top, sub]
+        # that 14/16 xx commands don't - verify they're echoed back correctly
+        # before trusting what follows as the actual data (same principle as
+        # the existing 1A 03/1A 06 sub= checks elsewhere in this file, just
+        # with the deeper 1A 05 menu-item address also checked, not just sub).
+        extra = len(cmd) - 2
+        if extra:
+            if len(p) < 1 + extra or list(p[1:1 + extra]) != cmd[2:]:
+                return None
+        data = p[1 + extra:]
+        return self._decode_adv(spec, data)
+
+    @staticmethod
+    def _decode_adv(spec: dict, data: bytes):
+        kind = spec["kind"]
+        if kind == "enum":
+            return data[0] if data else None
+        if kind == "range":
+            if not data:
+                return None
+            v = data[0] + spec.get("offset", 0)
+            return round(v * spec["scale"], 2) if "scale" in spec else v
+        if kind in ("bcd2pct", "bcd2range"):
+            if len(data) < 2:
+                return None
+            raw = bcd2(data[:2])
+            if kind == "bcd2pct":
+                return round(raw / 255.0, 4)
+            lo, hi = spec["min"], spec["max"]
+            return round(lo + raw / 255.0 * (hi - lo), 1)
+        return None
+
+    @staticmethod
+    def _encode_adv(spec: dict, value) -> bytes | None:
+        kind = spec["kind"]
+        try:
+            if kind == "enum":
+                v = int(value)
+                return bytes([v]) if 0 <= v < spec["n"] else None
+            if kind == "range":
+                # Inverse of _decode_adv's v = (raw + offset) * scale.
+                raw = float(value) / spec.get("scale", 1) - spec.get("offset", 0)
+                rawmax = spec.get("rawmax", 255)
+                return bytes([max(0, min(rawmax, int(round(raw))))])
+            if kind in ("bcd2pct", "bcd2range"):
+                if kind == "bcd2pct":
+                    frac = float(value)
+                else:
+                    lo, hi = spec["min"], spec["max"]
+                    frac = (float(value) - lo) / (hi - lo) if hi != lo else 0.0
+                frac = max(0.0, min(1.0, frac))
+                civ = CivRig._int_to_bcd2(int(round(frac * 255)))
+                return civ
+        except (TypeError, ValueError):
+            return None
+        return None
+
+    async def set_adv(self, key: str, value) -> bool:
+        spec = self.profile.get("adv", {}).get(key.upper())
+        if spec is None:
+            return False
+        enc = self._encode_adv(spec, value)
+        if enc is None:
+            return False
+        if self.sim or not self._ser:
+            return True
+        cmd = spec["cmd"]
+        p = await asyncio.to_thread(self._transact, bytes(cmd) + enc, {0xFB, 0xFA}, 0.4)
+        return p is not None and self._resp_matched_cmd == 0xFB
+
+    # ── RIT / ΔTX (clarifier) — CI-V 0x21, admin-only ───────────────────────
+    # Unique signed 4-digit-BCD format (not a fit for the generic _IC7300_ADV
+    # table above), so handled as its own small bespoke group instead of
+    # forcing it into that table's kinds.
+    async def get_rit(self) -> dict:
+        if self.sim or not self._ser:
+            return {"hz": 0, "ritOn": False, "dtxOn": False}
+        return await asyncio.to_thread(self._read_rit)
+
+    def _read_rit(self) -> dict:
+        hz = 0
+        p = self._transact(bytes([0x21, 0x00]), {0x21}, 0.3, sub=0x00)
+        if p and len(p) >= 4 and p[0] == 0x00:
+            sign = -1 if p[1] == 0x01 else 1
+            hz = sign * bcd2(p[2:4])
+        rit_on = False
+        p = self._transact(bytes([0x21, 0x01]), {0x21}, 0.3, sub=0x01)
+        if p and len(p) >= 2 and p[0] == 0x01:
+            rit_on = bool(p[1])
+        dtx_on = False
+        p = self._transact(bytes([0x21, 0x02]), {0x21}, 0.3, sub=0x02)
+        if p and len(p) >= 2 and p[0] == 0x02:
+            dtx_on = bool(p[1])
+        return {"hz": hz, "ritOn": rit_on, "dtxOn": dtx_on}
+
+    async def set_rit_hz(self, hz: int) -> bool:
+        hz = max(-9999, min(9999, int(hz)))
+        sign = bytes([0x01 if hz < 0 else 0x00])
+        if self.sim or not self._ser:
+            return True
+        p = await asyncio.to_thread(
+            self._transact, bytes([0x21, 0x00]) + sign + self._int_to_bcd4(abs(hz)),
+            {0xFB, 0xFA}, 0.4)
+        return p is not None and self._resp_matched_cmd == 0xFB
+
+    async def set_rit_enabled(self, on: bool) -> bool:
+        if self.sim or not self._ser:
+            return True
+        p = await asyncio.to_thread(
+            self._transact, bytes([0x21, 0x01, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+        return p is not None and self._resp_matched_cmd == 0xFB
+
+    async def set_dtx_enabled(self, on: bool) -> bool:
+        if self.sim or not self._ser:
+            return True
+        p = await asyncio.to_thread(
+            self._transact, bytes([0x21, 0x02, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
+        return p is not None and self._resp_matched_cmd == 0xFB
 
     async def get_capabilities(self) -> dict:
         """
@@ -2241,6 +2392,53 @@ class CivRig:
                         _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
                         self.log(f"[civ] VOLT transact fail ({_why}, may be unsupported on this model): p={vp.hex() if vp else None}")
                         self._volt_fail_logged = getattr(self, '_volt_fail_logged', 0) + 1
+
+                    # Supply current (Id — drain current draw). Command
+                    # "15 16" (the OTHER meter in the same pair as VOLT/"15
+                    # 15" above). Calibration points straight from the
+                    # official IC-7300MK2 CI-V Reference Guide, command
+                    # table entry "15 16": 0000=0, 0097=10, 0146=15, 0241=25
+                    # (Amps, same nonlinear-piecewise style as VOLT/SWR).
+                    idp = self._transact(bytes([0x15, 0x16]), {0x15, 0xFA}, 0.25, sub=0x16)
+                    if idp and len(idp) >= 3 and idp[0] == 0x16:
+                        id_raw = bcd2(idp[1:3])
+                        _id_points = [(0, 0.0), (97, 10.0), (146, 15.0), (241, 25.0)]
+                        amps = _id_points[-1][1]
+                        for _i in range(len(_id_points) - 1):
+                            _x0, _y0 = _id_points[_i]
+                            _x1, _y1 = _id_points[_i + 1]
+                            if _x0 <= id_raw <= _x1:
+                                _t = (id_raw - _x0) / (_x1 - _x0)
+                                amps = round(_y0 + _t * (_y1 - _y0), 2)
+                                break
+                        with self._telemetry_lock:
+                            self._telemetry_pending["txmeter_ID"] = {
+                                "type": "txmeter", "meter": "ID",
+                                "raw": id_raw,
+                                "value": amps,
+                                "pct": amps / 25.0}  # scale to nominal 25A
+                    elif getattr(self, '_id_fail_logged', 0) < 5:
+                        # Same "may simply not exist on this model" caveat as VOLT above.
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] ID transact fail ({_why}, may be unsupported on this model): p={idp.hex() if idp else None}")
+                        self._id_fail_logged = getattr(self, '_id_fail_logged', 0) + 1
+
+                    # OVF (ADC overflow / front-end overdrive indicator).
+                    # Command "15 07": 00=Not displayed, 01=Displayed. Pure
+                    # boolean status, no calibration needed - the radio
+                    # itself decides when the receiver front-end is being
+                    # overdriven, which a remote operator has no other way
+                    # to see (no physical panel to glance at).
+                    ovp = self._transact(bytes([0x15, 0x07]), {0x15, 0xFA}, 0.25, sub=0x07)
+                    if ovp and len(ovp) >= 2 and ovp[0] == 0x07:
+                        ovf = bool(ovp[1])
+                        if ovf != getattr(self, "ovf", False):
+                            self.ovf = ovf
+                            self.bcast({"type": "ovf", "value": ovf})
+                    elif getattr(self, '_ovf_fail_logged', 0) < 5:
+                        _why = "REJECTED by radio (NG 0xFA)" if self._resp_matched_cmd == 0xFA else "timeout, no response"
+                        self.log(f"[civ] OVF transact fail ({_why}, may be unsupported on this model): p={ovp.hex() if ovp else None}")
+                        self._ovf_fail_logged = getattr(self, '_ovf_fail_logged', 0) + 1
 
                     # RFPOWER SET level (14 0A) — direct read-back of the
                     # radio's CONFIGURED power ceiling, independent of the

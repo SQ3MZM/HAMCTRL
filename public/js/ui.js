@@ -426,10 +426,10 @@ function updateSMeter(val) {
 // them all cyclically, regardless of which one a given user is currently
 // watching) — this way switching the select shows the data immediately,
 // without waiting for the next CI-V polling cycle (up to 2s with PTT off, see civ.py n%8==0).
-const _txMeterValues = { ALC: null, PWR: null, SWR: null, VOLT: null };
+const _txMeterValues = { ALC: null, PWR: null, SWR: null, VOLT: null, ID: null };
 let _txMeterSelected = 'ALC';
 
-const _TXMETER_UNITS = { ALC: '%', PWR: '%', SWR: '', VOLT: 'V' };
+const _TXMETER_UNITS = { ALC: '%', PWR: '%', SWR: '', VOLT: 'V', ID: 'A' };
 
 // Tick marks below the bar — matched to the REAL reading range from the
 // radio (civ.py), not a plain 0-100 scale. Each point: {at: position in %
@@ -444,6 +444,9 @@ const _TXMETER_SCALES = {
   PWR:  [{at:0,label:'0'}, {at:25,label:'25'}, {at:50,label:'50'}, {at:75,label:'75'}, {at:100,label:'100%'}],
   SWR:  [{at:0,label:'1.0'}, {at:40,label:'1.5'}, {at:66.7,label:'2.0'}, {at:100,label:'3.0'}],
   VOLT: [],  // no ticks — VOLT is a stable number, not a moving scale (see below)
+  // ID (supply current): pct = amps/25 (civ.py), so the real calibration
+  // breakpoints (0/10/15/25A) land at 0/40/60/100% - same idea as SWR above.
+  ID:   [{at:0,label:'0'}, {at:40,label:'10'}, {at:60,label:'15'}, {at:100,label:'25A'}],
 };
 
 function updateTxMeter(msg) {

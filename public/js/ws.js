@@ -604,6 +604,9 @@ function handleMessage(msg) {
       }
       // Pass the operator state to OpPanel
       if (window.OpPanel?.handleWS) window.OpPanel.handleWS(msg);
+      // OVF (front-end overdrive) lamp — show the real current state
+      // immediately on (re)connect instead of defaulting to "off".
+      document.getElementById('ovf-badge')?.style.setProperty('display', msg.ovf ? 'inline-block' : 'none');
       break;
     }
 
@@ -796,6 +799,9 @@ function handleMessage(msg) {
       break;
     case 'power_state':
       window.RadioFunctions?.handlePowerState?.(!!msg.value);
+      break;
+    case 'ovf':
+      document.getElementById('ovf-badge')?.style.setProperty('display', msg.value ? 'inline-block' : 'none');
       break;
     case 'toast':
       window.UI?.showToast(msg.message || msg.msg || '');
