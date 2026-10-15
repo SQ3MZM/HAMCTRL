@@ -40,6 +40,13 @@
      OBU motywach (wyglada jak wnetrze fizycznego wskaznika), nie po
      prostu var(--panel3). */
   --meter-track: #060806;
+  /* Pola tekstowe/liczbowe (RIT Hz, edycja makr CW, numery portow COM itp.)
+     uzywaly "var(--input-bg,#0a0a0a)" wszedzie - --input-bg nigdy nie byl
+     jawnie zdefiniowany, wiec kazde z tych pol ZAWSZE dostawalo ten sam
+     twardy fallback #0a0a0a bez wzgledu na motyw (live report 2026-10-16:
+     "caly blok frq jest na ciemno" - pole RIT Hz tuz przy VFO to jeden z
+     tych inputow). */
+  --input-bg: #0a0a0a;
   /* --fg: uzywany w kilku inline-stylach (COM Bridge, PROFIL audio TEST,
      itp.) - domyslnie = --text, chyba ze konkretny motyw (np.
      amber-classic nizej) jawnie go nadpisuje. Bez tej linii --fg byl
@@ -382,7 +389,7 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .vfo-display {
   text-align: left;
   padding: 10px 14px 6px;
-  background: #090c09;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 .vfo-label { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--dim); margin-bottom: 5px; }
@@ -682,6 +689,7 @@ html[data-theme="amber-classic"] {
   --amber-rgb:  138,95,16;
   --red-rgb:    160,59,46;
   --meter-track: #3a362c;
+  --input-bg: #e6e1d2;
 }
 @media (prefers-color-scheme: light) {
   /* Tylko gdy user NIGDY nie kliknal przelacznika (brak zapisu w
@@ -707,6 +715,7 @@ html[data-theme="amber-classic"] {
     --amber-rgb:  138,95,16;
     --red-rgb:    160,59,46;
     --meter-track: #3a362c;
+    --input-bg: #e6e1d2;
   }
 }
 

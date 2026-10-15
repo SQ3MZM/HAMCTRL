@@ -34,21 +34,47 @@ let _tNext   = 0;      // time of the next expected update
 let _speed   = 0;      // °/s speed computed from previous updates
 
 // ── Compass ───────────────────────────────────────────────────────────────────
+// Theme-aware (2026-10-16, live report "rotor... sa na ciemno a powinny byc
+// na jasno... tylko waterfall mial zostac na ciemno"): unlike the waterfall/
+// scope (an RF data plot, kept dark in every SDR app regardless of theme),
+// the user explicitly wants this compass to follow the day/night toggle.
+// Reads data-mode directly (not a CSS var — this is a <canvas>, drawn in
+// JS, not styled by CSS) once per frame; cheap enough at this size/rate.
+function _compassPalette() {
+  const light = document.documentElement.getAttribute('data-mode') === 'light';
+  return light ? {
+    bgInner: '#f3efe3', bgOuter: '#e3ddc9',
+    ringMoving: 'rgba(138,95,16,0.45)', ringStill: 'rgba(79,107,52,0.35)',
+    tickBig: 'rgba(79,107,52,0.75)', tickMed: 'rgba(79,107,52,0.4)', tickSmall: 'rgba(79,107,52,0.18)',
+    labelN: 'rgba(160,59,46,0.9)', labelOther: 'rgba(79,107,52,0.75)',
+    targetLine: 'rgba(138,95,16,0.6)',
+    pointerMoving: '#8a5f10', pointerStill: '#3a4f26',
+  } : {
+    bgInner: '#111811', bgOuter: '#0a0c0a',
+    ringMoving: 'rgba(240,180,41,0.4)', ringStill: 'rgba(76,219,106,0.25)',
+    tickBig: 'rgba(76,219,106,0.6)', tickMed: 'rgba(76,219,106,0.3)', tickSmall: 'rgba(76,219,106,0.1)',
+    labelN: 'rgba(224,82,82,0.9)', labelOther: 'rgba(76,219,106,0.55)',
+    targetLine: 'rgba(240,180,41,0.55)',
+    pointerMoving: '#f0b429', pointerStill: '#4cdb6a',
+  };
+}
+
 function drawCompass(az, taz, moving) {
   const cv = document.getElementById('rot-compass');
   if (!cv) return;
   const ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;
   const cx = W/2, cy = H/2, R = W/2 - 3;
+  const P = _compassPalette();
 
   ctx.clearRect(0, 0, W, H);
 
   // Background
   const g = ctx.createRadialGradient(cx,cy,0,cx,cy,R);
-  g.addColorStop(0, '#111811'); g.addColorStop(1, '#0a0c0a');
+  g.addColorStop(0, P.bgInner); g.addColorStop(1, P.bgOuter);
   ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
   ctx.fillStyle = g; ctx.fill();
-  ctx.strokeStyle = moving ? 'rgba(240,180,41,0.4)' : 'rgba(76,219,106,0.25)';
+  ctx.strokeStyle = moving ? P.ringMoving : P.ringStill;
   ctx.lineWidth = moving ? 2 : 1; ctx.stroke();
 
   // Tick marks
@@ -59,7 +85,7 @@ function drawCompass(az, taz, moving) {
     ctx.beginPath();
     ctx.moveTo(cx+Math.cos(r)*r1, cy+Math.sin(r)*r1);
     ctx.lineTo(cx+Math.cos(r)*r2, cy+Math.sin(r)*r2);
-    ctx.strokeStyle = big?'rgba(76,219,106,0.6)':med?'rgba(76,219,106,0.3)':'rgba(76,219,106,0.1)';
+    ctx.strokeStyle = big?P.tickBig:med?P.tickMed:P.tickSmall;
     ctx.lineWidth = big?1.5:0.8; ctx.stroke();
   }
 
@@ -67,7 +93,7 @@ function drawCompass(az, taz, moving) {
   ctx.font='bold 9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
   for (const [l,d,red] of [['N',0,true],['E',90,false],['S',180,false],['W',270,false]]) {
     const r=(d-90)*Math.PI/180, rr=R-21;
-    ctx.fillStyle = red?'rgba(224,82,82,0.9)':'rgba(76,219,106,0.55)';
+    ctx.fillStyle = red?P.labelN:P.labelOther;
     ctx.fillText(l, cx+Math.cos(r)*rr, cy+Math.sin(r)*rr);
   }
 
@@ -106,12 +132,12 @@ function drawCompass(az, taz, moving) {
     ctx.save(); ctx.setLineDash([3,4]);
     ctx.beginPath(); ctx.moveTo(cx,cy);
     ctx.lineTo(cx+Math.cos(tr)*(R-16), cy+Math.sin(tr)*(R-16));
-    ctx.strokeStyle='rgba(240,180,41,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.strokeStyle=P.targetLine; ctx.lineWidth=1.5; ctx.stroke();
     ctx.restore();
   }
 
   // Pointer
-  const col = moving ? '#f0b429' : '#4cdb6a';
+  const col = moving ? P.pointerMoving : P.pointerStill;
   const aLen = R-14;
   ctx.save();
   ctx.translate(cx,cy);
