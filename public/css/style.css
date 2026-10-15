@@ -31,6 +31,63 @@
   --ui:      'Inter', sans-serif;
 }
 
+/* ── Jasny motyw (dzien/noc, approved 2026-10-15) ─────────────────────────
+   Live report: "na tym co jest slabo widac" (niektore teksty/panele slabo
+   widoczne) - niekt orzy userzy wola jasne tlo. Zachowujemy TA SAMA
+   tozsamosc kolorystyczna ("natural sage": szalwiowa zielen / bursztyn /
+   czerwien) - zmieniaja sie TYLKO neutralne kolory tla/tekstu (--bg,
+   --panel, --text, --dim, --border), PRZELACZANE przez toggle w theme.js
+   (localStorage 'ham_theme', jak PL/EN w i18n.js) - domyslnie ciemny
+   (obecny wyglad, bez zmian dla kogos kto nic nie kliknie).
+   Akcenty (--green/--green2/--amber/--red) dostaja NIECO ciemniejsze/
+   bardziej nasycone odcienie tej samej barwy niz w ciemnym motywie -
+   te same, pastelowe wartosci z ciemnego motywu mialyby ZA MALY kontrast
+   na jasnym tle (dokladnie ten sam problem widocznosci co user zglasza,
+   tylko w nowym miejscu).
+   UWAGA (znane ograniczenie): sporo odznak/plakietek w index.html ma
+   WPISANY NA SZTYWNO kolor tla (np. "background:rgba(212,168,87,0.2)"
+   zamiast var(--amber)) - te tla NIE zmienia sie w jasnym motywie (zostaja
+   w odcieniu dobranym pod ciemne tlo), tylko sam tekst (ktory juz uzywa
+   var(--amber) itp.) sie przelacza - drobna kosmetyczna niespojnosc,
+   zaakceptowana zamiast przepisywania dziesiatek inline-stylow. Wodospad/
+   scope/kompas rotora (canvas, nie CSS) CELOWO zostaja ciemne w obu
+   motywach - to wykresy RF, nie tekst, i tak jest w kazdym programie SDR. */
+:root[data-theme="light"] {
+  --bg:      #eeeae0;
+  --panel:   #faf8f2;
+  --panel2:  #f1ede2;
+  --panel3:  #e6e1d2;
+  --border:  rgba(74,88,54,0.16);
+  --border2: rgba(74,88,54,0.32);
+  --green:   #4f6b34;
+  --green2:  #3a4f26;
+  --amber:   #8a5f10;
+  --red:     #a03b2e;
+  --dim:     rgba(38,40,28,0.55);
+  --text:    #22241c;
+  --on-accent: #fdfcf6;
+}
+@media (prefers-color-scheme: light) {
+  /* Tylko gdy user NIGDY nie kliknal przelacznika (brak zapisu w
+     localStorage) - JS (theme.js) i tak ustawia data-theme explicite na
+     starcie, wiec to tylko fallback zanim JS zdazy sie wykonac. */
+  :root:not([data-theme]) {
+    --bg:      #eeeae0;
+    --panel:   #faf8f2;
+    --panel2:  #f1ede2;
+    --panel3:  #e6e1d2;
+    --border:  rgba(74,88,54,0.16);
+    --border2: rgba(74,88,54,0.32);
+    --green:   #4f6b34;
+    --green2:  #3a4f26;
+    --amber:   #8a5f10;
+    --red:     #a03b2e;
+    --dim:     rgba(38,40,28,0.55);
+    --text:    #22241c;
+    --on-accent: #fdfcf6;
+  }
+}
+
 html {
   /* body.width jest ustawiane przez JS (updateScale) na scale*REF_W.
      Wysokosc NIE jest sztywno ograniczana — strony dluzsze niz 1080px
@@ -46,6 +103,7 @@ html {
   background: #0d0f0e;
   scrollbar-gutter: stable;
 }
+html[data-theme="light"] { background: #d8d3c2; }
 
 body {
   background: var(--bg);
@@ -79,30 +137,57 @@ body::after {
 }
 
 /* ── TOPBAR ── */
+/* FIX (2026-10-15, live report "gora dostala przesuwane menu przy mniejszym
+   ekranie, stare bylo lepsze"):
+   Tried moving .topbar INSIDE #app-scale first (to have it scale down
+   together with the rest of the UI) and switching fixed -> sticky - DEAD
+   END, confirmed live with a MutationObserver/measurement pass: Chrome
+   computes a sticky descendant's stuck offset against a transformed
+   ancestor's own box instead of the real viewport once that ancestor has
+   transform:scale() applied (#app-scale always does, see index.html), so
+   the topbar ended up pinned somewhere in the middle of a scrolled page
+   instead of the top - broken. Reverted: .topbar stays OUTSIDE #app-scale,
+   at real unscaled pixels, same as it always was.
+   The ACTUAL fix for the complaint doesn't need scaling at all: measured
+   live (javascript_tool) that the topbar's full content (logo + ~9 tabs +
+   the status row's badges/indicators/role/callsign/toggles + logout)
+   needs ~1790px even at the reference width - it has simply grown (more
+   tabs, more status badges) since the layout was first sized, so it never
+   fit in one row at ANY scale, which is why nav-tabs got overflow-x:auto
+   (the "sliding menu") as a band-aid in the first place. Real fix:
+   .nav-tabs now wraps its OWN buttons onto a second line (flex-wrap:wrap)
+   instead of scrolling sideways - logo/status/logout stay on the first
+   row (.topbar itself does not wrap), and the middle nav-tabs column
+   simply grows taller by one row on a narrow screen. Nothing is ever
+   hidden or needs scrolling/swiping to reach - matches what users
+   remember from before ("wszystko bylo widoczne na 1 ekranie niezaleznie
+   od wielkosci okna"), just with an occasional 2-line tab bar instead of
+   a razor-thin single line.
+   position:sticky (kept, was already there before this fix) has no
+   transformed ancestor to fight here - it just keeps the topbar pinned
+   during a long page's scroll, same as position:fixed did, but also
+   auto-reserves its own space in normal flow (so no manual body
+   padding-top is needed, unlike fixed, which matters now that the
+   topbar's height can vary between one and two rows of tabs). */
 .topbar {
   background: var(--panel);
   border-bottom: 1px solid var(--border2);
   padding: 10px 20px;
-  display: flex; align-items: center; justify-content: space-between;
-  position: fixed; top: 0; left: 0; right: 0; z-index: 1000; gap: 12px;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: 12px;
+  position: sticky; top: 0; z-index: 1000;
 }
-
-body { padding-top: 52px; }
 
 /* Presence bar usunieta — funkcje przeniesione do panelu OPERATORZY w tile-cw */
 
-/* white-space:nowrap + flex-shrink:0 — bez tego na waskim realnym viewport
-   (topbar nie skaluje sie z #app-scale, patrz komentarz przy .nav-tabs) tekst
-   logo lamal sie na 3 linie i byl ucinany, bo .topbar to flex z ograniczona
-   szerokoscia a przegladarka domyslnie zawija tekst zamiast go przycinac. */
+/* white-space:nowrap + flex-shrink:0 — bez tego logo lamalo sie na 3 linie
+   i bylo ucinane zamiast zostac w calosci na jednej linii. */
 .logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); white-space: nowrap; flex-shrink: 0; }
 .logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(184,201,143,0.4); }
-/* .topbar sits outside #app-scale (position:fixed, real unscaled px) so it
-   does not shrink with the rest of the page on narrow real viewports.
-   min-width:0 lets this flex item shrink below its content width instead of
-   pushing the topbar's own width; overflow-x then scrolls the tab list
-   internally instead of the buttons disappearing off-screen. */
-.nav-tabs { display: flex; gap: 3px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+/* flex:1 1 auto + min-width:0 — nav-tabs takes whatever width is left
+   between the logo and the status row/logout, and flex-wrap lets its OWN
+   buttons drop to a second (or third) line when that's not enough, instead
+   of scrolling sideways (see the long comment on .topbar above). */
+.nav-tabs { display: flex; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; gap: 3px; row-gap: 4px; }
 .tab-btn {
   background: none; border: none; padding: 6px 14px; border-radius: 4px;
   color: var(--dim); font-family: var(--mono); font-size: 12px; cursor: pointer;
@@ -110,7 +195,12 @@ body { padding-top: 52px; }
 }
 .tab-btn:hover  { color: var(--text); background: var(--panel2); }
 .tab-btn.active { color: var(--green); background: rgba(184,201,143,0.08); border: 1px solid var(--border2); }
-.status-row { display: flex; align-items: center; gap: 12px; }
+/* flex-shrink:0 + flex-wrap - the status row's badges/indicators/toggles
+   don't shrink gracefully (icons, fixed-width badges), so it keeps its
+   natural size and wraps onto its own second line rather than letting the
+   browser squash it into unreadable mush when nav-tabs needs a lot of
+   room too. */
+.status-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; flex-shrink: 0; }
 .indicator  { display: flex; align-items: center; gap: 5px; }
 .dot        { width:8px; height:8px; border-radius:50%; background:var(--dim); }
 .dot.green  { background:var(--green); box-shadow:0 0 8px rgba(184,201,143,0.7); animation:blink 2s ease-in-out infinite; }
@@ -120,7 +210,7 @@ body { padding-top: 52px; }
 .logout-btn {
   background: none; border: 1px solid var(--border); border-radius: 4px;
   color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 5px 10px;
-  cursor: pointer; transition: all 0.2s;
+  cursor: pointer; transition: all 0.2s; flex-shrink: 0;
 }
 .logout-btn:hover { border-color: var(--red); color: var(--red); }
 .lang-switch-btn {
