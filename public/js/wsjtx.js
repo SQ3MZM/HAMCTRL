@@ -792,6 +792,10 @@ function _onAutoQsoComplete(msg) {
   _frozenRstSent = null; // reset after the QSO
   _frozenRstRcvd = null;
   _updateMacroTexts(); // the macro-3 preview reverts to the current _lastDxSnr
+  // wj-log-call/grid above were set directly (not via oninput), so the
+  // beam-heading row/dial hint would otherwise keep pointing at whichever
+  // station was there BEFORE this auto-QSO completed.
+  updateBeamRow();
   if (modeEl) modeEl.value = msg.mode || 'FT8';
   const commentEl = document.getElementById('wj-log-comment');
   if (commentEl) commentEl.value = '';
@@ -1414,6 +1418,9 @@ function updateBeamRow() {
     if (longEl) longEl.textContent = '';
     _beamSpAz = null; _beamLpAz = null;
     _updateRotorButtons();
+    // Callsign cleared (or no heading could be computed) - the dial's
+    // direction hint must go with it, same as rotator.js's own input.
+    if (_rotorId != null) window.Rotator?.clearHint(_rotorId);
     return;
   }
   if (azEl)   azEl.textContent   = h.azimuth + '°';
@@ -1423,6 +1430,10 @@ function updateBeamRow() {
   _beamSpAz = h.azimuth;
   _beamLpAz = h.azLong;
   _updateRotorButtons();
+  // Show the suggested direction on the rotor dial too, same as typing
+  // directly into rotator.js's own target field - cleared automatically
+  // once the rotor actually moves (rotator.js's updateCard).
+  if (_rotorId != null) window.Rotator?.setHint(_rotorId, h.azimuth);
 }
 
 // FIX (2026-09-03, follow-up to the main ROTATOR tile's data-perm-disable
@@ -1820,6 +1831,10 @@ async function addLog() {
       ['wj-log-call','wj-log-grid','wj-log-rst-rcvd','wj-log-comment'].forEach(id=>{
         const el=document.getElementById(id); if(el) el.value='';
       });
+      // Programmatic .value='' above doesn't fire 'input', so without this
+      // the beam-heading row (and the dial's direction hint) would keep
+      // showing the just-logged station after the form itself went blank.
+      updateBeamRow();
     } else {
       window.UI?.showToast(`✗ ${d.error || I18n.t('wj_log_error_fallback')}`, 'error');
     }

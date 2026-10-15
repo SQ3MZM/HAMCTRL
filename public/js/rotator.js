@@ -1,8 +1,13 @@
 /**
  * rotator.js (frontend) — rotator control panel
  * - Clickable SVG compass
- * - Type a 4/6-char locator or degrees → compute azimuth → go
+ * - Type a 4/6-char locator, degrees, or a callsign → compute azimuth → go
  * - Preset directions N/NE/E...
+ * - Direction HINT: typing (without hitting go) draws a dotted suggestion
+ *   line on the dial, separate from the real target/needle. Same hint also
+ *   appears here when typed into the FT8 quick-log (wsjtx.js's
+ *   updateBeamRow calls Rotator.setHint/clearHint). Clears itself once the
+ *   rotor actually starts moving, from ANY command - see updateCard.
  */
 (function() {
 'use strict';
@@ -75,6 +80,14 @@ function resolveTarget(input) {
     const az = bearingTo(myPos.lat, myPos.lon, dxPos.lat, dxPos.lon);
     const dist = calcDist(myPos.lat, myPos.lon, dxPos.lat, dxPos.lon);
     return { az: Math.round(az * 10) / 10, label: `${input} → ${Math.round(az)}° (${Math.round(dist)} km)` };
+  }
+
+  // Otherwise treat it as a callsign - reuse beamheading.js's own
+  // locator-or-prefix resolution (same logic the FT8 quick-log's SP/LP
+  // already relies on) instead of duplicating a prefix table here.
+  const h = window.BeamHeading?.headingFor(input, '');
+  if (h) {
+    return { az: h.azimuth, label: `${input.toUpperCase()} → ${h.azimuth}° (${h.distance}km, ${h.source === 'grid' ? 'grid' : 'prefix'})` };
   }
   return null;
 }
@@ -158,12 +171,12 @@ function buildCard(rot) {
       <!-- CONTROL PANEL -->
       <div class="rot-controls">
 
-        <!-- Type a locator or degrees -->
+        <!-- Type a locator, degrees, or a callsign -->
         <div style="margin-bottom:10px;">
-          <div class="form-label" style="margin-bottom:5px;">LOCATOR (np. KO02) LUB STOPNIE</div>
+          <div class="form-label" style="margin-bottom:5px;">LOCATOR / ZNAK / STOPNIE</div>
           <div style="display:flex;gap:5px;">
             <input type="text" id="rot-target-${rot.id}"
-              placeholder="KO02 / JO90 / 270"
+              placeholder="KO02 / SP3MZM / 270"
               style="flex:1;padding:7px 10px;font-size:13px;font-family:var(--mono);"
               oninput="Rotator.previewTarget(${rot.id})"
               onkeydown="if(event.key==='Enter')Rotator.goTarget(${rot.id})">
@@ -232,6 +245,9 @@ function previewTarget(id) {
   if (!inp || !prv) return;
   const result = resolveTarget(inp.value);
   prv.textContent = result ? `→ Azymut: ${result.az}° ${result.label || ''}` : (inp.value ? '⚠ Nieprawidłowy locator / kąt' : '');
+  // Empty/invalid input -> result is null -> setHint(id, null) clears it,
+  // same as deleting a callsign in the FT8 quick-log (see updateBeamRow).
+  setHint(id, result ? result.az : null);
 }
 
 // ── Go to a locator/degrees ────────────────────────────────────────────────────
@@ -257,6 +273,33 @@ const _displayAz = {};       // currently displayed angle (animated)
 const _serverAz  = {};       // last angle from the server (animation target)
 const _rotMeta   = {};       // {target_az, moving} per rotator
 let _animRaf = null;
+
+// Direction HINT per rotator - a suggestion only (typed into this tab's own
+// target input, or into the FT8 quick-log via Rotator.setHint from
+// wsjtx.js's updateBeamRow), separate from _rotMeta's real target_az. Drawn
+// on the dial as its own distinct marker (see drawCompass) and cleared as
+// soon as the rotor actually starts moving (updateCard below) so it can
+// never linger on the dial looking like a still-pending suggestion once
+// the rotor is already headed somewhere (possibly from a DIFFERENT
+// command - manual az, preset button, etc).
+const _hintAz = {};
+
+function setHint(id, az) {
+  _hintAz[id] = (az == null || isNaN(az)) ? null : az;
+  _redrawHint(id);
+}
+
+function clearHint(id) {
+  _hintAz[id] = null;
+  _redrawHint(id);
+}
+
+function _redrawHint(id) {
+  const rot  = rotators.find(r => r.id === id);
+  const az   = _displayAz[id] ?? rot?.azimuth ?? 0;
+  const meta = _rotMeta[id] || {};
+  drawCompass(id, az, meta.target_az ?? rot?.target_az ?? az, meta.moving ?? rot?.moving ?? false);
+}
 
 function _shortestAngleDiff(from, to) {
   // Shortest angular difference (-180..180), so the needle doesn't loop 350°->10°
@@ -303,6 +346,12 @@ function updateCard(rot) {
   if (movD) movD.innerHTML   = rot.moving
     ? `<span style="color:var(--amber)">● OBRACA → ${rot.target_az}°</span>`
     : `<span style="color:var(--dim)">● W POZYCJI</span>`;
+
+  // The rotor is actually moving now (from ANY command - this update, a
+  // preset button, another operator) - a lingering hint would read as "go
+  // here next" when it's really just stale input. Clear it unconditionally
+  // rather than only for the command that started this exact move.
+  if (rot.moving && _hintAz[rot.id] != null) _hintAz[rot.id] = null;
 
   // Save the target from the server and start a smooth needle animation to that position
   _serverAz[rot.id] = rot.azimuth;
@@ -361,6 +410,23 @@ function drawCompass(id, azimuth, target, moving) {
     ctx.fillStyle = ['0','90','180','270'].includes(d) ? 'rgba(76,219,106,0.8)' : 'rgba(76,219,106,0.45)';
     ctx.fillText(l, cx + R*dist*Math.cos(rad), cy + R*dist*Math.sin(rad));
   });
+
+  // Direction HINT (dotted blue) - a typed-in suggestion, not a real
+  // command (see _hintAz above). Drawn before the target/needle so it
+  // never visually competes with them - it's a suggestion, not a state.
+  const hint = _hintAz[id];
+  if (hint != null) {
+    const hRad = (hint-90)*Math.PI/180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + R*0.82*Math.cos(hRad), cy + R*0.82*Math.sin(hRad));
+    ctx.strokeStyle = 'rgba(100,180,255,0.6)';
+    ctx.lineWidth = 1.5; ctx.setLineDash([2,3]); ctx.stroke(); ctx.setLineDash([]);
+    const hx = cx + R*0.82*Math.cos(hRad), hy = cy + R*0.82*Math.sin(hRad);
+    ctx.beginPath();
+    ctx.arc(hx, hy, 3.5, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(100,180,255,0.8)'; ctx.fill();
+  }
 
   // Target line (dashed yellow)
   if (Math.abs(target - azimuth) > 1) {
@@ -478,6 +544,6 @@ async function apiPost(url, body) {
   }
 }
 
-window.Rotator = { load, render, handleWS, compassClick, previewTarget, goTarget, setPos, stop, park, goDir };
+window.Rotator = { load, render, handleWS, compassClick, previewTarget, goTarget, setPos, stop, park, goDir, setHint, clearHint };
 
 })();
