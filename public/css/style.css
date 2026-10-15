@@ -680,7 +680,16 @@ html[data-theme="amber-classic"] {
   --green2:  #3a4f26;
   --amber:   #8a5f10;
   --red:     #a03b2e;
-  --dim:     rgba(38,40,28,0.55);
+  /* 0.72 not 0.55 (live report 2026-10-16: "czcionka nadal malo czytelna
+     kolorystycznie") - --dim labels small text everywhere (section
+     titles, hints, secondary values), and 0.55 alpha of a dark color over
+     a LIGHT panel only works out to roughly 4:1 contrast - borderline-to-
+     failing for the 9-11px fonts used throughout this UI. 0.72 gets this
+     to a comfortably readable ~6:1 without making dim text as loud as
+     --text (still visibly "secondary"). Dark mode's --dim is untouched -
+     not reported as a problem there, and the user asked to keep the
+     existing dark look as-is. */
+  --dim:     rgba(38,40,28,0.72);
   --text:    #22241c;
   --on-accent: #fdfcf6;
   --fg:      var(--text);
@@ -706,7 +715,7 @@ html[data-theme="amber-classic"] {
     --green2:  #3a4f26;
     --amber:   #8a5f10;
     --red:     #a03b2e;
-    --dim:     rgba(38,40,28,0.55);
+    --dim:     rgba(38,40,28,0.72);
     --text:    #22241c;
     --on-accent: #fdfcf6;
     --fg:      var(--text);
@@ -720,6 +729,22 @@ html[data-theme="amber-classic"] {
 }
 
 @keyframes ptt-pulse { 0%,100%{box-shadow:0 0 20px rgba(var(--red-rgb),0.3)} 50%{box-shadow:0 0 35px rgba(var(--red-rgb),0.6)} }
+
+/* Neon text-shadow glows (big blur radii, designed for a dark background -
+   the VFO digits, S-meter reading, logo accent) read as thick/blurry
+   rather than crisp on a LIGHT panel instead of adding a "CRT glow" effect
+   - live report 2026-10-16: "czcionka nadal malo czytelna kolorystycznie"
+   (after the --dim contrast fix above, this was the other half of it).
+   Turned off in light mode; dark mode keeps every glow exactly as-is. */
+:root[data-mode="light"] .freq-big,
+:root[data-mode="light"] .freq-big:hover,
+:root[data-mode="light"] .smeter-value,
+:root[data-mode="light"] .logo-accent,
+:root[data-mode="light"] .vfo-digit.active:hover,
+:root[data-mode="light"] .vfo-digit.selected,
+:root[data-mode="light"] .vfo-arrow:hover {
+  text-shadow: none;
+}
 
 /* ── PANEL FUNKCJI RADIA (VFO A/B, func toggle) ── */
 .tile-rigfeatures { padding: 0; }
