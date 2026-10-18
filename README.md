@@ -28,7 +28,7 @@ person transmits at a time.
 |---|
 | ![QSO log](docs/screenshots/qsolog.jpg) |
 
-*(Simulation mode — no radio hardware attached; used for these screenshots.)*
+*(Live session with a real IC-7300 connected — current UI as of October 2026.)*
 
 ### Features
 
@@ -139,7 +139,7 @@ systemowi blokady/przejęcia TRX, tak że nadaje zawsze tylko jedna osoba.
 |---|
 | ![Log QSO](docs/screenshots/qsolog.jpg) |
 
-*(Tryb symulacji — bez podłączonego radia; użyty do tych zrzutów.)*
+*(Żywa sesja z podłączonym IC-7300 — aktualny interfejs, październik 2026.)*
 
 ### Funkcje
 
