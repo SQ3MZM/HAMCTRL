@@ -69,8 +69,8 @@ function renderUsers(users) {
     const perms = { ...DEFAULT_PERMS, ...(u.permissions || {}) };
     const permBadges = PERM_DEFS
       .filter(p => perms[p.key])
-      .map(p => `<span style="font-family:var(--mono);font-size:9px;background:rgba(184,201,143,0.08);
-        border:1px solid rgba(184,201,143,0.2);border-radius:2px;padding:1px 5px;color:var(--dim);
+      .map(p => `<span style="font-family:var(--mono);font-size:9px;background:rgba(var(--green-rgb),0.08);
+        border:1px solid rgba(var(--green-rgb),0.2);border-radius:2px;padding:1px 5px;color:var(--dim);
         white-space:nowrap;">${p.label.split('—')[0].split(' (')[0].trim()}</span>`).join('');
 
     // Escape user-supplied data before inserting into HTML - a user with
@@ -432,7 +432,7 @@ function renderRotatorConfig(rots) {
           </select>
         </div>
         <button class="admin-btn danger" onclick="Admin.removeRotator(${i})" style="height:33px;">✕</button>
-        <button onclick="Admin.testRotator(${i})" style="height:33px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:10px;padding:0 8px;border-radius:3px;cursor:pointer;">TEST</button>
+        <button onclick="Admin.testRotator(${i})" style="height:33px;background:rgba(var(--green-rgb),0.1);border:1px solid var(--green2);color:var(--green);font-family:var(--mono);font-size:10px;padding:0 8px;border-radius:3px;cursor:pointer;">TEST</button>
       </div>
       <div id="rot-test-result-${i}" style="font-family:var(--mono);font-size:10px;color:var(--dim);padding:3px 2px 0;min-height:14px;"></div>
     </div>`).join('') || `<div style="font-family:var(--mono);font-size:11px;color:var(--dim);padding:12px;">${I18n.t('cfg_no_rotators')}</div>`;

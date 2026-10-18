@@ -65,12 +65,12 @@ function _showRequestToast(callsign, fromUid) {
     </div>
     <div style="display:flex;gap:8px;">
       <button onclick="window.OpPanel.releaseRadio();document.getElementById('radio-request-toast')?.remove();"
-        style="flex:1;padding:8px;background:rgba(184,201,143,0.15);border:1px solid var(--green2);
+        style="flex:1;padding:8px;background:rgba(var(--green-rgb),0.15);border:1px solid var(--green2);
         border-radius:4px;color:var(--green);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✓ ODDAJ RADIO
       </button>
       <button onclick="window.OpPanel.rejectRequest('${_esc(fromUid)}');document.getElementById('radio-request-toast')?.remove();"
-        style="flex:1;padding:8px;background:rgba(217,119,106,0.1);border:1px solid rgba(217,119,106,0.3);
+        style="flex:1;padding:8px;background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.3);
         border-radius:4px;color:var(--red);font-family:var(--mono);font-size:11px;cursor:pointer;">
         ✗ ODRZUĆ
       </button>
@@ -163,7 +163,7 @@ function _renderOpPanel() {
       const isMe     = u.user_id === myUid;
       const isActive = u.user_id === _state.user_id;
       return `<div style="display:flex;align-items:center;gap:5px;padding:3px 4px;
-        border-radius:3px;background:${isActive ? 'rgba(184,201,143,0.08)' : 'transparent'};
+        border-radius:3px;background:${isActive ? 'rgba(var(--green-rgb),0.08)' : 'transparent'};
         border:1px solid ${isActive ? 'var(--border2)' : 'transparent'};">
         <span style="font-size:14px;">${isActive ? '🎙' : '👤'}</span>
         <span style="font-family:var(--mono);font-size:10px;color:${isMe ? 'var(--green)' : 'var(--text)'};flex:1;">

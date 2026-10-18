@@ -221,6 +221,42 @@ function _updateClock() {
   }
   const el = document.getElementById('wj-clock-s');
   if (el) el.textContent = s;
+
+  // Pasek postepu cyklu UTC (przejety z forka 2026-10-17, #page-wsjtx
+  // ".cycle-bar-wrap" nad wodospadem) - osobne obliczenia od "s"/"frac"
+  // powyzej (ktore sa na stale 15s, celowo nieruszone), bo ten pasek MUSI
+  // poprawnie obslugiwac tryb FT4 (7.5s) - inaczej etykieta "FT4 (15.0s)"
+  // myliłaby operatora co do faktycznej dlugosci okna.
+  const periodLen = _status.mode === 'FT4' ? 7.5 : 15.0;
+  const totalSec  = now.getUTCSeconds() + ms / 1000;
+  const cycleSec  = totalSec % periodLen;
+  const pct       = (cycleSec / periodLen) * 100;
+
+  const cycleFill = document.getElementById('wj-cycle-fill');
+  if (cycleFill) cycleFill.style.width = `${pct.toFixed(1)}%`;
+
+  const cycleTime = document.getElementById('wj-cycle-time');
+  if (cycleTime) cycleTime.textContent = `${cycleSec.toFixed(1)}s / ${periodLen.toFixed(1)}s`;
+
+  const cycleType = document.getElementById('wj-cycle-type');
+  if (cycleType) cycleType.textContent = `${_status.mode || 'FT8'} (${periodLen.toFixed(1)}s)`;
+
+  const phaseEl = document.getElementById('wj-cycle-phase');
+  if (phaseEl) {
+    if (_status.transmit) {
+      phaseEl.textContent = I18n.t('wj_cycle_phase_tx');
+      phaseEl.style.color = '#ef4444';
+    } else if (cycleSec < periodLen * 0.84) {
+      phaseEl.textContent = I18n.t('wj_cycle_phase_rx');
+      phaseEl.style.color = '#4ade80';
+    } else if (cycleSec < periodLen * 0.96) {
+      phaseEl.textContent = I18n.t('wj_cycle_phase_decoding');
+      phaseEl.style.color = '#facc15';
+    } else {
+      phaseEl.textContent = I18n.t('wj_cycle_phase_txprep');
+      phaseEl.style.color = '#f87171';
+    }
+  }
 }
 
 // FIX (2026-09-03, live report: "widze usera na FT8 ale inny grid w
@@ -245,6 +281,14 @@ function refreshOperatorInfo() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+// FIX (2026-10-17, live report: "w ft8 wystarczylo zmienic zakladke to
+// ciagle wyskakuje udp 2238"): init() runs every time the user switches
+// INTO the FT8 tab (see ui.js setPage), not just once at app boot - the
+// monitor-active toast below used to fire unconditionally every single
+// time, since d.running is true on every check once the (auto-started)
+// monitor is up. Only worth telling the operator once per session - after
+// that it's just confirming an already-known, unchanged state.
+let _monitorActiveToastShown = false;
 async function init() {
   refreshOperatorInfo();
   _startClock();
@@ -260,7 +304,10 @@ async function init() {
     const pill = document.getElementById('wj-status-pill');
     if (d.running) {
       if (pill) { pill.textContent = '● ONLINE'; pill.className = 'wsjtx-status-pill online'; }
-      window.UI?.showToast(I18n.t('wj_toast_monitor_active').replace('{port}', d.port));
+      if (!_monitorActiveToastShown) {
+        _monitorActiveToastShown = true;
+        window.UI?.showToast(I18n.t('wj_toast_monitor_active').replace('{port}', d.port));
+      }
     } else {
       // Autostart (wsjtxAutostart in the config, enabled by default)
       // normally listens on port 2238 by itself - OFFLINE here means
@@ -294,6 +341,7 @@ async function init() {
   }
   _tryScopeInit(20);  // max 2s of attempts every 100ms
   _initSplitResizer();
+  _initHorizontalResizer();
   _startRadioSync();
   _populateBandSelect();
 }
@@ -592,6 +640,56 @@ function _initSplitResizer() {
     if (!dragging) return;
     dragging = false;
     resizer.classList.remove('dragging');
+  });
+}
+
+// ── Resizer between Waterfall Scope and the decode windows below it (góra/dół) ──
+function _initHorizontalResizer() {
+  const resizer = document.getElementById('wj-h-split-resizer');
+  const canvas = document.getElementById('wj-scope-canvas');
+  if (!resizer || !canvas) return;
+
+  let dragging = false, startY = 0, startH = 0;
+  const MIN_H = 80;
+  const MAX_H = 450;
+
+  try {
+    const saved = localStorage.getItem('hamctrl_wj_scope_height');
+    if (saved) canvas.style.height = saved;
+  } catch(e) {}
+
+  resizer.addEventListener('mousedown', (ev) => {
+    dragging = true;
+    startY = ev.clientY;
+    startH = canvas.offsetHeight || 160;
+    resizer.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
+    ev.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (ev) => {
+    if (!dragging) return;
+    const appScaleEl = document.getElementById('app-scale');
+    let scale = 1;
+    if (appScaleEl) {
+      const rect = appScaleEl.getBoundingClientRect();
+      if (rect.width > 0) scale = rect.width / 1440;
+    }
+    const dy = (ev.clientY - startY) / scale;
+    const newH = Math.max(MIN_H, Math.min(MAX_H, startH + dy));
+    canvas.style.height = `${Math.round(newH)}px`;
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    try {
+      localStorage.setItem('hamctrl_wj_scope_height', canvas.style.height);
+    } catch(e) {}
   });
 }
 
@@ -1082,6 +1180,10 @@ function _addDecode(d) {
   _renderDecodes();
   _updateCount();
   _renderRxFreqPanel();
+  // Refresh the scope waterfall's CQ-caller flag overlay (see
+  // getCqDecodes() above) - cheap (a handful of DOM nodes), fine to do on
+  // every decode rather than throttling.
+  window.WSJTXScope?.refreshCqFlags?.();
 }
 
 // Computes the decode-window number (slot index) from timeStr (format
@@ -1096,6 +1198,45 @@ function _windowSlot(timeStr, mode) {
   const totalSec = hh * 3600 + mm * 60 + ss;
   const windowS = mode === 'FT4' ? 7.5 : 15.0;
   return Math.floor(totalSec / windowS);
+}
+
+// Recent CQ-calling decodes (excludes our own TX), for the scope
+// waterfall's clickable flag overlay (wsjtx_scope.js) - same data already
+// shown in Band Activity, surfaced on the waterfall too for "who's calling
+// CQ right now, click to jump to them" (the CW/SSB waterfall has the same
+// idea for DX-cluster spots, see waterfall.js's drawSpotFlags). Limited to
+// the current + previous decode-period slot so a flag disappears once
+// that station hasn't been re-decoded calling CQ for a while, instead of
+// pointing at someone who's since moved on. One flag per callsign (the
+// most recent decode of theirs in that window).
+function getCqDecodes() {
+  const cqDecodes = _decodes.filter(d =>
+    !d.is_tx && d.deltaFreq !== undefined && (d.message || '').toUpperCase().startsWith('CQ '));
+  if (!cqDecodes.length) return [];
+
+  let maxSlot = -Infinity;
+  for (const d of cqDecodes) {
+    const slot = _windowSlot(d.timeStr, d.mode);
+    if (slot != null && slot > maxSlot) maxSlot = slot;
+  }
+  // No usable timeStr on any of them (shouldn't normally happen) - fall
+  // back to just the most recent handful instead of showing nothing.
+  const recent = maxSlot === -Infinity
+    ? cqDecodes.slice(-20)
+    : cqDecodes.filter(d => {
+        const slot = _windowSlot(d.timeStr, d.mode);
+        return slot != null && slot >= maxSlot - 1;
+      });
+
+  const byCall = new Map();
+  for (const d of recent) {
+    const call = _extractCall(d.message);
+    if (!call) continue;
+    byCall.set(call, d); // later (more recent) decodes overwrite earlier ones for the same call
+  }
+  return Array.from(byCall.entries()).map(([call, d]) => ({
+    call, deltaFreq: d.deltaFreq, snr: d.snr, idx: _decodes.indexOf(d),
+  }));
 }
 
 function _decodeRowHtml(d, idx) {
@@ -1243,7 +1384,11 @@ function _selectRow(el, idx) {
   // Watchdog) - see the comment at 'wsjtx_decode' in handleWS.
   window.FT8Timer?.reset();
   document.querySelectorAll('.wj-decode-row.selected').forEach(r=>r.classList.remove('selected'));
-  el.classList.add('selected');
+  // el is null when this is invoked programmatically (e.g. clicking a CQ
+  // flag on the scope waterfall, see getCqDecodes/wsjtx_scope.js's flag
+  // overlay) rather than from an actual <div class="wj-decode-row"> click -
+  // there's no element to highlight in that case, just skip it.
+  el?.classList.add('selected');
   const d = _decodes[idx];
   if (!d) return;
   // Clicking OUR OWN transmission (is_tx) — do nothing (it's our own
@@ -2472,6 +2617,7 @@ function toggleHideWorked(chk) {
 }
 
 window.WSJTX = {
+  getCqDecodes,
   init, refreshOperatorInfo, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
   tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,

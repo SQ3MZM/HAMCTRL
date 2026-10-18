@@ -34,7 +34,7 @@ window.AudioAutoDetect = (function() {
     if (det.detected) {
       badge.textContent = I18n.t('cfg_detected_badge');
       badge.style.color = 'var(--green)';
-      badge.style.background = 'rgba(184,201,143,0.15)';
+      badge.style.background = 'rgba(var(--green-rgb),0.15)';
       info.style.borderLeftColor = 'var(--green2)';
       info.innerHTML = `
         <div style="color:var(--green);font-weight:600;margin-bottom:6px;">
@@ -54,7 +54,7 @@ window.AudioAutoDetect = (function() {
     } else {
       badge.textContent = I18n.t('cfg_not_detected_badge');
       badge.style.color = 'var(--amber)';
-      badge.style.background = 'rgba(212,168,87,0.15)';
+      badge.style.background = 'rgba(var(--amber-rgb),0.15)';
       info.style.borderLeftColor = 'var(--amber)';
       const rxList = (det.all_rx || []).slice(0, 5);
       const txList = (det.all_tx || []).slice(0, 5);

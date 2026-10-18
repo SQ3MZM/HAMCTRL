@@ -48,9 +48,13 @@ window.DXCluster = (function() {
         if (panel) panel.style.display = 'block';
       }
 
-      // Load history from the server cache (spots from this session even after a refresh)
+      // Load history from the server cache (spots from this session even after
+      // a refresh) - now a merge of EVERY connected user's history (see
+      // webapp.py's /api/dxcluster/config GET), so replay it through the same
+      // _addSpot de-dup the live feed uses instead of a raw assignment.
       if (data.history && data.history.length) {
-        _spots = data.history.slice();
+        _spots = [];
+        for (const s of data.history) _addSpot(s);
         renderSpots();
       }
 
@@ -183,7 +187,7 @@ window.DXCluster = (function() {
       const bColor = bandColors[s.band] || 'var(--dim)';
       const isNew = ageS < 60;
       return `
-        <tr style="font-family:var(--mono);font-size:11px;${isNew?'background:rgba(184,201,143,0.05);':''}">
+        <tr style="font-family:var(--mono);font-size:11px;${isNew?'background:rgba(var(--green-rgb),0.05);':''}">
           <td style="color:var(--dim);font-size:9px;">${_escapeHtml(s.utc || ageStr)}</td>
           <td style="color:var(--amber);font-weight:600;">${mhz}</td>
           <td style="color:var(--green);font-weight:700;letter-spacing:1px;">${_escapeHtml(s.call)}</td>
@@ -192,8 +196,8 @@ window.DXCluster = (function() {
           <td style="color:var(--dim);">${_escapeHtml(s.comment || '')}</td>
           <td style="color:var(--dim);font-size:10px;">${_escapeHtml(s.spotter)}</td>
           <td>
-            <button onclick="DXCluster.qsy(${s.freq_hz}, '${s.mode}')"
-              style="font-family:var(--mono);font-size:10px;padding:2px 8px;background:rgba(184,201,143,0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;">
+            <button onclick="DXCluster.qsy(${s.freq_hz}, '${s.mode}', '${s.call}')"
+              style="font-family:var(--mono);font-size:10px;padding:2px 8px;background:rgba(var(--green-rgb),0.1);border:1px solid var(--green2);color:var(--green);border-radius:3px;cursor:pointer;">
               QSY
             </button>
           </td>
@@ -259,7 +263,7 @@ window.DXCluster = (function() {
   // updateFreqDisplay, etc.). It used to call WS.send({type:'freq',freq})
   // directly, which bypassed the S.freq/updateFreqDisplay logic and didn't
   // always produce a visible change.
-  function qsy(freq_hz, mode) {
+  function qsy(freq_hz, mode, call) {
     // Guard against invalid arguments from the HTML onclick
     freq_hz = parseInt(freq_hz, 10);
     if (!freq_hz || freq_hz < 100000) {
@@ -307,6 +311,23 @@ window.DXCluster = (function() {
     const mhz = (freq_hz / 1e6).toFixed(3);
     window.UI?.showToast?.(`✓ QSY: ${mhz} MHz${mode && mode !== '?' ? ' ('+mode+')' : ''}`, 'info');
 
+    // A spot click (not a bare frequency) also drops the callsign into the
+    // quick-log bar (#qlog-call, see index.html) - same field the operator
+    // would type into by hand, so it gets the same worked-before highlight
+    // and rotor direction hint for free (see qsolog.js's oninput handler).
+    // Pinned to this frequency: ui.js::updateFreqDisplay clears the field
+    // again once the VFO drifts more than a few Hz away from it, since at
+    // that point we're probably not listening to this station anymore.
+    if (call) {
+      const callEl = document.getElementById('qlog-call');
+      if (callEl) {
+        callEl.value = String(call).toUpperCase();
+        window.AppState._qlogPinnedFreq = freq_hz;
+        window.QSOLog?.checkQuickLogWorkedBefore?.(callEl.value);
+        window.QSOLog?.updateQuickLogHint?.();
+      }
+    }
+
     // Switch to the Radio tab so the user sees the freq/mode change.
     // setTimeout(0) so the scroll reset (added in setPage) doesn't collide
     // with rendering the toast above.
@@ -318,10 +339,33 @@ window.DXCluster = (function() {
     renderSpots();
   }
 
+  // Same station+frequency arriving twice counts as the same spot, not two -
+  // the backend now broadcasts DX spots from EVERY connected cluster login
+  // (the admin's always-on one AND the operator's own, if they also connect
+  // one) to everyone, see webapp.py::_dx_broadcast. Different spotters/nodes
+  // routinely re-report the identical QSO a few Hz apart, so this matches on
+  // call + frequency WITHIN a tolerance, not an exact freq_hz match. Keeps
+  // only the freshest copy - used for both live spots (handleSpot) and the
+  // server's history replay (loadConfig) so the DX CLUSTER tab's table and
+  // the RADIO tab's waterfall flags both stay duplicate-free from one place.
+  const _DUP_FREQ_TOLERANCE_HZ = 1000;
+  function _addSpot(spot) {
+    const call = (spot.call || '').toUpperCase();
+    for (let i = _spots.length - 1; i >= 0; i--) {
+      const s = _spots[i];
+      if ((s.call || '').toUpperCase() === call &&
+          Math.abs((s.freq_hz || 0) - (spot.freq_hz || 0)) <= _DUP_FREQ_TOLERANCE_HZ) {
+        _spots.splice(i, 1);
+        break;
+      }
+    }
+    _spots.push(spot);
+    if (_spots.length > _MAX_SPOTS) _spots.splice(0, _spots.length - _MAX_SPOTS);
+  }
+
   // ── WS handlers ───────────────────────────────────────────────────────────
   function handleSpot(msg) {
-    _spots.push(msg);
-    if (_spots.length > _MAX_SPOTS) _spots.splice(0, _spots.length - _MAX_SPOTS);
+    _addSpot(msg);
     // Update the UI only if the tab is active (saves CPU)
     const page = document.getElementById('page-dxcluster');
     if (page && page.classList.contains('active')) {
@@ -343,7 +387,7 @@ window.DXCluster = (function() {
     if (status === 'connected') {
       badge.textContent = I18n.t('dx_connected');
       badge.style.color = 'var(--green)';
-      badge.style.background = 'rgba(184,201,143,0.15)';
+      badge.style.background = 'rgba(var(--green-rgb),0.15)';
       if (connectBtn) connectBtn.style.display = 'none';
       if (disconnectBtn) disconnectBtn.style.display = '';
       // Hide the config panel after a successful connection (so the spot
@@ -353,11 +397,11 @@ window.DXCluster = (function() {
     } else if (status === 'connecting') {
       badge.textContent = I18n.t('dx_connecting');
       badge.style.color = 'var(--amber)';
-      badge.style.background = 'rgba(212,168,87,0.15)';
+      badge.style.background = 'rgba(var(--amber-rgb),0.15)';
     } else if (status === 'error') {
       badge.textContent = I18n.t('dx_error_prefix') + (message || I18n.t('dx_unknown'));
       badge.style.color = 'var(--red)';
-      badge.style.background = 'rgba(217,119,106,0.15)';
+      badge.style.background = 'rgba(var(--red-rgb),0.15)';
       if (connectBtn) connectBtn.style.display = '';
       if (disconnectBtn) disconnectBtn.style.display = 'none';
     } else {
@@ -537,5 +581,6 @@ window.DXCluster = (function() {
     renderSpots, qsy, clearSpots, toggleConfig,
     handleSpot, handleStatus,
     openSpotDialog, closeSpotDialog, sendSpot,
+    getSpots: () => _spots,
   };
 })();

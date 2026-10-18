@@ -1,32 +1,33 @@
 /* advradio.js — "Deep" CI-V radio settings, admin-only (approved 2026-10-15):
- * modulation input source/level, AGC mode, VOX fine-tuning, NB depth/width,
- * APF, TX delay per band (amplifier/antenna-relay PTT sequencing), and
- * RIT/ΔTX (clarifier).
+ * AGC mode and TX delay per band (amplifier/antenna-relay PTT sequencing).
  *
  * Driven generically off rigs/civ_profiles.py's "adv" table via
  * GET/POST /api/rig/adv (same "settings" permission gate as KONFIGURACJA,
  * see auth.js's data-perm handling) — one renderer per "kind" instead of a
- * hand-written control per setting. RIT uses its own small GET/POST
- * /api/rig/rit (unique signed 4-digit format, doesn't fit the generic table).
+ * hand-written control per setting.
  *
  * Containers (see index.html):
- *   #adv-mod      (KONFIGURACJA) — MOD_USB/ACC/LAN, DATA_OFF_MOD, DATA_MOD
- *   #adv-nb       (KONFIGURACJA) — NB_DEPTH, NB_WIDTH
  *   #adv-txdelay  (KONFIGURACJA) — TX_DELAY_HF/50M/70M
  *   #adv-agc      (RADIO tab)    — AGC_MODE
- *   #adv-vox      (RADIO tab)    — VOX_GAIN, VOX_DELAY, ANTI_VOX
- *   #adv-apf      (CW tab)       — APF_MODE, APF_TYPE, APF_LEVEL
- *   #rit-row      (RADIO tab, near VFO) — RIT/ΔTX, handled separately below.
+ *
+ * NOTE (2026-10-18): several other entries were tried and REMOVED the same
+ * day after coming back "NG" live on the user's actual (non-MK2) IC-7300:
+ * MOD_USB/ACC/LAN, DATA_OFF_MOD/DATA_MOD, NB_DEPTH/NB_WIDTH, VOX_GAIN,
+ * ANTI_VOX, VOX_DELAY (all part of the original 2026-10-15 batch), a
+ * same-day TX_BASS_SSB/TX_TREBLE_SSB/TBW_* addition (MK2-CI-V-guide sourced,
+ * "HiFiSSB" investigation), and RIT/ΔTX (its own bespoke /api/rig/rit -
+ * ON/OFF toggles worked, but the Hz value gave NG even after fixing its BCD
+ * byte order, no further fix found - fully removed per user decision).
+ * AGC_MODE itself ALSO came back NG at first, but that one had a real bug
+ * (1-indexed wire value, see civ_profiles.py's "wire_base" fix) rather than
+ * a wrong address - fixed, not removed. See rigs/civ_profiles.py's removal
+ * comment for the full story before reintroducing any of the removed ones.
  */
 const AdvRadio = (() => {
 
   const GROUPS = {
-    'adv-mod':     ['MOD_USB', 'MOD_ACC', 'MOD_LAN', 'DATA_OFF_MOD', 'DATA_MOD'],
-    'adv-nb':      ['NB_DEPTH', 'NB_WIDTH'],
     'adv-txdelay': ['TX_DELAY_HF', 'TX_DELAY_50M', 'TX_DELAY_70M'],
     'adv-agc':     ['AGC_MODE'],
-    'adv-vox':     ['VOX_GAIN', 'VOX_DELAY', 'ANTI_VOX'],
-    'adv-apf':     ['APF_MODE', 'APF_TYPE', 'APF_LEVEL'],
   };
 
   function authHeaders() {
@@ -156,57 +157,14 @@ const AdvRadio = (() => {
     }
   }
 
-  // ── RIT / ΔTX ────────────────────────────────────────────────────────────
-  async function ritRefresh() {
-    let data;
-    try {
-      const res = await fetch('/api/rig/rit', { headers: authHeaders() });
-      data = await res.json();
-    } catch (e) {
-      console.warn('[advradio] rit refresh error:', e);
-      return;
-    }
-    if (!data || !data.ok) return;
-    ritApply(data);
-  }
-
-  function ritApply(data) {
-    const hzEl = document.getElementById('rit-hz-input');
-    const onBtn = document.getElementById('rit-on-btn');
-    const dtxBtn = document.getElementById('dtx-on-btn');
-    if (hzEl) hzEl.value = data.hz ?? 0;
-    if (onBtn) onBtn.classList.toggle('active', !!data.ritOn);
-    if (dtxBtn) dtxBtn.classList.toggle('active', !!data.dtxOn);
-  }
-
-  async function ritSetHz(hz) {
-    const res = await fetch('/api/rig/rit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ hz: parseInt(hz, 10) || 0 }),
-    });
-    const data = await res.json();
-    if (data.ok) ritApply(data);
-  }
-
-  async function ritToggle(field) {
-    const current = document.getElementById(field === 'ritOn' ? 'rit-on-btn' : 'dtx-on-btn')?.classList.contains('active');
-    const body = {}; body[field] = !current;
-    const res = await fetch('/api/rig/rit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (data.ok) ritApply(data);
-  }
+  // REMOVED (2026-10-18): ritRefresh/ritApply/ritSetHz/ritToggle (RIT/ΔTX) -
+  // see the file header for why.
 
   function init() {
     refresh();
-    ritRefresh();
   }
 
-  return { init, refresh, ritRefresh, ritSetHz, ritToggle };
+  return { init, refresh };
 })();
 
 document.addEventListener('DOMContentLoaded', () => {

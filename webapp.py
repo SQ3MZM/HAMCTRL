@@ -108,7 +108,7 @@ GITHUB_REPO = "SQ3MZM/HAMCTRL"
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
                     CIV_NATIVE_MODELS,
-                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE)
+                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE, DATA)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
@@ -168,6 +168,32 @@ _MOBILE_UA_RE = re.compile(r'Mobi|iPhone|iPod|Android.*Mobile|Windows Phone|Blac
 # and the per-message length cap (matches the input's maxlength in the HTML).
 _CHAT_HISTORY_MAX = 150
 _CHAT_MSG_MAX_LEN = 500
+
+# PTT timing log - zgloszone na zywo (SDR we Wloszech): "wcisniecie PTT nie
+# odrazu transmituje, jest zwloka". Istniejacy pomiar czasu wymiany CI-V przy
+# PTT byl juz w kodzie, ale TYLKO za flaga VERBOSE i tylko do print() - w
+# spakowanym EXE (bez okna konsoli) nikt tego nie widzi. Osobny maly plik
+# tekstowy, zawsze wlaczony (nie tylko VERBOSE), ten sam wzorzec co
+# dxcluster.log - zeby po fakcie bylo co wkleic zamiast zgadywac czy to
+# siec, CI-V, czy potok audio.
+_PTT_LOG_FILE = DATA / "ptt_timing.log"
+_PTT_LOG_MAX_BYTES = 500_000
+
+
+def _ptt_log_line(msg: str):
+    try:
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{ts}] {msg}\n"
+        if _PTT_LOG_FILE.exists() and _PTT_LOG_FILE.stat().st_size > _PTT_LOG_MAX_BYTES:
+            try:
+                data = _PTT_LOG_FILE.read_text(encoding='utf-8', errors='ignore')
+                _PTT_LOG_FILE.write_text(data[len(data) // 2:], encoding='utf-8')
+            except Exception:
+                pass
+        with open(_PTT_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception:
+        pass  # logging must never break PTT
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET HUB (aiohttp)
@@ -592,9 +618,18 @@ class App:
         self._server_start_time = time.time()  # for computing uptime in /api/status
         if _DXCLUSTER_OK:
             async def _dx_broadcast(user_id: str, msg: dict):
-                # Send WS only to the specific user (find their ws in online_users)
+                # dx_spot: broadcast to EVERYONE online, not just the user
+                # whose cluster login received it (decided 2026-10-18) - this
+                # is one shared radio/waterfall, so the admin's always-on
+                # connection (see the idle watchdog's admin exemption) is
+                # meant to feed spot flags to every operator, not just admin.
+                # dx_status stays private to the connecting user - it's
+                # feedback about THEIR OWN connect attempt (e.g. "login
+                # failed"), broadcasting that to everyone would just be noise
+                # about a connection they have nothing to do with.
+                is_spot = msg.get("type") == "dx_spot"
                 for ws, info in list(self.online_users.items()):
-                    if info.get("user_id") == user_id:
+                    if is_spot or info.get("user_id") == user_id:
                         try:
                             await ws.send_json(msg)
                         except Exception:
@@ -757,6 +792,78 @@ class App:
         # Update check: once at startup, in the background, admin-only notice.
         # Never blocks startup and stays silent on any network error.
         self._supervise(lambda: self._update_check_loop(), "update_check")
+        # DX Cluster idle watchdog - a cluster connection lives on the
+        # backend regardless of open browser tabs (by design, so spots
+        # keep flowing in the background - see ClusterManager.get_history).
+        # Without a limit that connection lives FOREVER once started - live
+        # report 2026-10-17 ("ciagle sie rozlancza i laczy") traced to
+        # exactly this: a second HAMCTRL install (closed browser, backend
+        # connection never torn down) fighting a fresh login with the SAME
+        # cluster callsign for the one session DXSpider allows per call.
+        self._supervise(lambda: self._dxcluster_idle_watchdog(), "dxcluster_idle_watchdog")
+
+    async def _dxcluster_idle_watchdog(self):
+        """
+        Every CHECK_INTERVAL_S, disconnect any non-admin user's DX Cluster
+        connection if none of their WS clients has had the DX Cluster or
+        Radio/WSJT-X tab open (subscribed to the 'dxcluster' or 'scope'
+        channel - see WSHub) for IDLE_TIMEOUT_S. "Open" is checked fresh
+        each tick - idle_since only starts counting once a check finds
+        them not engaged, so this is a full IDLE_TIMEOUT_S of continuous
+        idleness, not just one bad sample.
+
+        Admin is exempt on purpose: their cluster connection is the one
+        meant to keep collecting spots for the shared Radio-tab waterfall
+        flags even when nobody has a tab open at all.
+        """
+        if not self.dxcluster:
+            return
+        CHECK_INTERVAL_S = 300.0   # 5 min
+        IDLE_TIMEOUT_S = 3600.0    # 1h
+        idle_since: dict[str, float] = {}
+
+        while True:
+            try:
+                await asyncio.sleep(CHECK_INTERVAL_S)
+                now = time.time()
+                connected = self.dxcluster.connected_user_ids()
+
+                for user_id in connected:
+                    u = self.find_user_by_id(user_id)
+                    if u and u.get("role") == "admin":
+                        idle_since.pop(user_id, None)
+                        continue
+
+                    engaged = False
+                    for ws, info in list(self.online_users.items()):
+                        if info.get("user_id") != user_id:
+                            continue
+                        subs = self.hub._subs.get(ws, set())
+                        if 'dxcluster' in subs or 'scope' in subs:
+                            engaged = True
+                            break
+
+                    if engaged:
+                        idle_since.pop(user_id, None)
+                        continue
+
+                    since = idle_since.setdefault(user_id, now)
+                    idle_s = now - since
+                    if idle_s >= IDLE_TIMEOUT_S:
+                        print(f"[dx-watchdog] user {user_id} idle {int(idle_s)}s "
+                              f"(no DX Cluster/Radio tab open) - disconnecting cluster", flush=True)
+                        await self.dxcluster.disconnect_user(user_id)
+                        idle_since.pop(user_id, None)
+
+                # Forget idle timers for users no longer connected at all
+                for uid in list(idle_since.keys()):
+                    if uid not in connected:
+                        idle_since.pop(uid, None)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[dx-watchdog] error: {e}", flush=True)
 
     async def _telemetry_pump(self):
         """Reads the freshest freq/mode/freqB/split/smeter/txmeter messages
@@ -2219,7 +2326,10 @@ class App:
                     "auto_connect": bool(cfg.get("auto_connect", False)),
                 },
                 "connected": bool(self.dxcluster and self.dxcluster.get_client(uid) and self.dxcluster.get_client(uid).is_connected()),
-                "history":   self.dxcluster.get_history(uid) if self.dxcluster else [],
+                # Merged across every connected login (see ClusterManager.
+                # get_merged_history), not just this user's own - matches the
+                # live dx_spot broadcast, which is now global too.
+                "history":   self.dxcluster.get_merged_history() if self.dxcluster else [],
             }
 
         if p == "/api/dxcluster/config" and method == "POST":
@@ -2328,7 +2438,7 @@ class App:
         if p == "/api/dxcluster/history" and method == "GET":
             if not self.dxcluster:
                 return 200, {"ok": True, "history": []}
-            return 200, {"ok": True, "history": self.dxcluster.get_history(uid)}
+            return 200, {"ok": True, "history": self.dxcluster.get_merged_history()}
 
         # ── Server status + diagnostics (admin) ─────────────────────────────
         if p == "/api/health" and method == "GET":
@@ -3109,47 +3219,53 @@ class App:
             if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             return 200, await self._set_rig_features(body or {})
 
-        # ── Advanced radio settings (admin-only, per explicit user decision
-        # 2026-10-15) — modulation input, AGC mode, VOX fine-tuning, NB
-        # depth/width, APF, TX delay (see rigs/civ_profiles.py's _IC7300_ADV
-        # for the full list). Gated the SAME way KONFIGURACJA already is
-        # ("settings" = a deliberate admin-delegated grant, see the long
-        # comment on /api/rig/features GET above) - not a new permission key.
+        # ── Advanced radio settings — modulation input, AGC mode, VOX
+        # fine-tuning, NB depth/width, TX delay (see rigs/civ_profiles.py's
+        # _IC7300_ADV for the full list). Most entries are "settings"-only
+        # (admin/delegated-admin, infrastructure-level - a deliberate
+        # 2026-10-15 decision, see the long comment on /api/rig/features GET
+        # above). A spec entry can opt into gating by the per-rig FEATURES
+        # whitelist instead via "feature" (see AGC_MODE in civ_profiles.py,
+        # "feature": "agc") - ONE KONFIGURACJA -> FUNKCJE RADIA switch then
+        # exposes it to every regular operator, same as tx_power/tuner/
+        # autotune already work (_feature_allowed, not _has_perm). Falls
+        # back to the "settings" permission when a spec has no "feature"
+        # field, so every pre-existing entry keeps today's behavior.
         if p == "/api/rig/adv" and method == "GET":
-            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             adv_spec = self.rig.profile.get("adv", {})
-            values = {}
-            for key in adv_spec:
+            values, visible_spec = {}, {}
+            for key, spec in adv_spec.items():
+                feat = spec.get("feature")
+                allowed = self._feature_allowed(feat, role) if feat else self._has_perm(uid, role, "settings")
+                if not allowed:
+                    continue
+                visible_spec[key] = spec
                 values[key] = await self.rig.get_adv(key)
-            return 200, {"ok": True, "values": values, "spec": adv_spec}
+            return 200, {"ok": True, "values": values, "spec": visible_spec}
 
         if p == "/api/rig/adv" and method == "POST":
-            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             key = str(body.get("key", ""))
-            if key.upper() not in self.rig.profile.get("adv", {}):
+            spec = self.rig.profile.get("adv", {}).get(key.upper())
+            if spec is None:
                 return 400, {"error": f"Nieznane ustawienie: {key}"}
+            feat = spec.get("feature")
+            allowed = self._feature_allowed(feat, role) if feat else self._has_perm(uid, role, "settings")
+            if not allowed:
+                return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             ok = await self.rig.set_adv(key, body.get("value"))
             if not ok:
                 return 200, {"ok": False, "error": "Radio odrzucilo komende (NG) lub nie odpowiedzialo"}
             return 200, {"ok": True}
 
-        # ── RIT / ΔTX (clarifier) — same admin-only gate as above ───────────
-        if p == "/api/rig/rit" and method == "GET":
-            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
-            return 200, {"ok": True, **await self.rig.get_rit()}
-
-        if p == "/api/rig/rit" and method == "POST":
-            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
-            ok = True
-            if "hz" in body:
-                ok = ok and await self.rig.set_rit_hz(int(body["hz"]))
-            if "ritOn" in body:
-                ok = ok and await self.rig.set_rit_enabled(bool(body["ritOn"]))
-            if "dtxOn" in body:
-                ok = ok and await self.rig.set_dtx_enabled(bool(body["dtxOn"]))
-            if not ok:
-                return 200, {"ok": False, "error": "Radio odrzucilo komende (NG) lub nie odpowiedzialo"}
-            return 200, {"ok": True, **await self.rig.get_rit()}
+        # REMOVED (2026-10-18): /api/rig/rit GET/POST (RIT/ΔTX, CI-V 0x21).
+        # User decision after live testing: Hz-set gave NG even after fixing
+        # the BCD byte order to match this file's proven frequency
+        # convention (freq_to_bcd/bcd_to_freq) - root cause not found, not
+        # worth continuing to chase. Fully removed end-to-end (civ.py's
+        # get_rit/_read_rit/set_rit_hz/set_rit_enabled/set_dtx_enabled,
+        # advradio.js's rit* functions, the #rit-row UI, the "rit" entry in
+        # rigs/features.py's FEATURES and _BASE_CAPS_CIV) - "zeby po nim
+        # slad nie zostal, nie potrzebujemy tego".
 
         # ── CW Keyer (DTR/RTS keying - CAT/cmd-17 retired 2026-08-26) ───────
         # Frontend (cw.js) calls:
@@ -3644,6 +3760,26 @@ class App:
                     except Exception as e:
                         return 500, {"ok": False, "error": str(e)}
                 return 500, {"ok": False, "error": "set_scope_span niedostepne w tym profilu"}
+            if p.endswith("/mode") and method == "POST":
+                # Center/Fixed - czy okno wodospadu "podaza" za VFO (Center)
+                # czy zostaje na stalym zakresie czestotliwosci (Fixed).
+                try:
+                    mode_code = int(body.get("mode", 0))
+                except (TypeError, ValueError):
+                    return 400, {"ok": False, "error": "Nieprawidlowa wartosc mode"}
+                if mode_code not in (0, 1):
+                    return 400, {"ok": False, "error": "mode musi byc 0 (Center) lub 1 (Fixed)"}
+                if hasattr(self.rig, 'set_scope_mode'):
+                    try:
+                        ok = await asyncio.get_running_loop().run_in_executor(
+                            None, self.rig.set_scope_mode, mode_code)
+                        if ok:
+                            return 200, {"ok": True, "mode": mode_code}
+                        return 400, {"ok": False, "error": f"Radio nie potwierdzilo zmiany trybu wodospadu na {mode_code} "
+                                                            f"(zobacz log [civ] scope mode)"}
+                    except Exception as e:
+                        return 500, {"ok": False, "error": str(e)}
+                return 500, {"ok": False, "error": "set_scope_mode niedostepne w tym profilu"}
             return 200, self.rig.scope_start()
         if p == "/api/tunnel/cleanup" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
@@ -5804,6 +5940,13 @@ class App:
             # same "stopping something is never dangerous" reasoning as
             # ptt:false and ft8_tune_stop elsewhere in this file.
             "webrtc_offer",
+            # webrtc_tx_on (2026-10-18, "hot PTT" fix): webrtc_offer no
+            # longer starts real audio by itself (see its handler below) -
+            # this is now the actual "start transmitting mic audio" action,
+            # so it needs the exact same gate webrtc_offer carried before.
+            # webrtc_tx_off is its stop counterpart and, like webrtc_stop,
+            # stays OUT of this set on purpose.
+            "webrtc_tx_on",
         }
 
         # ── VIEWER: HARD WHITELIST ──────────────────
@@ -6105,6 +6248,7 @@ class App:
             await self.hub.broadcast({"type": "freq", "freq": hz})
 
         elif t == "ptt":
+            _ptt_recv_t0 = time.time()
             # FIX (found live 2026-09-02, see _feature_allowed's docstring):
             # this used to return silently for BOTH ptt:true and ptt:false
             # whenever _feature_allowed said no (e.g. an empty/stale
@@ -6206,17 +6350,28 @@ class App:
                         if _drain_ms > 20:
                             print(f"[ptt] OFF: waited {_drain_ms:.0f}ms for the TX audio queue to drain "
                                   f"before dropping carrier (qsize={_q.qsize()})", flush=True)
+                            _ptt_log_line(f"PTT OFF: waited {_drain_ms:.0f}ms for the TX audio queue "
+                                          f"to drain before dropping carrier (qsize={_q.qsize()})")
                 _ptt_t0 = time.time()
                 _qsize_before = getattr(self.audio, "_webrtc_pcm_queue", None)
                 _qsize_before = _qsize_before.qsize() if _qsize_before is not None else "?"
                 try: await self.rig.set_ptt(self.rig.ptt)
                 except: pass
                 _ptt_ms = (time.time() - _ptt_t0) * 1000.0
+                _pre_civ_ms = (_ptt_t0 - _ptt_recv_t0) * 1000.0  # our own gating/checks, before the CI-V call even starts
                 if VERBOSE:
                     print(f"[ptt] {'ON' if self.rig.ptt else 'OFF'}: CI-V exchange took {_ptt_ms:.0f}ms, "
                           f"TX audio queue at request time={_qsize_before} frames "
                           f"(~{(_qsize_before*20) if isinstance(_qsize_before, int) else '?'}ms of unplayed audio)",
                           flush=True)
+                _ptt_log_line(
+                    f"PTT {'ON' if self.rig.ptt else 'OFF'}: "
+                    f"server-side gating/checks={_pre_civ_ms:.0f}ms, "
+                    f"CI-V exchange={_ptt_ms:.0f}ms, "
+                    f"TX audio queue at request time={_qsize_before} frames "
+                    f"(~{(_qsize_before*20) if isinstance(_qsize_before, int) else '?'}ms unplayed), "
+                    f"audio.tx_active={getattr(self.audio, 'tx_active', '?')}"
+                )
             await self.hub.broadcast({"type": "ptt", "ptt": self.rig.ptt})
             # TX watchdog: start a max-transmit-time timer. Configurable in
             # config.json ("tx_watchdog_s", default 180s = 3 minutes).
@@ -7141,11 +7296,16 @@ class App:
             if not self.webrtc:
                 await ws.send_json({"type": "webrtc_error", "error": "WebRTC niedostepne na serwerze"})
                 return
-            # Start TX playback (self.audio.start_tx) before attaching the track
-            if not self.audio.tx_active:
-                dev = self.cfg.get("audio", {}).get("txDevice")
-                self.audio.start_tx(device=dev)
-                print(f"[audio] TX start (WebRTC) dev={dev}")
+            # NOTE (2026-10-18, "hot PTT" latency fix): webrtc_offer now only
+            # negotiates the connection itself (an empty sendonly transceiver,
+            # see ws.js's _ensureWarmPc) - it's sent ONCE per session/lock,
+            # not per PTT press anymore, and carries no real audio yet. Opening
+            # the TX playback device here (like the old per-press code used
+            # to) would leave it open for the whole warm-connection lifetime
+            # instead of just the actual transmit window - that job moved to
+            # webrtc_tx_on/webrtc_tx_off below, which DO fire once per press
+            # and keep the exact same open/close cadence the radio side had
+            # before this change.
             answer = await self.webrtc.handle_offer(msg.get("sdp"), msg.get("sdpType","offer"))
             await ws.send_json({"type": "webrtc_answer", "sdp": answer["sdp"], "sdpType": answer["type"]})
 
@@ -7153,11 +7313,53 @@ class App:
             if self.webrtc:
                 await self.webrtc.add_ice_candidate(msg.get("candidate", {}))
 
+        elif t == "webrtc_tx_on":
+            # The real "start transmitting mic audio" trigger, now that
+            # webrtc_offer itself no longer implies it (see note above) -
+            # gated the same way webrtc_offer used to be (_CONTROL_TYPES +
+            # the "ptt" permission), re-checked on EVERY press since this
+            # fires once per PTT press, same security property as before.
+            can, why = self._can_control_radio(ws, role)
+            if not can:
+                await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
+                return
+            if not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast", "msg": "⛔ Mikrofon TX niedostepny (brak uprawnien PTT)", "level": "error"})
+                return
+            if not self.audio.tx_active:
+                dev = self.cfg.get("audio", {}).get("txDevice")
+                self.audio.start_tx(device=dev)
+                print(f"[audio] TX start (hot WebRTC) dev={dev}")
+
+        elif t == "webrtc_tx_off":
+            # Mirrors webrtc_stop's reasoning (DELIBERATELY not gated by
+            # radio_lock/_CONTROL_TYPES, not viewer-blocked) - a stop action
+            # must never be rejected because the lock expired mid-transmit,
+            # or the TX audio device stays open "ingesting live ambient
+            # microphone audio indefinitely" (see the webrtc_stop comment
+            # in _CONTROL_TYPES below for the live incident this refers to).
+            if self.audio.tx_active:
+                self.audio.stop_tx()
+
         elif t == "webrtc_stop":
+            # Full teardown of the warm connection itself (lock released,
+            # logout, tab close) - NOT sent per PTT press anymore.
             if self.webrtc:
                 await self.webrtc.close()
             if self.audio.tx_active:
                 self.audio.stop_tx()
+
+        elif t == "tx_audio_timing":
+            # Client-measured time from "WebRTC offer sent" to "connection
+            # actually reached 'connected'" (see _txMic.start() in ws.js) -
+            # logged alongside the server-side PTT/CI-V timing in the same
+            # file so the two can be correlated by timestamp. Answers the
+            # live follow-up question to the PTT reordering fix: does PTT
+            # now key the radio before or after WebRTC audio can actually flow.
+            _ptt_log_line(
+                f"TX audio (WebRTC) connect wait: {msg.get('connectWaitMs', '?')}ms, "
+                f"final state={msg.get('finalState', '?')}"
+            )
 
         # ── WebRTC RX audio (webrtc_rx_audio.py) - the RX audio path,
         # opposite direction from webrtc_offer above (server offers,
@@ -7530,7 +7732,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-09-05-FT8-OPERATOR-PRESENT-SYNC, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja BUILD-2026-10-18-HOTPTT-AGC-FEATURE-CLEANUP, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -9301,12 +9503,25 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
                 ui_pref = ui_override
             else:
                 ui_pref = request.cookies.get("ui_pref", "")
-            if ui_pref == "mobile":
+            # FIX (found reviewing an independent fork, 2026-10-16): the
+            # ui_pref COOKIE alone used to decide everything once set, so a
+            # desktop browser that once visited "?ui=mobile" (e.g. for
+            # testing) got stuck on the mobile layout for the cookie's
+            # whole 1-year lifetime, even on a plain later visit with no
+            # query param at all - the only way back was another explicit
+            # "?ui=desktop". Now a desktop User-Agent always gets desktop
+            # UNLESS the query explicitly says ?ui=mobile THIS request; the
+            # cookie still matters (correctly) for the opposite case - a
+            # phone whose owner explicitly asked for the desktop layout.
+            ua_is_mobile = bool(_MOBILE_UA_RE.search(request.headers.get("User-Agent", "")))
+            if ui_override == "mobile":
                 is_mobile = True
-            elif ui_pref == "desktop":
+            elif ui_override == "desktop":
                 is_mobile = False
+            elif ua_is_mobile:
+                is_mobile = (ui_pref != "desktop")
             else:
-                is_mobile = bool(_MOBILE_UA_RE.search(request.headers.get("User-Agent", "")))
+                is_mobile = False
             path = "/mobile.html" if is_mobile else "/index.html"
         elif path == "/login":
             path = "/login.html"

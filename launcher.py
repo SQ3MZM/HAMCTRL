@@ -78,8 +78,14 @@ def _setup_dll_path():
     audio will fail. Add the DLL directory to the search path (Windows).
     """
     if not getattr(sys, "frozen", False):
-        return  # dev mode - DLLs come from the system/venv
-    base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        # Dev mode: DLLs (libopus.dll etc.) live in the repo root alongside
+        # this file, not on the system PATH by default - same reason the
+        # bundled EXE below needs _MEIPASS added. Without this, running
+        # `python launcher.py` straight from the repo fails to find opus
+        # unless the caller manually prepends the repo dir to PATH.
+        base = os.path.dirname(os.path.abspath(__file__))
+    else:
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
     try:
         # Python 3.8+ on Windows: the official way to add a DLL search path
         if hasattr(os, "add_dll_directory"):

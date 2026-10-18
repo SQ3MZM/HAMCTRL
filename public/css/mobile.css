@@ -3,25 +3,29 @@
    that scheme doesn't fit a phone). Same color tokens as style.css for
    visual consistency, otherwise a fresh, simple, single-column layout. */
 
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:      #1a1c19;
-  --panel:   #20231e;
-  --panel2:  #262a23;
-  --border:  rgba(184,201,143,0.14);
-  --border2: rgba(184,201,143,0.30);
-  --green:   #b8c98f;
-  --green2:  #7a8f5a;
-  --amber:   #d4a857;
-  --red:     #d9776a;
-  --dim:     rgba(220,224,206,0.42);
-  --text:    #d6ddc8;
-  --on-accent: #14160f;
-  --mono:    'Share Tech Mono', monospace;
-  --ui:      'Inter', sans-serif;
+  /* Paleta "SDR Studio Pro" (przejeta z forka 2026-10-16, patrz style.css) */
+  --bg:      #070b14;
+  --panel:   #0d1424;
+  --panel2:  #131c31;
+  --border:  rgba(56,189,248,0.14);
+  --border2: rgba(56,189,248,0.30);
+  --green:   #38bdf8;
+  --green2:  #0284c7;
+  --amber:   #fbbf24;
+  --red:     #f43f5e;
+  --green-rgb:  56,189,248;
+  --amber-rgb:  251,191,36;
+  --red-rgb:    244,63,94;
+  --dim:     rgba(148,163,184,0.65);
+  --text:    #f1f5f9;
+  --on-accent: #070b14;
+  --mono:    'JetBrains Mono', 'Share Tech Mono', monospace;
+  --ui:      'Plus Jakarta Sans', 'Inter', sans-serif;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bot: env(safe-area-inset-bottom, 0px);
 }
@@ -52,7 +56,7 @@ input, textarea { font-family: inherit; }
 }
 .m-conn { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px; color: var(--dim); }
 .m-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
-.m-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(184,201,143,0.7); }
+.m-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(var(--green-rgb),0.7); }
 .m-user { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
 .m-role { font-size: 9px; color: var(--amber); border: 1px solid var(--border2); border-radius: 3px; padding: 2px 5px; letter-spacing: 0.5px; }
 .m-logout {
@@ -123,7 +127,7 @@ input, textarea { font-family: inherit; }
 .m-btn-amber:active { background: var(--amber); color: var(--on-accent); }
 .m-btn-red { border-color: var(--red); color: var(--red); }
 .m-btn-red:active { background: var(--red); color: var(--on-accent); }
-.m-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
+.m-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 .m-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .m-mini-btn {
   background: transparent; border: 1px solid var(--border2); border-radius: 6px;
@@ -140,7 +144,7 @@ input, textarea { font-family: inherit; }
   color: var(--dim); font-family: var(--mono); font-size: 12px; font-weight: 600;
   padding: 8px; cursor: pointer; min-height: 36px;
 }
-.m-vfo-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
+.m-vfo-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 
 .m-freq {
   font-family: var(--mono); font-size: 32px; text-align: center; color: var(--green);
@@ -165,8 +169,8 @@ input, textarea { font-family: inherit; }
   color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 8px 14px; cursor: pointer;
   min-height: 40px;
 }
-.m-chip.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
-.m-band-row.m-chip-row .m-chip.active { border-color: var(--amber); color: var(--amber); background: rgba(212,168,87,0.10); }
+.m-chip.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
+.m-band-row.m-chip-row .m-chip.active { border-color: var(--amber); color: var(--amber); background: rgba(var(--amber-rgb),0.10); }
 
 .m-freq-strip {
   margin: 12px 0; height: 56px; border-radius: 10px; background: var(--panel2);
@@ -210,8 +214,8 @@ input, textarea { font-family: inherit; }
   color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 8px 12px; cursor: pointer;
   min-height: 38px; white-space: nowrap;
 }
-.rf-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
-.rf-btn-power.active { border-color: var(--red); color: var(--red); background: rgba(217,119,106,0.12); }
+.rf-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
+.rf-btn-power.active { border-color: var(--red); color: var(--red); background: rgba(var(--red-rgb),0.12); }
 .rf-slider-tile { margin-top: 12px; }
 .rf-slider-tile-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .rf-slider-tile-left { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--dim); }
@@ -243,7 +247,7 @@ input, textarea { font-family: inherit; }
   font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: 3px;
   cursor: pointer; touch-action: none; user-select: none;
 }
-.m-ptt-btn.active { background: var(--red); border-color: var(--red); color: var(--on-accent); box-shadow: 0 0 20px rgba(217,119,106,0.6); }
+.m-ptt-btn.active { background: var(--red); border-color: var(--red); color: var(--on-accent); box-shadow: 0 0 20px rgba(var(--red-rgb),0.6); }
 .m-ptt-btn:disabled { opacity: 0.4; }
 
 /* ── FT8/FT4 — most of this section reuses desktop's own generated
@@ -256,7 +260,7 @@ input, textarea { font-family: inherit; }
   color: var(--dim); font-family: var(--mono); font-size: 13px; font-weight: 700;
   padding: 10px; cursor: pointer; min-height: 40px;
 }
-.wj-mode-btn.active { border-color: var(--green); color: var(--green); background: rgba(184,201,143,0.12); }
+.wj-mode-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 .wj-band-select {
   width: 100%; border: 1px solid var(--border2); border-radius: 8px; background: var(--panel2);
   color: var(--text); font-family: var(--mono); font-size: 13px; padding: 10px; min-height: 44px;
@@ -337,7 +341,7 @@ input, textarea { font-family: inherit; }
 }
 .m-tx-btn-lbl { font-family: var(--mono); font-weight: 700; font-size: 12px; color: var(--amber); }
 .m-tx-btn-txt { font-size: 9px; color: var(--dim); text-align: center; word-break: break-word; line-height: 1.2; }
-.m-tx-btn.active { border-color: var(--red); background: rgba(217,119,106,0.15); }
+.m-tx-btn.active { border-color: var(--red); background: rgba(var(--red-rgb),0.15); }
 
 .m-ft8-decodes-card { padding-bottom: 10px; }
 .m-ft8-decodes { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
@@ -353,7 +357,7 @@ input, textarea { font-family: inherit; }
 .wj-decode-row.wj-cq { color: var(--green); }
 .wj-decode-row.wj-worked { color: var(--dim); }
 .wj-decode-row.wj-73 { color: var(--amber); }
-.wj-decode-row.wj-mycall { color: var(--text); background: rgba(184,201,143,0.16); }
+.wj-decode-row.wj-mycall { color: var(--text); background: rgba(var(--green-rgb),0.16); }
 .wj-decode-row.wj-own-tx { background: rgba(255,200,0,0.10); border-left: 3px solid var(--amber); }
 .wj-d-time { color: var(--dim); }
 .wj-d-snr { width: 30px; flex: 0 0 auto; }
@@ -451,7 +455,7 @@ input, textarea { font-family: inherit; }
    these need their own definitions here too. */
 .chat-msg { font-family: var(--mono); font-size: 11px; line-height: 1.4; padding: 4px 6px;
   border-radius: 4px; background: transparent; }
-.chat-msg.chat-mine { background: rgba(184,201,143,0.08); }
+.chat-msg.chat-mine { background: rgba(var(--green-rgb),0.08); }
 .chat-msg.chat-system { display: flex; align-items: center; gap: 5px; color: var(--dim);
   font-size: 10px; padding: 2px 6px; }
 .chat-header { display: flex; align-items: center; gap: 4px; margin-bottom: 1px; }

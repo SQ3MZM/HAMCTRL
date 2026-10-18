@@ -94,7 +94,7 @@ function buildRigPanel(id, rig, isAdmin) {
       <span style="font-family:var(--mono);font-size:11px;color:var(--green);letter-spacing:1px;">
         ${I18n.t('cfg_radio_n_lbl').replace('{id}', id)}${id===1?I18n.t('cfg_default_paren'):''}
       </span>
-      ${isAdmin && id > 1 ? `<button onclick="Settings.removeRig(${id})" style="background:none;border:1px solid rgba(217,119,106,0.3);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 8px;cursor:pointer;">✕ ${I18n.t('common_delete_btn')}</button>` : ''}
+      ${isAdmin && id > 1 ? `<button onclick="Settings.removeRig(${id})" style="background:none;border:1px solid rgba(var(--red-rgb),0.3);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 8px;cursor:pointer;">✕ ${I18n.t('common_delete_btn')}</button>` : ''}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
       <div class="sg"><label>${I18n.t('cfg_name_lbl')}</label>
@@ -174,7 +174,7 @@ function buildRigPanel(id, rig, isAdmin) {
 
     <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap;">
       <button onclick="Settings.saveRig(${id})" class="save-btn">${I18n.t('settings_save_btn')}</button>
-      <button onclick="Settings.connectRig(${id})" class="save-btn" style="background:rgba(184,201,143,0.05);">${I18n.t('cfg_connect_btn')}</button>
+      <button onclick="Settings.connectRig(${id})" class="save-btn" style="background:rgba(var(--green-rgb),0.05);">${I18n.t('cfg_connect_btn')}</button>
       <span id="rig-connect-status-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
     </div>
     ${id===1?`<div style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:6px;padding:6px;background:var(--panel2);border-radius:3px;">

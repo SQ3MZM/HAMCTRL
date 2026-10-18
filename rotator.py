@@ -26,7 +26,7 @@ class Rotator:
     Alfaspid RAK (Rot1Prog) — SPID protocol, pyserial.
       STATUS TX (13B): 57 00..00 1F 20  →  RX (5B): 57 H1 H2 H3 20  (az = H1*100+H2*10+H3-360)
       SET TX:          57 H1 H2 H3 00 01 00 00 00 00 00 2F 20  (H = az+360, ASCII digits)
-      STOP TX (6B):    57 00 00 00 0F 20
+      STOP TX (13B):   57 00..00 0F 20  (same fixed frame as STATUS/SET, see _spid_stop_pkt)
 
     Yaesu GS-232A — ASCII, commands terminated with CR (\\r), 8N1.
       STATUS TX: "C\\r"      →  RX: "+0ddd\\r" (sign + 4-digit azimuth, e.g. "+0180")
@@ -88,8 +88,19 @@ class Rotator:
                       0x2F, 0x20])
 
     def _spid_stop_pkt(self) -> bytes:
-        """STOP 6B: 57 00 00 00 0F 20"""
-        return bytes([0x57, 0, 0, 0, 0x0F, 0x20])
+        """STOP 13B: 57 00*10 0F 20 - SAME fixed 13-byte frame as STATUS/SET
+        (only the command byte at offset 11 differs: 0x1F status/0x2F set/
+        0x0F stop), per the Rot1Prog/Rot2Prog protocol spec (confirmed
+        against the Chalmers Rot2Prog protocol v2.0 reference, salsa.oso.
+        chalmers.se). FOUND 2026-10-18: this used to be a truncated 6-byte
+        packet (57 00 00 00 0F 20) - the controller expects every command
+        as a complete 13-byte frame, so a 6-byte STOP either got dropped as
+        an incomplete frame or desynced the controller's frame parser
+        ahead of the next legitimate SET the move loop sends a few seconds
+        later - matching exactly what was reported live: pressing STOP
+        almost always made the rotor carry on (or resume) toward its last
+        commanded azimuth instead of stopping."""
+        return bytes([0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0F, 0x20])
 
     def _spid_decode(self, buf: bytes) -> float | None:
         """Find and decode the 5B frame: 57 H1 H2 H3 20"""

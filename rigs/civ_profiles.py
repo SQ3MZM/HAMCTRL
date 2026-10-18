@@ -38,7 +38,12 @@ _BASE_CAPS_CIV = {
     "split":        True,   # split VFO A/B (0x0F)
     "smeter":       True,   # odczyt S-metru (0x15 02)
     "scope":        True,   # waterfall/scope (0x27 00)
-    "rit":          False,  # RIT/XIT — niezaimplementowane w civ.py
+    "agc":          True,   # tryb AGC (16 12) — zaimplementowane, potwierdzone zywo 2026-10-18
+    # REMOVED (2026-10-18): "rit" capability flag. RIT/ΔTX byl krotko
+    # zaimplementowany w civ.py (CI-V 0x21), ale ustawianie Hz dawalo NG na
+    # tym radiu nawet po poprawce kodowania BCD - przyczyny nie znaleziono,
+    # user zdecydowal usunac funkcje calkowicie zamiast dalej szukac. Patrz
+    # webapp.py's removed /api/rig/rit comment po pelna liste usunietych miejsc.
     "memory":       False,  # kanaly pamieci — niezaimplementowane
     "vfo_ab":       True,   # Select VFO A/B (0x07 00/01)
     "power":        True,   # Power ON/OFF radia (0x18 01/00)
@@ -132,7 +137,7 @@ _FUNC_LABELS = {
 # admin role (webapp.py checks this on every endpoint that reads/writes one
 # of these, not per-rig-whitelist like the generic levels/funcs above):
 # modulation input source/level, AGC behavior, VOX fine-tuning, noise
-# blanker depth/width, APF, and TX sequencing delay (relevant for amplifier/
+# blanker depth/width, and TX sequencing delay (relevant for amplifier/
 # antenna-relay keying, see the GSK fork's Sosny PA-controller work).
 # Source: official Icom "CI-V REFERENCE GUIDE HF/50MHz TRANSCEIVER 7300MK2"
 # (command table, cmd 0x1A sub 0x05 "SET > ..." menu-item area + cmds 0x14/
@@ -155,39 +160,59 @@ _FUNC_LABELS = {
 #   kind "bcd2pct":    2-byte BCD 0000-0255, UI value = fraction 0.0-1.0.
 #   kind "bcd2range":  2-byte BCD 0000-0255, UI value = "min".."max" (linear).
 _IC7300_ADV = {
-    "AGC_MODE":     {"cmd": [0x16, 0x12],             "kind": "enum", "n": 3,
+    # FIX (2026-10-18, live NG): the AGC time constant's DATA byte is
+    # 1-indexed on the wire (01=FAST, 02=MID, 03=SLOW - 00 is not a valid
+    # value for this specific sub-command), unlike most other enum-kind
+    # commands which start at 00. "wire_base" shifts the UI's 0-based
+    # dropdown index onto the radio's actual 1-based wire value - see
+    # civ.py's _decode_adv/_encode_adv.
+    # "feature": "agc" (2026-10-18, live request: "userzy nie widza agc...
+    # trzeba dac to gdzies w konfiguracji") - opts this ONE entry out of the
+    # blanket "settings"-only gate every other adv entry still uses. Gated
+    # instead by the per-rig FEATURES whitelist (rigs/features.py's "agc"
+    # entry, KONFIGURACJA -> FUNKCJE RADIA) - ONE switch turns it on for
+    # every regular operator at once (no per-user granularity needed for a
+    # small station - see webapp.py's /api/rig/adv handlers, which check
+    # _feature_allowed("agc", role) for this key instead of _has_perm(...,
+    # "settings")). An earlier per-user "perm" field approach was tried and
+    # reverted the same day per user preference for the simpler whitelist.
+    "AGC_MODE":     {"cmd": [0x16, 0x12],             "kind": "enum", "n": 3, "wire_base": 1,
+                      "feature": "agc",
                       "labels": ["FAST", "MID", "SLOW"]},
-    "VOX_GAIN":     {"cmd": [0x14, 0x16],             "kind": "bcd2pct"},
-    "ANTI_VOX":     {"cmd": [0x14, 0x17],             "kind": "bcd2pct"},
-    # 00~20 (decimal) = 0.0~2.0s in 0.1s steps
-    "VOX_DELAY":    {"cmd": [0x1A, 0x05, 0x02, 0x67], "kind": "range", "scale": 0.1, "rawmax": 20},
-    # 00~09 = DEPTH 1~10 (offset by 1 so the UI shows the real 1-10 scale)
-    "NB_DEPTH":     {"cmd": [0x1A, 0x05, 0x02, 0x65], "kind": "range", "offset": 1, "rawmax": 9},
-    "NB_WIDTH":     {"cmd": [0x1A, 0x05, 0x02, 0x66], "kind": "bcd2range", "min": 1, "max": 100},
-    # Main APF enable + bandwidth - CI-V 16 32 (NOT under 1A 05), needed
-    # alongside APF_TYPE/APF_LEVEL below for APF to do anything at all.
-    "APF_MODE":     {"cmd": [0x16, 0x32],             "kind": "enum", "n": 4,
-                      "labels": ["OFF", "WIDE", "MID", "NAR"]},
-    "APF_TYPE":     {"cmd": [0x1A, 0x05, 0x02, 0x69], "kind": "enum", "n": 2,
-                      "labels": ["SHARP", "SOFT"]},
-    "APF_LEVEL":    {"cmd": [0x1A, 0x05, 0x02, 0x70], "kind": "range", "rawmax": 6},  # 00~06 = 0~6dB
     # TX Delay per band - relevant for amp/antenna-relay PTT sequencing.
-    # 00~05 = OFF/10/15/20/25/30ms
+    # 00~05 = OFF/10/15/20/25/30ms. Confirmed working live 2026-10-18.
     "TX_DELAY_HF":  {"cmd": [0x1A, 0x05, 0x00, 0x29], "kind": "enum", "n": 6,
                       "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
     "TX_DELAY_50M": {"cmd": [0x1A, 0x05, 0x00, 0x30], "kind": "enum", "n": 6,
                       "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
     "TX_DELAY_70M": {"cmd": [0x1A, 0x05, 0x00, 0x31], "kind": "enum", "n": 6,
                       "labels": ["OFF", "10ms", "15ms", "20ms", "25ms", "30ms"]},
-    # Modulation input level per connector (0-100%)
-    "MOD_USB":      {"cmd": [0x1A, 0x05, 0x00, 0x81], "kind": "bcd2pct"},
-    "MOD_ACC":      {"cmd": [0x1A, 0x05, 0x00, 0x82], "kind": "bcd2pct"},
-    "MOD_LAN":      {"cmd": [0x1A, 0x05, 0x00, 0x83], "kind": "bcd2pct"},
-    # Which input actually feeds modulation in non-data vs data(-D) modes
-    "DATA_OFF_MOD": {"cmd": [0x1A, 0x05, 0x00, 0x84], "kind": "enum", "n": 6,
-                      "labels": ["MIC", "USB", "ACC", "MIC+USB", "MIC+ACC", "LAN"]},
-    "DATA_MOD":     {"cmd": [0x1A, 0x05, 0x00, 0x85], "kind": "enum", "n": 6,
-                      "labels": ["MIC", "USB", "ACC", "MIC+USB", "MIC+ACC", "LAN"]},
+
+    # REMOVED (2026-10-18, live NG on all of them): VOX_GAIN (14 16),
+    # ANTI_VOX (14 17), VOX_DELAY (1A 05 02 67), NB_DEPTH (1A 05 02 65),
+    # NB_WIDTH (1A 05 02 66), MOD_USB/ACC/LAN (1A 05 00 81/82/83),
+    # DATA_OFF_MOD/DATA_MOD (1A 05 00 84/85) - part of the same
+    # 2026-10-15 "approved" batch as the entries above, but unlike
+    # AGC_MODE (fixed, see wire_base above) no concrete encoding bug was
+    # found for these - every one of them was rejected (NG) live. Possible
+    # causes: wrong addresses for this non-MK2 unit/firmware, sourced from
+    # material that doesn't apply here. Don't re-add without a confirmed
+    # (not guessed) address for this exact radio/firmware.
+    #
+    # Also REMOVED same day: TX_BASS_SSB/TX_TREBLE_SSB (1A 05 00 12/13),
+    # TBW_ACTIVE (16 58), TBW_WIDE/MID/NAR (1A 05 00 14/15/16) - added during
+    # a "czy HiFiSSB jest wykonalne programowo" investigation, sourced from
+    # the IC-7300MK2 CI-V Reference Guide on the (wrong, in hindsight)
+    # reasoning that since TBW/Tone Control predate MK2 as FRONT-PANEL
+    # features, their CI-V REMOTE exposure must predate MK2 too. Live-tested
+    # on the user's actual (non-MK2) IC-7300: ALL SIX gave "NG" (rejected) -
+    # so this specific 1A 05 00 1x address range is MK2-only after all,
+    # same failure class as the earlier APF mistake, just for a feature
+    # that (unlike APF) genuinely isn't MK2-exclusive on the front panel -
+    # only its CI-V remote control is. Don't re-add these addresses without
+    # a real (non-MK2) IC-7300 CI-V reference confirming them - TBW is still
+    # changeable manually on the radio's own FUNCTION button, just not
+    # remotely through HAMCTRL.
 }
 
 

@@ -274,6 +274,18 @@ function goTarget(id) {
 const _displayAz = {};       // currently displayed angle (animated)
 const _serverAz  = {};       // last angle from the server (animation target)
 const _rotMeta   = {};       // {target_az, moving} per rotator
+// FOUND 2026-10-18: the needle used to just ease 25%/frame toward the last
+// server reading - at 60fps that closes the gap in ~0.25s, far faster than
+// the ~0.5-1.5s between actual position updates from the rotor, so the
+// needle visibly snapped-then-waited in lockstep with the jumpy numeric
+// readout instead of looking continuous. Ported the speed-based
+// extrapolation rotormini.js (the compact widget next to the VFO) already
+// used successfully: estimate °/s from consecutive updates, then keep
+// projecting the needle forward at that speed between updates (capped at
+// the commanded target, so it can't overshoot).
+const _azPrevSrv = {};       // previous angle from the server, per id
+const _tPrevSrv  = {};       // time of the last server update, per id
+const _speed     = {};       // smoothed °/s per id
 let _animRaf = null;
 
 // Direction HINT per rotator - a suggestion only (typed into this tab's own
@@ -312,20 +324,37 @@ function _shortestAngleDiff(from, to) {
 }
 
 function _animateNeedles() {
+  const now = performance.now();
   let anyMoving = false;
   for (const id in _serverAz) {
-    const cur = _displayAz[id] ?? _serverAz[id];
-    const tgt = _serverAz[id];
-    const diff = _shortestAngleDiff(cur, tgt);
-    if (Math.abs(diff) > 0.15) {
-      // Ease: move 25% of the distance per frame (smooth approach)
-      _displayAz[id] = (cur + diff * 0.25 + 360) % 360;
+    const meta = _rotMeta[id] || {};
+    const cur  = _displayAz[id] ?? _serverAz[id];
+    const base = _azPrevSrv[id] ?? _serverAz[id];
+    if (meta.moving && (_speed[id] || 0) > 0.05) {
+      // Actively turning - project forward from the last server reading at
+      // the estimated speed, capped so it never runs past the commanded
+      // target even if a status update is late.
+      const dt = Math.min((now - (_tPrevSrv[id] || now)) / 1000, 2.0);
+      const toTarget = _shortestAngleDiff(base, meta.target_az ?? base);
+      if (Math.abs(toTarget) > 1) {
+        const dir     = Math.sign(toTarget);
+        const stepMag = Math.min(_speed[id] * dt, Math.abs(toTarget));
+        _displayAz[id] = (base + dir * stepMag + 360) % 360;
+      } else {
+        _displayAz[id] = _serverAz[id];
+      }
       anyMoving = true;
     } else {
-      _displayAz[id] = tgt;
+      // Stopped - gentle ease to the exact position
+      const diff = _shortestAngleDiff(cur, _serverAz[id]);
+      if (Math.abs(diff) > 0.05) {
+        _displayAz[id] = (cur + diff * 0.15 + 360) % 360;
+        anyMoving = true;
+      } else {
+        _displayAz[id] = _serverAz[id];
+      }
     }
-    const meta = _rotMeta[id] || {};
-    drawCompass(id, _displayAz[id], meta.target_az ?? tgt, meta.moving);
+    drawCompass(id, _displayAz[id], meta.target_az ?? _serverAz[id], meta.moving);
     // Also update the azimuth text smoothly
     const azD = document.getElementById(`rot-az-disp-${id}`);
     if (azD) azD.textContent = `${_displayAz[id].toFixed(1)}°`;
@@ -354,6 +383,23 @@ function updateCard(rot) {
   // here next" when it's really just stale input. Clear it unconditionally
   // rather than only for the command that started this exact move.
   if (rot.moving && _hintAz[rot.id] != null) _hintAz[rot.id] = null;
+
+  // Estimate rotation speed (°/s) from consecutive server readings while
+  // moving - see _animateNeedles for why this matters. Smoothed (60/40)
+  // like rotormini.js's own speed estimate, so one glitchy read doesn't
+  // make the needle lurch.
+  const now = performance.now();
+  if (rot.moving && _tPrevSrv[rot.id] && now > _tPrevSrv[rot.id]) {
+    const dt = (now - _tPrevSrv[rot.id]) / 1000;
+    if (dt > 0.05 && dt < 3.0) {
+      const rawSpeed = Math.abs(_shortestAngleDiff(_serverAz[rot.id] ?? rot.azimuth, rot.azimuth)) / dt;
+      if (rawSpeed < 20) _speed[rot.id] = (_speed[rot.id] ?? 0) * 0.6 + rawSpeed * 0.4;
+    }
+  } else if (!rot.moving) {
+    _speed[rot.id] = 0;
+  }
+  _azPrevSrv[rot.id] = _serverAz[rot.id] ?? rot.azimuth;
+  _tPrevSrv[rot.id]  = now;
 
   // Save the target from the server and start a smooth needle animation to that position
   _serverAz[rot.id] = rot.azimuth;

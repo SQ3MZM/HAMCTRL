@@ -139,6 +139,7 @@ function _applyDigitStep(step, dir) {
   const nf = Math.max(100000, S.freq + dir * step);
   S.freq = nf;
   S._localFreqSetAt = Date.now();
+  window.UI?.checkQlogSpotPin?.();
   updateVFODisplay();
   window.UI?.updateBandButtons();
   window.UI?.updateVFOBadges?.();  // update band/mode badge immediately

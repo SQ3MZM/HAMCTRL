@@ -360,7 +360,7 @@ function _updateAudioLatencyBadge() {
   // (_AUDIO_MAX) — above it, the scheduler trims the buffer anyway, so
   // red = the buffer keeps hitting the ceiling regardless of the current adaptation target.
   badge.style.color = ms < 300 ? 'var(--green)' : ms < 400 ? 'var(--amber)' : 'var(--red)';
-  badge.style.borderColor = ms < 300 ? 'var(--green2)' : ms < 400 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
+  badge.style.borderColor = ms < 300 ? 'var(--green2)' : ms < 400 ? 'rgba(240,180,41,0.4)' : 'rgba(var(--red-rgb),0.4)';
 }
 
 function _scheduleAudioBuffer(audioBuffer) {
@@ -537,7 +537,7 @@ function _syncTxMicButton(active) {
   if (!btn) return;
   btn.textContent      = active ? '⏹ Zatrzymaj TX mikrofon' : '🎤 Nadawanie TX — mikrofon';
   btn.style.color      = active ? 'var(--red)' : 'var(--dim)';
-  btn.style.borderColor = active ? 'var(--red)' : 'rgba(217,119,106,0.3)';
+  btn.style.borderColor = active ? 'var(--red)' : 'rgba(var(--red-rgb),0.3)';
 }
 
 function handleMessage(msg) {
@@ -704,7 +704,7 @@ function handleMessage(msg) {
       break;
     case 'webrtc_error':
       console.warn('[txmic] server:', msg.error);
-      _txMic.stop();
+      _txMic.teardown();
       break;
     case 'webrtc_rx_offer':
       _onRxOffer(msg);
@@ -733,7 +733,7 @@ function handleMessage(msg) {
       if (badge) {
         badge.textContent = rtt + ' ms';
         badge.style.color = rtt < 50 ? 'var(--green)' : rtt < 150 ? 'var(--amber)' : 'var(--red)';
-        badge.style.borderColor = rtt < 50 ? 'var(--green2)' : rtt < 150 ? 'rgba(240,180,41,0.4)' : 'rgba(217,119,106,0.4)';
+        badge.style.borderColor = rtt < 50 ? 'var(--green2)' : rtt < 150 ? 'rgba(240,180,41,0.4)' : 'rgba(var(--red-rgb),0.4)';
       }
       // DIAGNOSTICS: log every suspiciously high RTT with the exact
       // wall-clock time, so it can be compared with the ham_audio.exe
@@ -1416,8 +1416,26 @@ function _connectAudioWs() {
 // Sends audio from the user's microphone to the server, which plays it
 // back on the radio's sound card. The server handles signaling over
 // WebSocket (webrtc_offer/answer/ice).
+//
+// "HOT PTT" (2026-10-18, live report via SDR in Italy: "wejscie szybko na
+// radio bez gubienia ramek... jesli szybko chce rzucic 59 moze wyjsc 9 albo
+// nic"): this used to tear down and rebuild the ENTIRE WebRTC connection
+// (new RTCPeerConnection, fresh SDP offer/answer, fresh ICE/DTLS over the
+// real internet via a public STUN server) on EVERY single PTT press, then
+// wait for it to reach 'connected' before keying PTT at all. Anything said
+// before that handshake finished was simply lost (RTP can't flow pre-DTLS,
+// nothing buffers it) - on a quick "59" that's most or all of it.
+// Now the RTCPeerConnection is negotiated ONCE (an empty 'sendonly'
+// transceiver, no track yet) and kept warm across PTT presses. Each press
+// only needs getUserMedia + sender.replaceTrack() - swapping which
+// MediaStreamTrack feeds the ALREADY-connected transceiver, which per the
+// WebRTC spec needs no renegotiation (no new SDP/ICE/DTLS round trip) and
+// is near-instant. The microphone itself is still opened/closed exactly at
+// PTT press/release as before (see the Windows audio-ducking note below) -
+// only the network connection underneath it is what's being kept warm.
 const _txMic = (() => {
-  let pc = null;              // RTCPeerConnection
+  let pc = null;               // RTCPeerConnection - persists across PTT presses once warm
+  let sender = null;           // RTCRtpSender on pc's audio transceiver - replaceTrack() target
   let stream = null;          // MediaStream z mikrofonu
   let active = false;
   let vuRaf = null;            // requestAnimationFrame id dla VU meter
@@ -1436,15 +1454,131 @@ const _txMic = (() => {
   // start() register the request instead of dropping it.
   let stopRequested = false;
 
+  // Builds (once) or reuses the warm RTCPeerConnection. Resolves true once
+  // it's actually usable (connected, or gave up after a timeout). Safe to
+  // call every start() - a no-op (instant) once the connection is already up.
+  async function _ensureWarmPc() {
+    if (pc && pc.connectionState === 'connected') return true;
+    if (pc) { try { pc.close(); } catch(e) {} pc = null; sender = null; }
+    if (typeof RTCPeerConnection === 'undefined') {
+      window.UI?.showToast('WebRTC niedostepny w tej przegladarce', 'error');
+      return false;
+    }
+
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate) {
+        window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log('[txmic] warm PC state:', pc.connectionState);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        // The warm connection died (network change, long idle, server
+        // restart...) - drop it so the NEXT start() rebuilds from scratch
+        // instead of trying to reuse a dead connection forever.
+        if (active) { active = false; cleanupMicOnly(); }
+        pc = null;
+        sender = null;
+      }
+    };
+
+    // An audio transceiver with NO track yet - this negotiates the m-line/
+    // codecs/ICE/DTLS once, up front. Real audio is attached later per PTT
+    // press via sender.replaceTrack(), which reuses this same negotiated
+    // transceiver and needs no new offer/answer round.
+    const transceiver = pc.addTransceiver('audio', { direction: 'sendonly' });
+    sender = transceiver.sender;
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
+    } catch (e) {
+      console.warn('[txmic] offer error:', e.message);
+      try { pc.close(); } catch(e2) {}
+      pc = null; sender = null;
+      return false;
+    }
+
+    const _CONNECT_TIMEOUT_MS = 2500;
+    const _connectWaitT0 = performance.now();
+    await new Promise((resolve) => {
+      if (pc.connectionState === 'connected') { resolve(); return; }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        pc.removeEventListener('connectionstatechange', onState);
+        clearTimeout(timer);
+        resolve();
+      };
+      const onState = () => {
+        if (pc.connectionState === 'connected' || pc.connectionState === 'failed' ||
+            pc.connectionState === 'closed') {
+          finish();
+        }
+      };
+      pc.addEventListener('connectionstatechange', onState);
+      const timer = setTimeout(() => {
+        console.warn('[txmic] warm WebRTC connection not up after', _CONNECT_TIMEOUT_MS, 'ms (state:', pc.connectionState, ')');
+        finish();
+      }, _CONNECT_TIMEOUT_MS);
+    });
+    // Report the measured wait into the same ptt_timing.log as the server-
+    // side PTT/CI-V timing (see webapp.py's _ptt_log_line) - this now only
+    // happens ONCE per warm connection (session/lock), not per PTT press.
+    window.WS?.send({ type: 'tx_audio_timing',
+      connectWaitMs: Math.round(performance.now() - _connectWaitT0),
+      finalState: pc.connectionState });
+
+    return pc.connectionState === 'connected';
+  }
+
+  // RE-ENTRANCY GUARD (2026-10-18, live report: "raz jest w miare glosna za
+  // chwile mowie tym samym poziomem glosu to ledwo ja slychac" - varies
+  // BETWEEN separate PTT presses, same speaking volume): start() used to
+  // have no protection against being called a SECOND time while a FIRST
+  // call was still mid-flight (active doesn't flip true until the whole
+  // getUserMedia + EQ-chain + replaceTrack sequence finishes) - a fast
+  // double-press of PTT (bouncy footswitch, quick re-tap) could open the
+  // SAME physical microphone device twice in overlapping calls, racing on
+  // the shared `stream` variable and likely getting inconsistent gain
+  // staging from the OS/Chrome when the device is reopened while already
+  // open. Now a second start() while one is in flight just awaits the
+  // SAME in-flight attempt instead of launching a parallel one.
+  let _startPromise = null;
   async function start() {
     if (active) return true;
+    if (_startPromise) return _startPromise;
+    _startPromise = _doStart();
+    try {
+      return await _startPromise;
+    } finally {
+      _startPromise = null;
+    }
+  }
+
+  async function _doStart() {
     stopRequested = false;
     if (!navigator.mediaDevices?.getUserMedia) {
       window.UI?.showToast('Mikrofon niedostepny (brak getUserMedia w przegladarce)', 'error');
       return false;
     }
-    if (typeof RTCPeerConnection === 'undefined') {
-      window.UI?.showToast('WebRTC niedostepny w tej przegladarce', 'error');
+
+    const pcOk = await _ensureWarmPc();
+    if (!pcOk) {
+      window.UI?.showToast('Nie udalo sie nawiazac polaczenia WebRTC z serwerem', 'error');
+      return false;
+    }
+    if (stopRequested) {
+      // Released again while the (first-time) warm connection was still
+      // negotiating - honor it now instead of continuing to open the mic.
+      stopRequested = false;
       return false;
     }
     try {
@@ -1518,24 +1652,6 @@ const _txMic = (() => {
       return false;
     }
 
-    pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
-
-    // Send every ICE candidate to the server
-    pc.onicecandidate = (ev) => {
-      if (ev.candidate) {
-        window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      console.log('[txmic] PC state:', pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-        stop();
-      }
-    };
-
     // Route through the EQ chain from the TxEq module (per-user
     // presets/custom). The filters are registered in TxEq so that preset/
     // slider changes update them live without restarting the connection.
@@ -1562,17 +1678,21 @@ const _txMic = (() => {
       console.warn('[txmic] EQ chain not connected, sending raw stream:', e.message);
     }
 
-    // Add the processed track (with EQ + limiter) to the peer connection
-    processedStream.getAudioTracks().forEach(t => pc.addTrack(t, processedStream));
-
-    // Generate the offer and send it to the server
+    // HOT PTT: swap the track feeding the ALREADY-connected sender, instead
+    // of adding a track + renegotiating. No SDP/ICE/DTLS round trip here -
+    // this is the whole point of keeping the connection warm (see the file
+    // header). Tell the server to open the TX audio device BEFORE the real
+    // track attaches (mirrors the old "start playback before attaching the
+    // track" ordering), then replace the track.
+    window.WS?.send({ type: 'webrtc_tx_on' });
     try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
+      const track = processedStream.getAudioTracks()[0];
+      await sender.replaceTrack(track);
     } catch (e) {
-      console.warn('[txmic] offer error:', e.message);
-      cleanup();
+      console.warn('[txmic] replaceTrack error:', e.message);
+      window.UI?.showToast('Blad podlaczenia mikrofonu do polaczenia WebRTC', 'error');
+      window.WS?.send({ type: 'webrtc_tx_off' });
+      cleanupMicOnly();
       return false;
     }
 
@@ -1631,7 +1751,10 @@ const _txMic = (() => {
       .catch(e => console.warn('[txmic] addIceCandidate error:', e.message));
   }
 
-  function cleanup() {
+  // Releases the microphone + EQ chain only - the warm `pc`/`sender` are
+  // DELIBERATELY left alone so the next PTT press can reuse them (see the
+  // file header). This is what stop() calls on every ordinary PTT release.
+  function cleanupMicOnly() {
     if (vuRaf) { cancelAnimationFrame(vuRaf); vuRaf = null; }
     audioAnalyzer = null;
     if (window.TxEq) window.TxEq.unregisterTxFilters();
@@ -1639,13 +1762,10 @@ const _txMic = (() => {
       try { window._txGainNode.disconnect(); } catch(e) {}
       window._txGainNode = null;
     }
+    if (sender) { try { sender.replaceTrack(null); } catch(e) {} }
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
-    }
-    if (pc) {
-      try { pc.close(); } catch(e) {}
-      pc = null;
     }
     const fill = document.getElementById('tx-vu-fill');
     if (fill) fill.style.width = '0%';
@@ -1661,13 +1781,23 @@ const _txMic = (() => {
       return;
     }
     active = false;
+    window.WS?.send({ type: 'webrtc_tx_off' });
+    cleanupMicOnly();
+    console.log('[txmic] stopped (mic released, WebRTC connection stays warm)');
+  }
+
+  // Full teardown of the warm connection itself - NOT called on an ordinary
+  // PTT release (see stop() above). Used when the connection should really
+  // go away: explicit logout/radio-lock release, or a dead connection that
+  // _ensureWarmPc's onconnectionstatechange already detected and cleared.
+  function teardown() {
+    if (active) { try { stop(); } catch(e) {} }
+    if (pc) { try { pc.close(); } catch(e) {} pc = null; sender = null; }
     window.WS?.send({ type: 'webrtc_stop' });
-    cleanup();
-    console.log('[txmic] stopped');
   }
 
   return {
-    start, stop, onAnswer, onRemoteIce,
+    start, stop, teardown, onAnswer, onRemoteIce,
     isActive: () => active,
   };
 })();
@@ -1716,6 +1846,7 @@ window.WS = {
   // TX microphone over WebRTC (used by the tx-mic-btn button in the UI)
   startTX:       () => _txMic.start(),
   stopTX:        () => _txMic.stop(),
+  teardownTX:    () => _txMic.teardown(),
   isTxActive:    () => _txMic.isActive(),
 };
 

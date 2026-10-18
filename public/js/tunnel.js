@@ -133,9 +133,9 @@ function renderBadge() {
   const dot = document.getElementById('tn-status-dot');
   if (!el) return;
   const map = {
-    connected: { txt: I18n.t('in_active'),          color:'var(--green)',  bg:'rgba(184,201,143,0.1)' },
-    starting:  { txt: I18n.t('in_connecting_dots'), color:'var(--amber)',  bg:'rgba(212,168,87,0.1)' },
-    error:     { txt: I18n.t('in_error_badge'),     color:'var(--red)',    bg:'rgba(217,119,106,0.1)' },
+    connected: { txt: I18n.t('in_active'),          color:'var(--green)',  bg:'rgba(var(--green-rgb),0.1)' },
+    starting:  { txt: I18n.t('in_connecting_dots'), color:'var(--amber)',  bg:'rgba(var(--amber-rgb),0.1)' },
+    error:     { txt: I18n.t('in_error_badge'),     color:'var(--red)',    bg:'rgba(var(--red-rgb),0.1)' },
     stopped:   { txt: I18n.t('in_stopped_badge'),   color:'var(--dim)',    bg:'transparent' },
   };
   const st = map[state.status] || map.stopped;
@@ -207,7 +207,7 @@ function modeChanged(mode) {
     const active = b.dataset.mode === mode;
     b.style.borderColor = active ? 'var(--green)' : 'var(--border)';
     b.style.color       = active ? 'var(--green)' : 'var(--dim)';
-    b.style.background  = active ? 'rgba(184,201,143,0.08)' : 'var(--panel2)';
+    b.style.background  = active ? 'rgba(var(--green-rgb),0.08)' : 'var(--panel2)';
   });
 
   // Show cloudflared diagnostics only for Cloudflare modes

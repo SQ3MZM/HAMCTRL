@@ -7,11 +7,13 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <style>
 :root {
-  --bg:     #1a1c19; --panel: #20231e; --panel2: #262a23;
-  --border: rgba(184,201,143,0.14); --border2: rgba(184,201,143,0.30);
-  --green:  #b8c98f; --green2: #7a8f5a; --dim: rgba(220,224,206,0.42);
-  --text:   #d6ddc8; --red: #d9776a; --amber: #d4a857;
-  --mono: 'Share Tech Mono', monospace;
+  /* Paleta "SDR Studio Pro" (przejeta z forka 2026-10-16, patrz style.css) */
+  --bg:     #070b14; --panel: #0d1424; --panel2: #131c31;
+  --border: rgba(56,189,248,0.14); --border2: rgba(56,189,248,0.30);
+  --green:  #38bdf8; --green2: #0284c7; --dim: rgba(148,163,184,0.65);
+  --green-rgb: 56,189,248; --amber-rgb: 251,191,36; --red-rgb: 244,63,94;
+  --text:   #f1f5f9; --red: #f43f5e; --amber: #fbbf24;
+  --mono: 'JetBrains Mono', 'Share Tech Mono', monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {
@@ -35,17 +37,17 @@ h2 { font-size: 16px; color: var(--text); letter-spacing: 2px; margin-bottom: 8p
 }
 .field input:focus { border-color: var(--green); }
 .btn {
-  width: 100%; background: rgba(184,201,143,0.12); border: 1px solid var(--green2);
+  width: 100%; background: rgba(var(--green-rgb),0.12); border: 1px solid var(--green2);
   border-radius: 5px; color: var(--green); font-family: var(--mono); font-size: 12px;
   padding: 13px; cursor: pointer; letter-spacing: 1px; margin-top: 6px;
   transition: all 0.15s;
 }
-.btn:hover { background: rgba(184,201,143,0.22); }
+.btn:hover { background: rgba(var(--green-rgb),0.22); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .msg { font-size: 11px; margin-top: 14px; padding: 10px; border-radius: 4px;
        min-height: 36px; line-height: 1.7; }
-.msg.ok  { color: var(--green); background: rgba(184,201,143,0.08); border: 1px solid var(--border); }
-.msg.err { color: var(--red);   background: rgba(217,119,106,0.08); border: 1px solid rgba(217,119,106,0.25); }
+.msg.ok  { color: var(--green); background: rgba(var(--green-rgb),0.08); border: 1px solid var(--border); }
+.msg.err { color: var(--red);   background: rgba(var(--red-rgb),0.08); border: 1px solid rgba(var(--red-rgb),0.25); }
 .link { font-size: 10px; color: var(--dim); margin-top: 20px; }
 .link a { color: var(--green); text-decoration: none; }
 .link a:hover { text-decoration: underline; }

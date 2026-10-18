@@ -37,6 +37,34 @@ META_FILE  = MODEL_DIR / "model.onnx.json"
 MODEL_URL  = "https://raw.githubusercontent.com/e04/deepcw-engine/main/model.onnx"
 META_URL   = "https://raw.githubusercontent.com/e04/deepcw-engine/main/model.onnx.json"
 
+# Diagnostic log for the "characters/words get jumbled in _consensus()"
+# class of bug reported live 2026-10-18 - raw per-window reads aren't
+# visible anywhere in production (print() is invisible once packaged, same
+# reason ptt_timing.log/dxcluster.log exist). One line per decoded window:
+# the raw reads that fed _consensus() plus what it produced, so a garbled
+# word can be traced back to which window(s) caused it without needing a
+# timestamp or a copy-pasted fragment - the operator just sends the whole
+# file whenever convenient (see webapp.py's _ptt_log_line for the same
+# pattern: size-capped, truncate-to-half rotation, never allowed to raise).
+_DEEPCW_LOG_FILE = MODEL_DIR / "deepcw.log"
+_DEEPCW_LOG_MAX_BYTES = 500_000
+
+
+def _deepcw_log_line(msg: str):
+    try:
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{ts}] {msg}\n"
+        if _DEEPCW_LOG_FILE.exists() and _DEEPCW_LOG_FILE.stat().st_size > _DEEPCW_LOG_MAX_BYTES:
+            try:
+                data = _DEEPCW_LOG_FILE.read_text(encoding='utf-8', errors='ignore')
+                _DEEPCW_LOG_FILE.write_text(data[len(data) // 2:], encoding='utf-8')
+            except Exception:
+                pass
+        with open(_DEEPCW_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception:
+        pass  # logging must never break CW decoding
+
 # ── Model metadata (from model.onnx.json) ───────────────────────────────────────
 DEFAULT_META = {
     "chars": list(",./0123456789?ABCDEFGHIJKLMNOPQRSTUVWXYZ "),
@@ -508,6 +536,8 @@ class DeepCWEngine:
             consensus = text
         else:
             consensus = self._consensus(self._history)
+        _deepcw_log_line(f"windows={list(self._history)!r} -> consensus={consensus!r}"
+                          + (" (short_end)" if short_end else ""))
         if not consensus:
             return None
 
@@ -923,6 +953,38 @@ class DeepCWEngine:
                     else:
                         break
                 result += tail
+
+        # Recover the HEAD missing from the reference - the mirror image of
+        # the tail recovery above, for characters that come BEFORE 'result'.
+        # When the reference window happens to start mid-word (e.g. a
+        # dropped leading 'C' of 'CQ'), that leading character has no
+        # position in 'ref' at all - difflib marks it an INSERT relative to
+        # ref, and the voting loop above only ever counts 'equal'/'replace'
+        # opcodes, so it was lost outright even when other windows clearly
+        # had it. FOUND 2026-10-18 from deepcw.log: 'CQ EH5CMP EH5CMP'
+        # repeatedly alternating with 'Q EH5CMP EH5CMP' / 'EH5CMP EH5CMP' in
+        # consecutive consensus lines of the same transmission. Same 'need'
+        # threshold as the tail recovery - conservative on purpose, only
+        # recovers what most windows actually agree on.
+        if result:
+            pre = []
+            for cand in h:
+                i = cand.find(result)
+                if i > 0:
+                    pre.append(cand[:i])
+            if pre:
+                head = ""
+                max_len = max(len(x) for x in pre)
+                for pos in range(1, max_len + 1):
+                    chars = [x[-pos] for x in pre if pos <= len(x)]
+                    if not chars:
+                        break
+                    ch, cnt = Counter(chars).most_common(1)[0]
+                    if cnt >= need:
+                        head = ch + head
+                    else:
+                        break
+                result = head + result
         return result
 
     def _filter_noise(self, text: str) -> str:

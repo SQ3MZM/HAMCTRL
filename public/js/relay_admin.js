@@ -48,11 +48,11 @@
         if (data.connected) {
           badge.textContent = I18n.t('adm_relay_connected_badge');
           badge.style.color = 'var(--green)';
-          badge.style.background = 'rgba(184,201,143,0.15)';
+          badge.style.background = 'rgba(var(--green-rgb),0.15)';
         } else if (_config.enabled) {
           badge.textContent = I18n.t('adm_relay_error_badge');
           badge.style.color = 'var(--red)';
-          badge.style.background = 'rgba(217,119,106,0.15)';
+          badge.style.background = 'rgba(var(--red-rgb),0.15)';
         } else {
           badge.textContent = I18n.t('in_stopped_badge');
           badge.style.color = 'var(--dim)';

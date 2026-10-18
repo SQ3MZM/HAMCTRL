@@ -18,6 +18,16 @@
 (function () {
 'use strict';
 
+// Decoded callsigns are already regex-validated by wsjtx.js's
+// _extractCall before they ever reach this file, but escaping here too
+// costs nothing and matches this project's general XSS-defensive
+// convention for anything interpolated into innerHTML.
+function _esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 let canvas = null, gl = null;
 let fMin = 100, fMax = 3000, nBins = 200;
 const MAX_ROWS = 300;
@@ -321,7 +331,7 @@ function init() {
   if (!canvas) { console.warn('[scope] no canvas'); return; }
 
   // If GL is already initialized — just resize and render
-  if (gl) { _resizeCanvas(); _renderAxis(); _requestRender(); return; }
+  if (gl) { _resizeCanvas(); _renderAxis(); _renderCqFlags(); _requestRender(); return; }
 
   // init() can now be called more than once (mobile re-triggers it when
   // the FT8 tab becomes visible, since the first attempt at boot happens
@@ -333,6 +343,7 @@ function init() {
   canvas.addEventListener('mousedown', _onMouseDown);
   window.addEventListener('mousemove', _onMouseMove);
   window.addEventListener('mouseup', _onMouseUp);
+  document.getElementById('wj-scope-cq-flags')?.addEventListener('click', _onCqFlagClick);
   // Touch support (added for the mobile mini-waterfall — this file
   // previously only handled mouse events, which desktop browsers never
   // needed touch equivalents for, but a phone has no mouse at all: no
@@ -346,10 +357,10 @@ function init() {
   window.addEventListener('touchcancel', _onTouchEnd);
 
   if (window.ResizeObserver) {
-    const ro = new ResizeObserver(() => { _resizeCanvas(); _renderAxis(); _requestRender(); });
+    const ro = new ResizeObserver(() => { _resizeCanvas(); _renderAxis(); _renderCqFlags(); _requestRender(); });
     ro.observe(canvas);
   } else {
-    window.addEventListener('resize', () => { _resizeCanvas(); _renderAxis(); _requestRender(); });
+    window.addEventListener('resize', () => { _resizeCanvas(); _renderAxis(); _renderCqFlags(); _requestRender(); });
   }
 
   // Wait until the canvas has dimensions before initializing WebGL
@@ -364,6 +375,7 @@ function init() {
     _resizeCanvas();
     if (!_initGL()) { console.warn('[scope] _initGL returned false'); return; }
     _renderAxis();
+    _renderCqFlags();
     _requestRender();
     _updateLabels();
     _startRenderLoop();
@@ -376,6 +388,43 @@ function init() {
 // the style of the reference JTDX. Rendered as lightweight HTML elements
 // positioned as a percentage of the container's width — simpler and
 // crisper (native browser font) than drawing text in WebGL/Canvas.
+// ── CQ-caller flags (clickable, like waterfall.js's DX-spot flags for
+// CW/SSB) — this tab's own equivalent uses our decoded callers instead of
+// the DX Cluster, since that's what's actually available/meaningful on
+// FT8: a DX-cluster spot can't tell you someone is STILL calling CQ right
+// now, but a fresh decode can. Positioned as plain HTML (same approach as
+// _renderAxis above), clicking one runs the exact same selection logic as
+// clicking that station's row in Band Activity (WSJTX._selectRow) - sets
+// RX/TX markers, prefills the log form, country flag, etc. ─────────────
+function _renderCqFlags() {
+  const el = document.getElementById('wj-scope-cq-flags');
+  if (!el || !canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width < 1) { el.innerHTML = ''; return; }
+
+  const decodes = window.WSJTX?.getCqDecodes?.() || [];
+  let html = '';
+  for (const d of decodes) {
+    if (d.idx < 0) continue; // decode aged out of _decodes (MAX_DECODES cap) between read and render
+    const pct = _freqToFrac(d.deltaFreq) * 100;
+    if (pct < -5 || pct > 105) continue; // well outside the visible band - skip
+    const snr = d.snr >= 0 ? '+' + d.snr : String(d.snr);
+    html += `<div class="wj-cq-flag" style="left:${pct.toFixed(2)}%" data-idx="${d.idx}"
+      title="QSY → ${_esc(d.call)} CQ (${snr} dB)">
+      <span class="wj-cq-flag-call">${_esc(d.call)}</span>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function _onCqFlagClick(ev) {
+  const flag = ev.target.closest('.wj-cq-flag');
+  if (!flag) return;
+  const idx = parseInt(flag.dataset.idx, 10);
+  if (Number.isNaN(idx)) return;
+  window.WSJTX?._selectRow?.(null, idx);
+}
+
 function _renderAxis() {
   const axisEl = document.getElementById('wj-scope-axis');
   if (!axisEl || !canvas) return;
@@ -429,7 +478,7 @@ function onWaterfallData(msg) {
   const prevFMin = fMin, prevFMax = fMax;
   if (msg.fMin !== undefined) fMin = msg.fMin;
   if (msg.fMax !== undefined) fMax = msg.fMax;
-  if (fMin !== prevFMin || fMax !== prevFMax) _renderAxis();
+  if (fMin !== prevFMin || fMax !== prevFMax) { _renderAxis(); _renderCqFlags(); }
   if (msg.nBins !== undefined && msg.nBins !== nBins) {
     nBins = msg.nBins;
     _reallocDataTextureIfNeeded();
@@ -656,5 +705,6 @@ function onSplitStatus(msg) { /* split status - handled by wsjtx.js */ }
 window.WSJTXScope = { init, onWaterfallData, onTxFreqUpdate, onRxFreqUpdate, onSplitStatus,
                         setRxFreq, setTxFreqManual, setRxFreqManual, rxEqTx, txEqRx, getRxFreq, getTxFreq, isTxFrozen,
                         toggleTxFreeze, setScopeDecodeMode,
-                        setPaletteReference, setPaletteZero, setPaletteGain };
+                        setPaletteReference, setPaletteZero, setPaletteGain,
+                        refreshCqFlags: _renderCqFlags };
 })();

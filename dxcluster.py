@@ -26,6 +26,38 @@ import socket
 import time
 from typing import Callable, Optional
 
+try:
+    from config import DATA as _DATA_DIR
+except Exception:
+    from pathlib import Path as _Path
+    _DATA_DIR = _Path(__file__).parent
+
+# Dziennik polaczenia DX Clustera - zgloszone na zywo: "hamctrl nie ma
+# zaimplementowanych logow", wiec przy "ciagle sie rozlancza i laczy" nie
+# bylo jak sprawdzic co faktycznie sie dzieje (produkcyjny EXE dziala bez
+# okna konsoli - print() ginie bez sladu). Osobny, maly plik tekstowy w
+# tym samym katalogu co config.DATA (czyli %APPDATA%\HAMCTRL na
+# Windowsie), zeby bylo co wkleic/przeczytac po fakcie zamiast zgadywac.
+_LOG_FILE = _DATA_DIR / "dxcluster.log"
+_LOG_MAX_BYTES = 1_000_000  # ~1MB - obcinamy zamiast rosnac w nieskonczonosc
+
+
+def _log_line(msg: str):
+    try:
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{ts}] {msg}\n"
+        if _LOG_FILE.exists() and _LOG_FILE.stat().st_size > _LOG_MAX_BYTES:
+            # Prosta rotacja: zostaw tylko ostatnia polowe pliku
+            try:
+                data = _LOG_FILE.read_text(encoding='utf-8', errors='ignore')
+                _LOG_FILE.write_text(data[len(data) // 2:], encoding='utf-8')
+            except Exception:
+                pass
+        with open(_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception:
+        pass  # logowanie nigdy nie moze wywrocic polaczenia
+
 
 async def _resolve_and_check_safe(host: str, port: int) -> tuple[bool, str]:
     """
@@ -253,6 +285,7 @@ class DXClusterClient:
         return self._connected
 
     async def _status(self, status: str, msg: str = ""):
+        _log_line(f"{self.login}@{self.host}:{self.port} -> {status}" + (f" ({msg})" if msg else ""))
         if self.on_status:
             try:
                 res = self.on_status(status, msg)
@@ -356,8 +389,10 @@ class DXClusterClient:
         try:
             self._writer.write((self.login + "\r\n").encode('ascii'))
             await self._writer.drain()
+            _log_line(f"{self.login}@{self.host}:{self.port} sent login")
         except Exception as e:
             print(f"[dx] error sending login: {e}")
+            _log_line(f"{self.login}@{self.host}:{self.port} ERROR sending login: {e}")
             return
         # If there's a password, wait briefly and send it
         if self.password:
@@ -365,17 +400,22 @@ class DXClusterClient:
             try:
                 self._writer.write((self.password + "\r\n").encode('ascii'))
                 await self._writer.drain()
+                _log_line(f"{self.login}@{self.host}:{self.port} sent password ({len(self.password)} chars)")
             except Exception as e:
                 print(f"[dx] error sending password: {e}")
+                _log_line(f"{self.login}@{self.host}:{self.port} ERROR sending password: {e}")
 
     async def _process_line(self, text: str):
         """Parse a line and (if it's a spot) call the callback."""
-        # Log everything coming in (useful for diagnosing new servers)
-        # Not logged by default to avoid spam - uncomment if needed
-        # print(f"[dx {self.host}] {text}")
-
         m = _DX_RE.match(text)
         if not m:
+            # Non-spot lines (banner, prompts, sysop announcements, kick
+            # messages like "Reconnected as X ... this instance is
+            # disconnected") - exactly the lines that explain an
+            # unexpected disconnect, so these go to the log (spot lines
+            # themselves don't - too frequent, and not diagnostically
+            # useful for connection-stability issues).
+            _log_line(f"{self.login}@{self.host}:{self.port} << {text}")
             return
 
         spotter    = m.group(1)
@@ -431,15 +471,41 @@ class ClusterManager:
         """on_broadcast(user_id, message) — sends over WS to a specific user."""
         self.on_broadcast = on_broadcast
         self._clients: dict[str, DXClusterClient] = {}
-        # Cache of the last N spots per user - returned when a tab is reopened
+        # Cache of the last N spots per user - returned when a tab is reopened.
+        # 300 (bylo 100): na zapchanym pasmie zalew spotow cyfrowych (FT8)
+        # wypychal z tego bufora spoty CW/SSB w czasie znacznie krotszym niz
+        # ich docelowy czas zycia na fladze wodospadu (SPOT_FLAG_TTL_S w
+        # waterfall.js, 3 min) - zgloszone na zywo jako "flagi z dx clustra
+        # pala sie zbyt krotko".
         self._spot_history: dict[str, list[dict]] = {}
-        self._max_history = 100
+        self._max_history = 300
 
     def get_client(self, user_id: str) -> Optional[DXClusterClient]:
         return self._clients.get(user_id)
 
+    def connected_user_ids(self) -> list[str]:
+        """user_id's with a live (connect() called) client - used by
+        webapp.py's idle watchdog to find candidates for auto-disconnect."""
+        return list(self._clients.keys())
+
     def get_history(self, user_id: str) -> list[dict]:
         return list(self._spot_history.get(user_id, []))
+
+    def get_merged_history(self) -> list[dict]:
+        """Union of every connected login's spot history - the admin's
+        always-on one AND any other user's own, if they also connect one.
+        Matches the live broadcast (webapp.py::_dx_broadcast now sends every
+        dx_spot to all online users, not just the one whose connection
+        received it) so a fresh page load/reconnect sees the same picture
+        the live feed would build up. Raw/undeduped on purpose - the client
+        (dxcluster.js::_addSpot) replays this through the same de-dup path
+        used for live spots, so there's only one place that knows about the
+        call+frequency tolerance."""
+        merged: list[dict] = []
+        for hist in self._spot_history.values():
+            merged.extend(hist)
+        merged.sort(key=lambda s: s.get("ts", 0))
+        return merged[-self._max_history:]
 
     async def connect_user(self, user_id: str, host: str, port: int,
                             login: str, password: str = ""):

@@ -5,48 +5,51 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  /* ── Paleta "natural sage" — cieple oliwkowe tla, akcent szalwiowy,
-     czarne obwodki na przyciskach/sliderach dla kontrastu i czytelnosci.
-     Poprzednia jaskrawo-zielona paleta CRT przy duzej liczbie elementow
-     (slidery, przyciski funkcji) robila sie nieczytelna — sage jest
-     spokojniejszy i lepiej skaluje sie na wielu elementach naraz. ── */
-  --bg:      #1a1c19;
-  --panel:   #20231e;
-  --panel2:  #262a23;
-  --panel3:  #2e332b;
-  --border:  rgba(var(--green-rgb),0.14);
-  --border2: rgba(var(--green-rgb),0.30);
-  --green:   #b8c98f;
-  --green2:  #7a8f5a;
-  --amber:   #d4a857;
-  --red:     #d9776a;
-  --dim:     rgba(220,224,206,0.42);
-  --text:    #d6ddc8;
+  /* ── Paleta "SDR Studio Pro" (przejete z forka 2026-10-16, na zadanie
+     uzytkownika "chce uzyskac tamten wyglad z nasza uzytecznoscia") —
+     gleboki granat/slate, elektryczny cyjan/blekit jako glowny akcent
+     (VFO, aktywne stany), bursztyn dla pasm/ostrzezen, rose-red dla
+     TX/PTT. Zastepuje poprzednia "natural sage" (oliwkowo-zielona). Nazwy
+     zmiennych BEZ ZMIAN — tylko wartosci — zeby wszystkie regulki
+     korzystajace z var(--green) itp. automatycznie dziedziczyly nowa
+     paleta. ── */
+  --bg:      #070b14;
+  --panel:   #0d1424;
+  --panel2:  #131c31;
+  --panel3:  #1c2944;
+  --border:  rgba(var(--green-rgb),0.12);
+  --border2: rgba(var(--green-rgb),0.28);
+  --green:   #38bdf8;
+  --green2:  #0284c7;
+  --amber:   #fbbf24;
+  --red:     #f43f5e;
+  --dim:     rgba(148,163,184,0.65);
+  --text:    #f1f5f9;
   /* Czarny tekst/obwodka dla wypelnionych (solid) elementow — przyciski
      aktywne, kciuki sliderow, znaczniki — zapewnia kontrast na jasnym
      tle akcentu (--green/--amber). */
-  --on-accent: #14160f;
+  --on-accent: #070b14;
   /* Rozpakowane R,G,B (bez "rgba()") dla --green/--green2/--amber/--red -
      pozwala inline-stylom i regulkom nizej budowac rgba(var(--green-rgb),
-     ALPHA) zamiast wpisywac na sztywno "184,201,143" itp. Dodane
+     ALPHA) zamiast wpisywac na sztywno wartosci liczbowe. Dodane
      2026-10-15: masowe podmienianie literalow na te zmienne to byl
      wlasciwy fix na "kolory... malo widoczne" w jasnym motywie — bez
      tego dziesiatki tel/obwodek odznak w ogole nie reagowaly na motyw. */
-  --green-rgb:  184,201,143;
-  --green2-rgb: 122,143,90;
-  --amber-rgb:  212,168,87;
-  --red-rgb:    217,119,106;
+  --green-rgb:  56,189,248;
+  --green2-rgb: 2,132,199;
+  --amber-rgb:  251,191,36;
+  --red-rgb:    244,63,94;
   /* Rowek miernikow (S-metr/TX-metr) — celowo ciemniejszy niz --panel w
      OBU motywach (wyglada jak wnetrze fizycznego wskaznika), nie po
      prostu var(--panel3). */
-  --meter-track: #060806;
+  --meter-track: #020617;
   /* Pola tekstowe/liczbowe (RIT Hz, edycja makr CW, numery portow COM itp.)
      uzywaly "var(--input-bg,#0a0a0a)" wszedzie - --input-bg nigdy nie byl
      jawnie zdefiniowany, wiec kazde z tych pol ZAWSZE dostawalo ten sam
      twardy fallback #0a0a0a bez wzgledu na motyw (live report 2026-10-16:
      "caly blok frq jest na ciemno" - pole RIT Hz tuz przy VFO to jeden z
      tych inputow). */
-  --input-bg: #0a0a0a;
+  --input-bg: #0a101d;
   /* --fg: uzywany w kilku inline-stylach (COM Bridge, PROFIL audio TEST,
      itp.) - domyslnie = --text, chyba ze konkretny motyw (np.
      amber-classic nizej) jawnie go nadpisuje. Bez tej linii --fg byl
@@ -54,9 +57,9 @@
      motywie/trybie po prostu dziedziczyl --text przez CSS fallback -
      dzialalo przypadkiem, ale jawna definicja jest jasniejsza i bezpieczniejsza. */
   --fg: var(--text);
-  --mono:    'Share Tech Mono', monospace;
-  --display: 'Orbitron', sans-serif;
-  --ui:      'Inter', sans-serif;
+  --mono:    'JetBrains Mono', 'Share Tech Mono', monospace;
+  --display: 'JetBrains Mono', 'Orbitron', monospace;
+  --ui:      'Plus Jakarta Sans', 'Inter', sans-serif;
 }
 
 html {
@@ -71,10 +74,10 @@ html {
      w updateScale) bylo stale i nie zmienialo sie przy przelaczaniu
      zakladek krotszych/dluzszych niz viewport — zapobiega "skakaniu"
      calego layoutu o szerokosc scrollbara. */
-  background: #0d0f0e;
+  background: #070b14;
   scrollbar-gutter: stable;
 }
-html[data-mode="light"] { background: #d8d3c2; }
+html[data-mode="light"] { background: #f8fafc; }
 
 body {
   background: var(--bg);
@@ -99,79 +102,58 @@ body {
   position: relative;
 }
 
-/* Linie skanowania — efekt CRT */
+/* Nowoczesne, czyste tlo — bez artefaktow CRT (usuniete 2026-10-16 razem
+   z przejsciem na paleta "SDR Studio Pro", ktora celowo rezygnuje z
+   retro-skanlinii na rzecz czystego, nowoczesnego wygladu). */
 body::after {
-  content: '';
-  position: fixed; inset: 0;
-  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px);
-  pointer-events: none; z-index: 9999;
+  display: none;
 }
 
 /* ── TOPBAR ── */
-/* FIX (2026-10-15, live report "gora dostala przesuwane menu przy mniejszym
-   ekranie, stare bylo lepsze"):
-   Tried moving .topbar INSIDE #app-scale first (to have it scale down
-   together with the rest of the UI) and switching fixed -> sticky - DEAD
-   END, confirmed live with a MutationObserver/measurement pass: Chrome
-   computes a sticky descendant's stuck offset against a transformed
-   ancestor's own box instead of the real viewport once that ancestor has
-   transform:scale() applied (#app-scale always does, see index.html), so
-   the topbar ended up pinned somewhere in the middle of a scrolled page
-   instead of the top - broken. Reverted: .topbar stays OUTSIDE #app-scale,
-   at real unscaled pixels, same as it always was.
-   The ACTUAL fix for the complaint doesn't need scaling at all: measured
-   live (javascript_tool) that the topbar's full content (logo + ~9 tabs +
-   the status row's badges/indicators/role/callsign/toggles + logout)
-   needs ~1790px even at the reference width - it has simply grown (more
-   tabs, more status badges) since the layout was first sized, so it never
-   fit in one row at ANY scale, which is why nav-tabs got overflow-x:auto
-   (the "sliding menu") as a band-aid in the first place. Real fix:
-   .nav-tabs now wraps its OWN buttons onto a second line (flex-wrap:wrap)
-   instead of scrolling sideways - logo/status/logout stay on the first
-   row (.topbar itself does not wrap), and the middle nav-tabs column
-   simply grows taller by one row on a narrow screen. Nothing is ever
-   hidden or needs scrolling/swiping to reach - matches what users
-   remember from before ("wszystko bylo widoczne na 1 ekranie niezaleznie
-   od wielkosci okna"), just with an occasional 2-line tab bar instead of
-   a razor-thin single line.
-   position:sticky (kept, was already there before this fix) has no
-   transformed ancestor to fight here - it just keeps the topbar pinned
-   during a long page's scroll, same as position:fixed did, but also
-   auto-reserves its own space in normal flow (so no manual body
-   padding-top is needed, unlike fixed, which matters now that the
-   topbar's height can vary between one and two rows of tabs). */
+/* "Opcja 2" (2026-10-16, user decision): .topbar zyje TERAZ wewnatrz
+   #app-scale (skaluje sie razem z reszta UI) i ma STALA wysokosc 52px,
+   bez position:sticky (i tak nie dzialal poprawnie na potomku
+   transform:scale — patrz historia tego pliku w git log). Dzieki stalej
+   wysokosci (gridH w index.html::updateScale() odejmuje dokladnie 52px)
+   caly widok RADIO/FT8 miesci sie w jednym ekranie bez przewijania
+   strony. Szerokosc 1440px (= REF_W) zamiast 100% — topbar jest teraz
+   childem #app-scale, ktory sam ma width:1440px, wiec musi dopasowac sie
+   do tej samej referencyjnej szerokosci zamiast do (nieskalowanego)
+   viewportu. */
 .topbar {
   background: var(--panel);
   border-bottom: 1px solid var(--border2);
-  padding: 10px 20px;
-  display: flex; align-items: center; flex-wrap: nowrap; gap: 12px;
-  position: sticky; top: 0; z-index: 1000;
+  padding: 0 20px;
+  height: 52px;
+  box-sizing: border-box;
+  width: 1440px;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: 12px;
 }
 
 /* Presence bar usunieta — funkcje przeniesione do panelu OPERATORZY w tile-cw */
 
 /* white-space:nowrap + flex-shrink:0 — bez tego logo lamalo sie na 3 linie
    i bylo ucinane zamiast zostac w calosci na jednej linii. */
-.logo { font-family: var(--display); font-size: 14px; font-weight: 700; letter-spacing: 3px; color: var(--text); white-space: nowrap; flex-shrink: 0; }
+.logo { font-family: var(--ui); font-size: 12px; font-weight: 800; letter-spacing: 1px; color: var(--text); white-space: nowrap; flex-shrink: 0; }
 .logo-accent { color: var(--green); text-shadow: 0 0 12px rgba(var(--green-rgb),0.4); }
-/* flex:1 1 auto + min-width:0 — nav-tabs takes whatever width is left
-   between the logo and the status row/logout, and flex-wrap lets its OWN
-   buttons drop to a second (or third) line when that's not enough, instead
-   of scrolling sideways (see the long comment on .topbar above). */
-.nav-tabs { display: flex; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; gap: 3px; row-gap: 4px; }
+.nav-tabs { display: flex; align-items: center; gap: 2px; flex-wrap: nowrap; flex-shrink: 1; min-width: 0; overflow: hidden; }
 .tab-btn {
-  background: none; border: none; padding: 6px 14px; border-radius: 4px;
-  color: var(--dim); font-family: var(--mono); font-size: 12px; cursor: pointer;
-  letter-spacing: 1px; transition: all 0.2s; flex-shrink: 0;
+  background: transparent; border: 1px solid transparent; padding: 4px 6px; border-radius: 5px;
+  color: var(--dim); font-family: var(--ui); font-size: 10px; font-weight: 600; cursor: pointer;
+  letter-spacing: 0.2px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); flex-shrink: 0;
+  white-space: nowrap;
 }
 .tab-btn:hover  { color: var(--text); background: var(--panel2); }
-.tab-btn.active { color: var(--green); background: rgba(var(--green-rgb),0.08); border: 1px solid var(--border2); }
-/* flex-shrink:0 + flex-wrap - the status row's badges/indicators/toggles
-   don't shrink gracefully (icons, fixed-width badges), so it keeps its
-   natural size and wraps onto its own second line rather than letting the
-   browser squash it into unreadable mush when nav-tabs needs a lot of
-   room too. */
-.status-row { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; flex-shrink: 0; }
+.tab-btn.active {
+  color: var(--green); background: rgba(var(--green-rgb),0.14); border: 1px solid rgba(var(--green-rgb),0.35);
+  box-shadow: 0 0 16px -2px rgba(var(--green-rgb),0.25); font-weight: 700;
+}
+/* Status-row + wylogowanie sa teraz grupowane w .topbar-right, zeby latwo
+   trzymac sie po prawej stronie stalej 52px-wysokiej belki, bez zawijania
+   (wrap nie jest juz potrzebny — belka ma stala wysokosc, wiec druga linia
+   po prostu zostalaby obcieta zamiast sie pokazac). */
+.topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.status-row { display: flex; align-items: center; flex-wrap: nowrap; justify-content: flex-end; gap: 10px; flex-shrink: 0; }
 .indicator  { display: flex; align-items: center; gap: 5px; }
 .dot        { width:8px; height:8px; border-radius:50%; background:var(--dim); }
 .dot.green  { background:var(--green); box-shadow:0 0 8px rgba(var(--green-rgb),0.7); animation:blink 2s ease-in-out infinite; }
@@ -294,23 +276,33 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 
 /* ── KAFELKOWY GRID ── */
+/* grid-template-rows ma teraz 3 wiersze (nie 4) — rotator i CW keyer nie sa
+   juz osobnymi komorkami siatki, tylko jednym polaczonym kafelkiem
+   .tile-right (patrz index.html) zajmujacym cala wysokosc kolumny 4.
+   Wysokosc liczona z --radio-grid-h (ustawianej w JS, updateScale() w
+   index.html) zamiast sztywnego "calc(1080px - 52px)", zeby dokladnie
+   wypelnic dostepna wysokosc okna bez przewijania strony ("opcja 2",
+   2026-10-16). */
 .tile-grid {
   display: grid;
   width: 100%;
   grid-template-columns: 250px 1fr 1fr 250px;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 1px;
   background: var(--border);
-  height: calc(1080px - 52px);
+  height: var(--radio-grid-h, calc(1080px - 52px));
+  max-height: var(--radio-grid-h, calc(1080px - 52px));
+  overflow: hidden;
 }
 
 /* Pozycje kafelków */
-.tile-left       { grid-column: 1; grid-row: 1 / 5; }
+.tile-left       { grid-column: 1; grid-row: 1 / 4; }
 .tile-vfo        { grid-column: 2 / 4; grid-row: 1; }
 .tile-rigfeatures{ grid-column: 2 / 4; grid-row: 2; }
-.tile-wf         { grid-column: 2 / 4; grid-row: 3 / 5; }
-.tile-rotator    { grid-column: 4; grid-row: 1 / 3; font-size: 125%; background: var(--bg); }
-.tile-cw         { grid-column: 4; grid-row: 3 / 5; font-size: 125%; }
+.tile-wf         { grid-column: 2 / 4; grid-row: 3; min-height: 0; }
+.tile-right      { grid-column: 4; grid-row: 1 / 4; }
+.tile-rotator    { font-size: 125%; background: var(--bg); }
+.tile-cw         { font-size: 125%; }
 
 /* Wspólne style kafelka */
 .tile {
@@ -321,10 +313,15 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 }
 
 /* ── BOX / HEADER (zachowane ze starego CSS) ── */
-.box { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.box { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .box-header {
-  padding: 7px 12px; background: var(--panel2); border-bottom: 1px solid var(--border);
-  font-family: var(--mono); font-size: 12px; letter-spacing: 2px; color: var(--dim);
+  /* FIX: byl hardcoded rgba(19,28,49,0.7) - to akurat ciemny granat
+     (#131c31 = dzisiejsze --panel2 w trybie ciemnym), wiec w nocy wygladalo
+     ok, ale w jasnym motywie zostawalo tym samym ciemnym paskiem na bialym
+     tle .box. Zgloszone na zywo: "w trybie nocnym jest zgodne z kolorami
+     tryb dzienny juz nie" (okno LOG QSO / przyciski ADIF). */
+  padding: 8px 14px; background: var(--panel2); border-bottom: 1px solid var(--border);
+  font-family: var(--ui); font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: var(--dim);
   text-transform: uppercase; display: flex; align-items: center; justify-content: space-between;
 }
 .box-body { padding: 12px; }
@@ -347,7 +344,16 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .tile-divider { height: 1px; background: var(--border); flex-shrink: 0; }
 
 /* ── LEWA KOLUMNA ── */
-.tile-left { background: var(--bg); overflow-y: auto; min-height: 0; font-size: 125%; }
+.tile-left { background: var(--bg); overflow-y: auto; overflow-x: hidden; min-height: 0; height: 100%; font-size: 125%; }
+
+/* ── PRAWA KOLUMNA (rotator + CW keyer + czat w jednym, scrollowanym kafelku) ── */
+.tile-right {
+  background: var(--panel);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  height: 100%;
+}
 
 /* Siatka Tryb / Pasmo — identyczny rozmiar */
 .mode-band-grid {
@@ -388,52 +394,55 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 /* ── VFO ── */
 .vfo-display {
   text-align: left;
-  padding: 10px 14px 6px;
+  padding: 3px 10px 2px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
-.vfo-label { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--dim); margin-bottom: 5px; }
-.vfo-badges { display: flex; gap: 4px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+.vfo-label { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--dim); margin-bottom: 2px; }
+.vfo-badges { display: flex; gap: 4px; margin-bottom: 4px; align-items: center; flex-wrap: wrap; }
 .vfo-badge {
-  font-family: var(--mono); font-size: 8px; padding: 2px 6px;
-  border-radius: 3px; border: 1px solid; cursor: default;
+  font-family: var(--mono); font-size: 9px; font-weight: 700; padding: 2px 7px;
+  border-radius: 4px; border: 1px solid; cursor: default;
 }
 .freq-big {
-  font-family: var(--display); font-size: 44px; font-weight: 900;
+  font-family: var(--mono); font-size: 32px; font-weight: 800;
   color: var(--green); letter-spacing: -1px; line-height: 1;
-  text-shadow: 0 0 20px rgba(var(--green-rgb),0.5), 0 0 40px rgba(var(--green-rgb),0.2);
+  text-shadow: 0 0 20px rgba(var(--green-rgb),0.5);
   cursor: pointer; user-select: none;
 }
-.freq-big:hover { text-shadow: 0 0 30px rgba(var(--green-rgb),0.8), 0 0 60px rgba(var(--green-rgb),0.3); }
-.freq-unit { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+.freq-big:hover { text-shadow: 0 0 30px rgba(var(--green-rgb),0.85); }
+.freq-unit { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--dim); margin-bottom: 2px; }
 
 /* Kroki strojenia */
-.tuning-steps { display: flex; gap: 2px; padding: 5px 0; flex-wrap: wrap; }
+.tuning-steps { display: flex; gap: 2px; padding: 2px 0; flex-wrap: wrap; }
 .step-btn {
+  /* FIX: bylo rgba(19,28,49,.7)/rgba(255,255,255,.08) na sztywno (wartosci
+     dobre tylko na ciemnym tle - w jasnym motywie dawaly ciemny prostokat
+     z prawie niewidoczna ramka) - patrz ten sam fix w .box-header. */
   background: var(--panel2); border: 1px solid var(--border2); border-radius: 3px;
-  color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 4px 8px;
+  color: var(--dim); font-family: var(--mono); font-size: 9.5px; font-weight: 600; padding: 1px 6px;
   cursor: pointer; transition: all 0.15s;
 }
 .step-btn:hover  { background: var(--panel3); border-color: var(--green); color: var(--green); }
 .step-btn:active { transform: scale(0.95); }
-.step-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.1); }
+.step-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.16); font-weight: 700; }
 
 .go-btn {
-  background: rgba(var(--green-rgb),0.1); border: 1px solid var(--green2); border-radius: 4px;
-  color: var(--green); font-family: var(--mono); font-size: 14px; padding: 6px 13px;
+  background: rgba(var(--green-rgb),0.12); border: 1px solid var(--green); border-radius: 4px;
+  color: var(--green); font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 3px 8px;
   cursor: pointer; flex-shrink: 0; transition: all 0.15s;
 }
-.go-btn:hover { background: rgba(var(--green-rgb),0.2); }
+.go-btn:hover { background: rgba(var(--green-rgb),0.25); }
 
 /* ── S-METER ── */
-.smeter-wrap { padding: 8px 14px 9px; }
+.smeter-wrap { padding: 3px 10px 3px; }
 .smeter-scale {
   display: flex; justify-content: space-between;
-  font-family: var(--mono); font-size: 11px; color: var(--dim); margin-bottom: 4px; padding: 0 2px;
+  font-family: var(--mono); font-size: 8.5px; font-weight: 600; color: var(--dim); margin-bottom: 1px; padding: 0 2px;
 }
 .smeter-bar-wrap {
-  position: relative; height: 25px; background: var(--meter-track);
-  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  position: relative; height: 11px; background: var(--meter-track);
+  border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 3px; overflow: hidden;
 }
 .smeter-fill {
   height: 100%; width: 100%; border-radius: 2px;
@@ -441,9 +450,9 @@ input[type="range"].rf-range::-webkit-slider-thumb {
   clip-path: inset(0 100% 0 0); transition: clip-path 0.1s ease;
 }
 .smeter-value {
-  font-family: var(--display); font-size: 13px; font-weight: 700;
-  color: var(--green); margin-top: 3px;
-  text-shadow: 0 0 8px rgba(var(--green-rgb),0.3);
+  font-family: var(--mono); font-size: 11px; font-weight: 800;
+  color: var(--green); margin-top: 1px;
+  text-shadow: 0 0 10px rgba(var(--green-rgb),0.4);
 }
 
 /* ── TX Meter (ALC/PWR/SWR/VOLT) — bargraf kompaktowy pod S-metrem ──
@@ -456,18 +465,18 @@ input[type="range"].rf-range::-webkit-slider-thumb {
    odczytu z radia, inna dla kazdej funkcji (patrz UI._renderTxMeter()). */
 .txmeter-wrap {
   display: flex; align-items: center; gap: 6px;
-  margin-top: 6px; padding-top: 6px;
+  margin-top: 2px; padding-top: 2px;
   border-top: 1px solid var(--border);
 }
 .txmeter-label-name {
-  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
   color: var(--dim); letter-spacing: 1px; flex-shrink: 0;
-  min-width: 28px;
+  min-width: 24px;
 }
 .txmeter-bar-col { flex: 0 0 50%; display: flex; flex-direction: column; gap: 1px; }
 .txmeter-bar-wrap {
-  position: relative; height: 12px; background: var(--meter-track);
-  border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  position: relative; height: 8px; background: var(--meter-track);
+  border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 2px; overflow: hidden;
 }
 .txmeter-fill {
   height: 100%; width: 0%;
@@ -503,9 +512,10 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 
 /* ── PTT ── */
 .ptt-btn {
-  padding: 9px 112px; border-radius: 4px; border: 2px solid var(--border2);
-  background: var(--panel2); color: var(--text); font-family: var(--display);
-  font-size: 16px; font-weight: 700; letter-spacing: 3px; cursor: pointer; transition: all 0.1s;
+  padding: 3px 48px; border-radius: 5px; border: 1px solid var(--border2);
+  background: var(--panel2); color: var(--text); font-family: var(--ui);
+  font-size: 12.5px; font-weight: 800; letter-spacing: 2px; cursor: pointer; transition: all 0.2s;
+  height: 25px;
 }
 .ptt-btn:hover  { border-color: var(--green); color: var(--green); }
 .ptt-btn.active {
@@ -670,61 +680,57 @@ html[data-theme="amber-classic"] {
    scope/kompas rotora (canvas, nie CSS) CELOWO zostaja ciemne w obu
    motywach - to wykresy RF, nie tekst, i tak jest w kazdym programie SDR. */
 :root[data-mode="light"] {
-  --bg:      #eeeae0;
-  --panel:   #faf8f2;
-  --panel2:  #f1ede2;
-  --panel3:  #e6e1d2;
-  --border:  rgba(74,88,54,0.16);
-  --border2: rgba(74,88,54,0.32);
-  --green:   #4f6b34;
-  --green2:  #3a4f26;
-  --amber:   #8a5f10;
-  --red:     #a03b2e;
-  /* 0.72 not 0.55 (live report 2026-10-16: "czcionka nadal malo czytelna
-     kolorystycznie") - --dim labels small text everywhere (section
-     titles, hints, secondary values), and 0.55 alpha of a dark color over
-     a LIGHT panel only works out to roughly 4:1 contrast - borderline-to-
-     failing for the 9-11px fonts used throughout this UI. 0.72 gets this
-     to a comfortably readable ~6:1 without making dim text as loud as
-     --text (still visibly "secondary"). Dark mode's --dim is untouched -
-     not reported as a problem there, and the user asked to keep the
-     existing dark look as-is. */
-  --dim:     rgba(38,40,28,0.72);
-  --text:    #22241c;
-  --on-accent: #fdfcf6;
+  /* Jasny wariant palety "SDR Studio Pro" (przejety z forka 2026-10-16,
+     razem z ciemnym wariantem powyzej). --dim jest tu PELNYM kolorem
+     (nie rgba() na przezroczystosci) - fork tak to rozwiazal, i daje to
+     wystarczajacy kontrast bez potrzeby osobnego dostrajania alpha jak w
+     poprzedniej (sage) palecie. */
+  --bg:      #f8fafc;
+  --panel:   #ffffff;
+  --panel2:  #f1f5f9;
+  --panel3:  #e2e8f0;
+  --border:  rgba(15,23,42,0.09);
+  --border2: rgba(15,23,42,0.20);
+  --green:   #0284c7;
+  --green2:  #0369a1;
+  --amber:   #d97706;
+  --red:     #dc2626;
+  --dim:     #64748b;
+  --text:    #0f172a;
+  --on-accent: #ffffff;
   --fg:      var(--text);
-  --green-rgb:  79,107,52;
-  --green2-rgb: 58,79,38;
-  --amber-rgb:  138,95,16;
-  --red-rgb:    160,59,46;
-  --meter-track: #3a362c;
-  --input-bg: #e6e1d2;
+  --green-rgb:  2,132,199;
+  --green2-rgb: 3,105,161;
+  --amber-rgb:  217,119,6;
+  --red-rgb:    220,38,38;
+  --meter-track: #e2e8f0;
+  --input-bg: #ffffff;
 }
 @media (prefers-color-scheme: light) {
   /* Tylko gdy user NIGDY nie kliknal przelacznika (brak zapisu w
      localStorage) - JS (theme.js) i tak ustawia data-mode explicite na
      starcie, wiec to tylko fallback zanim JS zdazy sie wykonac. */
   :root:not([data-mode]) {
-    --bg:      #eeeae0;
-    --panel:   #faf8f2;
-    --panel2:  #f1ede2;
-    --panel3:  #e6e1d2;
-    --border:  rgba(74,88,54,0.16);
-    --border2: rgba(74,88,54,0.32);
-    --green:   #4f6b34;
-    --green2:  #3a4f26;
-    --amber:   #8a5f10;
-    --red:     #a03b2e;
-    --dim:     rgba(38,40,28,0.72);
-    --text:    #22241c;
-    --on-accent: #fdfcf6;
+    --bg:      #f8fafc;
+    --panel:   #ffffff;
+    --panel2:  #f1f5f9;
+    --panel3:  #e2e8f0;
+    --border:  rgba(15,23,42,0.09);
+    --border2: rgba(15,23,42,0.20);
+    --green:   #0284c7;
+    --green2:  #0369a1;
+    --amber:   #d97706;
+    --red:     #dc2626;
+    --dim:     #64748b;
+    --text:    #0f172a;
+    --on-accent: #ffffff;
     --fg:      var(--text);
-    --green-rgb:  79,107,52;
-    --green2-rgb: 58,79,38;
-    --amber-rgb:  138,95,16;
-    --red-rgb:    160,59,46;
-    --meter-track: #3a362c;
-    --input-bg: #e6e1d2;
+    --green-rgb:  2,132,199;
+    --green2-rgb: 3,105,161;
+    --amber-rgb:  217,119,6;
+    --red-rgb:    220,38,38;
+    --meter-track: #e2e8f0;
+    --input-bg: #ffffff;
   }
 }
 
@@ -755,8 +761,8 @@ html[data-theme="amber-classic"] {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 3px;
+  padding: 2px 8px;
 }
 /* Wszystkie grupy/przyciski trzymaja sie jednego wiersza (scroll-x w razie
    przepelnienia) — nie kurcza sie i nie zawijaja. */
@@ -767,27 +773,31 @@ html[data-theme="amber-classic"] {
 
 /* Zunifikowany przycisk dla rf-buttons-row — jeden rozmiar dla wszystkich */
 .rf-btn {
-  padding: 6px 15px; border-radius: 4px; border: 1px solid var(--border2);
+  /* FIX: bylo rgba(19,28,49,.75)/rgba(255,255,255,.08) na sztywno - patrz
+     ten sam fix w .box-header (dobre tylko na ciemnym tle). */
+  padding: 3px 9px; border-radius: 4px; border: 1px solid var(--border2);
   background: var(--panel2); color: var(--dim); font-family: var(--mono);
-  font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.1s;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s;
   white-space: nowrap; flex-shrink: 0;
 }
 .rf-btn:hover { border-color: var(--green); color: var(--green); background: var(--panel3); }
 .rf-btn.active {
-  background: rgba(110,231,150,0.15); border-color: var(--green); color: var(--green);
+  background: rgba(var(--green-rgb), 0.18); border-color: var(--green); color: var(--green);
+  box-shadow: 0 0 10px rgba(var(--green-rgb), 0.25); font-weight: 700;
 }
 .rf-btn-power { color: var(--green); }
 .rf-btn-power:hover { border-color: var(--red); color: var(--red); }
 .rf-btn-power.active {
-  background: rgba(var(--red-rgb),0.15); border-color: var(--red); color: var(--red);
+  background: rgba(var(--red-rgb),0.18); border-color: var(--red); color: var(--red);
+  box-shadow: 0 0 10px rgba(var(--red-rgb), 0.3);
 }
 /* Zachowane dla kompatybilnosci wstecznej */
-.btn-vfo-select, .btn-func-toggle, .btn-power-toggle { padding: 6px 15px; border-radius: 4px; border: 1px solid var(--border2); background: var(--panel2); color: var(--dim); font-family: var(--mono); font-size: 12px; letter-spacing: 1px; cursor: pointer; transition: all 0.1s; }
-.btn-vfo-select:hover, .btn-func-toggle:hover { border-color: var(--green); color: var(--green); }
-.btn-vfo-select.active, .btn-func-toggle.active { background: rgba(110,231,150,0.15); border-color: var(--green); color: var(--green); }
+.btn-vfo-select, .btn-func-toggle, .btn-power-toggle { padding: 6px 15px; border-radius: 6px; border: 1px solid var(--border2); background: var(--panel2); color: var(--dim); font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
+.btn-vfo-select:hover, .btn-func-toggle:hover { border-color: var(--green); color: var(--green); background: var(--panel3); }
+.btn-vfo-select.active, .btn-func-toggle.active { background: rgba(var(--green-rgb),0.18); border-color: var(--green); color: var(--green); box-shadow: 0 0 10px rgba(var(--green-rgb), 0.25); font-weight: 700; }
 .btn-power-toggle { color: var(--green); }
-.btn-power-toggle:hover { border-color: var(--red); }
-.btn-power-toggle.active { background: rgba(var(--red-rgb),0.15); border-color: var(--red); color: var(--red); }
+.btn-power-toggle:hover { border-color: var(--red); color: var(--red); }
+.btn-power-toggle.active { background: rgba(var(--red-rgb),0.18); border-color: var(--red); color: var(--red); }
 
 /* ── WATERFALL ── */
 .wf-header {
@@ -795,11 +805,63 @@ html[data-theme="amber-classic"] {
   display: flex; justify-content: space-between; align-items: center;
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-#wf-spectrum  { width: 100%; height: 60px; display: block; background: #060806; border-bottom: 1px solid var(--border); }
-#wf-waterfall { width: 100%; display: block; background: #060806; flex: 1; min-height: 80px; }
+#wf-spectrum  { width: 100%; flex: 0 0 clamp(60px, 30%, 110px); min-height: 50px; max-height: 110px; display: block; background: #060806; }
+#wf-axis      { width: 100%; height: 20px; display: block; background: #0a0c0a; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+#wf-waterfall { width: 100%; display: block; background: #060806; flex: 1 1 0; min-height: 60px; }
+
+/* ── PASEK SOFTKEYS (ekranowe przyciski radia, jak w IC-7300) ── */
+.wf-softkeys {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  padding: 3px 5px;
+  background: var(--panel2);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.wf-softkey-btn {
+  background: var(--panel3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 2px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.wf-softkey-btn:hover { border-color: var(--green); color: var(--text); }
+.wf-softkey-btn.active {
+  background: rgba(var(--green-rgb),0.18);
+  border-color: var(--green);
+  color: var(--green);
+  box-shadow: inset 0 0 6px rgba(var(--green-rgb),0.25);
+}
+/* SPAN jako rozwijane menu zamiast przycisku-cyklu - zgloszone na zywo:
+   "span na waterfallu nie przelacza sie normalnie" (klikanie przez 7
+   wartosci kazdorazowo bylo niewygodne - teraz wybor od razu). */
+.wf-softkey-select {
+  background: var(--panel3);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 2px;
+  text-align: center;
+  text-align-last: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.wf-softkey-select:hover { border-color: var(--green); }
 
 /* ── ROTATOR ── */
-.rotator-inner { padding: 8px 10px; }
+.rotator-inner { padding: 4px 10px 6px; }
 #rot-compass { width: 205px !important; height: 205px !important; }
 .rot-az-display { font-family: var(--display); font-size: 45px; font-weight: 900; color: var(--green); text-align: center; line-height: 1; }
 .rot-unit-label { font-family: var(--mono); font-size: 9px; color: var(--dim); text-align: center; margin-bottom: 6px; }
@@ -979,8 +1041,10 @@ input::placeholder { color: var(--dim); }
 .page-content.active { display: block; }
 #page-wsjtx { padding: 0; }
 #page-wsjtx.active { display: flex; flex-direction: column; height: var(--wsjtx-h, 1028px); overflow: hidden; }
-body.page-wsjtx-active { overflow: hidden; }
+body.page-wsjtx-active, html.page-wsjtx-active { overflow: hidden; scrollbar-gutter: auto; }
 #page-radio { padding: 0; }
+#page-radio.active { display: block; height: var(--radio-grid-h, calc(1080px - 52px)); max-height: var(--radio-grid-h, calc(1080px - 52px)); overflow: hidden; }
+body.page-radio-active, html.page-radio-active { overflow: hidden; scrollbar-gutter: auto; }
 
 /* DX Cluster — pelna wysokosc, bez scrolla strony. Lista spotow scrolluje
    wewnetrznie, reszta (pasek gorny, config, CLI) jest staticzna. */
@@ -1180,277 +1244,504 @@ body.page-wsjtx-active { overflow: hidden; }
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /* Layout */
+/* ── 1. GÓRNY PASEK STATUSU I STEROWANIA (DWIE LINIE, przejete z forka 2026-10-17) ── */
 .wsjtx-layout {
   display: flex; flex-direction: column;
   flex: 1; height: 100%;
-  background: #0d0d0d; color: #ccc; overflow: hidden;
+  background: var(--wj-bg); color: var(--wj-text); overflow: hidden;
+  font-family: var(--ui); user-select: none;
 }
 
-/* Górny pasek */
 .wsjtx-topbar {
-  display: flex; align-items: center; gap: 10px;
-  background: #111; border-bottom: 1px solid #2a2a2a;
-  padding: 5px 12px; flex-shrink: 0; flex-wrap: wrap;
+  /* FIX (2026-10-17, live report: chce wiekszy wodospad, "wyciagnac okna
+     band i rx wyzej") - caly pasek nad wodospadem (ten blok + cycle-bar +
+     scope-toolbar ponizej) scisniety, zeby zwolnic wysokosc dla wodospadu
+     i okien dekodowan pod nim. */
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--wj-topbar); border-bottom: 2px solid var(--wj-border);
+  padding: 5px 10px; flex-shrink: 0; z-index: 10;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
 }
+.wj-topbar-row-1, .wj-topbar-row-2 {
+  display: flex; align-items: center; gap: 10px; width: 100%; flex-wrap: nowrap;
+}
+.wj-topbar-left {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+}
+.wj-topbar-right {
+  width: 380px; min-width: 380px; display: flex; align-items: center;
+  box-sizing: border-box; padding-left: 6px;
+}
+
 .wsjtx-freq {
-  font-family: 'Share Tech Mono', monospace;
-  font-size: 20px; font-weight: 700; color: #4cf; letter-spacing: 1px;
-  min-width: 110px;
+  font-family: var(--mono); font-size: 18px; font-weight: 800;
+  color: #fff; letter-spacing: 0.6px;
+  background: var(--wj-input-bg); padding: 4px 10px; border-radius: 6px;
+  border: 1px solid var(--wj-border-bright);
+  display: flex; align-items: center; gap: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  min-width: 158px; white-space: nowrap; flex-shrink: 0; box-sizing: border-box;
 }
-.wsjtx-mode-badge {
-  font-family: 'Share Tech Mono', monospace; font-size: 12px;
-  color: #fff; background: #1a3a1a; border: 1px solid #2a6a2a;
-  padding: 2px 8px; border-radius: 2px; letter-spacing: 1px;
+.wsjtx-freq::before {
+  content: ''; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 8px var(--green); flex-shrink: 0;
 }
+html[data-mode="light"] .wsjtx-freq { color: #0284c7; background: #ffffff; border-color: #cbd5e1; }
+
 .wj-mode-switch {
-  display: flex; border: 1px solid #2a6a2a; border-radius: 2px; overflow: hidden;
+  display: inline-flex; border: 1px solid var(--wj-border-bright); border-radius: 6px;
+  overflow: hidden; background: var(--wj-input-bg); flex-shrink: 0;
 }
 .wj-mode-btn {
-  font-family: 'Share Tech Mono', monospace; font-size: 12px;
-  letter-spacing: 1px; color: #6a8; background: #0d0d0d; border: none;
-  padding: 3px 10px; cursor: pointer; transition: background 0.15s, color 0.15s;
+  font-family: var(--mono); font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
+  color: var(--wj-text-dim); background: transparent; border: none;
+  padding: 4px 11px; cursor: pointer; transition: all 0.15s;
 }
-.wj-mode-btn:hover { background: #142214; }
-.wj-mode-btn.active {
-  background: #1a3a1a; color: #fff;
-}
+.wj-mode-btn:hover { background: rgba(255,255,255,0.08); color: var(--wj-text); }
+.wj-mode-btn.active { background: #0284c7 !important; color: #fff !important; }
+
 .wj-band-select {
-  font-family: 'Share Tech Mono', monospace; font-size: 11px;
-  background: #0d0d0d; border: 1px solid #333; color: #ccc;
-  padding: 4px 6px; border-radius: 2px;
+  font-family: var(--mono); font-size: 12px; font-weight: 800;
+  background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright);
+  color: var(--green); padding: 5px 9px; border-radius: 6px; outline: none; cursor: pointer;
 }
+
 .wj-topbar-check {
-  font-size: 11px; color: #aaa; display: flex; align-items: center;
-  gap: 4px; cursor: pointer;
+  font-size: 12px; font-family: var(--mono); font-weight: 800; color: var(--wj-text);
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 4px 9px; border-radius: 6px; border: 1px solid var(--wj-border-bright);
+  background: var(--wj-card); transition: all 0.15s;
 }
+.wj-topbar-check:hover { background: var(--wj-card-sub); border-color: #0284c7; }
+.wj-topbar-check input { cursor: pointer; accent-color: var(--green); width: 15px; height: 15px; }
+.wj-topbar-check.hound-box {
+  color: #f97316; border-color: rgba(249,115,22,0.55); background: rgba(249,115,22,0.12);
+}
+.wj-topbar-check.hound-box input { accent-color: #f97316; }
+
 .wj-period-switch {
-  display: flex; border: 1px solid #336; border-radius: 2px; overflow: hidden;
+  display: inline-flex; border: 1px solid var(--wj-border-bright); border-radius: 6px; overflow: hidden;
 }
-.wj-period-switch .wj-mode-btn.active {
-  background: #1a1a3a; color: #fff;
-}
+.wj-period-switch .wj-mode-btn.active { background: #0284c7 !important; color: #fff !important; }
+
 .wsjtx-clock-wrap {
-  display: flex; align-items: center; gap: 4px;
-  background: #0a0a0a; border: 1px solid #222;
-  padding: 2px 6px; border-radius: 2px;
+  display: flex; align-items: center; gap: 6px;
+  background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright);
+  padding: 3px 8px; border-radius: 6px;
 }
+#wj-clock-s {
+  font-family: var(--mono); font-size: 17px; font-weight: 800; color: var(--wj-text);
+  min-width: 22px; text-align: right;
+}
+
 .wsjtx-status-pill {
-  font-family: 'Share Tech Mono', monospace; font-size: 11px;
-  padding: 2px 10px; border-radius: 2px;
-  border: 1px solid #333; color: #666;
+  font-family: var(--mono); font-size: 11px; font-weight: 800;
+  padding: 4px 10px; border-radius: 6px; border: 1px solid var(--wj-border-bright);
+  color: var(--wj-text-dim); background: var(--wj-card);
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
 }
-.wsjtx-status-pill.online  { color: #4f4; border-color: #2a4a2a; background: #0a1a0a; }
-.wsjtx-status-pill.tx      { color: #f44; border-color: #4a1a1a; background: #1a0a0a; }
-.wsjtx-status-pill.decoding{ color: #fa0; border-color: #3a2a0a; background: #0a0a00; }
+.wsjtx-status-pill.online   { color: #22c55e; border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.15); }
+.wsjtx-status-pill.tx       { color: #ef4444; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.15); }
+.wsjtx-status-pill.decoding { color: var(--amber); border-color: rgba(var(--amber-rgb),0.4); background: rgba(var(--amber-rgb),0.15); }
 
 /* Przyciski topbar */
 .wj-btn {
-  font-family: 'Share Tech Mono', monospace; font-size: 11px;
-  padding: 4px 10px; cursor: pointer; border-radius: 2px;
-  border: 1px solid #333; background: #1a1a1a; color: #aaa;
-  letter-spacing: 0.5px; transition: all 0.1s;
+  font-family: var(--mono); font-size: 12px; font-weight: 800;
+  padding: 5px 11px; cursor: pointer; border-radius: 6px;
+  border: 1px solid var(--wj-border-bright); background: var(--wj-card); color: var(--wj-text);
+  transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
-.wj-btn:hover { border-color: #555; color: #fff; }
-.wj-btn-green { border-color: #2a5a2a; color: #4f4; background: #0a1a0a; }
-.wj-btn-green:hover { border-color: #4a8a4a; background: #0f2a0f; }
-.wj-btn-red   { border-color: #5a1a1a; color: #f44; background: #1a0a0a; }
-.wj-btn-red:hover { border-color: #8a2a2a; background: #2a0f0f; }
+.wj-btn:hover { background: var(--wj-card-sub); border-color: #0284c7; color: #fff; }
+html[data-mode="light"] .wj-btn:hover { color: #0284c7; }
 
-/* Wodospad / scope */
+.wj-btn-tune {
+  background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.5); color: #ef4444;
+}
+.wj-btn-tune:hover, .wj-btn-tune.active { background: #ef4444 !important; color: #fff !important; border-color: #ef4444 !important; }
+
+#wj-own-rx-btn {
+  width: 100%; justify-content: center; font-size: 12.5px; font-weight: 800; padding: 6px 14px;
+  background: rgba(34,197,94,0.2); border-color: #22c55e; color: #22c55e;
+}
+#wj-own-rx-btn.active { background: rgba(34,197,94,0.25); border-color: #22c55e; color: #22c55e; }
+#wj-own-rx-btn.active:hover { background: rgba(34,197,94,0.4); color: #fff; }
+#wj-own-rx-btn.stopped { background: rgba(245,158,11,0.18); border-color: #f59e0b; color: #f59e0b; }
+#wj-own-rx-btn.stopped:hover { background: rgba(245,158,11,0.35); color: #fff; }
+
+/* ── 1.5. PASEK POSTĘPU CYKLU UTC ── */
+.cycle-bar-wrap {
+  background: #03060a; border-bottom: 1px solid var(--wj-border);
+  padding: 4px 12px; flex-shrink: 0; box-sizing: border-box;
+}
+.cycle-bar-header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+  margin-bottom: 3px; color: var(--wj-text-dim);
+}
+.cycle-progress-outer {
+  position: relative; height: 16px; background: #020408;
+  border: 1px solid var(--wj-border-bright); border-radius: 5px; overflow: hidden; display: flex;
+}
+.cycle-progress-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, #10b981 0%, #06b6d4 75%, #f59e0b 84%, #f43f5e 100%);
+  transition: width 0.1s linear;
+}
+.cycle-markers-overlay {
+  position: absolute; inset: 0; display: flex; pointer-events: none;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 800; line-height: 16px;
+}
+.c-marker-rx  { position: absolute; left: 8px;  color: #4ade80; }
+.c-marker-dec { position: absolute; left: 82%;  color: #facc15; }
+.c-marker-tx  { position: absolute; left: 93%;  color: #f87171; }
+html[data-mode="light"] .cycle-bar-wrap { background: #f1f5f9; border-bottom: 1px solid var(--wj-border); }
+html[data-mode="light"] .cycle-progress-outer { background: #e2e8f0; border-color: #cbd5e1; }
+html[data-mode="light"] .cycle-bar-header { color: #475569; }
+
+/* ── 2. WODOSPAD / SCOPE I TOOLBAR CZĘSTOTLIWOŚCI (przejete z forka 2026-10-17) ── */
 .wsjtx-scope-wrap {
-  flex-shrink: 0; border-bottom: 1px solid #1a1a1a; background: #050505;
-  width: 100%; min-width: 0;
+  flex-shrink: 0; border-bottom: 1px solid var(--wj-border); background: #020408;
+  width: 100%; min-width: 0; display: flex; flex-direction: column;
 }
 .wsjtx-scope-toolbar {
-  display: flex; align-items: center; gap: 0; padding: 3px 8px;
-  background: #161616; border-bottom: 1px solid #2a2a2a;
+  display: flex; align-items: center; gap: 8px; padding: 3px 10px;
+  background: var(--wj-card); border-bottom: 1px solid var(--wj-border);
+  font-family: var(--mono); font-size: 11px; color: var(--wj-text-dim);
 }
 .wsjtx-scope-canvas {
   display: block; width: 100%; height: 160px; cursor: crosshair;
-  background: #000;
+  background: #020408;
 }
 .wsjtx-scope-axis {
-  position: relative; height: 18px; background: #0d0d0d;
-  border-bottom: 1px solid #2a2a2a; overflow: hidden;
-  font-family: var(--mono); font-size: 10px; color: #999;
+  position: relative; height: 20px; background: var(--wj-topbar);
+  border-bottom: 1px solid var(--wj-border); overflow: hidden;
+  font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--wj-text-dim);
 }
 .wsjtx-scope-axis .wj-axis-tick {
-  position: absolute; top: 2px; transform: translateX(-50%);
+  position: absolute; top: 3px; transform: translateX(-50%);
   white-space: nowrap;
+}
+/* Flagi stacji wolających CQ na wodospadzie FT8 (klikalne — QSY do nich) */
+.wj-cq-flag {
+  position: absolute; top: 2px; transform: translateX(-50%);
+  pointer-events: auto; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center;
+  font-family: var(--mono); font-size: 9px; line-height: 1.1;
+  z-index: 5;
+}
+.wj-cq-flag::after {
+  content: ''; width: 1px; height: 6px; background: rgba(var(--green-rgb),0.67);
+  margin-top: 1px;
+}
+.wj-cq-flag-call {
+  background: rgba(2,8,16,0.82); border: 1px solid var(--green); color: var(--green);
+  border-radius: 2px; padding: 1px 4px; white-space: nowrap; box-shadow: 0 0 4px rgba(0,0,0,0.6);
+}
+.wj-cq-flag:hover .wj-cq-flag-call {
+  background: var(--green); color: var(--on-accent); border-color: var(--green);
 }
 #wj-tx-freeze-btn.active { border-color: #2a6a8a; color: #4cf; background: #05202a; }
 #wj-fake-split-toggle.active { border-color: #8a6a2a; color: #fc0; background: #2a1f05; }
 
-/* Środkowy obszar */
-.wsjtx-main {
-  display: flex; flex-direction: row; flex: 1;
-  overflow: hidden; gap: 0; min-height: 0; align-items: stretch;
-}
-
-/* Tabela dekodowań */
-.wsjtx-decodes-wrap {
-  flex: 1; display: flex; flex-direction: row;
-  border-right: 1px solid #1a1a1a; overflow: hidden;
-  min-height: 0; min-width: 0;
-}
-
-/* Panele regulowane (Band Activity / RX Frequency), obok siebie, z
-   przeciaganym pionowym splitterem miedzy nimi */
-.wj-split-pane {
-  display: flex; flex-direction: column; overflow: hidden;
-  min-width: 120px; flex-grow: 0; flex-shrink: 0; min-height: 0;
-}
-.wj-split-resizer {
-  flex: 0 0 6px; cursor: col-resize; background: #161616;
-  border-left: 1px solid #2a2a2a; border-right: 1px solid #2a2a2a;
-  position: relative;
-}
-.wj-split-resizer:hover, .wj-split-resizer.dragging { background: #2a2a2a; }
-.wj-split-resizer::after {
-  content: ''; position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%,-50%); width: 2px; height: 30px;
-  background: #555; border-radius: 1px;
-}
-.wj-btn-xs {
-  font-size: 10px; padding: 1px 5px; line-height: 1.4;
-}
-
-.wsjtx-decode-header {
-  display: flex; gap: 0; align-items: center;
-  background: #161616; border-bottom: 1px solid #2a2a2a;
-  padding: 3px 6px; flex-shrink: 0;
-}
-.wjh {
-  font-family: 'Share Tech Mono', monospace; font-size: 11px;
-  color: #aaa; padding: 0 4px; white-space: nowrap; user-select: none;
-  min-width: 52px;
-}
-.wjh-r { text-align: right; min-width: 42px; }
-
-.wsjtx-decode-list {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
-}
-.wsjtx-decode-list::-webkit-scrollbar { width: 5px; }
-.wsjtx-decode-list::-webkit-scrollbar-track { background: #0a0a0a; }
-.wsjtx-decode-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-
 /* Edytowalne pola czestotliwosci RX/TX w toolbarze scope'a */
 .wj-freq-field {
-  font-family: var(--mono); font-size: 11px;
-  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: 11.5px; font-weight: 800;
+  display: inline-flex; align-items: center; gap: 5px;
 }
 .wj-freq-input {
-  width: 60px; background: #0a0a0a; border: 1px solid #333;
-  color: inherit; font-family: var(--mono); font-size: 11px;
-  padding: 2px 4px; border-radius: 3px; text-align: right;
+  width: 56px; background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright);
+  color: inherit; font-family: var(--mono); font-size: 12px; font-weight: 800;
+  padding: 2px 5px; border-radius: 4px; text-align: right; outline: none;
 }
-.wj-freq-input:focus { outline: none; border-color: #666; }
+.wj-freq-input:focus { border-color: #0284c7; }
 /* Ukryj strzalki spinner w number input dla czystszego wygladu */
 .wj-freq-input::-webkit-inner-spin-button,
 .wj-freq-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .wj-freq-input[type=number] { -moz-appearance: textfield; }
 
+/* ── 3. POZIOMY SPLITTER MIĘDZY WODOSPADEM A DEKODOWANIAMI ── */
+.wj-h-split-resizer {
+  height: 7px; background: var(--wj-card);
+  border-top: 1px solid var(--wj-border); border-bottom: 1px solid var(--wj-border);
+  cursor: row-resize; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s; z-index: 10; flex-shrink: 0;
+}
+.wj-h-split-resizer:hover, .wj-h-split-resizer.dragging { background: #0284c7; }
+.wj-h-split-grip { width: 60px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.4); }
+html[data-mode="light"] .wj-h-split-grip { background: rgba(0,0,0,0.3); }
+
+/* ── 4. OKNA DEKODOWAŃ: BAND ACTIVITY & RX FREQUENCY ── */
+.wsjtx-main {
+  display: flex; flex-direction: row; flex: 1;
+  overflow: hidden; gap: 0; min-height: 0; align-items: stretch;
+}
+
+.wsjtx-decodes-wrap {
+  display: flex; flex-direction: row; flex: 1; width: 100%;
+  min-height: 0; overflow: hidden; position: relative; background: var(--wj-bg);
+}
+
+.wj-split-pane {
+  display: flex; flex-direction: column; overflow: hidden;
+  min-width: 140px; flex-grow: 1; flex-shrink: 1; min-height: 0;
+}
+.wj-split-resizer {
+  flex: 0 0 6px; cursor: col-resize; background: var(--wj-card);
+  border-left: 1px solid var(--wj-border); border-right: 1px solid var(--wj-border);
+  position: relative; transition: background 0.2s;
+}
+.wj-split-resizer:hover, .wj-split-resizer.dragging { background: #0284c7; }
+.wj-split-resizer::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%); width: 2px; height: 30px;
+  background: rgba(255,255,255,0.3); border-radius: 1px;
+}
+.wj-btn-xs {
+  font-size: 10px; padding: 1px 5px; line-height: 1.4;
+}
+/* Poziomy resizer gora/dol miedzy wodospadem a oknami dekodow (Band Activity / RX Frequency) */
+.wj-h-split-resizer {
+  height: 7px; background: var(--wj-card);
+  border-top: 1px solid var(--wj-border); border-bottom: 1px solid var(--wj-border);
+  cursor: row-resize; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s; z-index: 10; flex-shrink: 0;
+}
+.wj-h-split-resizer:hover, .wj-h-split-resizer.dragging { background: #0284c7; }
+.wj-h-split-grip { width: 60px; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.4); }
+html[data-mode="light"] .wj-h-split-grip { background: rgba(0,0,0,0.3); }
+
+.wj-panel-title {
+  background: var(--wj-card); border-bottom: 1px solid var(--wj-border);
+  padding: 6px 12px; display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 13px; font-weight: 800;
+  color: var(--wj-text); letter-spacing: 0.5px;
+}
+
+.wsjtx-decode-header {
+  /* FIX (2026-10-17, live report: "band i rx maja za duza czcionke nie
+     miesci sie pelen opis dekodow"): kolumny i font przejete 1:1 z forka
+     byly za duze na realna tresc (dluzsze prawdziwe znaki/lokatory/raporty
+     niz testowe skroty) - zmniejszone kolumny Grid/Country/czas/dB/DT/Freq,
+     zwezony gap i font, zeby oddac wiecej miejsca kolumnie Message (1fr). */
+  display: grid; grid-template-columns: 50px 38px 38px 48px 1fr 42px 44px;
+  column-gap: 5px; padding: 4px 8px;
+  background: var(--wj-card-sub); border-bottom: 1px solid var(--wj-border);
+  font-family: var(--mono); font-size: 10px; color: var(--wj-text-dim);
+  font-weight: 800; letter-spacing: 0.3px; flex-shrink: 0; box-sizing: border-box;
+}
+.wsjtx-decode-header .wjh-r { text-align: right; }
+.wjh {
+  padding: 0 4px; white-space: nowrap; user-select: none;
+}
+.wjh-r { text-align: right; }
+
+.wsjtx-decode-list {
+  flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0;
+  background: var(--wj-bg); font-family: var(--mono); font-size: 11.5px;
+}
+.wsjtx-decode-list::-webkit-scrollbar { width: 5px; }
+.wsjtx-decode-list::-webkit-scrollbar-track { background: var(--wj-bg); }
+.wsjtx-decode-list::-webkit-scrollbar-thumb { background: var(--wj-border-bright); border-radius: 3px; }
+
+/* Wiersz zdekodowanej stacji */
 .wj-decode-row {
-  display: flex; align-items: center; padding: 1px 6px;
-  cursor: pointer; gap: 0; border-bottom: 1px solid #111;
-  font-family: 'Share Tech Mono', monospace; font-size: 12px;
-  color: #ddd;
-  transition: background 0.05s;
+  display: grid; grid-template-columns: 50px 38px 38px 48px 1fr 42px 44px;
+  column-gap: 5px; align-items: center; padding: 3px 8px; line-height: 20px;
+  cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-weight: 600; color: var(--wj-text); font-size: 11.5px;
+  transition: background 0.1s; white-space: nowrap; overflow: hidden; box-sizing: border-box;
 }
-.wj-decode-row:hover { background: #1a1a2a; }
-.wj-decode-row.wj-cq     { color: #4cf; }   /* CQ — jasny niebieski jak w WSJT-X */
-.wj-decode-row.wj-mycall  { color: #ff0; background: #1a1a00; }  /* własny callsign — żółty */
-.wj-decode-row.wj-dx      { color: #4f4; }  /* odpowiedź do DX — zielony */
-.wj-decode-row.wj-73      { color: #fa0; }  /* 73/RR73 — pomarańczowy */
-.wj-decode-row.wj-worked  { color: #556; text-decoration: line-through; opacity: 0.6; } /* juz w logu — szary przekreślony */
-.wj-decode-row.wj-tx-own  { color: #ff0; background: #1a1a00; opacity: 0.85; }  /* nasz TX — żółty */
-.wj-decode-row.selected   { background: #0a2a1a !important; outline: 1px solid #2a6a3a; }
+.wj-decode-row .wj-d-snr, .wj-decode-row .wj-d-dt, .wj-decode-row .wj-d-freq { text-align: right; }
+.wj-decode-row .wj-d-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-mode="light"] .wj-decode-row { border-bottom: 1px solid rgba(0,0,0,0.06); }
+.wj-decode-row:hover { background: rgba(255,255,255,0.08); }
+html[data-mode="light"] .wj-decode-row:hover { background: rgba(2,132,199,0.08); }
+.wj-decode-row.wj-cq     { color: #38bdf8; font-weight: 700; }   /* CQ — jasny niebieski jak w WSJT-X */
+.wj-decode-row.wj-mycall  { color: #fca5a5; background: rgba(239,68,68,0.2) !important; font-weight: 800; border-left: 3px solid #ef4444; }  /* własny callsign */
+.wj-decode-row.wj-dx      { color: #22c55e; font-weight: 700; }  /* odpowiedź do DX — zielony */
+.wj-decode-row.wj-73      { color: #fbbf24; font-weight: 700; }  /* 73/RR73 — bursztyn */
+.wj-decode-row.wj-worked  { color: var(--wj-text-dimmer); text-decoration: line-through; opacity: 0.6; } /* juz w logu */
+.wj-decode-row.wj-own-tx  { color: #fef08a; background: rgba(245,158,11,0.16) !important; font-weight: 700; border-left: 3px solid #f59e0b; }  /* nasz TX */
+.wj-decode-row.selected   { outline: 1px solid var(--green); background: rgba(56,189,248,0.15) !important; }
 
+/* ── Belka separatora periodow dekodowania (dashed line + badge) —
+   zastepuje pojedynczy <div class="wj-period-sep"> generowany w
+   wsjtx.js (_renderDecodes) prostym, tematycznym podzialem zamiast
+   pelnej struktury sep-line/sep-badge z forka, bo JS nie generuje
+   tych dodatkowych elementow potomnych. ── */
 .wj-period-sep {
-  border-top: 1px dashed #888; margin: 3px 6px; opacity: 0.9;
+  border-top: 2px solid var(--wj-period-bar-border); margin: 4px 6px 2px;
+  opacity: 0.9;
 }
 
-.wj-d-time { min-width: 60px; color: #666; font-size: 11px; }
-.wj-d-snr  { min-width: 42px; text-align: right; }
-.wj-d-dt   { min-width: 42px; text-align: right; color: #888; }
-.wj-d-freq { min-width: 48px; text-align: right; color: #888; }
-.wj-d-msg  { flex: 1; padding-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wj-d-grid { min-width: 52px; color: #666; font-size: 10px; }
-.wj-d-country { min-width: 60px; color: #555; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+.wj-d-time { color: var(--wj-text-dimmer); font-size: 11px; }
+.wj-d-dt, .wj-d-freq { color: var(--wj-text-dim); }
+.wj-d-grid { min-width: 52px; color: var(--wj-text-dimmer); font-size: 10px; }
+.wj-d-country { min-width: 60px; color: var(--wj-text-dimmer); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
 
 .wj-empty {
   padding: 20px; text-align: center;
-  font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #333;
+  font-family: var(--mono); font-size: 11px; color: var(--wj-text-dimmer);
+}
+
+/* ── Zmienne FT8/WSJT-X (przejete z forka 2026-10-16, panel prawy) —
+   oddzielny, lokalny zestaw tokenow dla tej strony (karty/obwodki
+   dopasowane do ciemnej "karty" w stylu oryginalnego WSJT-X), poza
+   glownymi --panel/--border uzywanymi wszedzie indziej. ── */
+:root {
+  --wj-bg:          #070c14;
+  --wj-card:        #0b111a;
+  --wj-card-sub:    #0f1724;
+  --wj-topbar:      #090e18;
+  --wj-border:      rgba(var(--green-rgb),0.12);
+  --wj-border-bright: rgba(var(--green-rgb),0.28);
+  --wj-text:        #e2e8f0;
+  --wj-text-dim:    #94a3b8;
+  --wj-text-dimmer: #64748b;
+  --wj-input-bg:    var(--input-bg);
+  --wj-period-bar-bg:     #081220;
+  --wj-period-bar-border: #0284c7;
+  --wj-period-bar-text:   #38bdf8;
+  --wj-badge-bg:    rgba(2, 132, 199, 0.25);
+  --wj-badge-border: rgba(56, 189, 248, 0.4);
+}
+:root[data-mode="light"] {
+  --wj-bg:          #f8fafc;
+  --wj-card:        #ffffff;
+  --wj-card-sub:    #f1f5f9;
+  --wj-topbar:      #ffffff;
+  --wj-border:      rgba(15, 23, 42, 0.09);
+  --wj-border-bright: rgba(15, 23, 42, 0.20);
+  --wj-text:        #0f172a;
+  --wj-text-dim:    #475569;
+  --wj-text-dimmer: #64748b;
+  --wj-period-bar-bg:     #e0f2fe;
+  --wj-period-bar-border: #0284c7;
+  --wj-period-bar-text:   #0369a1;
+  --wj-badge-bg:    rgba(2, 132, 199, 0.15);
+  --wj-badge-border: rgba(2, 132, 199, 0.4);
 }
 
 /* Prawa kolumna */
 .wsjtx-right {
-  width: 320px; flex-shrink: 0;
+  width: 380px; min-width: 380px; flex-shrink: 0;
   display: flex; flex-direction: column;
-  background: #0e0e0e;
-  border-left: 1px solid #2a2a2a;
+  background: var(--wj-card);
+  border-left: 2px solid var(--wj-border);
   overflow-y: auto;
+  gap: 10px; padding: 12px; box-sizing: border-box;
   /* Kolumna zaczyna sie od linii waterfalla —
      wsjtx-main jest flex-row i zaczyna sie po topbarze+scope */
 }
-.wj-panel-title {
-  font-family: 'Share Tech Mono', monospace; font-size: 10px;
-  color: #888; letter-spacing: 2px; padding: 5px 8px 3px;
-  border-bottom: 1px solid #1a1a1a; text-transform: uppercase;
+.wsjtx-right input[type="text"],
+.wsjtx-right select {
+  background: var(--wj-input-bg) !important;
+  border: 1px solid var(--wj-border-bright) !important;
+  color: var(--text) !important;
+  border-radius: 4px !important;
 }
-
-/* Automatyka QSO */
+.wsjtx-right input[type="text"]:focus,
+.wsjtx-right select:focus {
+  border-color: var(--green2) !important;
+}
+.wj-panel-title {
+  font-family: var(--mono); font-size: 13.5px; font-weight: 800;
+  color: var(--green); letter-spacing: 0.8px; margin-bottom: 8px;
+}
 .wj-panel-title label {
-  font-size: 10px; color: #aaa; display: flex; align-items: center;
+  font-size: 10px; color: var(--dim); display: flex; align-items: center;
   gap: 4px; cursor: pointer; font-weight: normal; text-transform: none;
   letter-spacing: normal;
 }
-#wj-autoqso-status {
-  font-family: var(--mono); font-size: 11px; padding: 6px 8px; color: #bbb;
-  transition: color 0.2s;
-  white-space: normal; overflow: hidden;
-}
-#wj-autoqso-status.active { color: #8be; }
-#wj-autoqso-status.done { color: #8f8; }
-#wj-autoqso-status.error { color: #f88; }
 
-/* TX panel */
+/* Automatyka QSO — "status box" (przejete z forka): karta z wyrazniejszym
+   stanem GOTOWY/trwajace QSO, zamiast samej linii tekstu jak poprzednio */
+.auto-qso-box {
+  background: var(--wj-card-sub);
+  border: 1px solid var(--wj-border-bright);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+}
+.auto-qso-box.active {
+  border-color: rgba(34, 197, 94, 0.6);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+/* TX panel - FIX (2026-10-17, live report: "makra nie sa w stanie pokazac
+   pelnego wypelnienia czcionka"): fork's own 13px/380px combo still wasn't
+   enough for REALNA wypelniona tresc makra (dlugi prawdziwy znak + lokator
+   + raport, np. "DL1ABC SQ3MZM R-15" - dluzsze niz skrocone dane testowe) -
+   zmniejszony font i padding daja wiecej znakow na linie. */
 .wsjtx-tx-panel {
-  padding: 4px 8px; border-bottom: 1px solid #1a1a1a; flex-shrink: 0;
+  padding: 10px 12px; border: 1px solid var(--wj-border); border-radius: 6px;
+  background: var(--wj-card-sub); flex-shrink: 0;
 }
 .wsjtx-tx-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin-bottom: 6px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px;
 }
 .wj-tx-btn {
-  display: flex; align-items: flex-start; gap: 5px;
-  background: #131313; border: 1px solid #2a2a2a; border-radius: 2px;
-  padding: 3px 6px; cursor: pointer; text-align: left;
-  font-family: 'Share Tech Mono', monospace; color: #aaa;
-  transition: all 0.1s;
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright); border-radius: 5px;
+  padding: 5px 6px; cursor: pointer; text-align: left;
+  font-family: var(--mono); color: #cbd5e1; font-size: 10px; font-weight: 700;
+  transition: all 0.15s; overflow: hidden;
 }
-.wj-tx-btn:hover { border-color: #3a3a3a; background: #1a1a1a; color: #fff; }
-.wj-tx-btn.active { border-color: #c33; background: #1a0a0a; color: #f88; }
-.wj-tx-num  { font-size: 9px; color: #555; flex-shrink: 0; margin-top: 1px; }
-.wj-tx-text { font-size: 10px; line-height: 1.3; word-break: break-word; }
+.wj-tx-btn:hover { border-color: var(--green2); background: var(--wj-card); color: #fff; }
+.wj-tx-btn.active {
+  background: rgba(245, 158, 11, 0.28) !important; border-color: #f59e0b !important;
+  color: #fbbf24 !important; font-weight: 800;
+}
+.wj-tx-num  { font-size: 10px; font-weight: 800; color: #f59e0b; flex-shrink: 0; }
+.wj-tx-text {
+  font-size: inherit; line-height: 1.3; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Pola DX i SNR */
+#wj-dx-call { font-size: 15.5px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 10px !important; }
+#wj-dx-grid { width: 68px !important; font-size: 15.5px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 8px !important; text-align: center; }
+#wj-dx-snr  { font-size: 15px !important; font-weight: 800 !important; color: #22c55e !important; }
+
+/* Antena i Rotor */
+#wj-beam-row { font-size: 12.5px !important; padding: 8px 10px !important; border-radius: 5px !important; }
+#wj-beam-az  { font-size: 20px !important; font-weight: 800 !important; color: #f59e0b !important; }
+#wj-rotor-az { font-size: 13px !important; font-weight: 800 !important; color: #22c55e !important; }
 
 /* Log QSO */
 .wsjtx-log-panel {
-  flex: 1; display: flex; flex-direction: column;
-  border-bottom: 1px solid #1a1a1a; overflow: hidden;
-  min-height: 80px;
+  padding: 12px 14px; border: 1px solid var(--wj-border); border-radius: 6px;
+  background: var(--wj-card-sub); display: flex; flex-direction: column; gap: 8px;
 }
+#wj-log-call, #wj-log-grid { font-size: 13.5px !important; padding: 6px 10px !important; }
+#wj-log-mode, #wj-log-rst-sent, #wj-log-rst-rcvd { font-size: 12.5px !important; padding: 5px 8px !important; }
+#wj-log-comment { font-size: 12px !important; padding: 5px 8px !important; }
 
-/* Config panel */
+/* Legenda kolorow wierszy dekodowania (zastepuje martwy panel "konfiguracja
+   WSJT-X" - HAMCTRL ma wlasny dekoder, zewnetrzny WSJT-X nigdy nie jest
+   wymagany, wiec ta instrukcja konfiguracji nie miala tu racji bytu) */
 .wsjtx-config-panel {
-  padding: 6px 8px; flex-shrink: 0;
+  padding: 10px 12px; flex-shrink: 0; border: 1px solid var(--wj-border);
+  border-radius: 6px; background: var(--wj-card-sub);
+}
+.wj-legend-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px;
+}
+.wj-legend-item {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--wj-text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wj-legend-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
 }
 
 /* Dolny pasek */
 .wsjtx-bottombar {
-  display: flex; align-items: center; gap: 8px;
-  background: #111; border-top: 1px solid #1a1a1a;
-  padding: 3px 12px; flex-shrink: 0;
-  font-family: 'Share Tech Mono', monospace;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--wj-topbar); border-top: 1px solid var(--wj-border);
+  padding: 5px 14px; flex-shrink: 0;
+  font-family: var(--mono); font-size: 12px; color: var(--dim);
 }
 
 /* TX pulse animation */

@@ -43,19 +43,29 @@ let _speed   = 0;      // °/s speed computed from previous updates
 function _compassPalette() {
   const light = document.documentElement.getAttribute('data-mode') === 'light';
   return light ? {
-    bgInner: '#f3efe3', bgOuter: '#e3ddc9',
-    ringMoving: 'rgba(138,95,16,0.45)', ringStill: 'rgba(79,107,52,0.35)',
-    tickBig: 'rgba(79,107,52,0.75)', tickMed: 'rgba(79,107,52,0.4)', tickSmall: 'rgba(79,107,52,0.18)',
-    labelN: 'rgba(160,59,46,0.9)', labelOther: 'rgba(79,107,52,0.75)',
-    targetLine: 'rgba(138,95,16,0.6)',
-    pointerMoving: '#8a5f10', pointerStill: '#3a4f26',
+    bezel: '#94a3b8',
+    bgInner: '#f8fafc', bgOuter: '#e2e8f0',
+    hubBg: 'rgba(255, 255, 255, 0.95)',
+    hubBorder: 'rgba(148, 163, 184, 0.6)',
+    ringMoving: 'rgba(217, 119, 6, 0.65)', ringStill: 'rgba(2, 132, 199, 0.35)',
+    radarRing: 'rgba(148, 163, 184, 0.25)',
+    tickBig: 'rgba(15, 23, 42, 0.85)', tickMed: 'rgba(71, 85, 105, 0.6)', tickSmall: 'rgba(148, 163, 184, 0.35)',
+    degText: 'rgba(71, 85, 105, 0.8)',
+    labelN: '#dc2626', labelOther: '#0284c7',
+    targetLine: '#d97706', targetBug: '#d97706',
+    pointerMoving: '#d97706', pointerStill: '#0284c7',
   } : {
-    bgInner: '#111811', bgOuter: '#0a0c0a',
-    ringMoving: 'rgba(240,180,41,0.4)', ringStill: 'rgba(76,219,106,0.25)',
-    tickBig: 'rgba(76,219,106,0.6)', tickMed: 'rgba(76,219,106,0.3)', tickSmall: 'rgba(76,219,106,0.1)',
-    labelN: 'rgba(224,82,82,0.9)', labelOther: 'rgba(76,219,106,0.55)',
-    targetLine: 'rgba(240,180,41,0.55)',
-    pointerMoving: '#f0b429', pointerStill: '#4cdb6a',
+    bezel: '#1e293b',
+    bgInner: '#0b1329', bgOuter: '#060a14',
+    hubBg: 'rgba(7, 12, 22, 0.92)',
+    hubBorder: 'rgba(56, 189, 248, 0.35)',
+    ringMoving: 'rgba(251, 191, 36, 0.7)', ringStill: 'rgba(56, 189, 248, 0.35)',
+    radarRing: 'rgba(56, 189, 248, 0.12)',
+    tickBig: 'rgba(56, 189, 248, 0.95)', tickMed: 'rgba(56, 189, 248, 0.55)', tickSmall: 'rgba(56, 189, 248, 0.22)',
+    degText: 'rgba(148, 163, 184, 0.65)',
+    labelN: '#f43f5e', labelOther: '#38bdf8',
+    targetLine: 'rgba(251, 191, 36, 0.75)', targetBug: '#fbbf24',
+    pointerMoving: '#fbbf24', pointerStill: '#38bdf8',
   };
 }
 
@@ -64,95 +74,227 @@ function drawCompass(az, taz, moving) {
   if (!cv) return;
   const ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;
-  const cx = W/2, cy = H/2, R = W/2 - 3;
+  const cx = W/2, cy = H/2, R = W/2 - 2;
   const P = _compassPalette();
+  const hubR = 38; // Radius of central digital readout hub
 
   ctx.clearRect(0, 0, W, H);
 
-  // Background
-  const g = ctx.createRadialGradient(cx,cy,0,cx,cy,R);
-  g.addColorStop(0, P.bgInner); g.addColorStop(1, P.bgOuter);
-  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
-  ctx.fillStyle = g; ctx.fill();
+  // 1. Dial background plate
+  const g = ctx.createRadialGradient(cx, cy, hubR, cx, cy, R);
+  g.addColorStop(0, P.bgInner);
+  g.addColorStop(1, P.bgOuter);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  // Outer bezel & moving glow
+  ctx.strokeStyle = moving ? P.ringMoving : P.bezel;
+  ctx.lineWidth = moving ? 2.5 : 1.5;
+  if (moving) {
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = P.pointerMoving;
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Thin outer track ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, R - 3, 0, Math.PI * 2);
   ctx.strokeStyle = moving ? P.ringMoving : P.ringStill;
-  ctx.lineWidth = moving ? 2 : 1; ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.stroke();
 
-  // Tick marks
-  for (let d=0; d<360; d+=5) {
-    const r  = (d-90)*Math.PI/180;
-    const big = d%30===0, med = d%10===0;
-    const r1 = R-(big?13:med?8:5), r2 = R-2;
+  // Subtle radar range ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, R * 0.72, 0, Math.PI * 2);
+  ctx.strokeStyle = P.radarRing;
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // 2. Tick marks (avionics graduations)
+  for (let d = 0; d < 360; d += 5) {
+    const rad = (d - 90) * Math.PI / 180;
+    const isMajor = d % 30 === 0;
+    const isMed = d % 10 === 0;
+    const r1 = R - (isMajor ? 12 : isMed ? 8 : 5);
+    const r2 = R - 3;
     ctx.beginPath();
-    ctx.moveTo(cx+Math.cos(r)*r1, cy+Math.sin(r)*r1);
-    ctx.lineTo(cx+Math.cos(r)*r2, cy+Math.sin(r)*r2);
-    ctx.strokeStyle = big?P.tickBig:med?P.tickMed:P.tickSmall;
-    ctx.lineWidth = big?1.5:0.8; ctx.stroke();
+    ctx.moveTo(cx + Math.cos(rad) * r1, cy + Math.sin(rad) * r1);
+    ctx.lineTo(cx + Math.cos(rad) * r2, cy + Math.sin(rad) * r2);
+    ctx.strokeStyle = isMajor ? P.tickBig : (isMed ? P.tickMed : P.tickSmall);
+    ctx.lineWidth = isMajor ? 1.6 : 0.8;
+    ctx.stroke();
   }
 
-  // N E S W
-  ctx.font='bold 9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  for (const [l,d,red] of [['N',0,true],['E',90,false],['S',180,false],['W',270,false]]) {
-    const r=(d-90)*Math.PI/180, rr=R-21;
-    ctx.fillStyle = red?P.labelN:P.labelOther;
-    ctx.fillText(l, cx+Math.cos(r)*rr, cy+Math.sin(r)*rr);
+  // 3. Labels (N, E, S, W and degree markers every 30°)
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const headings = [
+    { d: 0,   text: 'N',   cardinal: true, north: true },
+    { d: 30,  text: '30',  cardinal: false },
+    { d: 60,  text: '60',  cardinal: false },
+    { d: 90,  text: 'E',   cardinal: true },
+    { d: 120, text: '120', cardinal: false },
+    { d: 150, text: '150', cardinal: false },
+    { d: 180, text: 'S',   cardinal: true },
+    { d: 210, text: '210', cardinal: false },
+    { d: 240, text: '240', cardinal: false },
+    { d: 270, text: 'W',   cardinal: true },
+    { d: 300, text: '300', cardinal: false },
+    { d: 330, text: '330', cardinal: false },
+  ];
+
+  for (const h of headings) {
+    const rad = (h.d - 90) * Math.PI / 180;
+    const textR = R - 20;
+    const tx = cx + Math.cos(rad) * textR;
+    const ty = cy + Math.sin(rad) * textR;
+
+    if (h.north) {
+      // Crimson North Triangle Marker at the outer track
+      const nx = cx + Math.cos(rad) * (R - 3);
+      const ny = cy + Math.sin(rad) * (R - 3);
+      ctx.beginPath();
+      ctx.moveTo(nx, ny);
+      ctx.lineTo(nx - 4, ny + 7);
+      ctx.lineTo(nx + 4, ny + 7);
+      ctx.closePath();
+      ctx.fillStyle = P.labelN;
+      ctx.fill();
+
+      ctx.font = 'bold 11px "JetBrains Mono", monospace';
+      ctx.fillStyle = P.labelN;
+      ctx.fillText(h.text, tx, ty);
+    } else if (h.cardinal) {
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.fillStyle = P.labelOther;
+      ctx.fillText(h.text, tx, ty);
+    } else {
+      ctx.font = '8px "JetBrains Mono", monospace';
+      ctx.fillStyle = P.degText;
+      ctx.fillText(h.text, tx, ty);
+    }
   }
 
-  // Direction HINT (dotted blue) - a typed-in suggestion, not a real
-  // command (see _hintAz above). Drawn before the real target/pointer so
-  // it never visually competes with them.
-  // FIX (2026-10-15, live report "nie widze podpowiedzi"): at this
-  // widget's real on-screen size (205px canvas, not a zoomed screenshot)
-  // a 1.5px dotted line + 3px dot was nearly invisible against the busy
-  // RADIO tab - thickened the line/dot and added the actual degree number
-  // next to it (more useful anyway: the operator wants the number to set
-  // the rotor to, not just a rough direction).
+  // 4. Direction HINT (dotted cyan line & beacon tag) - a typed-in
+  // suggestion, not a real command (see _hintAz above). Drawn before the
+  // real target/pointer so it never visually competes with them.
   if (_hintAz != null) {
-    const hr=(_hintAz-90)*Math.PI/180;
-    ctx.save(); ctx.setLineDash([3,3]);
-    ctx.beginPath(); ctx.moveTo(cx,cy);
-    ctx.lineTo(cx+Math.cos(hr)*(R-16), cy+Math.sin(hr)*(R-16));
-    ctx.strokeStyle='rgba(120,195,255,0.9)'; ctx.lineWidth=2.5; ctx.stroke();
+    const hr = (_hintAz - 90) * Math.PI / 180;
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(hr) * (hubR + 2), cy + Math.sin(hr) * (hubR + 2));
+    ctx.lineTo(cx + Math.cos(hr) * (R - 15), cy + Math.sin(hr) * (R - 15));
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.restore();
-    const hx=cx+Math.cos(hr)*(R-16), hy=cy+Math.sin(hr)*(R-16);
-    ctx.beginPath(); ctx.arc(hx,hy,5,0,Math.PI*2);
-    ctx.fillStyle='rgba(120,195,255,1)'; ctx.shadowBlur=6; ctx.shadowColor='rgba(120,195,255,0.9)'; ctx.fill();
-    ctx.shadowBlur=0;
-    // Degree label, placed just short of the dot (toward the center) so
-    // it always stays inside the canvas regardless of angle - placing it
-    // further OUT than the dot clipped off-canvas at diagonal angles.
-    const lx=cx+Math.cos(hr)*(R-32), ly=cy+Math.sin(hr)*(R-32);
-    ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='rgba(120,195,255,1)';
-    ctx.fillText(Math.round(_hintAz)+'°', lx, ly);
+
+    const hx = cx + Math.cos(hr) * (R - 14);
+    const hy = cy + Math.sin(hr) * (R - 14);
+    ctx.beginPath();
+    ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#38bdf8';
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#38bdf8';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    const lx = cx + Math.cos(hr) * (R - 28);
+    const ly = cy + Math.sin(hr) * (R - 28);
+    ctx.font = 'bold 10px "JetBrains Mono", monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(Math.round(_hintAz) + '°', lx, ly);
   }
 
-  // Target line (dashed)
-  if (moving && taz!=null) {
-    const tr=(taz-90)*Math.PI/180;
-    ctx.save(); ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(cx,cy);
-    ctx.lineTo(cx+Math.cos(tr)*(R-16), cy+Math.sin(tr)*(R-16));
-    ctx.strokeStyle=P.targetLine; ctx.lineWidth=1.5; ctx.stroke();
+  // 5. Target Line & Target Bug (when moving or taz specified)
+  if (moving && taz != null) {
+    const tr = (taz - 90) * Math.PI / 180;
+    ctx.save();
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(tr) * (hubR + 2), cy + Math.sin(tr) * (hubR + 2));
+    ctx.lineTo(cx + Math.cos(tr) * (R - 14), cy + Math.sin(tr) * (R - 14));
+    ctx.strokeStyle = P.targetLine;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    // Target Bug chevron / marker at rim
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(tr);
+    ctx.beginPath();
+    ctx.moveTo(R - 3, 0);
+    ctx.lineTo(R - 11, -4.5);
+    ctx.lineTo(R - 9, 0);
+    ctx.lineTo(R - 11, 4.5);
+    ctx.closePath();
+    ctx.fillStyle = P.targetBug;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = P.targetBug;
+    ctx.fill();
     ctx.restore();
   }
 
-  // Pointer
+  // 6. Azimuth Pointer (Precision avionics needle)
   const col = moving ? P.pointerMoving : P.pointerStill;
-  const aLen = R-14;
+  const pRad = (az - 90) * Math.PI / 180;
+
   ctx.save();
-  ctx.translate(cx,cy);
-  ctx.rotate((az-90)*Math.PI/180);
-  ctx.shadowBlur = moving?8:4; ctx.shadowColor = col;
-  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(aLen-10,0);
-  ctx.strokeStyle=col; ctx.lineWidth=2; ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(aLen,0); ctx.lineTo(aLen-10,-3.5); ctx.lineTo(aLen-10,3.5);
-  ctx.closePath(); ctx.fillStyle=col; ctx.fill();
+  ctx.translate(cx, cy);
+  ctx.rotate(pRad);
+
+  // Sleek tapered needle from hub to rim
+  ctx.beginPath();
+  ctx.moveTo(hubR + 1, -1.8);
+  ctx.lineTo(R - 15, -1.2);
+  ctx.lineTo(R - 15, 1.2);
+  ctx.lineTo(hubR + 1, 1.8);
+  ctx.closePath();
+  ctx.fillStyle = col;
+  ctx.shadowBlur = moving ? 10 : 5;
+  ctx.shadowColor = col;
+  ctx.fill();
+
+  // Aerodynamic arrow head
+  ctx.beginPath();
+  ctx.moveTo(R - 5, 0);
+  ctx.lineTo(R - 16, -4.5);
+  ctx.lineTo(R - 13, 0);
+  ctx.lineTo(R - 16, 4.5);
+  ctx.closePath();
+  ctx.fillStyle = col;
+  ctx.fill();
+
+  // Counter pip on opposite side of hub
+  ctx.beginPath();
+  ctx.arc(-hubR - 2, 0, 2, 0, Math.PI * 2);
+  ctx.fillStyle = col;
+  ctx.fill();
+
   ctx.restore();
 
-  // Center
-  ctx.beginPath(); ctx.arc(cx,cy,4,0,Math.PI*2);
-  ctx.fillStyle=col; ctx.shadowBlur=6; ctx.shadowColor=col; ctx.fill();
-  ctx.shadowBlur=0;
+  // 7. Center Hub (Instrument Gauge Pod)
+  // Keeps center clear for digital readout: <span id="rot-az-display">
+  ctx.beginPath();
+  ctx.arc(cx, cy, hubR, 0, Math.PI * 2);
+  ctx.fillStyle = P.hubBg;
+  ctx.fill();
+
+  ctx.strokeStyle = moving ? P.ringMoving : P.hubBorder;
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+
+  // Fine inner accent ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, hubR - 2.5, 0, Math.PI * 2);
+  ctx.strokeStyle = moving ? 'rgba(251, 191, 36, 0.25)' : 'rgba(56, 189, 248, 0.15)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
 }
 
 // ── Animation loop (60fps) ─────────────────────────────────────────────────────
@@ -333,6 +475,45 @@ function handleWS(msg) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   if (window.AppState?.stationLocator) _myLoc=window.AppState.stationLocator;
+
+  // Click directly on the dial to set the target azimuth input (does NOT
+  // move the rotor by itself - onInput() only sets the preview/hint, same
+  // as typing a value; a separate GO/Enter still confirms the move).
+  const cv = document.getElementById('rot-compass');
+  if (cv && !cv._hasClickListener) {
+    cv._hasClickListener = true;
+    cv.style.cursor = 'crosshair';
+    cv.title = 'Kliknij na tarczę, aby wybrać kąt azymutu';
+    cv.addEventListener('click', (e) => {
+      // FIX (found reviewing an independent fork, 2026-10-16): the fork's
+      // version of this handler computed x/y directly from
+      // getBoundingClientRect() (real, on-screen/CSS pixels) but then
+      // subtracted cv.width/2 (the canvas's internal pixel count,
+      // width="205") - correct only when the page happens to render at
+      // exactly 1:1 scale. Everywhere else (any #app-scale zoom other
+      // than 100%, which is almost always, see index.html's updateScale)
+      // the two coordinate spaces don't match, so the computed angle was
+      // simply wrong - click "due north" on a scaled-down window, get a
+      // noticeably different degree value. Same fix tuneToClick() in
+      // waterfall.js already applies: scale the click position into
+      // canvas-internal pixels first via rect.width/rect.height, matching
+      // what drawCompass() actually used to lay out the dial.
+      const rect = cv.getBoundingClientRect();
+      const scaleX = cv.width / rect.width;
+      const scaleY = cv.height / rect.height;
+      const x = (e.clientX - rect.left) * scaleX - cv.width / 2;
+      const y = (e.clientY - rect.top) * scaleY - cv.height / 2;
+      const dist = Math.sqrt(x*x + y*y);
+      if (dist < 38) return; // click on the inner hub - ignored
+      const deg = Math.round((Math.atan2(y, x) * 180 / Math.PI + 90 + 360) % 360);
+      const inp = document.getElementById('rot-target-inp');
+      if (inp) {
+        inp.value = deg + '°';
+        onInput();
+      }
+    });
+  }
+
   try {
     const r=await fetch('/api/rotator');
     const rots=await r.json();

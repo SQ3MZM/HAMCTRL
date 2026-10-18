@@ -53,8 +53,11 @@ const _DEFAULT_PERMS = {
 // per-user override. "split" was the first (needed for PTT to work
 // correctly with a split-frequency setup); "tuner"/"autotune" followed
 // the same reasoning (they used to piggyback on the unrelated freq/ptt
-// permissions). Used below to skip the permsSet check entirely for these.
-const FEATURE_ONLY_KEYS = new Set(['split', 'tuner', 'autotune']);
+// permissions). "agc" joined 2026-10-18 (an earlier per-user permission
+// attempt was reverted same day - user preferred the simpler single
+// whitelist switch, same as tuner/autotune). Used below to skip the
+// permsSet check entirely for these.
+const FEATURE_ONLY_KEYS = new Set(['split', 'tuner', 'autotune', 'agc']);
 
 // Real per-user permission keys, derived from _DEFAULT_PERMS instead of a
 // second hand-maintained list - a data-perm value NOT in this set (e.g.
@@ -115,7 +118,7 @@ function applyPermissions(user) {
   // governed by the per-user permission alone).
   const FEATURE_ID_FOR_PERM = {
     freq: 'freq_set', mode: 'mode_set', split: 'split', ptt: 'ptt',
-    tuner: 'tuner', autotune: 'autotune',
+    tuner: 'tuner', autotune: 'autotune', agc: 'agc',
   };
 
   // data-perm elements — show/hide

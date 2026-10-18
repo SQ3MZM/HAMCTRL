@@ -20,25 +20,30 @@
     } catch (e) { document.documentElement.setAttribute('data-mode', 'dark'); }
   })();
 </script>
-<link rel="stylesheet" href="css/style.css?v=202610161100">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css?v=202610172600">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
      martwa zaszloscia i rzucala 404 (plik przeniesiony do js/). -->
 </head>
-<body>
+<body class="page-radio-active">
+
+<!-- ── #app-scale: caly UI w referencyjnym rozmiarze 1440x1080, skalowany
+     przez JS (transform:scale) wg viewportu — gwarantuje identyczne
+     pozycje px-perfect wszystkich elementow na kazdym ekranie/rozmiarze
+     okna. Patrz funkcja updateScale na koncu pliku. Topbar jest TERAZ w
+     srodku (nie poza) — "opcja 2" (2026-10-16, user decision): skalowany
+     razem z reszta UI, co daje naprawde jednoekranowy uklad Radio/FT8 bez
+     przewijania strony; position:sticky usuniete (i tak nie dzialal
+     poprawnie na potomku transform:scale, patrz historia tego pliku),
+     wysokosc 52px jest stala i odejmowana od dostepnej wysokosci siatki w
+     updateScale() (zmienna --radio-grid-h / --wsjtx-h). ── -->
+<div id="app-scale">
 
 <!-- ─── TOP BAR ─────────────────────────────────────────────────────────────── -->
-<!-- Sits OUTSIDE #app-scale deliberately — live-tested (2026-10-15) that
-     position:sticky stops working correctly on a descendant of an
-     ancestor with transform:scale() applied (Chrome computes the sticky
-     offset against the transformed ancestor instead of the real
-     viewport, so it ends up pinned somewhere in the middle of the page
-     instead of the top) — so the topbar can NOT live inside #app-scale
-     and still use sticky. It stays at real, unscaled pixels; the actual
-     fix for "tabs need horizontal scroll on a narrow window" is
-     .nav-tabs' flex-wrap (see style.css) wrapping onto a second line,
-     which works at any pixel scale, real or transformed. -->
 <div class="topbar">
   <div class="logo">HAM RADIO <span class="logo-accent">CTRL</span></div>
 
@@ -54,33 +59,29 @@
     <button class="tab-btn" id="tab-admin" onclick="UI.setPage('admin')" style="display:none" data-i18n="tab_admin">ADMIN</button>
   </div>
 
-  <div class="status-row">
-    <span id="sim-badge" style="display:none;background:rgba(var(--amber-rgb),0.2);color:var(--amber);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--amber-rgb),0.4);">SIM</span>
-    <span id="rig-disconnected-badge" style="display:none;background:rgba(var(--red-rgb),0.15);color:var(--red);font-size:10px;padding:3px 8px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--red-rgb),0.4);"></span>
-    <div class="indicator"><div class="dot" id="ptt-dot"></div><span id="ptt-label" style="font-family:var(--mono);font-size:11px;">RX</span></div>
-    <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
-    <span id="user-role" class="role-badge"></span>
-    <span id="callsign-display" style="font-family:var(--mono);font-size:13px;color:var(--green);font-weight:bold;letter-spacing:2px;">--</span>
-    <!-- Dzien/noc — zapamietywane per przegladarka w localStorage (jak PL/EN
-         ponizej), domyslnie ciemny (obecny wyglad). Patrz theme.js. -->
-    <button class="lang-switch-btn" id="theme-switch" onclick="Theme.toggle()" title="Jasny / ciemny motyw">🌙</button>
-    <button class="lang-switch-btn" id="lang-switch" onclick="I18n.toggle()" title="Switch language / Zmien jezyk">PL</button>
-    <!-- Czat — skrót do panelu w OPERATORZY (2026-09-03): ten panel wymaga
-         przewinięcia strony żeby go zobaczyć (patrz CLAUDE.md notatka o
-         tej samej sesji), więc badge tutaj daje znać o nowej wiadomości
-         bez konieczności ciągłego przewijania w dół. Klik przewija płynnie
-         do panelu (Chat.scrollToChat, chat.js) i czyści licznik. -->
-    <a class="lang-switch-btn" href="javascript:void(0)" onclick="Chat.scrollToChat()" data-i18n-title="chat_hdr" title="Czat" style="position:relative;">💬<span id="chat-badge" class="chat-badge" hidden>0</span></a>
-    <a class="lang-switch-btn" href="/?ui=mobile" title="Wersja mobilna">📱</a>
+  <div class="topbar-right">
+    <div class="status-row">
+      <span id="sim-badge" style="display:none;background:rgba(var(--amber-rgb),0.2);color:var(--amber);font-size:9px;padding:2px 6px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--amber-rgb),0.4);">SIM</span>
+      <span id="rig-disconnected-badge" style="display:none;background:rgba(var(--red-rgb),0.15);color:var(--red);font-size:9px;padding:2px 6px;border-radius:3px;font-family:var(--mono);border:1px solid rgba(var(--red-rgb),0.4);"></span>
+      <div class="indicator"><div class="dot" id="ptt-dot"></div><span id="ptt-label" style="font-family:var(--mono);font-size:11px;">RX</span></div>
+      <div class="indicator"><div class="dot" id="conn-dot"></div><span id="conn-label" style="font-family:var(--mono);font-size:11px;">--</span></div>
+      <span id="user-role" class="role-badge"></span>
+      <span id="callsign-display" style="font-family:var(--mono);font-size:12px;color:var(--green);font-weight:bold;letter-spacing:1.5px;">--</span>
+      <!-- Dzien/noc — zapamietywane per przegladarka w localStorage (jak PL/EN
+           ponizej), domyslnie ciemny (obecny wyglad). Patrz theme.js. -->
+      <button class="lang-switch-btn" id="theme-switch" onclick="Theme.toggle()" title="Jasny / ciemny motyw">🌙</button>
+      <button class="lang-switch-btn" id="lang-switch" onclick="I18n.toggle()" title="Switch language / Zmien jezyk">PL</button>
+      <!-- Czat — skrót do panelu w OPERATORZY (2026-09-03): ten panel wymaga
+           przewinięcia strony żeby go zobaczyć (patrz CLAUDE.md notatka o
+           tej samej sesji), więc badge tutaj daje znać o nowej wiadomości
+           bez konieczności ciągłego przewijania w dół. Klik przewija płynnie
+           do panelu (Chat.scrollToChat, chat.js) i czyści licznik. -->
+      <a class="lang-switch-btn" href="javascript:void(0)" onclick="Chat.scrollToChat()" data-i18n-title="chat_hdr" title="Czat" style="position:relative;">💬<span id="chat-badge" class="chat-badge" hidden>0</span></a>
+      <a class="lang-switch-btn" href="/?ui=mobile" title="Wersja mobilna">📱</a>
+    </div>
+    <button class="logout-btn" onclick="Auth.logout()" title="Wyloguj" data-i18n-title="logout_title" data-i18n="logout_btn">⏻ WYLOGUJ</button>
   </div>
-  <button class="logout-btn" onclick="Auth.logout()" title="Wyloguj" data-i18n-title="logout_title" data-i18n="logout_btn">⏻ WYLOGUJ</button>
 </div>
-
-<!-- ── #app-scale: caly UI w referencyjnym rozmiarze 1440x1080, skalowany
-     przez JS (transform:scale) wg viewportu — gwarantuje identyczne
-     pozycje px-perfect wszystkich elementow na kazdym ekranie/rozmiarze
-     okna. Patrz funkcja updateAppScale na koncu pliku. ── -->
-<div id="app-scale">
 
 <!-- ─── PAGE: RADIO ──────────────────────────────────────────────────────────── -->
 <div class="page-content active" id="page-radio">
@@ -142,10 +143,13 @@
 
       <div class="tile-divider"></div>
 
-      <!-- AGC — admin-only / "settings" (approved 2026-10-15), wypelniane
-           przez advradio.js. Na zyczenie uzytkownika przeniesione tutaj,
-           miedzy TRX FUNKCJE a AUDIO (2026-10-15). -->
-      <div class="rf-section" data-perm="settings">
+      <!-- AGC — wypelniane przez advradio.js. Gated by the per-rig FEATURES
+           whitelist (rigs/features.py's "agc" entry, KONFIGURACJA -> FUNKCJE
+           RADIA), same mechanism as split/tuner/autotune - NOT the
+           "settings" admin gate, so one admin switch exposes it to every
+           regular operator at once (see auth.js's FEATURE_ONLY_KEYS/
+           FEATURE_ID_FOR_PERM). Admin always sees it regardless. -->
+      <div class="rf-section" data-perm="agc">
         <div class="rf-section-title" data-i18n="adv_agc_hdr">AGC</div>
         <div id="adv-agc"></div>
       </div>
@@ -213,20 +217,13 @@
         <!-- wypelniane przez radiofunctions.js -->
       </div>
 
-      <!-- Ustawienia zaawansowane CI-V — tylko admin / "settings" (approved
-           2026-10-15), wypelniane przez advradio.js -->
-      <div class="rf-section" data-perm="settings">
-        <div class="rf-section-title" data-i18n="adv_vox_hdr">VOX</div>
-        <div id="adv-vox"></div>
-      </div>
-
     </div><!-- /tile-left -->
 
     <!-- ═══════════════════════════════ VFO ════════════════════════════════════ -->
     <div class="tile tile-vfo" id="vfo-box">
 
       <!-- Badges: SPLIT, RX/TX, tryb, pasmo (VFO A/B usuniete — sa w rf-buttons-row) -->
-      <div style="display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid var(--border);background:var(--panel2);">
+      <div style="display:flex;align-items:center;gap:6px;padding:3px 8px;border-bottom:1px solid var(--border);background:var(--panel2);">
         <!-- Ukryte elementy zachowane dla JS (updateVFOBadges) -->
         <span id="badge-vfoa" style="display:none;"></span>
         <span id="badge-vfob" style="display:none;"></span>
@@ -235,15 +232,15 @@
         <span id="badge-tx" style="display:none;" class="vfo-badge" style="border-color:rgba(var(--red-rgb),0.4);background:rgba(var(--red-rgb),0.15);color:var(--red);">TX</span>
         <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">WS</span><span id="badge-latency" class="vfo-badge" onclick="WS.ping()" data-i18n-title="ws_badge_title" title="Opoznienie polaczenia sterujacego (ping/pong) — NIE opoznienie samego audio. Kliknij aby odswiezyc." style="cursor:pointer;border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
         <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">AUDIO</span><span id="badge-audio-latency" class="vfo-badge" data-i18n-title="audio_badge_title" title="Rzeczywiste opoznienie odsluchu RX: ile audio jest zbuforowane miedzy odbiorem z serwera a odtworzeniem. Cel adaptacyjny 180-300ms (rosnie po niedoborach, opada gdy lacze spokojne), twardy limit 400ms." style="border-color:var(--border2);color:var(--dim);min-width:60px;text-align:center;">--</span>
-        <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--amber);background:rgba(var(--amber-rgb),0.15);border:1px solid rgba(var(--amber-rgb),0.4);padding:3px 9px;border-radius:3px;letter-spacing:1px;">USB</span>
-        <span id="vfo-band-badge" style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);padding:3px 9px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
+        <span id="vfo-mode-badge" style="margin-left:auto;font-family:var(--mono);font-size:10px;font-weight:600;color:var(--amber);background:rgba(var(--amber-rgb),0.15);border:1px solid rgba(var(--amber-rgb),0.4);padding:2px 7px;border-radius:3px;letter-spacing:1px;">USB</span>
+        <span id="vfo-band-badge" style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--green);background:rgba(var(--green-rgb),0.12);border:1px solid var(--green2);padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-right:4px;">20m</span>
       </div>
 
       <!-- Cyfry VFO A -->
       <div class="vfo-display">
         <div style="display:flex;align-items:baseline;gap:6px;">
-          <div id="vfo-digits" style="display:flex;align-items:center;gap:1px;font-family:var(--display);font-size:44px;font-weight:900;color:var(--green);text-shadow:0 0 25px rgba(var(--green-rgb),0.4);cursor:default;user-select:none;letter-spacing:-1px;"></div>
-          <span style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">MHz</span>
+          <div id="vfo-digits" style="display:flex;align-items:center;gap:1px;font-family:var(--display);font-size:32px;font-weight:900;color:var(--green);text-shadow:0 0 20px rgba(var(--green-rgb),0.4);cursor:default;user-select:none;letter-spacing:-1px;"></div>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-bottom:2px;">MHz</span>
         </div>
         <!-- Kroki strojenia -->
         <div class="tuning-steps" data-perm="freq">
@@ -262,24 +259,13 @@
             data-i18n-title="vfo_b_tooltip" title="Klik: przełącz na VFO-B | Prawy klik: wpisz częstotliwość | Scroll: zmieniaj co 1kHz"
             style="margin-left:auto;display:flex;align-items:baseline;gap:5px;cursor:pointer;user-select:none;">
             <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">VFO-B</span>
-            <span id="freq-b-display" style="font-family:var(--display);font-size:18px;font-weight:700;color:var(--dim);">14.200.000</span>
+            <span id="freq-b-display" style="font-family:var(--display);font-size:16px;font-weight:700;color:var(--dim);">14.200.000</span>
             <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">MHz</span>
             <span id="vfo-b-split-label" style="display:none;font-family:var(--mono);font-size:9px;color:var(--amber);background:rgba(var(--amber-rgb),0.1);border:1px solid rgba(var(--amber-rgb),0.3);padding:1px 5px;border-radius:2px;">TX</span>
           </span>
         </div>
-        <!-- RIT / ΔTX (clarifier, CI-V 0x21) — admin-only, approved 2026-10-15.
-             See advradio.js (AdvRadio.ritSetHz/ritToggle) + GET/POST /api/rig/rit. -->
-        <div id="rit-row" data-perm="settings" style="display:flex;align-items:center;gap:6px;margin-top:6px;">
-          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">RIT/ΔTX</span>
-          <button id="rit-on-btn" class="rf-btn" onclick="AdvRadio.ritToggle('ritOn')" title="RIT ON/OFF (CI-V 21 01)">RIT</button>
-          <button id="dtx-on-btn" class="rf-btn" onclick="AdvRadio.ritToggle('dtxOn')" title="ΔTX ON/OFF — clarifier wplywa tez na TX (CI-V 21 02)">ΔTX</button>
-          <input id="rit-hz-input" type="number" step="10" value="0"
-            style="width:64px;font-family:var(--mono);font-size:11px;text-align:right;
-            background:var(--panel3);border:1px solid var(--border2);color:var(--text);
-            padding:3px 6px;border-radius:3px;"
-            onchange="AdvRadio.ritSetHz(this.value)">
-          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);">Hz</span>
-        </div>
+        <!-- RIT/ΔTX removed 2026-10-18 - Hz-set gave NG on this radio, no
+             fix found, dropped per user decision. -->
       </div>
 
       <!-- S-meter + PTT -->
@@ -291,16 +277,16 @@
           <span style="color:var(--red)">+60</span>
         </div>
         <div class="smeter-bar-wrap"><div class="smeter-fill" id="smeter-fill"></div></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
           <span id="smeter-value" class="smeter-value">S 0</span>
           <!-- OVF (ADC/front-end overflow indicator, CI-V 15 07) - the
                radio's own overdrive warning, otherwise invisible to a
                remote operator (no physical panel to glance at). -->
-          <span id="ovf-badge" style="display:none;background:rgba(224,82,82,0.15);color:var(--red);
+          <span id="ovf-badge" style="display:none;background:rgba(var(--red-rgb),0.15);color:var(--red);
             font-size:10px;padding:2px 7px;border-radius:3px;font-family:var(--mono);
-            border:1px solid rgba(224,82,82,0.4);letter-spacing:1px;">OVF</span>
+            border:1px solid rgba(var(--red-rgb),0.4);letter-spacing:1px;">OVF</span>
         </div>
-        <div style="display:flex;justify-content:center;margin-top:8px;">
+        <div style="display:flex;justify-content:center;margin-top:2px;">
           <button id="ptt-btn" class="ptt-btn" data-perm="ptt"
             onpointerdown="this.setPointerCapture(event.pointerId); UI.setPTT(true)"
             onpointerup="UI.setPTT(false)" onpointercancel="UI.setPTT(false)">PTT</button>
@@ -331,36 +317,36 @@
          miedzy PTT i waterfallem. Bez naglowka — kompaktowy pasek. -->
     <div class="tile tile-rigfeatures" id="rig-features-panel">
       <!-- SZYBKIE LOGOWANIE QSO — jeden wiersz, zawsze widoczny -->
-      <div id="quick-log-bar" style="display:flex;align-items:center;gap:8px;
-        padding:5px 10px;border-bottom:1px solid var(--border);background:var(--panel2);">
+      <div id="quick-log-bar" style="display:flex;align-items:center;gap:6px;
+        padding:3px 8px;border-bottom:1px solid var(--border);background:var(--panel2);">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);
           letter-spacing:1px;flex-shrink:0;" data-i18n="tab_log">LOG QSO</span>
         <input type="text" id="qlog-call" placeholder="CALL"
-          style="font-family:var(--mono);font-size:12px;text-transform:uppercase;
-          width:110px;flex-shrink:0;padding:3px 7px;background:var(--panel3);
+          style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
+          width:100px;flex-shrink:0;padding:2px 6px;background:var(--panel3);
           border:1px solid var(--border2);border-radius:3px;color:var(--text);"
           onkeydown="if(event.key==='Enter')QSOLog.quickLog()"
-          oninput="QSOLog.checkQuickLogWorkedBefore(this.value);QSOLog.updateQuickLogHint()">
+          oninput="window.AppState._qlogPinnedFreq=null;QSOLog.checkQuickLogWorkedBefore(this.value);QSOLog.updateQuickLogHint()">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" data-i18n-title="sent_title" title="RST wyslane">SENT</span>
         <input type="text" id="qlog-rst-s" placeholder="599" maxlength="3"
-          style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
-          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          style="font-family:var(--mono);font-size:11px;width:38px;flex-shrink:0;
+          padding:2px 5px;background:var(--panel3);border:1px solid var(--border2);
           border-radius:3px;color:var(--text);text-align:center;" value="599">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;" data-i18n-title="rcvd_title" title="RST odebrane">RCVD</span>
         <input type="text" id="qlog-rst-r" placeholder="599" maxlength="3"
-          style="font-family:var(--mono);font-size:12px;width:42px;flex-shrink:0;
-          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          style="font-family:var(--mono);font-size:11px;width:38px;flex-shrink:0;
+          padding:2px 5px;background:var(--panel3);border:1px solid var(--border2);
           border-radius:3px;color:var(--text);text-align:center;" value="599">
         <span style="font-family:var(--mono);font-size:10px;color:var(--dim);flex-shrink:0;">GRID</span>
         <input type="text" id="qlog-grid" placeholder="KO02" maxlength="8"
-          style="font-family:var(--mono);font-size:12px;width:62px;flex-shrink:0;
-          padding:3px 6px;background:var(--panel3);border:1px solid var(--border2);
+          style="font-family:var(--mono);font-size:11px;width:58px;flex-shrink:0;
+          padding:2px 5px;background:var(--panel3);border:1px solid var(--border2);
           border-radius:3px;color:var(--text);text-transform:uppercase;"
           onkeydown="if(event.key==='Enter')QSOLog.quickLog()"
           oninput="QSOLog.updateQuickLogHint()">
         <button onclick="QSOLog.quickLog()"
-          style="font-family:var(--mono);font-size:11px;letter-spacing:1px;
-          padding:4px 16px;background:rgba(76,219,106,0.12);border:1px solid var(--green2);
+          style="font-family:var(--mono);font-size:10px;letter-spacing:1px;
+          padding:2px 12px;background:rgba(76,219,106,0.12);border:1px solid var(--green2);
           border-radius:3px;color:var(--green);cursor:pointer;flex-shrink:0;">LOG</button>
         <span id="qlog-status" style="font-family:var(--mono);font-size:10px;
           color:var(--dim);flex:1;text-align:right;"></span>
@@ -393,39 +379,73 @@
     <!-- ═══════════════════════════════ WATERFALL ══════════════════════════════ -->
     <div class="tile tile-wf">
       <div class="wf-header">
-        <span style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;">WATERFALL</span>
         <div style="display:flex;align-items:center;gap:8px;">
-          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:4px;">
-            SPAN:
-            <select id="wf-span-select" onchange="Waterfall.setSpan(parseInt(this.value,10))"
-              style="font-family:var(--mono);font-size:9px;padding:1px 4px;background:var(--panel3);border:1px solid var(--border);color:var(--fg);border-radius:2px;cursor:pointer;">
-              <option value="5000">5kHz</option>
-              <option value="10000">10kHz</option>
-              <option value="20000" selected>20kHz</option>
-              <option value="50000">50kHz</option>
-              <option value="100000">100kHz</option>
-              <option value="200000">200kHz</option>
-              <option value="500000">500kHz</option>
-              <option value="1000000">1MHz</option>
-            </select>
-          </label>
-          <label style="font-family:var(--mono);font-size:9px;color:var(--dim);display:flex;align-items:center;gap:3px;cursor:pointer;" data-i18n-title="peak_hold_title" title="Peak-hold: pokazuje najwyższą wartość w każdym paśmie">
-            <input type="checkbox" id="wf-peak-toggle" checked
-              onchange="Waterfall.setPeakHold(this.checked)"
-              style="width:11px;height:11px;">
-            PEAK
-          </label>
-          <span id="wf-source-badge" style="font-family:var(--mono);font-size:9px;color:rgba(200,200,200,0.3);">● SIM</span>
+          <span style="font-family:var(--mono);font-size:10px;font-weight:700;color:var(--dim);letter-spacing:1px;">WATERFALL</span>
+          <span id="wf-source-badge" style="font-family:var(--mono);font-size:9px;color:rgba(200,200,200,0.35);">● SIM</span>
           <span id="smeter-text" style="font-family:var(--mono);font-size:10px;color:var(--green)">S0</span>
-          <button id="wf-collapse-btn" onclick="Waterfall.toggleCollapse()" data-i18n-title="wf_collapse_title" title="Zwiń wodospad (np. gdy radio nie ma scope'a i animacja przeszkadza)"
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <!-- SPAN/PEAK usuniete stad (2026-10-17, na zadanie uzytkownika:
+               "w gornej belce jest peak i span i nadole jest tez" -
+               zdublowane z dolnym paskiem softkeys (#wf-btn-span/#wf-btn-peak,
+               _updateSoftkeys() w waterfall.js), ktory jest pelnoprawnym
+               zamiennikiem - zweryfikowano na zywo ze cycleSpan()/
+               togglePeak() poprawnie zmieniaja stan. #wf-span-select i
+               #wf-peak-toggle byly tylko SYNC-TARGETAMI (if(sel)/if(chk),
+               zrodlem prawdy jest localStorage['wf_span_hz'] + _peakEnabled),
+               wiec usuniecie ich jest bezpieczne, init() w waterfall.js ich
+               nie wymaga. -->
+          <button id="wf-collapse-btn" onclick="Waterfall.toggleCollapse()" data-i18n-title="wf_collapse_title" title="Zwiń wodospad (np. gdy radio nie ma scope'a)"
             style="font-family:var(--mono);font-size:9px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;width:20px;">−</button>
           <button onclick="Waterfall.toggleFullscreen()" title="Fullscreen (F11 alternate)"
             style="font-family:var(--mono);font-size:9px;padding:2px 6px;background:var(--panel3);border:1px solid var(--border);color:var(--dim);border-radius:2px;cursor:pointer;">⛶</button>
         </div>
       </div>
-      <canvas id="wf-spectrum"  style="width:100%;height:80px;display:block;background:#060806;border-bottom:1px solid var(--border);"></canvas>
-      <canvas id="wf-waterfall" style="width:100%;flex:1;min-height:160px;max-height:350px;display:block;background:#060806;"></canvas>
-      <canvas id="wf-axis" style="width:100%;height:27px;display:block;background:#0a0c0a;border-top:1px solid var(--border);flex-shrink:0;"></canvas>
+
+      <!-- 1. SPECTRUM SCOPE -->
+      <canvas id="wf-spectrum"></canvas>
+
+      <!-- 2. OS CZESTOTLIWOSCI (miedzy widmem a wodospadem, jak w IC-7300) -->
+      <canvas id="wf-axis"></canvas>
+
+      <!-- 3. WATERFALL (WODOSPAD) -->
+      <canvas id="wf-waterfall"></canvas>
+
+      <!-- 4. PASEK SOFTKEYS (ekranowe przyciski radia) -->
+      <div class="wf-softkeys" id="wf-softkeys">
+        <select class="wf-softkey-select" id="wf-btn-cent" onchange="Waterfall.setScopeMode(parseInt(this.value,10))">
+          <option value="0">CENTER</option>
+          <option value="1">FIXED</option>
+        </select>
+        <!-- Wartosci MUSZA pokrywac sie DOKLADNIE z SCOPE_SPAN_KHZ w civ.py -
+             IC-7300 NIE obsluguje 25 kHz (radio odrzuca to komenda NG),
+             tylko 5/10/20/50/100/200/500/1000. Nie dodawac 25000 z powrotem. -->
+        <select class="wf-softkey-select" id="wf-btn-span" onchange="Waterfall.setSpan(parseInt(this.value,10))">
+          <option value="5000">SPAN: 5k</option>
+          <option value="10000">SPAN: 10k</option>
+          <option value="20000">SPAN: 20k</option>
+          <option value="50000">SPAN: 50k</option>
+          <option value="100000">SPAN: 100k</option>
+          <option value="200000">SPAN: 200k</option>
+          <option value="500000">SPAN: 500k</option>
+          <option value="1000000">SPAN: 1M</option>
+        </select>
+        <button class="wf-softkey-btn active" id="wf-btn-peak" onclick="Waterfall.togglePeak()">PEAK: MAX</button>
+        <button class="wf-softkey-btn active" id="wf-btn-spots" onclick="Waterfall.toggleSpots()">SPOTS: ON</button>
+        <select class="wf-softkey-select" id="wf-btn-speed" onchange="Waterfall.setSpeed(parseFloat(this.value))">
+          <option value="0.5">SPEED: SLOW</option>
+          <option value="1">SPEED: MID</option>
+          <option value="2">SPEED: FAST</option>
+        </select>
+        <select class="wf-softkey-select" id="wf-btn-ref" onchange="Waterfall.setRefLevel(parseInt(this.value,10))">
+          <option value="-30">REF: -30dB</option>
+          <option value="-20">REF: -20dB</option>
+          <option value="-15">REF: -15dB</option>
+          <option value="-10">REF: -10dB</option>
+          <option value="-5">REF: -5dB</option>
+          <option value="0">REF: 0dB</option>
+        </select>
+      </div>
     </div><!-- /tile-wf -->
 
     <!-- ═══════════════════════════════ ROTATOR ════════════════════════════════ -->
@@ -444,43 +464,51 @@
          see the comment there, this permission was previously ONLY
          enforced by hiding this tile, not by the backend.
     -->
-    <div class="tile tile-rotator" id="rot-side-panel" style="display:flex;flex-direction:column;">
+    <!-- ═══════════════════════════════ PRAWA KOLUMNA (ROTATOR + CW KEYER + CZAT) ═══════════════════════════════
+         Jeden kafelek siatki (grid-column:4) obejmujacy pelna wysokosc
+         (grid-row:1/4), scrollowany wewnetrznie — "opcja 2" (2026-10-16):
+         rotator i CW keyer (z panelem OPERATORZY/CZAT) juz nie sa
+         osobnymi komorkami siatki, tylko blokami jeden pod drugim w tym
+         jednym, przewijanym kafelku. -->
+    <div class="tile tile-right" id="tile-right" style="grid-column:4;grid-row:1/4;overflow-y:auto !important;overflow-x:hidden !important;height:100% !important;max-height:100% !important;min-height:0 !important;display:block !important;">
 
-      <div class="tile-header">
-        <span>ROTATOR</span>
-        <span id="rot-status-badge" data-i18n="rotator_none" style="font-family:var(--mono);font-size:9px;color:var(--dim);">● brak</span>
-      </div>
+      <div class="tile-rotator" id="rot-side-panel" style="display:flex;flex-direction:column;flex-shrink:0;">
 
-      <div class="rotator-inner">
-        <div style="position:relative;width:205px;height:205px;margin:0 auto 8px;">
-          <canvas id="rot-compass" width="205" height="205" style="display:block;border-radius:50%;width:205px;height:205px;"></canvas>
-          <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
-            <span id="rot-az-display" class="rot-az-display">---</span>
-            <span style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:1px;">° AZ</span>
+        <div class="tile-header">
+          <span>ROTATOR</span>
+          <span id="rot-status-badge" data-i18n="rotator_none" style="font-family:var(--mono);font-size:9px;color:var(--dim);">● brak</span>
+        </div>
+
+        <div class="rotator-inner">
+          <div style="position:relative;width:205px;height:205px;margin:0 auto 4px;">
+            <canvas id="rot-compass" width="205" height="205" style="display:block;border-radius:50%;width:205px;height:205px;"></canvas>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
+              <span id="rot-az-display" class="rot-az-display">---</span>
+              <span style="font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:1px;">° AZ</span>
+            </div>
+          </div>
+
+          <div id="rot-name-label" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-bottom:3px;"></div>
+
+          <div>
+            <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;" data-i18n="rotator_target_lbl">CEL (stopnie lub lokator)</div>
+            <input id="rot-target-inp" type="text" class="rot-target-inp" data-i18n-placeholder="rotator_target_placeholder" placeholder="272 lub KO02"
+              style="text-transform:uppercase;" data-perm-disable="rotator"
+              onkeydown="if(event.key==='Enter')RotW.go()"
+              oninput="RotW.onInput()">
+            <div id="rot-target-preview" style="font-family:var(--mono);font-size:9px;color:var(--green);margin-top:3px;min-height:13px;"></div>
+          </div>
+
+          <div class="rot-btns" style="margin-top:6px;">
+            <button class="rot-go-btn" onclick="RotW.go()" data-perm-disable="rotator">▶ START</button>
+            <button class="rot-stop-btn" onclick="RotW.stop()" data-perm-disable="rotator">■ STOP</button>
           </div>
         </div>
 
-        <div id="rot-name-label" style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-bottom:6px;"></div>
+      </div><!-- /tile-rotator -->
 
-        <div>
-          <div style="font-family:var(--mono);font-size:8px;color:var(--dim);margin-bottom:3px;letter-spacing:1px;" data-i18n="rotator_target_lbl">CEL (stopnie lub lokator)</div>
-          <input id="rot-target-inp" type="text" class="rot-target-inp" data-i18n-placeholder="rotator_target_placeholder" placeholder="272 lub KO02"
-            style="text-transform:uppercase;" data-perm-disable="rotator"
-            onkeydown="if(event.key==='Enter')RotW.go()"
-            oninput="RotW.onInput()">
-          <div id="rot-target-preview" style="font-family:var(--mono);font-size:9px;color:var(--green);margin-top:3px;min-height:13px;"></div>
-        </div>
-
-        <div class="rot-btns" style="margin-top:6px;">
-          <button class="rot-go-btn" onclick="RotW.go()" data-perm-disable="rotator">▶ START</button>
-          <button class="rot-stop-btn" onclick="RotW.stop()" data-perm-disable="rotator">■ STOP</button>
-        </div>
-      </div>
-
-    </div><!-- /tile-rotator -->
-
-    <!-- ═══════════════════════════════ CW KEYER ═══════════════════════════════ -->
-    <div class="tile tile-cw" id="cw-inline" data-perm="cw" style="display:flex;flex-direction:column;">
+      <!-- ═══════════════════════════════ CW KEYER ═══════════════════════════════ -->
+      <div class="tile-cw" id="cw-inline" data-perm="cw" style="display:flex;flex-direction:column;flex-shrink:0;border-top:1px solid var(--border);">
       <div class="tile-header" style="flex-wrap:wrap;gap:4px;">
         <div style="display:flex;align-items:center;gap:6px;">
           <span style="white-space:nowrap;">CW KEYER</span>
@@ -501,12 +529,6 @@
           <button onclick="CW.stopCW()" title="STOP" data-perm-disable="ptt"
             style="background:rgba(var(--red-rgb),0.1);border:1px solid rgba(var(--red-rgb),0.4);border-radius:3px;color:var(--red);font-family:var(--mono);font-size:10px;padding:2px 7px;cursor:pointer;">■</button>
         </div>
-      </div>
-      <!-- APF (Audio Peak Filter) — admin-only, approved 2026-10-15,
-           wypelniane przez advradio.js (#adv-apf). -->
-      <div data-perm="settings" style="padding:2px 8px 4px;border-bottom:1px solid var(--border);flex-shrink:0;">
-        <div style="font-family:var(--mono);font-size:9px;color:var(--dim);letter-spacing:1px;" data-i18n="adv_apf_hdr">APF</div>
-        <div id="adv-apf"></div>
       </div>
       <div id="cw-macros-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:3px;padding:6px 8px;flex-shrink:0;">
         <!-- F1 -->
@@ -624,7 +646,9 @@
           </div>
         </div>
       </div>
-    </div><!-- /tile-cw -->
+      </div><!-- /tile-cw -->
+
+    </div><!-- /tile-right -->
 
   </div><!-- /tile-grid -->
 
@@ -634,108 +658,135 @@
 <div class="page-content" id="page-wsjtx">
 <div class="wsjtx-layout">
 
-  <!-- ── GÓRNY PASEK STATUSU ── -->
+  <!-- ── GÓRNY PASEK STATUSU (dwie linie, przejete z forka 2026-10-17) ── -->
   <div class="wsjtx-topbar">
-    <div class="wsjtx-freq" id="wj-freq">14.074.000</div>
-    <div class="wj-mode-switch" id="wj-mode-switch" data-i18n-title="wj_decode_mode_title" title="Tryb dekodowania">
-      <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
-      <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
-    </div>
-    <select id="wj-band-select" class="wj-band-select" data-i18n-title="wj_band_select_title" title="Wybierz pasmo i przestrój radio na standardowa czestotliwosc"
-            onchange="WSJTX.tuneToBand(this.value)">
-      <option value="" data-i18n="wj_band_placeholder">-- pasmo --</option>
-    </select>
-    <label class="wj-topbar-check" data-i18n-title="wj_cq_only_title" title="Pokazuj tylko wywolania CQ w Band Activity">
-      <input type="checkbox" id="wj-cq-only-toggle" onchange="WSJTX.toggleCqOnly()"> CQ
-    </label>
-    <label class="wj-topbar-check" data-i18n-title="wj_hound_title" title="Fox/Hound DXpedition mode — wpisz znak Foxa w polu DX"
-      style="color:#f90;border:1px solid rgba(255,140,0,0.3);border-radius:2px;padding:1px 6px;">
-      <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"
-        style="accent-color:#f90;"> HOUND
-    </label>
-    <!-- WSJTX.houndConfirm() istnial i byl eksportowany, ale nic go nigdy
-         nie wolalo - toast "potwierdz obecnosc" (_houndCheckConfirm co
-         30s) wisial bez zadnego przycisku do klikniecia, blokujac Hounda
-         na stale po 2 minutach. Domyslnie ukryty, pokazywany razem z
-         toastem przez _houndCheckConfirm. -->
-    <button id="wj-hound-confirm-btn" onclick="WSJTX.houndConfirm()" style="display:none;
-      color:#f90;border:1px solid #f90;border-radius:2px;padding:1px 6px;
-      background:rgba(255,140,0,0.15);cursor:pointer;font-family:var(--mono);font-size:11px;"
-      data-i18n="wj_hound_confirm_btn">✓ POTWIERDŹ</button>
-    <div class="wj-period-switch" id="wj-period-switch" data-i18n-title="wj_period_title" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
-      <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
-      <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
-    </div>
-    <div class="wsjtx-clock-wrap">
-      <canvas id="wj-clock" width="36" height="36"></canvas>
-      <div id="wj-clock-s" style="font-family:var(--mono);font-size:18px;color:#fff;min-width:22px;text-align:right;">0</div>
-    </div>
-    <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
-    <!-- MUTE (2026-09-06, live request: "jeden lubi sluchac dekodow
-         nadawania, drugiemu to przeszkadza, per user") — per-operator
-         speaker mute, DIGI ONLY (confirmed live: musi dzialac wylacznie
-         gdy radio faktycznie jest w trybie digi - USB-D/PKTUSB na tym
-         IC-7300 - i nie tykac SSB/CW, ktore maja juz swoj wlasny przycisk
-         MON). Zaimplementowane w AudioControls (ws.js), zeby dzielic ten
-         sam _masterGain co RX VOL, ale sprawdza aktualny tryb radia przed
-         wyciszeniem. -->
-    <button id="wj-mute-btn" onclick="AudioControls.toggleRxMute()"
-      title="Wycisz dzwiek RX na digi (FT8/FT4) — nie dotyka SSB/CW"
-      style="background:none;border:1px solid var(--border);border-radius:3px;color:var(--dim);font-size:14px;line-height:1;padding:3px 8px;cursor:pointer;margin-left:8px;">🔊</button>
-    <!-- max-width+ellipsis (2026-09-03): d.text (the FT8 message being
-         waited on) has no length cap from the backend - without this, a
-         long message could grow this pill wide enough to push the
-         toolbar row below (TUNE/HIDE WORKED/own-RX) into wrapping. -->
-    <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.12);border-color:#f90;color:#fc0;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-         data-i18n-title="wj_tx_wait_title" title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
-    <div style="flex:1"></div>
-    <div style="display:flex;gap:6px;margin-left:12px;">
-      <!-- Kontrolki palety wodospadu (Reference/Zero/Gain) w stylu WSJT-X —
-           przeniesione tu z paska nad wodospadem, ktory na waskiej lewej
-           kolumnie (1120px przy 320px prawej kolumnie) nie mial juz miejsca
-           i obcinal tresc (overflow:hidden na kolumnie-rodzicu, bez
-           zawijania). Ten gorny pasek ma flex-wrap, wiec jest tu bezpiecznie. -->
-      <div style="display:flex;align-items:center;gap:6px;padding-right:10px;margin-right:6px;
-        border-right:1px solid var(--border);font-family:var(--mono);font-size:10px;color:var(--dim);">
+    <div class="wj-topbar-row-1">
+      <div class="wsjtx-freq" id="wj-freq">14.074.000</div>
+
+      <div class="wj-mode-switch" id="wj-mode-switch" data-i18n-title="wj_decode_mode_title" title="Tryb dekodowania">
+        <button class="wj-mode-btn active" id="wj-mode-ft8-btn" onclick="WSJTX.setDecodeMode('FT8')">FT8</button>
+        <button class="wj-mode-btn" id="wj-mode-ft4-btn" onclick="WSJTX.setDecodeMode('FT4')">FT4</button>
+      </div>
+
+      <select id="wj-band-select" class="wj-band-select" data-i18n-title="wj_band_select_title" title="Wybierz pasmo i przestrój radio na standardowa czestotliwosc"
+              onchange="WSJTX.tuneToBand(this.value)">
+        <option value="" data-i18n="wj_band_placeholder">-- pasmo --</option>
+      </select>
+
+      <div class="wsjtx-status-pill" id="wj-status-pill">○ OFFLINE</div>
+
+      <!-- Kontrolki palety wodospadu (Reference/Zero/Gain) -->
+      <div style="display:flex;align-items:center;gap:8px;padding:0 8px;border-left:1px solid var(--wj-border);border-right:1px solid var(--wj-border);font-family:var(--mono);font-size:12px;color:var(--wj-text-dim);">
         <label data-i18n-title="wj_ref_title" title="Reference: przesuniecie punktu 'typowego szumu' na palecie. Wyzej = wodospad jasniejszy dla szumu.">REF:
           <input type="range" id="wj-palette-ref" min="0" max="100" value="15" step="1"
             oninput="WSJTXScope.setPaletteReference(this.value/100);document.getElementById('wj-palette-ref-val').textContent=this.value"
-            style="width:50px;accent-color:var(--green);vertical-align:middle;">
+            style="width:55px;accent-color:var(--green);vertical-align:middle;cursor:pointer;">
           <span id="wj-palette-ref-val" style="width:20px;display:inline-block;text-align:right;">15</span>
         </label>
         <label data-i18n-title="wj_zero_title" title="Zero: odcina najslabsze sygnaly (podnosi 'dol' palety). Wyzej = wiecej szumu tla znika w czern.">ZERO:
           <input type="range" id="wj-palette-zero" min="0" max="60" value="0" step="1"
             oninput="WSJTXScope.setPaletteZero(this.value/100);document.getElementById('wj-palette-zero-val').textContent=this.value"
-            style="width:50px;accent-color:var(--amber);vertical-align:middle;">
+            style="width:55px;accent-color:var(--amber);vertical-align:middle;cursor:pointer;">
           <span id="wj-palette-zero-val" style="width:20px;display:inline-block;text-align:right;">0</span>
         </label>
         <label data-i18n-title="wj_gain_title" title="Gain: kontrast krzywej. Wyzej = mocniejsze rozroznienie miedzy szumem a sygnalem.">GAIN:
           <input type="range" id="wj-palette-gain" min="30" max="300" value="100" step="5"
             oninput="WSJTXScope.setPaletteGain(this.value/100);document.getElementById('wj-palette-gain-val').textContent=(this.value/100).toFixed(1)"
-            style="width:50px;accent-color:var(--red);vertical-align:middle;">
+            style="width:55px;accent-color:var(--red);vertical-align:middle;cursor:pointer;">
           <span id="wj-palette-gain-val" style="width:22px;display:inline-block;text-align:right;">1.0</span>
         </label>
-        <button onclick="WSJTX.resetPaletteAdjust()" data-i18n-title="wj_reset_palette_title" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="margin-left:2px;">↺</button>
+        <button onclick="WSJTX.resetPaletteAdjust()" data-i18n-title="wj_reset_palette_title" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="padding:2px 6px;">↺</button>
       </div>
-      <button onclick="WSJTX.startTune()" class="wj-btn" id="wj-tune-btn" data-i18n-title="wj_tune_title" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
-      <!-- Removed the standalone WYCZYŚĆ button (2026-09-03): it called
-           the exact same WSJTX.clearDecodes() as the 🗑 icon next to Band
-           Activity's header below - fully redundant, and freeing this
-           slot helps this toolbar row not wrap when #wj-tx-wait-status
-           (the "TX za Xs" pill, right side of the row above) grows long. -->
-      <label class="wj-btn" style="cursor:pointer;display:flex;align-items:center;gap:5px;font-size:10px;" data-i18n-title="wj_hide_worked_title" title="Ukryj stacje już zaliczone w logu QSO">
-        <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)"
-          style="accent-color:var(--amber);cursor:pointer;">
+
+      <button onclick="WSJTX.startTune()" class="wj-btn wj-btn-tune" id="wj-tune-btn" data-i18n-title="wj_tune_title" title="Nadaj stały ton dla strojenia ATU. Kliknij ponownie aby przerwać.">🎵 TUNE</button>
+
+      <label class="wj-topbar-check" data-i18n-title="wj_hide_worked_title" title="Ukryj stacje już zaliczone w logu QSO">
+        <input type="checkbox" id="wj-hide-worked" onchange="WSJTX.toggleHideWorked(this)" style="accent-color:var(--amber);cursor:pointer;">
         HIDE WORKED
       </label>
-      <span style="width:1px;background:#333;margin:2px 4px;"></span>
-      <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="wj-btn" data-i18n-title="wj_own_rx_title" title="Wlasny dekoder FT8 (audio z radia, bez zewnetrznego WSJT-X)">▶ START (własny RX)</button>
+    </div>
+
+    <!-- DOLNA LINIA: cq ; hound ; 1st/2st ; zegar odliczania periodow ; glosnik ; [spacer] ; START / STOP (wlasny RX) -->
+    <div class="wj-topbar-row-2">
+      <div class="wj-topbar-left">
+        <label class="wj-topbar-check" data-i18n-title="wj_cq_only_title" title="Pokazuj tylko wywolania CQ w Band Activity">
+          <input type="checkbox" id="wj-cq-only-toggle" onchange="WSJTX.toggleCqOnly()"> CQ
+        </label>
+
+        <label class="wj-topbar-check hound-box" data-i18n-title="wj_hound_title" title="Fox/Hound DXpedition mode — wpisz znak Foxa w polu DX">
+          <input type="checkbox" id="wj-hound-toggle" onchange="WSJTX.toggleHound(this.checked)"> HOUND
+        </label>
+        <!-- WSJTX.houndConfirm() istnial i byl eksportowany, ale nic go nigdy
+             nie wolalo - toast "potwierdz obecnosc" (_houndCheckConfirm co
+             30s) wisial bez zadnego przycisku do klikniecia, blokujac Hounda
+             na stale po 2 minutach. Domyslnie ukryty, pokazywany razem z
+             toastem przez _houndCheckConfirm. -->
+        <button id="wj-hound-confirm-btn" onclick="WSJTX.houndConfirm()" style="display:none;color:#f97316;border:1px solid #f97316;border-radius:6px;padding:6px 12px;background:rgba(249,115,22,0.2);cursor:pointer;font-family:var(--mono);font-size:13px;font-weight:800;"
+          data-i18n="wj_hound_confirm_btn">⚡ POTWIERDŹ</button>
+
+        <div class="wj-period-switch" id="wj-period-switch" data-i18n-title="wj_period_title" title="Okres nadawania (parzyste/nieparzyste okno 15s)">
+          <button class="wj-mode-btn active" id="wj-period-1-btn" onclick="WSJTX.setTxPeriod(1)">1st</button>
+          <button class="wj-mode-btn" id="wj-period-2-btn" onclick="WSJTX.setTxPeriod(2)">2nd</button>
+        </div>
+
+        <div class="wsjtx-clock-wrap" title="Zegar odliczania periodow UTC">
+          <canvas id="wj-clock" width="36" height="36"></canvas>
+          <div id="wj-clock-s">0</div>
+        </div>
+
+        <!-- MUTE (2026-09-06, live request: "jeden lubi sluchac dekodow
+             nadawania, drugiemu to przeszkadza, per user") — per-operator
+             speaker mute, DIGI ONLY (confirmed live: musi dzialac wylacznie
+             gdy radio faktycznie jest w trybie digi - USB-D/PKTUSB na tym
+             IC-7300 - i nie tykac SSB/CW, ktore maja juz swoj wlasny przycisk
+             MON). Zaimplementowane w AudioControls (ws.js), zeby dzielic ten
+             sam _masterGain co RX VOL, ale sprawdza aktualny tryb radia przed
+             wyciszeniem. -->
+        <button id="wj-mute-btn" onclick="AudioControls.toggleRxMute()"
+          title="Wycisz dzwiek RX na digi (FT8/FT4) — nie dotyka SSB/CW"
+          class="wj-btn" style="padding:6px 10px;font-size:14px;line-height:1;">🔊</button>
+
+        <!-- max-width+ellipsis (2026-09-03): d.text (the FT8 message being
+             waited on) has no length cap from the backend - without this, a
+             long message could grow this pill wide enough to push the row. -->
+        <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.15);border-color:#f59e0b;color:#fbbf24;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+             data-i18n-title="wj_tx_wait_title" title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
+      </div>
+
+      <!-- Spacer -->
+      <div style="flex:1;"></div>
+
+      <!-- Przycisk START / STOP (własny RX) po prawej stronie dokładnie nad kolumną automatyki -->
+      <div class="wj-topbar-right">
+        <button id="wj-own-rx-btn" onclick="WSJTX.toggleOwnRx()" class="wj-btn stopped" data-i18n-title="wj_own_rx_title" title="Wlasny dekoder FT8 (audio z radia, bez zewnetrznego WSJT-X)">▶ START (własny RX)</button>
+      </div>
     </div>
   </div>
 
   <!-- Wrapper: lewa(scope+decodes+bottombar) | prawa kolumna -->
   <div style="display:flex;flex-direction:row;flex:1;overflow:hidden;min-height:0;">
   <div style="display:flex;flex-direction:column;flex:1;overflow:hidden;min-width:0;min-height:0;">
+
+  <!-- ── PASEK POSTĘPU CYKLU UTC (przejety z forka 2026-10-17) ──
+       Rozbudowuje istniejacy _updateClock() w wsjtx.js (obok rysowania
+       malej ikony-zegara #wj-clock, ktora zostaje bez zmian) o te 4
+       elementy: #wj-cycle-fill (szerokosc %), #wj-cycle-time (tekst),
+       #wj-cycle-type (tekst), #wj-cycle-phase (tekst+kolor). -->
+  <div class="cycle-bar-wrap">
+    <div class="cycle-bar-header">
+      <span><span data-i18n="wj_cycle_utc_lbl">UTC CYKL:</span> <strong id="wj-cycle-type" style="color:#38bdf8;">FT8 (15.0s)</strong></span>
+      <span id="wj-cycle-phase" style="color:#22c55e;font-weight:800;" data-i18n="wj_cycle_phase_rx">ODBIÓR (RX)</span>
+      <span id="wj-cycle-time" style="font-weight:700;">00.0s / 15.0s</span>
+    </div>
+    <div class="cycle-progress-outer">
+      <div class="cycle-progress-fill" id="wj-cycle-fill"></div>
+      <div class="cycle-markers-overlay">
+        <span class="c-marker-rx">RX</span>
+        <span class="c-marker-dec" data-i18n="wj_cycle_marker_dec">DEKODOWANIE</span>
+        <span class="c-marker-tx">TX PREP</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ── WODOSPAD / SCOPE ── -->
   <div class="wsjtx-scope-wrap">
@@ -753,7 +804,7 @@
                onchange="WSJTX.setRxFreqManual(this.value)">Hz
       </span>
       <div style="flex:1"></div>
-      <button onclick="WSJTX.haltTx()" class="wj-btn wj-btn-red" id="wj-halt-tx-btn" data-i18n-title="wj_halt_tx_title" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
+      <button onclick="WSJTX.haltTx()" class="wj-btn" id="wj-halt-tx-btn" style="border-color:#ef4444;color:#ef4444;" data-i18n-title="wj_halt_tx_title" title="Zatrzymaj TX po bieżącym oknie">⛔ HALT TX</button>
       <button id="wj-tx-freeze-btn" onclick="WSJTX.toggleTxFreeze()" class="wj-btn" style="margin-left:6px;" data-i18n-title="wj_tx_freeze_title" title="Zamroz znacznik TX w wybranym miejscu — kliknij na waterfalllu aby ustawic pozycje TX, potem zamroz. RX nadal automatycznie podaza za wywolaniami adresowanymi do Ciebie.">🔓 TX WOLNY</button>
       <button id="wj-fake-split-toggle" onclick="WSJTX.toggleFakeSplit()" class="wj-btn" style="margin-left:6px;"
         data-i18n-title="wj_fake_split_title" title="Fake Split: przesuwa VFO na czas nadawania tak, zeby audio bylo blisko srodka filtra SSB (~1500Hz) — pelna moc, brak splatterow na krawedziach filtra. Steruje radiem podczas TX, VFO wraca po nadaniu.">⭕ Fake Split: OFF</button>
@@ -764,7 +815,17 @@
       <canvas id="wj-scope-canvas" class="wsjtx-scope-canvas" height="160"></canvas>
       <!-- Overlay UTC time labels co 1 min - pozycjonowany absolutnie nad waterfallem -->
       <div id="wj-scope-time-overlay" style="position:absolute;left:0;top:0;bottom:0;width:38px;pointer-events:none;font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.5);"></div>
+      <!-- Flagi stacji wolających CQ (klikalne — QSY do nich), odpowiednik
+           flag DX-spotów na wodospadzie radia (waterfall.js), ale zrodlo
+           to NASZE dekody FT8 (kto AKTUALNIE woła CQ), nie DX cluster —
+           patrz WSJTX.getCqDecodes / WSJTXScope.refreshCqFlags. -->
+      <div id="wj-scope-cq-flags" style="position:absolute;left:0;top:0;right:0;height:32px;pointer-events:none;"></div>
     </div>
+  </div>
+
+  <!-- ── POZIOMY RESIZER (GORA/DOL) MIEDZY WODOSPADEM A OKNAMI DEKODOW ── -->
+  <div class="wj-h-split-resizer" id="wj-h-split-resizer" title="Przeciagnij gora/dol aby zmienic wysokosc okien dekodowania">
+    <div class="wj-h-split-grip"></div>
   </div>
 
   <!-- ── ŚRODEK: DEKODOWANIA + TX PANEL ── -->
@@ -822,29 +883,35 @@
 
   </div><!-- /wsjtx-main -->
 
-  <!-- ── DOLNY PASEK ── -->
+  <!-- ── DOLNY PASEK (przejety z forka 2026-10-17: audio-status + engine-label statyczne, wj-decode-count/wj-version zostaja tym samym elementem co dawniej) ── -->
   <div class="wsjtx-bottombar">
+    <span id="wj-audio-status" style="font-size:11.5px;color:var(--wj-text-dim);">Audio: 12000 Hz float mono • Rig: Icom IC-7300 (USB-D)</span>
     <div style="flex:1"></div>
-    <span id="wj-decode-count" data-i18n="wj_decode_count_default" style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);">0 dekodowań</span>
-    <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.35);margin-left:12px;" id="wj-version"></span>
+    <span id="wj-decode-count" data-i18n="wj_decode_count_default" style="font-weight:700;">0 dekodowań</span>
+    <span style="margin-left:14px;font-weight:800;color:var(--green);" id="wj-engine-label">HAMCTRL Engine</span>
+    <span style="font-family:var(--mono);font-size:10px;color:var(--wj-text-dimmer);margin-left:12px;" id="wj-version"></span>
   </div>
 
   </div><!-- /lewa-kolumna -->
 
   <!-- PRAWA KOLUMNA od gornej linii waterfalla -->
   <!-- PRAWA: panel TX + log -->
-  <div class="wsjtx-right" style="width:320px;flex-shrink:0;display:flex;flex-direction:column;background:#0e0e0e;border-left:1px solid #2a2a2a;overflow-y:auto;">
+  <div class="wsjtx-right" id="wj-right-col">
 
-    <!-- AUTOMATYKA QSO — ZAWSZE AKTYWNA. Klik na makro = ręczne wymuszenie -->
+    <!-- AUTOMATYKA QSO — ZAWSZE AKTYWNA. Klik na makro = ręczne wymuszenie.
+         Status-box (przejety z forka 2026-10-16) zamiast samej linii tekstu —
+         #wj-autoqso-status zostaje tym samym elementem co dawniej (JS go
+         znajduje po id bez zmian), tylko teraz w srodku karty .auto-qso-box. -->
     <div class="wsjtx-tx-panel" id="wj-autoqso-panel">
-      <div class="wj-panel-title" style="display:flex;align-items:center;">
+      <div class="wj-panel-title" style="display:flex;align-items:center;justify-content:space-between;">
         <span data-i18n="wj_autoqso_hdr">AUTOMATYKA QSO</span>
-        <span style="font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:rgba(var(--green-rgb),0.15);color:var(--green);margin-left:6px;letter-spacing:1px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
-        <div style="flex:1"></div>
+        <span style="font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,0.22);color:#22c55e;font-weight:800;letter-spacing:0.5px;" data-i18n-title="wj_auto_badge_title" title="Automatyka jest zawsze aktywna. Klik na makro (F1-F6) w panelu TX wymusza ręczne nadanie tej wiadomości." data-i18n="wj_auto_badge">● AUTO</span>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;">
-        <div id="wj-autoqso-status" data-i18n="wj_autoqso_ready" style="flex:1;font-family:var(--mono);font-size:10px;color:var(--dim);">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
-        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;font-family:var(--mono);font-size:9px;padding:2px 6px;white-space:nowrap;" data-i18n-title="wj_skip_title" title="Porzuć bieżącą stację (bez czekania na limit prób)" data-i18n="wj_skip_btn">⏭ Pomiń</button>
+      <div class="auto-qso-box active">
+        <div id="wj-autoqso-status" data-i18n="wj_autoqso_ready" style="font-size:12px;color:#cbd5e1;line-height:1.4;">Automatyka gotowa — kliknij wiersz CQ aby rozpocząć automatyczne QSO • klik makro = ręczne wymuszenie</div>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:6px;">
+        <button id="wj-autoqso-skip" onclick="WSJTX.skipAutoQso()" style="display:none;width:100%;font-family:var(--mono);font-size:12px;font-weight:800;padding:6px;background:rgba(245,158,11,0.28);border:1px solid #f59e0b;color:#fbbf24;border-radius:4px;cursor:pointer;" data-i18n-title="wj_skip_title" title="Porzuć bieżącą stację (bez czekania na limit prób)" data-i18n="wj_skip_btn">⏭ Pomiń stację</button>
       </div>
     </div>
 
@@ -869,16 +936,16 @@
 
     <!-- NADAWANIE TX -->
     <div class="wsjtx-tx-panel">
-      <div class="wj-panel-title" style="display:flex;align-items:center;">
+      <div class="wj-panel-title" style="display:flex;align-items:center;justify-content:space-between;">
         <span data-i18n="wj_tx_panel_hdr">NADAWANIE TX</span>
-        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
-          <span style="font-family:var(--mono);font-size:9px;color:var(--dim);" data-i18n="wj_timer_lbl">TIMER:</span>
-          <span id="ft8-timer-display" style="font-family:var(--mono);font-size:11px;
-            color:var(--green);min-width:42px;text-align:right;">--:--</span>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span style="font-family:var(--mono);font-size:11px;color:var(--dim);" data-i18n="wj_timer_lbl">TIMER:</span>
+          <span id="ft8-timer-display" style="font-family:var(--mono);font-size:14px;font-weight:800;
+            color:#22c55e;min-width:42px;text-align:right;">--:--</span>
           <button id="ft8-timer-confirm" onclick="FT8Timer.confirm()"
-            style="display:none;font-family:var(--mono);font-size:9px;padding:2px 8px;
-            background:rgba(255,140,0,0.2);border:1px solid #f90;border-radius:2px;
-            color:#f90;cursor:pointer;animation:wj-tx-pulse 0.5s ease infinite alternate;" data-i18n="wj_confirm_btn">
+            style="display:none;font-family:var(--mono);font-size:11px;padding:3px 8px;
+            background:rgba(255,140,0,0.25);border:1px solid #f90;border-radius:4px;
+            color:#f90;cursor:pointer;font-weight:800;animation:wj-tx-pulse 0.5s ease infinite alternate;" data-i18n="wj_confirm_btn">
             POTWIERDŹ ▶
           </button>
         </div>
@@ -909,32 +976,34 @@
           <span class="wj-tx-text" id="wj-tx6-text">{DXCALL} RR73</span>
         </button>
       </div>
-      <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
-        <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">DX:</span>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+        <span style="font-family:var(--mono);font-size:14px;font-weight:800;color:var(--dim);">DX:</span>
         <input id="wj-dx-call" type="text" data-i18n-placeholder="wj_dx_call_ph" placeholder="-- KLIKNIJ WIERSZ LUB WPISZ --"
           onkeydown="if(event.key==='Enter'){WSJTX.searchDxCall(this.value)}"
           onblur="WSJTX.searchDxCall(this.value)"
-          style="flex:1;font-family:var(--mono);font-size:12px;text-transform:uppercase;
-          background:#0a0a0a;border:1px solid #333;color:#8be;padding:3px 6px;border-radius:2px;">
+          style="flex:1;text-transform:uppercase;">
         <input id="wj-dx-grid" type="text" placeholder="Grid"
-          style="width:48px;font-family:var(--mono);font-size:12px;text-transform:uppercase;
-          background:#0a0a0a;border:1px solid #333;color:#8be;padding:3px 5px;border-radius:2px;">
+          style="text-transform:uppercase;">
       </div>
-      <div style="display:flex;gap:6px;margin-top:4px;align-items:center;">
-        <span style="font-family:var(--mono);font-size:10px;color:rgba(255,255,255,0.4);">SNR:</span>
-        <span id="wj-dx-snr" style="font-family:var(--mono);font-size:12px;color:#8f8;min-width:40px;">--</span>
-        <div id="wj-tx-indicator" style="display:none;background:#c33;color:#fff;
-          font-family:var(--mono);font-size:10px;font-weight:bold;padding:2px 8px;
-          border-radius:2px;letter-spacing:1px;animation:wj-tx-pulse 0.5s ease infinite alternate;">
-          📡 TX
+      <div style="display:flex;gap:6px;margin-top:6px;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:13px;">
+          <span style="color:var(--dim);font-weight:700;">SNR:</span>
+          <span id="wj-dx-snr" style="font-weight:800;font-size:15px;color:#22c55e;min-width:40px;">--</span>
+        </div>
+        <div id="wj-tx-indicator" style="display:none;background:#ef4444;color:#fff;
+          font-family:var(--mono);font-size:11px;font-weight:800;padding:3px 10px;
+          border-radius:4px;letter-spacing:1px;animation:wj-tx-pulse 0.5s ease infinite alternate;">
+          📡 NADAWANIE (TX)
         </div>
       </div>
     </div>
 
-    <!-- MÓJ LOG QSO -->
-    <div class="wsjtx-log-panel">
-      <div class="wj-panel-title" data-i18n="wj_quicklog_hdr">
-        SZYBKI ZAPIS QSO
+    <!-- ANTENA I ROTOR — wydzielone do wlasnej karty (poprzednio bylo
+         wtopione w naglowek panelu LOG QSO) -->
+    <div class="wsjtx-tx-panel">
+      <div class="wj-panel-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span data-i18n="wj_antenna_hdr">ANTENA I ROTOR</span>
+        <span id="wj-rotor-az" style="color:#22c55e;font-weight:800;font-size:13.5px;">ROTOR: --°</span>
       </div>
       <!-- Kierunek anteny na korespondenta — liczony w przegladarce po
            wpisaniu znaku (lokator z pola / cache FT8 / logu / prefiksu).
@@ -942,13 +1011,8 @@
            dopoki nie wybrano stacji. Prawa strona: zywa pozycja rotora (ten
            sam WS "rotator_update" co duzy kompas w RADIO) + SP/LP - klik od
            razu wysyla komende, bez osobnego potwierdzenia (patrz
-           rotorGoBeam w wsjtx.js). Umieszczone NAD polami Call/Grid (nie
-           miedzy nimi a Mode/RST) — poprzednia pozycja rozdzielala dwie
-           logicznie powiazane grupy pol. -->
-      <div id="wj-beam-row" style="display:flex;font-family:var(--mono);
-           font-size:10px;color:#888;padding:3px 6px;margin:0 6px 4px;
-           background:#0a0a0a;border:1px solid #1a1a1a;border-radius:2px;
-           align-items:center;gap:0;">
+           rotorGoBeam w wsjtx.js). -->
+      <div id="wj-beam-row" style="display:flex;align-items:center;justify-content:space-between;background:var(--wj-input-bg);border:1px solid var(--wj-border-bright);border-radius:5px;padding:8px 10px;font-family:var(--mono);">
         <!-- Lewa czesc (namiar na stacje) MOZE sie skracac/obcinac (...) -
              prawa (kontrolki rotora) MA flex-shrink:0, wiec nigdy nie
              zostaje wypchnieta poza widoczny obszar bez wzgledu na to jak
@@ -958,85 +1022,77 @@
              po prawej - wygladalo jak zniknely, choc byly tylko wypchniete
              poza krawedz. Zglaszone na zywo: "znacznik recznego wyboru
              pozycji rotora zniknal jak tylko wybralem stacje do QSO". -->
-        <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-             min-width:0;flex-shrink:1;">
-          <span style="color:#666;" data-i18n="wj_antenna_lbl">ANTENA</span>
-          <span id="wj-beam-az" style="color:#fa0;font-weight:bold;font-size:12px;
-                margin:0 4px;">---°</span>
-          <span id="wj-beam-dist" style="color:#4cf;"></span>
-          <span id="wj-beam-src" style="color:#555;margin-left:4px;"></span>
-          <span id="wj-beam-long" style="color:#555;margin-left:6px;"></span>
+        <div style="overflow:hidden;white-space:normal;min-width:0;flex-shrink:1;line-height:1.5;">
+          <span style="color:var(--dim);">AZ:</span>
+          <strong id="wj-beam-az" style="color:#f59e0b;font-size:20px;margin:0 6px;">---°</strong>
+          <span id="wj-beam-dist" style="color:var(--green);font-size:13px;font-weight:800;"></span>
+          <span id="wj-beam-src" style="color:var(--wj-text-dimmer);margin-left:4px;font-size:11px;"></span>
+          <span id="wj-beam-long" style="color:var(--wj-text-dimmer);margin-left:6px;font-size:11px;"></span>
         </div>
-        <div style="flex:1;min-width:6px;"></div>
-        <div style="display:flex;align-items:center;flex-shrink:0;white-space:nowrap;">
-          <span id="wj-rotor-az" style="color:#4cdb6a;margin-right:6px;">ROTOR --°</span>
+        <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
           <button id="wj-rotor-sp-btn" onclick="WSJTX.rotorGoBeam('sp')" disabled
             data-i18n-title="wj_rotor_sp_title" title="Ustaw rotor na azymut SP (krotka droga)"
-            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
-            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸SP</button>
+            class="wj-btn" style="padding:4px 8px;font-size:11.5px;">▸SP</button>
           <button id="wj-rotor-lp-btn" onclick="WSJTX.rotorGoBeam('lp')" disabled
             data-i18n-title="wj_rotor_lp_title" title="Ustaw rotor na azymut LP (dluga droga)"
-            style="font-family:var(--mono);font-size:9px;padding:1px 5px;margin-right:3px;
-            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">▸LP</button>
+            class="wj-btn" style="padding:4px 8px;font-size:11.5px;">▸LP</button>
           <button id="wj-rotor-manual-btn" onclick="WSJTX.rotorGoManual()" disabled
             data-i18n-title="wj_rotor_manual_title" title="Recznie: wpisz azymut w stopniach lub lokator"
-            style="font-family:var(--mono);font-size:9px;padding:1px 5px;
-            background:#131313;border:1px solid #2a2a2a;color:#8be;border-radius:2px;cursor:pointer;">🎯</button>
+            class="wj-btn" style="padding:4px 8px;font-size:11.5px;">🎯</button>
         </div>
-      </div>
-      <div style="padding:4px 6px;border-bottom:1px solid #1a1a1a;flex-shrink:0;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:3px;">
-          <input id="wj-log-call" type="text" data-i18n-placeholder="wj_call_dx_ph" placeholder="CALLSIGN DX *"
-            oninput="WSJTX.updateBeamRow()"
-            style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
-            background:#0a0a0a;border:1px solid #2a2a2a;color:#4cf;padding:3px 5px;border-radius:2px;">
-          <input id="wj-log-grid" type="text" data-i18n-placeholder="wj_grid_dx_ph" placeholder="Grid DX"
-            oninput="WSJTX.updateBeamRow()"
-            style="font-family:var(--mono);font-size:11px;text-transform:uppercase;
-            background:#0a0a0a;border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px;margin-bottom:3px;">
-          <select id="wj-log-mode"
-            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
-            border:1px solid #2a2a2a;color:#aaa;padding:3px 4px;border-radius:2px;">
-            <option>FT8</option><option>FT4</option>
-          </select>
-          <input id="wj-log-rst-sent" type="text" placeholder="RST Sent"
-            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
-            border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
-          <input id="wj-log-rst-rcvd" type="text" placeholder="RST Rcvd"
-            style="font-family:var(--mono);font-size:10px;background:#0a0a0a;
-            border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;">
-        </div>
-        <input id="wj-log-comment" type="text" data-i18n-placeholder="wj_comment_ph" placeholder="Komentarz (opcjonalnie)"
-          style="width:100%;font-family:var(--mono);font-size:10px;background:#0a0a0a;
-          border:1px solid #2a2a2a;color:#888;padding:3px 5px;border-radius:2px;margin-bottom:3px;">
-        <div style="display:flex;gap:4px;">
-          <button onclick="WSJTX.addLog()" class="wj-btn wj-btn-green" style="flex:1;padding:4px;" data-i18n="wj_addlog_btn">+ LOG QSO</button>
-          <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:4px 8px;" data-i18n-title="wj_adif_btn_title" title="Eksport ADIF">⬇ ADIF</button>
-        </div>
-      </div>
-      <!-- Mini-log: czysto informacyjny podglad tego co wyladowalo w logu -->
-      <!-- (pasmo/znak/RST) - edycja i pelny zapis sa na osobnej stronie -->
-      <!-- LOG QSO (tab-log), tu tylko podglad na biezaco. -->
-      <div style="flex:1;overflow-y:auto;padding:2px 6px;">
-        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;">
-          <tbody id="wj-minilog-body">
-            <tr><td colspan="4" style="color:#333;text-align:center;padding:8px;" data-i18n="wj_no_logged_qso">Brak zalogowanych QSO</td></tr>
-          </tbody>
-        </table>
       </div>
     </div>
 
-    <!-- KONFIGURACJA WSJT-X -->
+    <!-- SZYBKI ZAPIS QSO -->
+    <div class="wsjtx-log-panel">
+      <div class="wj-panel-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span data-i18n="wj_quicklog_hdr">SZYBKI ZAPIS QSO</span>
+        <span style="color:var(--wj-text-dimmer);font-size:11px;">DB: qso.db</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <input id="wj-log-call" type="text" data-i18n-placeholder="wj_call_dx_ph" placeholder="CALLSIGN DX *"
+          oninput="WSJTX.updateBeamRow()" style="text-transform:uppercase;">
+        <input id="wj-log-grid" type="text" data-i18n-placeholder="wj_grid_dx_ph" placeholder="Grid DX"
+          oninput="WSJTX.updateBeamRow()" style="text-transform:uppercase;">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+        <select id="wj-log-mode">
+          <option>FT8</option><option>FT4</option>
+        </select>
+        <input id="wj-log-rst-sent" type="text" placeholder="RST Sent">
+        <input id="wj-log-rst-rcvd" type="text" placeholder="RST Rcvd">
+      </div>
+      <input id="wj-log-comment" type="text" data-i18n-placeholder="wj_comment_ph" placeholder="Komentarz (opcjonalnie)">
+      <div style="display:flex;gap:6px;">
+        <button onclick="WSJTX.addLog()" class="wj-btn" style="flex:1;background:rgba(34,197,94,0.25);border-color:#22c55e;color:#22c55e;font-weight:800;font-size:13.5px;padding:8px;" data-i18n="wj_addlog_btn">+ LOG QSO</button>
+        <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:8px 12px;font-size:12px;" data-i18n-title="wj_adif_btn_title" title="Eksport ADIF">⬇ ADIF</button>
+      </div>
+
+      <!-- Mini-log: czysto informacyjny podglad tego co wyladowalo w logu -->
+      <!-- (pasmo/znak/RST) - edycja i pelny zapis sa na osobnej stronie -->
+      <!-- LOG QSO (tab-log), tu tylko podglad na biezaco. -->
+      <div class="minilog-wrap" style="margin-top:6px;border-top:1px solid var(--wj-border);padding-top:6px;">
+        <div style="font-size:10px;color:var(--dim);margin-bottom:4px;font-family:var(--mono);font-weight:700;" data-i18n="wj_minilog_hdr">OSTATNIO ZALOGOWANE:</div>
+        <div style="max-height:80px;overflow-y:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10.5px;">
+            <tbody id="wj-minilog-body">
+              <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:8px;" data-i18n="wj_no_logged_qso">Brak zalogowanych QSO</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- LEGENDA KOLORÓW wierszy dekodowania (Band Activity / RX Frequency) -->
     <div class="wsjtx-config-panel">
-      <div class="wj-panel-title" data-i18n="wj_wsjtx_config_hdr">KONFIGURACJA WSJT-X</div>
-      <div style="font-family:var(--mono);font-size:9px;color:rgba(255,255,255,0.35);line-height:2;">
-        Settings → Radio → Rig: <span style="color:#fa0">Hamlib NET rigctl</span><br>
-        Network Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">4532</span><br>
-        Settings → Reporting → UDP Server: <span style="color:#fa0">localhost</span> Port: <span style="color:#fa0">2238</span><br>
-        ✓ Accept UDP requests<br>
-        <span style="color:rgba(255,100,100,0.7);font-size:8px;" data-i18n="wj_port_note">⚠ Port 2237 jest zarezerwowany przez WSJT-X — używamy 2238</span>
+      <div class="wj-panel-title" data-i18n="wj_color_legend_hdr">LEGENDA KOLORÓW</div>
+      <div class="wj-legend-grid">
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:#38bdf8;"></span><span data-i18n="wj_legend_cq">CQ</span></div>
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:#22c55e;"></span><span data-i18n="wj_legend_dx">Odpowiedź do DX</span></div>
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:#ef4444;"></span><span data-i18n="wj_legend_mycall">Mój znak</span></div>
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:#fbbf24;"></span><span data-i18n="wj_legend_73">73 / RR73</span></div>
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:#f59e0b;"></span><span data-i18n="wj_legend_owntx">Moje TX</span></div>
+        <div class="wj-legend-item"><span class="wj-legend-dot" style="background:var(--wj-text-dimmer);opacity:0.6;"></span><span data-i18n="wj_legend_worked">Już w logu</span></div>
       </div>
     </div>
 
@@ -1607,19 +1663,10 @@
          podlaczonym radiu.
          ═══════════════════════════════════════════════════════════════════ -->
     <div class="box">
-      <div class="box-header"><span data-i18n="adv_mod_hdr">WEJŚCIE MODULACJI (USB/ACC/LAN, DATA MOD)</span></div>
-      <div style="padding:4px 12px 12px;" id="adv-mod"></div>
-    </div>
-
-    <div class="box">
-      <div class="box-header"><span data-i18n="adv_nb_hdr">NB (NOISE BLANKER) — GŁĘBOKOŚĆ / SZEROKOŚĆ</span></div>
-      <div style="padding:4px 12px 12px;" id="adv-nb"></div>
-    </div>
-
-    <div class="box">
       <div class="box-header"><span data-i18n="adv_txdelay_hdr">TX DELAY — sekwencja PTT (wzmacniacz / przekaźnik antenowy)</span></div>
       <div style="padding:4px 12px 12px;" id="adv-txdelay"></div>
     </div>
+
 
     <!-- ═══════════════════════════════════════════════════════════════════
          COM BRIDGE — sekcja informacyjna (2 stale porty CI-V dla kazdego)
@@ -2753,9 +2800,6 @@
 
 <!-- MODAL: Edycja makra CW -->
 
-<!-- TOAST -->
-<div class="toast" id="toast"></div>
-
 <!-- ─── Moduły JS ─────────────────────────────────────────────────────────────── -->
 <script>
   // Sets window.__HAM_INITIAL_LANG__ from the server-wide default language
@@ -2779,38 +2823,38 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202610150001"></script>
+<script src="js/i18n.js?v=202610181800"></script>
 <script src="js/theme.js?v=202610161000"></script>
-<script src="js/auth.js?v=202609030005"></script>
+<script src="js/auth.js?v=202610181800"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202610150001"></script>
+<script src="js/ws.js?v=202610181445"></script>
 <script src="js/radiofunctions.js?v=202609040002"></script>
-<script src="js/ui.js?v=202610150001"></script>
-<script src="js/advradio.js?v=202610150001"></script>
-<script src="js/radiolock.js?v=202608242100"></script>
+<script src="js/ui.js?v=202610172904"></script>
+<script src="js/advradio.js?v=202610181650"></script>
+<script src="js/radiolock.js?v=202610162130"></script>
 <script src="js/serial_ports.js?v=202609020001"></script>
-<script src="js/settings.js?v=202609020001"></script>
+<script src="js/settings.js?v=202610162130"></script>
 <script src="js/tx_eq.js?v=202608210003"></script>
 <script src="js/cw_sidetone.js?v=202608210001"></script>
-<script src="js/relay_ui.js?v=202609020001"></script>
-<script src="js/dxcluster.js?v=202608180001"></script>
-<script src="js/audio_autodetect.js?v=202608180001"></script>
+<script src="js/relay_ui.js?v=202610162130"></script>
+<script src="js/dxcluster.js?v=202610180002"></script>
+<script src="js/audio_autodetect.js?v=202610162130"></script>
 <script src="js/com_bridge.js?v=202608180001"></script>
-<script src="js/rotator.js?v=202608210001"></script>
+<script src="js/rotator.js?v=202610180003"></script>
 <script src="js/rotormini.js?v=202610161030"></script>
-<script src="js/admin.js?v=202609030003"></script>
+<script src="js/admin.js?v=202610181800"></script>
 <script src="js/admin_status.js?v=202608180002"></script>
 <script src="js/profile_audio.js?v=202608243200"></script>
-<script src="js/relay_admin.js?v=202608180001"></script>
-<script src="js/tunnel.js?v=202609010001"></script>
+<script src="js/relay_admin.js?v=202610162130"></script>
+<script src="js/tunnel.js?v=202610162130"></script>
 <script src="js/dxcc.js?v=202608210002"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202609050001"></script>
-<script src="js/wsjtx_scope.js?v=202608242200"></script>
+<script src="js/wsjtx.js?v=202610172700"></script>
+<script src="js/wsjtx_scope.js?v=202610161200"></script>
 <script src="js/chat.js?v=202609030004"></script>
-<script src="js/vfo.js?v=202609040003"></script>
-<script src="js/waterfall.js?v=202609010001"></script>
+<script src="js/vfo.js?v=202610172903"></script>
+<script src="js/waterfall.js?v=202610180002"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>
@@ -2884,7 +2928,7 @@
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>
-<script src="js/qsolog.js?v=202609060001"></script>
+<script src="js/qsolog.js?v=202610172902"></script>
 
 <script>
 // ── HamlibUI — panel wirtualnych radii (rigctld emulator) ────────────────────
@@ -3557,33 +3601,78 @@ function debounceSave() {
   if (!el) return;
 
   function updateScale() {
+    // "Opcja 2" (2026-10-16): Radio i FT8 (wsjtx) sa teraz widokami o
+    // STALEJ wysokosci, bez przewijania strony — przewijaja sie wylacznie
+    // poszczegolne kolumny/listy w ich wnetrzu (np. tile-left, tile-right),
+    // a srodek (VFO, Waterfall / scope) pozostaje w 100% nieruchomy.
+    // Pozostale zakladki (USTAWIENIA, LOG, itp.) scrolluja sie normalnie,
+    // jak dotychczas.
+    const isRadio = !!document.getElementById('page-radio')?.classList.contains('active');
+    const isWsjtx = !!document.getElementById('page-wsjtx')?.classList.contains('active');
+
+    if (isRadio || isWsjtx) {
+      document.documentElement.style.overflow = 'hidden';
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.documentElement.style.overflow = '';
+      document.body.style.overflow = '';
+    }
+
     // clientWidth (nie innerWidth) — wylacza szerokosc pionowego scrollbara
-    // z obliczenia. Gdy strona jest wyzsza niz viewport (np. zakladka
-    // USTAWIENIA), pojawia sie scrollbar (~15-17px), ktory zabiera miejsce
-    // z viewportu — przy innerWidth scale wychodzil odrobinę za duzy i
-    // prawa kolumna (rotator/CW) byla lekko obcinana poza widoczny obszar.
+    // z obliczenia.
+    // FIX (2026-10-16, live report: "prawy panel w zakladce RADIO nie jest
+    // spasowany z przegladarka, za nim jest puste miejsce"): RADIO used to
+    // get its own scale formula here - min(scaleW, scaleH) - to keep the
+    // waterfall from looking squished-tall on 16:9 monitors. But browser
+    // chrome (tabs/address bar) always eats into innerHeight without
+    // touching innerWidth, so on almost any real window the height-based
+    // scale ends up smaller than the width-based one and wins the min() -
+    // body.style.width below is then set to REF_W*scale, which is LESS
+    // than the actual viewport width, leaving a dead gap on the right
+    // (exactly where .tile-right/rotator lives). FT8 never had this bug
+    // because it always used plain vw/REF_W (the else branch) - RADIO now
+    // matches it, so every tab fills the window width with no gap.
     const vw = document.documentElement.clientWidth;
-    // Skalujemy WYLACZNIE wg szerokosci. Wczesniejsze ograniczanie przez
-    // vh/REF_H (1080) bylo bledne: typowe okno przegladarki ma vh znacznie
-    // mniejsze niz 1080px (belki przegladarki, taskbar), wiec heightScale
-    // dominowal i scieskal caly layout do ~0.6-0.7x — odwrotny efekt od
-    // zamierzonego. Strona moze byc wyzsza niz viewport — wtedy po prostu
-    // przewija sie wertykalnie (body.height ustawiane nizej), co jest
-    // normalne i oczekiwane.
     const scale = Math.max(MIN_SCALE, vw / REF_W);
 
     el.style.transform = `scale(${scale})`;
 
-    // Naturalna (nieskalowana) wysokosc zawartosci #app-scale (scrollHeight
-    // nie jest wplywany przez transform).
-    const contentH = Math.max(el.scrollHeight, REF_H);
+    // Dostepna wysokosc referencyjna (ponizej topbara 52px) — udostepniana
+    // jako zmienna CSS, zeby .tile-grid / #page-wsjtx mogly dokladnie
+    // wypelnic reszte okna bez przewijania strony.
+    const availRefH = window.innerHeight / scale;
+    const gridH = Math.max(500, Math.floor(availRefH - 52));
+    document.documentElement.style.setProperty('--radio-grid-h', gridH + 'px');
+    document.documentElement.style.setProperty('--wsjtx-h', gridH + 'px');
 
-    document.body.style.width  = (REF_W * scale) + 'px';
-    document.body.style.height = (contentH * scale) + 'px';
+    document.documentElement.classList.toggle('page-radio-active', isRadio);
+    document.documentElement.classList.toggle('page-wsjtx-active', isWsjtx);
+    document.body.classList.toggle('page-radio-active', isRadio);
+    document.body.classList.toggle('page-wsjtx-active', isWsjtx);
+
+    let contentH;
+    if (isRadio || isWsjtx) {
+      contentH = availRefH;
+      document.body.style.height = window.innerHeight + 'px';
+    } else {
+      // Naturalna (nieskalowana) wysokosc zawartosci #app-scale (scrollHeight
+      // nie jest wplywany przez transform) — pozostale zakladki moga byc
+      // dluzsze niz viewport i wtedy przewijaja sie wertykalnie.
+      contentH = Math.max(el.scrollHeight, REF_H);
+      document.body.style.height = (contentH * scale) + 'px';
+    }
+
+    document.body.style.width = (REF_W * scale) + 'px';
+
+    if (isRadio && typeof window.Waterfall?.resize === 'function') {
+      window.Waterfall.resize();
+    }
   }
 
+  window.updateScale = updateScale;
   window.addEventListener('resize', updateScale);
   window.addEventListener('orientationchange', updateScale);
+
   // Re-mierz przy zmianie zakladki (page-content active/hidden) — to
   // jedyny przypadek gdy calkowita wysokosc strony realnie sie zmienia.
   // NIE obserwujemy calego #app-scale (subtree) — telemetria (VFO, S-meter,
@@ -3593,6 +3682,7 @@ function debounceSave() {
     if (_raf) return;
     _raf = requestAnimationFrame(() => { _raf = null; updateScale(); });
   };
+  window.scheduleScaleUpdate = scheduleUpdate;
   document.querySelectorAll('.page-content').forEach(p => {
     new MutationObserver(scheduleUpdate).observe(p, { attributes: true, attributeFilter: ['class'] });
   });
@@ -3602,6 +3692,18 @@ function debounceSave() {
 </script>
 
 </div><!-- /app-scale -->
+
+<!-- TOAST — DELIBERATELY outside #app-scale (2026-10-18, live report:
+     "jak zjade oknem na dol to toastu nie zobaczysz"). #app-scale has
+     transform:scale() applied (see updateScale() above) - CSS spec: any
+     ancestor with `transform` set becomes the containing block for its
+     fixed-position descendants, so .toast's `position:fixed` was anchored
+     to #app-scale's own (tall, scrollable) box instead of the real browser
+     viewport, scrolling out of view along with the page content instead of
+     staying pinned to the visible window. Moving it here (a direct body
+     child, no transformed ancestor) restores real fixed-to-viewport
+     behavior - always visible regardless of scroll position. -->
+<div class="toast" id="toast"></div>
 
 
 <!-- ─── AUDIO DEVICE MANAGEMENT ──────────────────────────────────────────────── -->

@@ -37,8 +37,8 @@ FEATURES = [
     {"id": "split",     "label": "Split VFO A/B", "icon": "⇄",
      "group": "vfo", "backend": "both", "enabled_default": True},
 
-    {"id": "rit",       "label": "RIT / XIT", "icon": "🎯",
-     "group": "vfo", "backend": "both", "enabled_default": False},
+    # REMOVED (2026-10-18): "rit" (RIT/XIT) - setting Hz gave NG on the
+    # live radio, no fix found, removed end-to-end per user decision.
 
     # ── TX / PTT ────────────────────────────────────────────────────────────
     {"id": "ptt",       "label": "PTT (nadawanie)", "icon": "🎙️",
@@ -59,6 +59,9 @@ FEATURES = [
 
     {"id": "scope",     "label": "Waterfall / Scope", "icon": "🌊",
      "group": "scope", "backend": "civ", "enabled_default": True},
+
+    {"id": "agc",       "label": "AGC — tryb pracy", "icon": "📡",
+     "group": "scope", "backend": "civ", "enabled_default": False},
 
     # ── Inne ────────────────────────────────────────────────────────────────
     {"id": "memory",    "label": "Kanaly pamieci", "icon": "💾",

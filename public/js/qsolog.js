@@ -593,6 +593,7 @@ async function quickLog(overrides = {}) {
       callEl.style.borderColor = '';
       document.getElementById('qlog-grid').value = '';
       callEl.focus();
+      S._qlogPinnedFreq = null;
       // Programmatic clear above doesn't fire 'input' - without this the
       // dial's direction hint would keep pointing at the station just logged.
       _updateQuickLogHint();
@@ -832,15 +833,15 @@ async function checkWorkedBefore() {
       if (d.worked_all) {
         badge.textContent = `⚠ DUPE (${d.count}× worked, ${d.last_qso.qso_date})`;
         badge.style.color = 'var(--red)';
-        badge.style.background = 'rgba(217,119,106,0.15)';
+        badge.style.background = 'rgba(var(--red-rgb),0.15)';
       } else if (d.worked_band) {
         badge.textContent = `⚠ WORKED NA ${band}`;
         badge.style.color = 'var(--amber)';
-        badge.style.background = 'rgba(212,168,87,0.15)';
+        badge.style.background = 'rgba(var(--amber-rgb),0.15)';
       } else if (d.worked) {
         badge.textContent = `✓ NOWY BAND (${d.count}× wcześniej)`;
         badge.style.color = 'var(--green)';
-        badge.style.background = 'rgba(184,201,143,0.15)';
+        badge.style.background = 'rgba(var(--green-rgb),0.15)';
       } else {
         badge.textContent = '★ NEW ONE';
         badge.style.color = '#66d0ff';

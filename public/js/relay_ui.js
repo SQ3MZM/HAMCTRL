@@ -35,7 +35,7 @@ window.RelayUI = (function() {
       const isOn = !!r.state;
       const isMomentary = r.mode === 'momentary';
       const color = isOn ? 'var(--red)' : 'var(--green)';
-      const bgColor = isOn ? 'rgba(217,119,106,0.15)' : 'rgba(184,201,143,0.1)';
+      const bgColor = isOn ? 'rgba(var(--red-rgb),0.15)' : 'rgba(var(--green-rgb),0.1)';
       const label = isMomentary
         ? `⚡ ${_escapeHtml(r.name)}`
         : (isOn ? `● ${_escapeHtml(r.name)}` : `○ ${_escapeHtml(r.name)}`);

@@ -9,7 +9,7 @@
  *  - after the admin saves the whitelist (broadcast 'rig_features')
  *
  * Each button:
- *  - "freq_set"/"mode_set"/"split"/"rit" — doesn't generate its own button
+ *  - "freq_set"/"mode_set"/"split" — doesn't generate its own button
  *    (these features already have separate controls in the VFO UI) — the
  *    panel only shows them as info/toggling the visibility of the related controls
  *  - "ptt" — already has its own PTT button (the panel doesn't duplicate it)
@@ -30,9 +30,6 @@ const RigFeatures = (() => {
   const FEATURE_ACTIONS = {
     tx_power: {
       toggles: ['#tx-power-row', '.tx-power-control'],
-    },
-    rit: {
-      toggles: ['#rit-row', '.rit-control'],
     },
     memory: {
       onClick: () => UI.showTab && UI.showTab('memory'),

@@ -468,6 +468,36 @@ class CivRig:
         self.log(f"[civ] scope span -> {span_hz} Hz (VFO=00, half={half}, bytes: {hexstr}) — OK")
         return True
 
+    def set_scope_mode(self, mode_code: int) -> bool:
+        """Set the waterfall scope mode (Center vs Fixed). CI-V: 27 14
+        [VFO-select][mode byte] - mode_code 0x00=Center (okno podaza za
+        VFO), 0x01=Fixed (stale okno brzegow pasma, nie podaza za VFO).
+        02/03 (SCROLL-C/SCROLL-F) istnieja w protokole ale nie sa tu
+        wspierane - interfejs ma tylko dwustanowy przelacznik CENT/FIX.
+
+        Returns True only if the radio ACKed (0xFB), False on NG/timeout/
+        bad value. Sam byte-layout (27 14 00 xx) jest juz uzywany
+        fire-and-forget w _enable_scope() przy wlaczaniu scope'u (zawsze
+        wymusza Center) - to tu jest pierwsza wersja z realnym
+        ACK/NG-check, do recznego przelaczania przez usera.
+        """
+        if mode_code not in (0x00, 0x01):
+            return False
+        if self.sim or not self._ser:
+            self._scope_mode_code = mode_code
+            return True
+        resp = self._transact(bytes([0x27, 0x14, 0x00, mode_code]), {0xFB, 0xFA}, 0.4)
+        matched = self._resp_matched_cmd
+        if resp is None:
+            self.log(f"[civ] scope mode -> {mode_code} (VFO=00) — NO RESPONSE (timeout)")
+            return False
+        if matched == 0xFA:
+            self.log(f"[civ] scope mode -> {mode_code} (VFO=00) — radio REJECTED (NG)")
+            return False
+        self._scope_mode_code = mode_code
+        self.log(f"[civ] scope mode -> {mode_code} (VFO=00) — OK")
+        return True
+
     async def set_mode(self, mode: str, bw: int = 0, fil: int = 0):
         """
         Set the mode (CI-V 06 <mode_byte> <filter_byte>).
@@ -1177,20 +1207,10 @@ class CivRig:
         byte1 = ((lo // 10) << 4) | (lo % 10)
         return bytes([byte0, byte1])
 
-    @staticmethod
-    def _int_to_bcd4(v: int) -> bytes:
-        """0-9999 -> 2-byte BCD (4 packed decimal digits), e.g. a RIT
-        offset in Hz. Unlike _int_to_bcd2 above (hardcoded to the 0-255
-        'Set Level' convention), this covers the full 4-digit range RIT
-        and a few other commands use. Inverse of bcd2()."""
-        v = max(0, min(9999, int(v)))
-        d0, d1, d2, d3 = (v // 1000) % 10, (v // 100) % 10, (v // 10) % 10, v % 10
-        return bytes([(d0 << 4) | d1, (d2 << 4) | d3])
-
     # ── Advanced ("admin-only") radio settings ──────────────────────────────
     # Generic engine for rigs/civ_profiles.py's per-model "adv" table (CI-V
     # commands beyond the Set Level/Set Func tables above - modulation
-    # input, AGC mode, VOX fine-tuning, NB depth/width, APF, TX delay). See
+    # input, AGC mode, VOX fine-tuning, NB depth/width, TX delay). See
     # that table's own docstring for the exact format of each "kind".
     # webapp.py gates every caller of get_adv/set_adv to the admin role -
     # civ.py itself doesn't know about users/permissions, same separation
@@ -1223,7 +1243,15 @@ class CivRig:
     def _decode_adv(spec: dict, data: bytes):
         kind = spec["kind"]
         if kind == "enum":
-            return data[0] if data else None
+            # wire_base (2026-10-18, live NG on AGC_MODE): most "enum" CI-V
+            # data bytes are 0-indexed (00=first option), but some - e.g.
+            # 16 12 AGC time constant, 01=FAST/02=MID/03=SLOW - start at 1
+            # on the wire while the UI dropdown still wants a plain 0-based
+            # index for spec["labels"]. Defaults to 0 so every other enum
+            # entry (unaffected) decodes exactly as before.
+            if not data:
+                return None
+            return data[0] - spec.get("wire_base", 0)
         if kind == "range":
             if not data:
                 return None
@@ -1245,7 +1273,9 @@ class CivRig:
         try:
             if kind == "enum":
                 v = int(value)
-                return bytes([v]) if 0 <= v < spec["n"] else None
+                if not (0 <= v < spec["n"]):
+                    return None
+                return bytes([v + spec.get("wire_base", 0)])
             if kind == "range":
                 # Inverse of _decode_adv's v = (raw + offset) * scale.
                 raw = float(value) / spec.get("scale", 1) - spec.get("offset", 0)
@@ -1274,58 +1304,50 @@ class CivRig:
         if self.sim or not self._ser:
             return True
         cmd = spec["cmd"]
+        # RETRY (2026-10-18, live report: AGC_MODE "od czasu do czasu rzuca
+        # bledem NG" with nothing else happening on the radio at the time -
+        # same bus-contention suspicion as set_ptt's own retry-once above):
+        # only retry on a TRUE timeout (p is None, no response of ANY kind -
+        # likely swallowed by the background poller or dropped on the wire),
+        # never on an explicit 0xFA NG - a genuine rejection means the VALUE
+        # itself was refused, and resending the identical command would
+        # just NG again for the same reason.
         p = await asyncio.to_thread(self._transact, bytes(cmd) + enc, {0xFB, 0xFA}, 0.4)
-        return p is not None and self._resp_matched_cmd == 0xFB
+        if p is None:
+            self.log(f"[civ] set_adv({key}): no response - retrying once")
+            p = await asyncio.to_thread(self._transact, bytes(cmd) + enc, {0xFB, 0xFA}, 0.4)
+        ok = p is not None and self._resp_matched_cmd == 0xFB
+        if not ok:
+            reason = "NG (0xFA)" if self._resp_matched_cmd == 0xFA else "no response even after retry"
+            # VERIFY-BY-READBACK (2026-10-18, live report: "dalej pokazuje
+            # NG ale na pewno dziala" - AGC audibly switched even though the
+            # ACK round-trip failed). Likely story: the FIRST attempt's own
+            # ACK actually arrived, just too late (past our 0.4s timeout) -
+            # the radio HAD already applied it - and the retry we then sent
+            # landed while the radio was still finishing up from the first
+            # one, earning a real NG for being redundant/mistimed, not
+            # because the value itself was ever rejected. A flaky ACK
+            # doesn't prove the command didn't take, so check reality
+            # instead of trusting it: read the value back and believe THAT.
+            await asyncio.sleep(0.15)
+            actual = await asyncio.to_thread(self._read_adv, spec)
+            matches = (abs(actual - value) < 0.01 if isinstance(value, (int, float))
+                       and isinstance(actual, (int, float)) else actual == value)
+            if matches:
+                self.log(f"[civ] set_adv({key}): ACK said {reason}, but readback confirms "
+                         f"the value DID take ({actual!r}) - reporting success")
+                return True
+            self.log(f"[civ] set_adv({key}): failed - {reason} (readback: {actual!r})")
+        return ok
 
-    # ── RIT / ΔTX (clarifier) — CI-V 0x21, admin-only ───────────────────────
-    # Unique signed 4-digit-BCD format (not a fit for the generic _IC7300_ADV
-    # table above), so handled as its own small bespoke group instead of
-    # forcing it into that table's kinds.
-    async def get_rit(self) -> dict:
-        if self.sim or not self._ser:
-            return {"hz": 0, "ritOn": False, "dtxOn": False}
-        return await asyncio.to_thread(self._read_rit)
-
-    def _read_rit(self) -> dict:
-        hz = 0
-        p = self._transact(bytes([0x21, 0x00]), {0x21}, 0.3, sub=0x00)
-        if p and len(p) >= 4 and p[0] == 0x00:
-            sign = -1 if p[1] == 0x01 else 1
-            hz = sign * bcd2(p[2:4])
-        rit_on = False
-        p = self._transact(bytes([0x21, 0x01]), {0x21}, 0.3, sub=0x01)
-        if p and len(p) >= 2 and p[0] == 0x01:
-            rit_on = bool(p[1])
-        dtx_on = False
-        p = self._transact(bytes([0x21, 0x02]), {0x21}, 0.3, sub=0x02)
-        if p and len(p) >= 2 and p[0] == 0x02:
-            dtx_on = bool(p[1])
-        return {"hz": hz, "ritOn": rit_on, "dtxOn": dtx_on}
-
-    async def set_rit_hz(self, hz: int) -> bool:
-        hz = max(-9999, min(9999, int(hz)))
-        sign = bytes([0x01 if hz < 0 else 0x00])
-        if self.sim or not self._ser:
-            return True
-        p = await asyncio.to_thread(
-            self._transact, bytes([0x21, 0x00]) + sign + self._int_to_bcd4(abs(hz)),
-            {0xFB, 0xFA}, 0.4)
-        return p is not None and self._resp_matched_cmd == 0xFB
-
-    async def set_rit_enabled(self, on: bool) -> bool:
-        if self.sim or not self._ser:
-            return True
-        p = await asyncio.to_thread(
-            self._transact, bytes([0x21, 0x01, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
-        return p is not None and self._resp_matched_cmd == 0xFB
-
-    async def set_dtx_enabled(self, on: bool) -> bool:
-        if self.sim or not self._ser:
-            return True
-        p = await asyncio.to_thread(
-            self._transact, bytes([0x21, 0x02, 0x01 if on else 0x00]), {0xFB, 0xFA}, 0.4)
-        return p is not None and self._resp_matched_cmd == 0xFB
-
+    # REMOVED (2026-10-18): RIT/ΔTX (CI-V 0x21) - get_rit/_read_rit/
+    # set_rit_hz/set_rit_enabled/set_dtx_enabled. RIT ON/OFF and ΔTX ON/OFF
+    # (plain 00/01 bytes) worked; setting the Hz value gave NG every time,
+    # even after fixing the BCD byte order to match this file's proven
+    # frequency convention (freq_to_bcd/bcd_to_freq instead of the
+    # Set-Level-style bcd2). Root cause not found - user decision: drop it
+    # rather than keep chasing it ("nie potrzebujemy tego"). See webapp.py's
+    # removed /api/rig/rit comment for the full removal list.
     async def get_capabilities(self) -> dict:
         """
         Return the full structure of discovered CI-V capabilities:
@@ -2673,7 +2695,7 @@ class CivRig:
                             "hiHz": self.freq + self._scope_span_hz // 2,
                             "mode": self.mode, "dataMode": self.data_mode,
                             "filterHz": self._filter_width_hz,
-                            "scopeMode": 0, "outOfRange": False})
+                            "scopeMode": self._scope_mode_code, "outOfRange": False})
                 _errs = 0
             except Exception as e:
                 _errs += 1

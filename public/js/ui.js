@@ -69,7 +69,33 @@ function updateDisconnectBadge() {
 }
 
 // ── Frequency ─────────────────────────────────────────────────────────────────
+// Spot-click auto-filled the quick-log callsign (see dxcluster.js::qsy) -
+// once the VFO drifts more than a few kHz away from that spot's frequency
+// we're probably no longer listening to that station, so drop it again.
+// Called from updateFreqDisplay() AND from vfo.js's digit-scroll/click
+// stepping (_applyDigitStep) - that path updates S.freq and its own compact
+// VFO display directly, WITHOUT going through updateFreqDisplay() (it's the
+// fast/frequent interaction path and skips the full re-render on purpose),
+// so without this second call site the pin never got checked for the most
+// common way of actually moving the VFO off a spot.
+const _QLOG_PIN_TOLERANCE_HZ = 5000;  // 5 kHz - a small tuning nudge within
+                                        // the same signal/pileup shouldn't
+                                        // drop the auto-filled call.
+function checkQlogSpotPin() {
+  if (S._qlogPinnedFreq != null && Math.abs(S.freq - S._qlogPinnedFreq) > _QLOG_PIN_TOLERANCE_HZ) {
+    S._qlogPinnedFreq = null;
+    const callEl = document.getElementById('qlog-call');
+    if (callEl) {
+      callEl.value = '';
+      callEl.style.color = '';
+      callEl.style.borderColor = '';
+    }
+    window.RotorMini?.clearHint?.();
+  }
+}
+
 function updateFreqDisplay() {
+  checkQlogSpotPin();
   const el = document.getElementById('freq-display');
   if (el) el.textContent = fmtFreq(S.freq);
   const elB = document.getElementById('freq-b-display');
@@ -311,7 +337,6 @@ let _pttOwnsMic = false;
 function setPTT(on) {
   S.ptt = !!on;
   updatePTT();
-  WS.send({ type: 'ptt', ptt: on });
 
   // TX mic tied directly to PTT (SSB/AM/FM only - CW is keyed via CI-V
   // text in civ.py, never touches the microphone at all). Used to
@@ -323,25 +348,45 @@ function setPTT(on) {
   // Opening it only for the PTT window keeps that ducking limited to
   // exactly when RX is already intentionally muted anyway (setTxAudioDuck,
   // above in updatePTT) - no NEW loss of RX audio versus today's normal PTT.
-  if (S.mode !== 'CW') {
-    if (on) {
-      // Only start (and remember we own it) if it wasn't already running -
-      // an operator may have manually enabled the "Nadawanie TX -
-      // mikrofon" button in RADIO to keep it on continuously; in that
-      // case leave it alone entirely, don't stop it out from under them
-      // on the next PTT release.
-      if (window.WS?.isTxActive?.()) {
-        _pttOwnsMic = false;
+  if (S.mode !== 'CW' && on && !window.WS?.isTxActive?.()) {
+    // FIX (2026-10-17, live report via an independent SDR in Italy:
+    // "wcisniecie PTT nie odrazu transmituje, jest zwloka"): this used to
+    // send the CI-V ptt:true WS message FIRST and only start the mic/
+    // audio pipeline (getUserMedia -> WebRTC) afterward - proven via
+    // ptt_timing.log on the live station: audio.tx_active was False on
+    // EVERY single PTT-ON, meaning the radio got keyed (carrier up) before
+    // the mic had even started, let alone before any audio reached the
+    // radio - dead air on the carrier until the mic/network caught up.
+    // Reversed: start the audio pipeline FIRST, key the radio (send
+    // ptt:true) only once startTX() actually resolves. Still not
+    // zero-latency (mic/encoder startup takes real time regardless), but
+    // the carrier no longer sits keyed with silence before modulation
+    // begins. If the mic fails to start (permission denied, no device -
+    // _txMic.start() already shows its own toast for that), the radio is
+    // never keyed at all instead of transmitting dead air.
+    _pttOwnsMic = true;
+    window.WS?.startTX?.().then(ok => {
+      if (ok) {
+        _syncTxMicBtn(true);
+        WS.send({ type: 'ptt', ptt: true });
       } else {
-        _pttOwnsMic = true;
-        window.WS?.startTX?.().then(ok => { if (ok) _syncTxMicBtn(true); });
+        _pttOwnsMic = false;
+        S.ptt = false;
+        updatePTT();
       }
-    } else if (_pttOwnsMic) {
-      _pttOwnsMic = false;
-      window.WS?.stopTX?.();
-      _syncTxMicBtn(false);
-    }
+    });
+    return;
   }
+  if (S.mode !== 'CW' && on) {
+    // Mic already running (operator left "Nadawanie TX - mikrofon" on
+    // manually) - audio is already flowing, nothing to wait for.
+    _pttOwnsMic = false;
+  } else if (S.mode !== 'CW' && !on && _pttOwnsMic) {
+    _pttOwnsMic = false;
+    window.WS?.stopTX?.();
+    _syncTxMicBtn(false);
+  }
+  WS.send({ type: 'ptt', ptt: on });
 }
 
 // Keeps the manual "Nadawanie TX - mikrofon" button (RADIO tab) in sync
@@ -353,7 +398,7 @@ function _syncTxMicBtn(active) {
   btn.removeAttribute('data-i18n');
   btn.textContent = I18n.t(active ? 'tx_mic_stop' : 'tx_mic_start');
   btn.style.color = active ? 'var(--red)' : 'var(--dim)';
-  btn.style.borderColor = active ? 'var(--red)' : 'rgba(217,119,106,0.3)';
+  btn.style.borderColor = active ? 'var(--red)' : 'rgba(var(--red-rgb),0.3)';
 }
 
 function updatePTT() {
@@ -665,8 +710,14 @@ function setPage(name) {
   document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
   const pg = document.getElementById('page-' + name);
   if (pg) pg.classList.add('active');
-  // Block body scrolling on the FT8 page
-  document.body.classList.toggle('page-wsjtx-active', name === 'wsjtx');
+  // Block body scrolling on the FT8 and Radio pages (both use the fixed
+  // single-screen layout - see updateScale() at the bottom of index.html)
+  const isWs = name === 'wsjtx';
+  const isRad = name === 'radio';
+  document.body.classList.toggle('page-wsjtx-active', isWs);
+  document.body.classList.toggle('page-radio-active', isRad);
+  document.documentElement.classList.toggle('page-wsjtx-active', isWs);
+  document.documentElement.classList.toggle('page-radio-active', isRad);
 
   // Reset scroll to the top - every tab starts from the beginning.
   // Without this, scrolling the Radio page causes "shifted" views in
@@ -677,6 +728,12 @@ function setPage(name) {
   } catch(e) {
     // Fallback for older browsers that don't support the options object
     window.scrollTo(0, 0);
+  }
+
+  // Re-run the #app-scale sizing logic - it behaves differently per page
+  // (Radio/FT8 lock to the viewport height, everything else scrolls).
+  if (typeof window.updateScale === 'function') {
+    window.updateScale();
   }
 
   // WebSocket channel subscription per tab. The server only sends
@@ -759,10 +816,29 @@ function setPage(name) {
 // recent ones.
 let _toastQueue = [];
 let _toastShowing = false;
+let _recentToasts = []; // [{msg, at}] - shown OR currently queued, pruned by age
+
+// FIX (2026-10-17, live report: "jak sie zaloguje i przejme radio potrafi
+// tam wyskoczyc z 5 toastow"): several independent things (WSJT-X monitor
+// status, radio-lock grant, online/lock-state broadcasts, etc.) can each
+// call showToast() within the same few seconds right after login/taking
+// the radio - none of that is wrong on its own, but with no
+// deduplication every one of them queued up and played back-to-back, so
+// the user sat through a 15-20s drip of popups for what was really one
+// logical event. Collapse duplicate text within a short window - checked
+// against recent history (not just the single last message), since the
+// repeats are often interleaved with other, genuinely different toasts
+// rather than strictly back-to-back (e.g. A, B, A).
+const TOAST_DEDUP_WINDOW_MS = 4000;
 
 function showToast(msg, type = 'info') {
   const el = document.getElementById('toast');
   if (!el) return;
+  const now = Date.now();
+  _recentToasts = _recentToasts.filter(t => (now - t.at) < TOAST_DEDUP_WINDOW_MS);
+  if (_recentToasts.some(t => t.msg === msg)) return;
+  if (_toastQueue.some(t => t.msg === msg)) return;
+  _recentToasts.push({ msg, at: now });
   _toastQueue.push({ msg, type });
   if (_toastQueue.length > 4) _toastQueue.splice(0, _toastQueue.length - 4);
   if (!_toastShowing) _drainToastQueue();
@@ -1142,7 +1218,7 @@ document.addEventListener('wheel', (e) => {
 
 // ── Export ────────────────────────────────────────────────────────────────────
 window.UI = {
-  updateConnectionStatus, updateDisconnectBadge, updateFreqDisplay, updateModeButtons, updatePTT,
+  updateConnectionStatus, updateDisconnectBadge, updateFreqDisplay, checkQlogSpotPin, updateModeButtons, updatePTT,
   updateSMeter, updateTelemetry, fullRefresh, updateFreqB, updateVFOBadges,
   setPage, showToast, tune, sendFreq, gotoFreq, vfoSelect,
   editVfoB, wheelVfoB, applyRadioLockUI,
