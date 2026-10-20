@@ -200,9 +200,19 @@ function _startClock() {
 
 function _updateClock() {
   const now  = new Date();
-  const s    = now.getUTCSeconds() % 15;
   const ms   = now.getUTCMilliseconds();
-  const frac = (s * 1000 + ms) / 15000;
+  // FIX (2026-10-20, live question: "czy zegar i pasek postepu sa
+  // synchronizowane") - this clock used to be hardcoded to a fixed 15s
+  // cycle (deliberately left that way when the progress bar below got its
+  // own FT4 fix on 2026-10-17) - correct for FT8, but in FT4 (7.5s) it ran
+  // at HALF the real rate: a full real FT4 period only swept the clock
+  // face halfway, visibly out of sync with the progress bar right below
+  // it. Now shares periodLen/totalSec/cycleSec with the progress bar logic
+  // that follows, instead of computing its own fixed-15s s/frac.
+  const periodLen = _status.mode === 'FT4' ? 7.5 : 15.0;
+  const totalSec  = now.getUTCSeconds() + ms / 1000;
+  const cycleSec  = totalSec % periodLen;
+  const frac = cycleSec / periodLen;
   const canvas = document.getElementById('wj-clock');
   if (canvas) {
     const ctx = canvas.getContext('2d');
@@ -214,23 +224,20 @@ function _updateClock() {
     ctx.beginPath(); ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, r, -Math.PI/2, -Math.PI/2 + frac * 2 * Math.PI);
     ctx.closePath();
-    ctx.fillStyle = _status.transmit ? '#c33' : (s < 8 ? '#1a4a2a' : '#1a2a4a');
+    // Same proportional threshold as the old fixed "s < 8" (8/15), now
+    // scaled to whichever periodLen actually applies.
+    ctx.fillStyle = _status.transmit ? '#c33' : (cycleSec < periodLen * 8 / 15 ? '#1a4a2a' : '#1a2a4a');
     ctx.fill();
     ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2);
     ctx.fillStyle = '#fff'; ctx.fill();
   }
   const el = document.getElementById('wj-clock-s');
-  if (el) el.textContent = s;
+  if (el) el.textContent = Math.floor(cycleSec);
 
   // Pasek postepu cyklu UTC (przejety z forka 2026-10-17, #page-wsjtx
-  // ".cycle-bar-wrap" nad wodospadem) - osobne obliczenia od "s"/"frac"
-  // powyzej (ktore sa na stale 15s, celowo nieruszone), bo ten pasek MUSI
-  // poprawnie obslugiwac tryb FT4 (7.5s) - inaczej etykieta "FT4 (15.0s)"
-  // myliłaby operatora co do faktycznej dlugosci okna.
-  const periodLen = _status.mode === 'FT4' ? 7.5 : 15.0;
-  const totalSec  = now.getUTCSeconds() + ms / 1000;
-  const cycleSec  = totalSec % periodLen;
-  const pct       = (cycleSec / periodLen) * 100;
+  // ".cycle-bar-wrap" nad wodospadem) - reuses periodLen/totalSec/cycleSec
+  // computed above (shared with the clock face now, see its comment).
+  const pct = (cycleSec / periodLen) * 100;
 
   const cycleFill = document.getElementById('wj-cycle-fill');
   if (cycleFill) cycleFill.style.width = `${pct.toFixed(1)}%`;

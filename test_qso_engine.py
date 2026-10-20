@@ -23,6 +23,7 @@ Zwraca exit code 0 gdy wszystko OK, 1 gdy sa bledy (do CI/skryptow).
 """
 import sys
 import os
+import time
 import importlib.util
 
 # ── Zaladuj qso_engine.py jako modul ────────────────────────────────────────
@@ -39,6 +40,7 @@ _qe = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_qe)
 
 QsoEngine = _qe.QsoEngine
+pick_best_caller = _qe.pick_best_caller
 parse_message = _qe.parse_message
 is_cq_modifier = _qe.is_cq_modifier
 ST_IDLE = _qe.ST_IDLE
@@ -739,6 +741,79 @@ def test_dxpedition_message_unresolved_sender_falls_back():
     check(parsed["call_de"] == "W9XYZ", "Fallback na call_de gdy sender_call nierozpoznany")
 
 
+def test_should_retransmit_slot():
+    section("should_retransmit_slot: retry wg siatki slotow (handoff item F)")
+    window_s = 15.0
+    eng = QsoEngine("SQ3MZM", "JO82")
+
+    check(eng.should_retransmit_slot(window_s) is False, "IDLE: nigdy nie trzeba retransmitowac")
+
+    eng.start_qso("HB9CNU", parse_message("SQ3MZM HB9CNU JN37"))
+    check(eng.should_retransmit_slot(window_s) is False, "Przed pierwsza transmisja: nic do powtorzenia")
+
+    eng.record_tx_sent()
+    # Zakotwicz last_tx_at do GRANICY aktualnego slotu (nie dowolnego
+    # przesuniecia od "teraz") - test deterministyczny niezaleznie od tego,
+    # w ktorym momencie realnego slotu akurat sie wykonuje.
+    now_slot = int(time.time() // window_s)
+
+    eng.last_tx_at = now_slot * window_s
+    check(eng.should_retransmit_slot(window_s) is False,
+          "Ten sam slot co 'teraz': za wczesnie na powtorke")
+
+    eng.last_tx_at = (now_slot - 1) * window_s
+    check(eng.should_retransmit_slot(window_s) is False,
+          "1 slot wstecz (polowa wlasnego okresu): jeszcze za wczesnie")
+
+    eng.last_tx_at = (now_slot - 2) * window_s
+    check(eng.should_retransmit_slot(window_s) is True,
+          "2 sloty wstecz (pelny wlasny okres minal): pora powtorzyc")
+
+    eng.last_tx_at = (now_slot - 5) * window_s
+    check(eng.should_retransmit_slot(window_s) is True,
+          "Dawno minelo wiecej niz jeden okres: dalej True")
+
+    eng.abort_qso()
+    eng.last_tx_at = (now_slot - 5) * window_s
+    check(eng.should_retransmit_slot(window_s) is False,
+          "Po abort: znow IDLE, nic do powtorzenia niezaleznie od last_tx_at")
+
+
+def test_pick_best_caller():
+    section("pick_best_caller: wybor stacji z wielu wolajacych (handoff item E)")
+    check(pick_best_caller([]) is None, "Pusta lista -> None")
+
+    # Sama roznica SNR, obie nie w logu -> wygrywa wyzszy SNR
+    cands = [
+        {"call_de": "SP1AAA", "snr": -10, "worked_before": False},
+        {"call_de": "SP2BBB", "snr": -3, "worked_before": False},
+        {"call_de": "SP3CCC", "snr": -20, "worked_before": False},
+    ]
+    best = pick_best_caller(cands)
+    check(best["call_de"] == "SP2BBB", "Najwyzszy SNR wygrywa, gdy nikt nie jest w logu")
+
+    # Stacja NIE w logu wygrywa z duzo lepszym SNR stacji JUZ w logu
+    cands = [
+        {"call_de": "WORKED", "snr": 10, "worked_before": True},
+        {"call_de": "NEW", "snr": -15, "worked_before": False},
+    ]
+    best = pick_best_caller(cands)
+    check(best["call_de"] == "NEW", "Stacja NIE w logu wygrywa mimo gorszego SNR")
+
+    # Obie juz w logu -> SNR rozstrzyga
+    cands = [
+        {"call_de": "A", "snr": -5, "worked_before": True},
+        {"call_de": "B", "snr": 2, "worked_before": True},
+    ]
+    best = pick_best_caller(cands)
+    check(best["call_de"] == "B", "Gdy obie w logu, SNR rozstrzyga")
+
+    # Brakujace klucze (snr/worked_before) nie wywalaja wyjatku
+    cands = [{"call_de": "X"}, {"call_de": "Y", "snr": 1}]
+    best = pick_best_caller(cands)
+    check(best is not None, "Brakujace klucze nie wywalaja wyjatku (domyslne wartosci)")
+
+
 def main():
     print("╔══════════════════════════════════════════════════════╗")
     print("║  TEST SUITE — Maszyna stanow QSO (HAMCTRL)            ║")
@@ -767,6 +842,8 @@ def main():
     test_dxpedition_message_we_get_report()
     test_dxpedition_message_we_get_rr73()
     test_dxpedition_message_unresolved_sender_falls_back()
+    test_should_retransmit_slot()
+    test_pick_best_caller()
 
     print("\n" + "═" * 56)
     total = _passed + _failed

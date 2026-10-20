@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ham Radio Control</title>
+<link rel="icon" href="favicon.ico">
 <!-- Dzien/noc: ustaw data-mode PRZED zaladowaniem CSS/reszty strony, zeby
      nie bylo widac blysku zlego motywu przy starcie (patrz theme.js).
      UWAGA: data-mode (jasny/ciemny), NIE data-theme — data-theme to
@@ -23,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=202610172600">
+<link rel="stylesheet" href="css/style.css?v=202610201900">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -748,8 +749,14 @@
 
         <!-- max-width+ellipsis (2026-09-03): d.text (the FT8 message being
              waited on) has no length cap from the backend - without this, a
-             long message could grow this pill wide enough to push the row. -->
-        <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.15);border-color:#f59e0b;color:#fbbf24;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+             long message could grow this pill wide enough to push the row.
+             Widened 280->440px (2026-10-20, live request: "przycina ...
+             nie pokazuje co dokladnie teraz poleci") - 280px ellipsis-cut
+             a realistic worst-case message ("⏳ TX za 15.0s — SQ3MZM/P
+             HB9CNU R-10" at 11px mono is ~320-350px); this sibling row's
+             OTHER items are now flex-shrink:0 (see .wj-period-switch's
+             comment in style.css) so widening this no longer squeezes them. -->
+        <div class="wsjtx-status-pill" id="wj-tx-wait-status" style="display:none;background:rgba(255,170,0,0.15);border-color:#f59e0b;color:#fbbf24;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
              data-i18n-title="wj_tx_wait_title" title="Nadawanie FT8/FT4 musi wystartowac dokladnie na granicy okna 15s/7.5s UTC — to normalne oczekiwanie, nie zawieszenie. Sam TX (PTT) zaczyna sie po zejsciu licznika do 0.">⏳ TX za --s</div>
       </div>
 
@@ -2847,14 +2854,14 @@
 <script src="js/profile_audio.js?v=202608243200"></script>
 <script src="js/relay_admin.js?v=202610162130"></script>
 <script src="js/tunnel.js?v=202610162130"></script>
-<script src="js/dxcc.js?v=202608210002"></script>
+<script src="js/dxcc.js?v=202610202000"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
-<script src="js/beamheading.js?v=202607230001"></script>
-<script src="js/wsjtx.js?v=202610172700"></script>
+<script src="js/beamheading.js?v=202610202000"></script>
+<script src="js/wsjtx.js?v=202610201950"></script>
 <script src="js/wsjtx_scope.js?v=202610161200"></script>
 <script src="js/chat.js?v=202609030004"></script>
 <script src="js/vfo.js?v=202610172903"></script>
-<script src="js/waterfall.js?v=202610180002"></script>
+<script src="js/waterfall.js?v=202610201930"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>
@@ -2924,7 +2931,7 @@
   </div>
 </div>
 
-<script src="js/cw.js?v=202608260003"></script>
+<script src="js/cw.js?v=202610202100"></script>
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>

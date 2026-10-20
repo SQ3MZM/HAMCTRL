@@ -98,16 +98,13 @@ impl Ft8Buffer {
         snap
     }
 
-    /// Snapshot of the just-completed FT8/FT4 window, aligned to the window
-    /// grid. Called by rx_loop shortly (settle ~0.3s) AFTER a window boundary,
-    /// so the window that just ended occupies the buffer region ending a touch
-    /// before "now". We return `window_s + lead_s` seconds: `window_s` is the
-    /// transmission length, `lead_s` a small head margin for signals that start
-    /// slightly early. The decoder's own time-search absorbs the small offset.
-    ///
-    /// Implemented on top of `snapshot`: we grab `window_s + lead_s` seconds
-    /// ending at the current write position. Because rx_loop wakes right after
-    /// the boundary, this region is the completed window (plus the head margin).
+    /// UNUSED since the 2026-10-20 early-decode change (rx_loop.rs now wakes
+    /// BEFORE the window boundary and calls `snapshot()` directly with a
+    /// computed length instead) - kept for reference/potential future use.
+    /// Was: snapshot of the just-completed FT8/FT4 window, aligned to the
+    /// window grid, called by rx_loop shortly (settle ~0.3s) AFTER a window
+    /// boundary.
+    #[allow(dead_code)]
     pub fn snapshot_aligned(&self, window_s: f64, lead_s: f64) -> Option<Vec<f32>> {
         let want = (window_s + lead_s) as f32;
         self.snapshot(want)

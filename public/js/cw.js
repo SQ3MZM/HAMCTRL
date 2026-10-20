@@ -53,7 +53,10 @@ async function loadMacros() {
 
 async function loadStatus() {
   try {
-    const r   = await fetch('/api/cw/status');
+    const token = localStorage.getItem('token') || '';
+    const r   = await fetch('/api/cw/status', {
+      headers: token ? {'Authorization': `Bearer ${token}`} : {}
+    });
     const st  = await r.json();
     cwMethod  = st.method || 'dtr';
     updateMethodBadge();
@@ -320,8 +323,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.CW._loaded = true;
 });
 
-// Load macros after login — that's when we finally have the token and uid
-window.addEventListener('app:ready', () => { loadMacros(); });
+// Load macros (and re-fetch status with the token) after login — that's
+// when we finally have the token and uid. The DOMContentLoaded call above
+// runs pre-login without a token and always gets the default, so the
+// method badge needs this second call to show the real configured method.
+window.addEventListener('app:ready', () => { loadMacros(); loadStatus(); });
 
 })();
 

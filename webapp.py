@@ -99,6 +99,13 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # all three are bumped together at release time, not per-commit.
 SERVER_VERSION = "2.0.15"
 
+# Internal per-commit diagnostic marker (see the comment above). Defined
+# once here and printed both at server startup (server.py::amain, so it's
+# visible without needing to transmit anything first) and at first FT8/FT4
+# TX encode below - the two used to be out of sync (only the TX-time print
+# existed despite the comment above claiming "printed at startup").
+BUILD_MARKER = "BUILD-2026-10-20-STARTUP-MARKER-CWFIX"
+
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
 # notice (it never downloads or installs anything — the admin fetches the new
@@ -194,6 +201,34 @@ def _ptt_log_line(msg: str):
             f.write(line)
     except Exception:
         pass  # logging must never break PTT
+
+# DIAGNOSTIC (2026-10-20, live report: "user nie raz to wystepuje tylko co
+# jakies logowanie widzi duzo za duzo trybow" - checkboxes in KONFIGURACJA
+# show only 4 modes enabled, but on SOME logins the regular user's mode
+# grid shows ~13). Intermittent, not reproduced from static code review
+# alone (the save->self.cfg->GET->S.modes path reads correctly on paper) -
+# same reasoning as ptt_timing.log/dxcluster.log above: log every GET
+# /api/config/modes response instead of guessing, so the NEXT occurrence
+# can be compared against what KONFIGURACJA actually has checked at that
+# moment.
+_MODES_LOG_FILE = DATA / "modes_config.log"
+_MODES_LOG_MAX_BYTES = 200_000
+
+
+def _modes_log_line(msg: str):
+    try:
+        ts = time.strftime('%Y-%m-%d %H:%M:%S')
+        line = f"[{ts}] {msg}\n"
+        if _MODES_LOG_FILE.exists() and _MODES_LOG_FILE.stat().st_size > _MODES_LOG_MAX_BYTES:
+            try:
+                data = _MODES_LOG_FILE.read_text(encoding='utf-8', errors='ignore')
+                _MODES_LOG_FILE.write_text(data[len(data) // 2:], encoding='utf-8')
+            except Exception:
+                pass
+        with open(_MODES_LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(line)
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WEBSOCKET HUB (aiohttp)
@@ -566,6 +601,12 @@ class App:
         # we need to know WHO in order to know when to stop.
         self._ft8_rx_owner_uid: str | None = None
         self._autoqso_uid: str | None = None  # the operator who started the current CQ/auto-QSO
+        # Handoff item E (2026-10-20): candidates collected from the CURRENT
+        # decode batch when several stations reply to our CQ at once, plus
+        # the pending decision task that picks among them after a short
+        # collection window (see _decide_best_caller / qso_engine.pick_best_caller).
+        self._cq_candidates: dict = {}
+        self._cq_decision_task = None
         self._last_auto_tx_key = None
         self._last_auto_tx_action = None  # dict of the last sent auto-QSO message, for retransmission
         self._pre_pcm_cache = None  # (call_to, call_de, report, pcm_bytes, duration)  # auto-TX dedup: (call_to, report_or_grid)
@@ -3020,9 +3061,13 @@ class App:
             all_modes = ["USB","LSB","AM","FM","CW","CW-R","RTTY","RTTY-R",
                          "USB-D","LSB-D","PSK","PSK-R","PKTUSB","PKTLSB",
                          "WFM","DV"]
+            _has_key = "enabledModes" in self.cfg
             enabled = self.cfg.get("enabledModes", ["USB","LSB","AM","FM","CW","RTTY","PKTUSB","PKTLSB"])
             # Modes with filters — the admin can assign a preferred filter
             mode_filters = self.cfg.get("modeFilters", {})
+            _modes_log_line(f"GET /api/config/modes uid={uid} role={role} "
+                             f"cfg_id={id(self.cfg)} has_key={_has_key} "
+                             f"returned_enabledModes={enabled}")
             return 200, {"allModes": all_modes, "enabledModes": enabled, "modeFilters": mode_filters}
 
         if p == "/api/config/modes" and method == "POST":
@@ -3032,6 +3077,8 @@ class App:
             if "modeFilters" in body:
                 self.cfg["modeFilters"] = body["modeFilters"]
             save_json(CFG_F, self.cfg)
+            _modes_log_line(f"POST /api/config/modes uid={uid} cfg_id={id(self.cfg)} "
+                             f"saved_enabledModes={self.cfg.get('enabledModes')}")
             await self.hub.broadcast({
                 "type": "config_update",
                 "enabledModes": self.cfg.get("enabledModes", []),
@@ -7732,7 +7779,7 @@ class App:
             # BUILD VERSION MARKER - confirms which code version is in the
             # EXE. CHANGED on every significant fix. If you see an OLD
             # marker after rebuilding the EXE = PyInstaller packaged the wrong webapp.py.
-            print(f"[build] webapp.py wersja BUILD-2026-10-18-HOTPTT-AGC-FEATURE-CLEANUP, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
+            print(f"[build] webapp.py wersja {BUILD_MARKER}, ldpc_valid={debug.get('ldpc_valid')}", flush=True)
             if not debug.get("ldpc_valid"):
                 print(f"[{'ft4' if is_ft4 else 'ft8'}] WARNING: ldpc_valid=False for '{call_to} {call_de} {report}' — sending anyway")
 
@@ -7793,13 +7840,28 @@ class App:
                 # We're in the partner's window, BEFORE our window starts
                 wait_s = offset - pos_in_full
             elif pos_in_full < offset + window_s:
-                # We're in OUR window — transmit if there's enough time
-                # left for the whole transmission, otherwise wait for the next occurrence
+                # We're in OUR window. Transmitting "late" into a window
+                # isn't free even when the window has physical room for the
+                # full duration (handoff 2026-10-20, live report: "potrafi
+                # przesunac odpowiedz za 2,3 periody" / barely any replies
+                # landing in time): a receiver's own decoder only searches a
+                # DT range of roughly -0.5..+1.5s around the nominal start -
+                # a reply starting noticeably later than that is at serious risk of being
+                # missed even though OUR window had room for it (FT8's full
+                # margin is window_s-duration=2.36s, FT4's is ~3.0s - both
+                # well past that ~1.5s decode-search margin). So: only start
+                # immediately if the window both HAS room for the whole
+                # transmission AND we're not already past this cap into it;
+                # otherwise treat it the same as "doesn't fit" and wait for
+                # the next occurrence of our parity instead of going out
+                # late and likely unheard.
+                _LATE_START_CAP_S = 1.5
                 remaining = offset + window_s - pos_in_full
-                if remaining < duration:
-                    wait_s = remaining + full_period_s - window_s
-                else:
+                pos_in_our_window = window_s - remaining
+                if remaining >= duration and pos_in_our_window <= _LATE_START_CAP_S:
                     wait_s = 0.0
+                else:
+                    wait_s = remaining + full_period_s - window_s
             else:
                 # We're already in the partner's window AFTER ours — wait
                 # for the next occurrence of our parity
@@ -8093,8 +8155,8 @@ class App:
         governed by the same bounded retry count instead of duplicating
         this logic with a risk of the two copies drifting apart later.
         """
-        _retry_period_s = 2 * (ft4_encoder.FT4_SLOT_TIME
-                                if self._ft8_decode_mode == "FT4" else 15.0)
+        _window_s = ft4_encoder.FT4_SLOT_TIME if self._ft8_decode_mode == "FT4" else 15.0
+        _retry_period_s = 2 * _window_s
         _max_retries = 4
         # DIAGNOSTIC (added 2026-08-27, reported live: "nadawanie nie jest
         # zgodne z dekodami tylko 3 razy idzie dobrze przerwa i zdowu
@@ -8115,7 +8177,12 @@ class App:
                       f"elapsed={_elapsed:.1f}s/{_retry_period_s:.0f}s "
                       f"retry_count={self._qso_engine.retry_count}/{_max_retries} "
                       f"last_action={'set' if self._last_auto_tx_action else 'MISSING'}")
-        if self._qso_engine.should_retransmit(_retry_period_s):
+        # FIX (handoff item F, 2026-10-20): should_retransmit_slot (slot-grid
+        # count), not should_retransmit (continuous elapsed duration) - see
+        # its docstring in qso_engine.py for why the continuous version can
+        # drift a retry by a whole slot depending on exactly when a
+        # triggering decode happens to arrive.
+        if self._qso_engine.should_retransmit_slot(_window_s):
             if self._qso_engine.should_give_up(_max_retries):
                 print(f"[autoqso] {self._qso_engine.partner_call} not "
                       f"responding after {_max_retries} tries — abandoning QSO")
@@ -8287,43 +8354,33 @@ class App:
 
             if result.get("action") == "new_caller":
                 call_de = result["call_de"]
-                # Someone replied to our CQ while we were free (IDLE) -
-                # stop the periodic CQ calling (we're moving into a QSO
-                # with this station) and answer immediately. No queue
-                # (removed 2026-08-26): we're always IDLE here by
-                # construction (the engine only returns 'new_caller' from
-                # ST_IDLE - see on_decode), so start_qso always applies.
-                if self._cq_calling:
-                    print(f"[cq] {call_de} replied to CQ - stopping CQ, starting QSO")
-                    self._stop_cq_calling()
-                print(f"[autoqso] Auto-starting QSO with {call_de} (idle)")
-                start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
-                if start_result and start_result.get("action") == "reply":
-                    await self._dispatch_auto_reply(start_result, m,
-                                                     tx_seq=self._reserve_tx_seq())
-                    if start_result.get("qso_complete"):
-                        # FIX (2026-09-03, live report: "nasze rpts jest nie
-                        # wypelniony w logu" / QSOs not ending up in the log
-                        # at all): a QSO can complete on its VERY FIRST
-                        # exchange right here - e.g. our own silence give-up
-                        # timer (MAX_REPORT_REPEATS / should_give_up)
-                        # already abandoned a stalled QSO with this station,
-                        # and their delayed confirmation then arrives and
-                        # gets treated as a fresh 'new_caller' whose first
-                        # message is ALREADY a completing R+report/73/RR73/
-                        # RRR (more likely now that R+report itself
-                        # completes immediately, see the RRR->RR73
-                        # shortcut). This branch used to just dispatch the
-                        # reply and return WITHOUT ever calling the
-                        # qso_complete logging code below (that only lived
-                        # inside the separate "action == reply" handler) -
-                        # the QSO was transmitted correctly but silently
-                        # never written to the log at all.
-                        await self._log_completed_auto_qso(m)
-                        return
-                await self.hub.broadcast({"type": "auto_qso_status",
-                                           "state": self._qso_engine.state,
-                                           "partner": self._qso_engine.partner_call})
+                # Handoff item E (2026-10-20, live report: "na 10 wybranych
+                # stacji tylko raz udalo sie zmiescic w czasie" / the
+                # automation used to grab the FIRST decoded reply instead of
+                # the best one when several stations answer our CQ in the
+                # same batch). Rather than starting the QSO immediately on
+                # the first 'new_caller' seen, collect candidates for a
+                # short window and let _decide_best_caller choose.
+                # on_decode() is pure here (doesn't mutate engine state for
+                # 'new_caller' - only start_qso does), so it's safe to see
+                # this action repeatedly for different candidates without
+                # committing to any of them yet.
+                snr = m.get("snr_db", m.get("snr", 0))
+                uid = getattr(self, "_autoqso_uid", None)
+                worked = False
+                try:
+                    if uid:
+                        worked = bool(qso_db.worked_before(uid, call_de).get("worked"))
+                except Exception as e:
+                    print(f"[autoqso] worked_before lookup failed for {call_de}: {e}")
+                self._cq_candidates[call_de] = {
+                    "call_de": call_de, "snr": snr, "worked_before": worked,
+                    "parsed": parsed, "m": m,
+                }
+                print(f"[autoqso] {call_de} replied to CQ (snr={snr}, worked_before={worked}) "
+                      f"- candidate {len(self._cq_candidates)}/? this window")
+                if self._cq_decision_task is None or self._cq_decision_task.done():
+                    self._cq_decision_task = asyncio.create_task(self._decide_best_caller())
                 return
 
             if result.get("action") == "partner_busy":
@@ -8517,6 +8574,81 @@ class App:
         # No queue (removed 2026-08-26) - we're free again and
         # will answer whoever calls next.
 
+    async def _decide_best_caller(self):
+        """Handoff item E (2026-10-20): after a short collection window,
+        pick the best of the candidates gathered in self._cq_candidates
+        (see the 'new_caller' branch in _process_auto_qso above) and start
+        the QSO with that one only - collect replies, then pick by priority,
+        instead of grabbing whichever decoded first. Runs as its own task
+        so _process_auto_qso (called
+        per-decode, sequentially, from _ft8_rx_loop) never blocks waiting
+        for this - other decodes in the same batch keep being processed
+        and can add more candidates while this sleeps.
+        """
+        # Trade-off: every extra ms here delays the reply even when there's
+        # only ONE caller (the common case) - comes straight out of the
+        # margin the Step 0 early-decode fix just bought back. Kept short
+        # (0.3s) on purpose - per rx_loop.rs's own comments, a single decode
+        # pass (where most CQ replies will have already arrived) takes
+        # ~150-200ms, so 0.3s catches the common case without eating much
+        # into the window-timing cap (item B, ~1.5s).
+        _COLLECT_WINDOW_S = 0.3
+        await asyncio.sleep(_COLLECT_WINDOW_S)
+        candidates = list(self._cq_candidates.values())
+        self._cq_candidates = {}
+        if not candidates:
+            return
+        # Something else (a manual click, or this task losing a race with
+        # another one - shouldn't happen since _process_auto_qso only
+        # starts a new task when none is pending, but cheap to guard)
+        # already moved us out of IDLE while we were collecting.
+        if self._qso_engine.state != qso_engine.ST_IDLE:
+            print(f"[autoqso] {len(candidates)} CQ-reply candidate(s) collected, "
+                  f"but engine already busy ({self._qso_engine.state}) - skipping")
+            return
+        chosen = qso_engine.pick_best_caller(candidates)
+        call_de, parsed, m = chosen["call_de"], chosen["parsed"], chosen["m"]
+        if len(candidates) > 1:
+            others = ", ".join(f"{c['call_de']}(snr={c['snr']},b4={c['worked_before']})"
+                               for c in candidates if c is not chosen)
+            print(f"[autoqso] Picked {call_de} (snr={chosen['snr']}, "
+                  f"worked_before={chosen['worked_before']}) over "
+                  f"{len(candidates) - 1} other caller(s): {others}")
+        # Someone replied to our CQ while we were free (IDLE) - stop the
+        # periodic CQ calling (we're moving into a QSO with this station).
+        # No queue (removed 2026-08-26): we're always IDLE here by
+        # construction (the engine only returns 'new_caller' from ST_IDLE -
+        # see on_decode), so start_qso always applies.
+        if self._cq_calling:
+            print(f"[cq] {call_de} replied to CQ - stopping CQ, starting QSO")
+            self._stop_cq_calling()
+        print(f"[autoqso] Auto-starting QSO with {call_de} (idle)")
+        start_result = self._qso_engine.start_qso(call_de, initial_decode=parsed)
+        if start_result and start_result.get("action") == "reply":
+            await self._dispatch_auto_reply(start_result, m,
+                                             tx_seq=self._reserve_tx_seq())
+            if start_result.get("qso_complete"):
+                # FIX (2026-09-03, live report: "nasze rpts jest nie
+                # wypelniony w logu" / QSOs not ending up in the log at
+                # all): a QSO can complete on its VERY FIRST exchange right
+                # here - e.g. our own silence give-up timer (MAX_REPORT_REPEATS
+                # / should_give_up) already abandoned a stalled QSO with
+                # this station, and their delayed confirmation then arrives
+                # and gets treated as a fresh 'new_caller' whose first
+                # message is ALREADY a completing R+report/73/RR73/RRR
+                # (more likely now that R+report itself completes
+                # immediately, see the RRR->RR73 shortcut). This branch
+                # used to just dispatch the reply and return WITHOUT ever
+                # calling the qso_complete logging code below (that only
+                # lived inside the separate "action == reply" handler) -
+                # the QSO was transmitted correctly but silently never
+                # written to the log at all.
+                await self._log_completed_auto_qso(m)
+                return
+        await self.hub.broadcast({"type": "auto_qso_status",
+                                   "state": self._qso_engine.state,
+                                   "partner": self._qso_engine.partner_call})
+
     async def _dispatch_auto_reply(self, result: dict, m: dict, tx_seq: int = None):
         """Substitutes the measured SNR (if required) and schedules
         sending the reply generated by the QSO engine.
@@ -8571,18 +8703,23 @@ class App:
         RECEIVE timestamp of the decode (recvEpoch, set ONCE in
         _ft8_rx_loop the moment the result comes in from Rust).
 
-        IMPORTANT - this is NOT the partner's period flipped. Rust only
-        sends the decode result AFTER the entire audio window +
-        computation finishes (see rx_loop.rs: settle=0.3s + decode time),
-        so by the time we receive it we're ALREADY in the next 15s/7.5s
-        window relative to the one the partner actually transmitted in —
-        and that next window is by definition OUR reply window. So there's
+        IMPORTANT - this is NOT the partner's period flipped. So there's
         no need to compute the "partner's period" and flip it (that was
         the bug in the previous version: it used the timeStr string with
         whole-second resolution, set AFTER decoding, so it regularly
         pointed to the window ALREADY AFTER the partner — computing the
         "partner's period" from that and taking the opposite landed back
         on the partner's window, one too many).
+
+        UPDATE (2026-10-20, early-decode handoff): rx_loop.rs now wakes
+        ~0.9-1.0s BEFORE the window boundary instead of 0.3s after it (see
+        rx_loop.rs's early_s), so recv_epoch can land either just before or
+        just after the boundary depending on exact timing - no longer
+        reliably "already in the next window" the way the original
+        settle-after-boundary design guaranteed. The +0.15*window_s shift
+        in the calculation below compensates for that, mapping an
+        early-arriving result to the same (next/our-reply) window the old
+        settle-after design used to guarantee on its own.
 
         recvEpoch is set ONCE on receive, so the result is stable
         regardless of when this code later runs (instant automation vs a
@@ -8593,7 +8730,12 @@ class App:
         if recv_epoch is None:
             return None
         try:
-            window_idx = int(float(recv_epoch) // window_s)
+            # Rust decodes EARLY now (wake ~0.9s before the window end, see
+            # rx_loop.rs early_s), so the result can arrive just BEFORE the
+            # boundary (still inside the partner's window). Shift by 15% of
+            # a window so any arrival from ~window_end-1s up to ~1.85
+            # windows after the start maps to the NEXT (= our reply) window.
+            window_idx = int((float(recv_epoch) + 0.15 * window_s) // window_s)
         except (TypeError, ValueError):
             return None
         return 1 if (window_idx % 2 == 0) else 2
@@ -8660,8 +8802,17 @@ class App:
         print(f"[autoqso] Scheduling TX: {action['call_to']} {action['call_de']} "
               f"{action['report_or_grid']} (r_flag={action.get('r_flag', False)})")
 
-        # Dedup — don't send the same message twice in a row
-        tx_key = (action['call_to'], action.get('report_or_grid'))
+        # Dedup — don't send the same message twice in a row.
+        # FIX (handoff 2026-10-20): the key used to be just (call_to,
+        # report_or_grid), missing r_flag - a plain report ("-10") and its
+        # later R-prefixed acknowledgment ("R-10", same report_or_grid
+        # value, r_flag=True) collided on this key. If the automation sent
+        # "-10" and then needed to send "R-10" next (same call_to/report,
+        # only r_flag differs) while still inside the same locked TX
+        # window, this treated it as a duplicate of the message that just
+        # went out and silently dropped it - skipping the acknowledgment
+        # the partner was waiting for.
+        tx_key = (action['call_to'], action.get('report_or_grid'), action.get('r_flag', False))
         if tx_key == self._last_auto_tx_key and self._ft8_tx_lock.locked():
             print(f"[autoqso] Duplicate TX {tx_key} — ignoring")
             return

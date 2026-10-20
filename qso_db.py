@@ -338,6 +338,44 @@ def add_qso(user_id: str, data: dict) -> dict:
         # I18n lookup. Kept in Polish deliberately, do not translate.
         raise ValueError("Brak wymaganych pól: call, qso_date, time_on")
 
+    # DUPLICATE GUARD (handoff item G, 2026-10-20): the auto-QSO engine logs
+    # on RR73 (qso_complete=True -> _log_completed_auto_qso -> abort_qso(),
+    # see webapp.py) and goes back to IDLE - but the partner's own closing
+    # message (R-xx or 73) can still be in flight and arrive a moment
+    # later. Since we're IDLE again by then, on_decode() treats it as a
+    # FRESH 'new_caller' (see its own comment on this exact failure mode)
+    # and the automation logs the "same" QSO a second time - add_qsos_bulk
+    # already guards this for CSV/ADIF imports, this single-row path never
+    # did. Only suppresses an EXACT call+band+mode repeat within a short
+    # window (a genuine second contact with the same station on the same
+    # band/mode minutes later is vanishingly rare in practice, and a
+    # parsing hiccup here fails OPEN - i.e. still logs the QSO - rather
+    # than ever silently dropping a real one).
+    band = data.get("band", "")
+    mode = data.get("mode", "")
+    _DUP_WINDOW_S = 300
+    try:
+        _new_dt = datetime.strptime(qso_date + time_on, "%Y%m%d%H%M%S")
+        _dup_row = None
+        for _r in conn.execute(
+            "SELECT * FROM qso WHERE user_id=? AND UPPER(call)=? AND band=? AND mode=? "
+            "ORDER BY qso_date DESC, time_on DESC LIMIT 5",
+            (user_id, call, band, mode)
+        ).fetchall():
+            try:
+                _existing_dt = datetime.strptime(_r["qso_date"] + _r["time_on"], "%Y%m%d%H%M%S")
+            except (ValueError, TypeError):
+                continue
+            if abs((_new_dt - _existing_dt).total_seconds()) <= _DUP_WINDOW_S:
+                _dup_row = _r
+                break
+        if _dup_row is not None:
+            print(f"[qso_db] duplicate QSO suppressed: {call} {band} {mode} "
+                  f"within {_DUP_WINDOW_S}s of an existing entry ({_dup_row['id']})")
+            return dict(_dup_row)
+    except (ValueError, TypeError):
+        pass  # qso_date/time_on in an unexpected format - fail open, insert normally
+
     row = {
         "id":            qso_id,
         "user_id":       user_id,

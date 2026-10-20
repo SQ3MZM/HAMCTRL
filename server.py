@@ -84,6 +84,7 @@ import os as _os
 # limits listening to localhost; the tunnel still works because cloudflared
 # connects to localhost. Documented for clubs so 0.0.0.0 is a known choice.
 BIND_HOST = _os.environ.get("HAM_BIND_HOST", "0.0.0.0")
+import webapp
 from webapp import App
 
 @web.middleware
@@ -511,10 +512,11 @@ async def amain():
               flush=True)
     asyncio.create_task(_startup_self_test())
 
+    print(f"[build] webapp.py wersja {webapp.BUILD_MARKER}", flush=True)
     print(f"""
-╔══════════════════════════════════════════════╗
-║   Ham Radio Control v2.5  [Python+aiohttp]  ║
-╚══════════════════════════════════════════════╝
+╔════════════════════════════════════════════════╗
+║   Ham Radio Control v{webapp.SERVER_VERSION}  [Python+aiohttp]  ║
+╚════════════════════════════════════════════════╝
 ► HTTP:  http://localhost:{PORT}
 ► HTTP:  http://{local_ip}:{PORT}
 {f'► HTTPS: https://{local_ip}:{_https_port}  ← USE THIS (TX microphone)' if _https_port else '► HTTPS: unavailable (pip install cryptography)'}

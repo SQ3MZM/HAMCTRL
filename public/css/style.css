@@ -247,6 +247,7 @@ input[type="range"].rf-range::-webkit-slider-thumb {
 .audio-toggle-btn:hover { color: var(--green); border-color: var(--green2); }
 
 #wj-mute-btn.active { color: var(--red); border-color: var(--red) !important; background: rgba(var(--red-rgb),0.1); }
+#wj-mute-btn { flex-shrink: 0; } /* see .wj-period-switch's comment - don't get squeezed by the TX-wait status pill */
 
 /* ── Czarne obwodki na przyciskach/sliderach ──
    Paleta sage jest spokojna/naturalna — czarna obwodka 1px na elementach
@@ -1311,6 +1312,7 @@ html[data-mode="light"] .wsjtx-freq { color: #0284c7; background: #ffffff; borde
   display: flex; align-items: center; gap: 6px; cursor: pointer;
   padding: 4px 9px; border-radius: 6px; border: 1px solid var(--wj-border-bright);
   background: var(--wj-card); transition: all 0.15s;
+  flex-shrink: 0; /* see .wj-period-switch's comment - don't get squeezed by the TX-wait status pill */
 }
 .wj-topbar-check:hover { background: var(--wj-card-sub); border-color: #0284c7; }
 .wj-topbar-check input { cursor: pointer; accent-color: var(--green); width: 15px; height: 15px; }
@@ -1320,7 +1322,14 @@ html[data-mode="light"] .wsjtx-freq { color: #0284c7; background: #ffffff; borde
 .wj-topbar-check.hound-box input { accent-color: #f97316; }
 
 .wj-period-switch {
+  /* flex-shrink:0 (2026-10-20, live request: "jak [status pill] sie pojawi
+     przycina 1st/2nd") - #wj-tx-wait-status sharing this row starts at
+     display:none and only appears during TX wait/transmit; the row is
+     flex-wrap:nowrap, so without this, the newly-visible pill's width
+     squeezed the OTHER items (this one included) to make room instead of
+     the pill's own ellipsis/overflow handling absorbing it alone. */
   display: inline-flex; border: 1px solid var(--wj-border-bright); border-radius: 6px; overflow: hidden;
+  flex-shrink: 0;
 }
 .wj-period-switch .wj-mode-btn.active { background: #0284c7 !important; color: #fff !important; }
 
@@ -1328,6 +1337,7 @@ html[data-mode="light"] .wsjtx-freq { color: #0284c7; background: #ffffff; borde
   display: flex; align-items: center; gap: 6px;
   background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright);
   padding: 3px 8px; border-radius: 6px;
+  flex-shrink: 0; /* see .wj-period-switch's comment above */
 }
 #wj-clock-s {
   font-family: var(--mono); font-size: 17px; font-weight: 800; color: var(--wj-text);
@@ -1409,7 +1419,12 @@ html[data-mode="light"] .cycle-bar-header { color: #475569; }
   font-family: var(--mono); font-size: 11px; color: var(--wj-text-dim);
 }
 .wsjtx-scope-canvas {
-  display: block; width: 100%; height: 160px; cursor: crosshair;
+  /* Halved (2026-10-20, live request: "ramka w ktorej sie znajduje wybor
+     jest za duza") - this is the clickable waterfall used to pick the TX
+     audio frequency; the backing bitmap resolution tracks this CSS height
+     dynamically (see wsjtx_scope.js's resize handler), so no JS change
+     needed alongside this. */
+  display: block; width: 100%; height: 80px; cursor: crosshair;
   background: #020408;
 }
 .wsjtx-scope-axis {

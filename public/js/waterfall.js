@@ -146,6 +146,27 @@ function init() {
     ro.observe(roTarget);
   }
 
+  // FIX (2026-10-20, live report: "button span jego nazwa wyswietla sie
+  // dopiero jak go wybierzesz... ponowne logowanie i znow button jest bez
+  // nazwy") - restoring the persisted span used to happen ONLY in a
+  // separate 'app:ready' listener below, which can fire BEFORE this init()
+  // (and therefore before #wf-btn-span even exists in the DOM, since
+  // init() itself is what's gated on the canvases existing) - that
+  // listener's own _updateSoftkeys() call (inside setSpan()) then found
+  // the button not-yet-rendered and silently skipped it, leaving the
+  // <select> with no option selected (blank) until the user manually
+  // changed the span themselves. Restoring here instead guarantees
+  // lastMeta.spanHz is already correct by the time _updateSoftkeys() below
+  // runs, which is only reached after the canvases (hence the rest of
+  // this panel's DOM) are confirmed present.
+  const _savedSpan = parseInt(localStorage.getItem('wf_span_hz'), 10);
+  if (_savedSpan) {
+    lastMeta.spanHz = _savedSpan;
+    const _center = lastMeta.centerHz || (S?.freq || 14205000);
+    lastMeta.loHz = _center - _savedSpan / 2;
+    lastMeta.hiHz = _center + _savedSpan / 2;
+  }
+
   _updateSoftkeys();
   drawAxis();
   start();
@@ -1074,10 +1095,13 @@ window.addEventListener('app:ready', () => {
 document.addEventListener('DOMContentLoaded', () => setTimeout(init, 300));
 
 window.addEventListener('app:ready', () => {
+  // init() already restores the DISPLAYED softkey from localStorage (see
+  // its own comment) regardless of event ordering - this handler's job is
+  // just to push the restored span to the SERVER (shared scope config),
+  // which setSpan()'s own fetch call does. #wf-span-select was removed
+  // 2026-10-17 (replaced by the #wf-btn-span softkey) - no longer queried here.
   const saved = parseInt(localStorage.getItem('wf_span_hz'), 10);
   if (!saved) return;
-  const sel = document.getElementById('wf-span-select');
-  if (sel) sel.value = String(saved);
   setSpan(saved);
 });
 

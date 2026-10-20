@@ -92,8 +92,18 @@ async fn run_loop(
         // is fully in the buffer, then decode it from an aligned snapshot.
         let now_epoch = current_epoch();
         let pos = now_epoch % window_s;               // 0..window_s
-        let settle = 0.3f64;                          // wait past boundary a touch
-        let wait = (window_s - pos) + settle;
+        // EARLY DECODE (handoff 2026-10-20, live report: automation missing
+        // reply slots / falling back a whole period): the old settle=0.3s-
+        // after-boundary wake meant the decode result reached Python
+        // 15.3-16.5s into the window, so _ft8_tx_sequence_inner started
+        // 1.5-3.3s late and, whenever what was left was shorter than the TX
+        // duration (~2.36s), the whole reply slipped a full 30s/15s period.
+        // The signal itself ends ~13.2s (FT8) / ~5.6s (FT4) into the window,
+        // so waking `early_s` BEFORE the boundary and snapshotting up to
+        // "now" instead of window_end+settle loses nothing but silence,
+        // while getting the result to the QSO engine ~1.2s sooner.
+        let early_s = if is_ft4 { 1.0f64 } else { 0.9f64 };
+        let mut wait = (window_s - pos) - early_s;
         // TRUE UTC start of the window we're about to decode, captured NOW
         // (before sleeping) - NOT recomputed after waking. Bug found live
         // 2026-08-26 (operator reported: "I can't tell who's replying to
@@ -106,7 +116,12 @@ async fn run_loop(
         // 7.5s FT4) too late, which made it collide in the UI with OUR OWN
         // next transmission instead of showing when the partner actually
         // sent it.
-        let window_start_epoch = now_epoch - pos;
+        let mut window_start_epoch = now_epoch - pos;
+        if wait < 0.0 {
+            // Already past this window's wake point - take the next window.
+            wait += window_s;
+            window_start_epoch += window_s;
+        }
         tokio::time::sleep(tokio::time::Duration::from_secs_f64(wait.max(0.0))).await;
 
         if !rx_enabled {
@@ -122,9 +137,13 @@ async fn run_loop(
             continue;   // not enough audio yet
         }
 
-        let audio = buffer.snapshot_aligned(window_s, lead_s);
+        // Same start as before (window_start - 0.2s => unchanged DT calibration),
+        // but ending at "now" (~window_end - early_s) instead of window_end+0.3s.
+        let elapsed = current_epoch() - window_start_epoch;
+        let snap_s = (elapsed + (lead_s - 0.3)).clamp(min_s, window_s + lead_s);
+        let audio = buffer.snapshot(snap_s as f32);
         match &audio {
-            None => println!("[ft8dec] snapshot_aligned returned None (available={:.1}s)", available),
+            None => println!("[ft8dec] snapshot returned None (available={:.1}s)", available),
             Some(s) => println!("[ft8dec] decoding window: {} samples ({:.1}s)", s.len(), s.len() as f64 / 12000.0),
         }
         if let Some(samples) = audio {

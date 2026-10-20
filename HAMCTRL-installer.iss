@@ -155,6 +155,7 @@ var
   LangCode: String;
   MarkerDir: String;
   MarkerFile: String;
+  RuntimeDir: String;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -166,6 +167,22 @@ begin
     ForceDirectories(MarkerDir);
     MarkerFile := MarkerDir + '\install_lang.txt';
     SaveStringToFile(MarkerFile, LangCode, False);
+
+    // FIX (2026-10-20, live report: new favicon.ico shipped in a new EXE
+    // build never appeared on a running server - [static] MISSING FILE in
+    // the log despite the console confirming the latest [build] marker).
+    // hamctrl.spec uses a PERSISTENT PyInstaller onefile extraction folder
+    // (runtime_tmpdir=%APPDATA%\HAMCTRL\_runtime, see its own comment there)
+    // instead of a fresh %TEMP%\_MEIxxxxxx each run, specifically so a 24/7
+    // server's files survive Windows' temp-cleanup. The flip side: on an
+    // UPGRADE, a stale extraction from the OLD build can stick around and
+    // the new EXE doesn't necessarily get a fully fresh folder. Clearing
+    // this cache on every install/update forces a clean re-extraction on
+    // next launch - safe, it holds zero user data (config.json/users.json/
+    // qso.db live directly under %APPDATA%\HAMCTRL, untouched by this).
+    RuntimeDir := ExpandConstant('{userappdata}\HAMCTRL\_runtime');
+    if DirExists(RuntimeDir) then
+      DelTree(RuntimeDir, True, True, True);
   end;
 end;
 

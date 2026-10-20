@@ -5,24 +5,33 @@ sequence.
 Pure logic (no asyncio/networking), easy to test in isolation.
 Responsible for:
   1. Parsing received FT8 messages (who/to whom/what).
-  2. The state machine of a single QSO (Tx1..Tx5, classic RRR->73 sequence).
+  2. The state machine of a single QSO.
 
 Standard auto-QSO message sequence (when WE start, answering someone else's
 CQ — i.e. Tx1 as the first step):
   Tx1: <THEIR_CALL> <OUR_CALL> <OUR_GRID>
   Tx2: <THEIR_CALL> <OUR_CALL> <SNR_REPORT>          (when they send us a report)
   Tx3: <THEIR_CALL> <OUR_CALL> R<SNR_REPORT>         (ack + our report)
-  Tx4: <THEIR_CALL> <OUR_CALL> RRR                   (ack of received report)
-  Tx5: <THEIR_CALL> <OUR_CALL> 73                    (sign-off, QSO end)
 
 When WE call CQ and SOMEONE answers us, the sequence starts at Tx2 (Tx1 is
 their first message to us, which we answer with a report).
 
-This implementation uses the classic (not the shortened RR73) ending:
-separate Tx4=RRR and Tx5=73, per the user's choice — RRR is sent immediately
-upon receiving a report, 73 is sent only once the partner confirms (sends
-RRR or 73 on their side). This mirrors the traditional auto-sequencing
-sequence more closely than the newer RR73 shortcut.
+UPDATE (2026-09-03, docstring corrected 2026-10-20 - this had gone stale and
+still described the OLD classic-only ending): the engine uses the SHORTENED
+RR73 ending wherever it's our turn to both acknowledge the partner's report
+AND sign off in one transmission, not the separate classic Tx4=RRR/Tx5=73
+pair the comment above used to claim exclusively:
+  - Partner sends their OWN R+report (confirms ours, sends theirs) -> we
+    reply "R73" shortened to a single RR73 (ack + sign-off combined) and
+    the QSO is done in ONE fewer transmission than the classic sequence.
+  - Partner sends plain RRR (no report of their own, just acknowledging
+    ours) -> we reply with plain 73 (not RR73 - RRR already IS their
+    acknowledgment, nothing left to combine).
+  - Partner sends 73 or RR73 directly -> QSO ends immediately, no reply
+    needed beyond what's already been exchanged.
+All three are idempotent against an echoed repeat after we've already
+reached the DONE state (a partner repeating their closing message because
+ours was missed doesn't restart the QSO or re-trigger qso_complete).
 """
 
 import re
@@ -363,6 +372,31 @@ ST_DONE = 'DONE'                  # QSO finished (received/sent 73), ready to lo
 # (2026-09-03): "automat nie powtarzal w kolko raportu do klienta jesli
 # powtorzylismy 3 razy i nam nie potwierdzil powinien nastapic stop".
 MAX_REPORT_REPEATS = 3
+
+
+# Handoff item E (2026-10-20, live report: "na 10 wybranych stacji tylko
+# raz udalo sie zmiescic w czasie zeby cos nadac" / automation just grabbed
+# the FIRST decoded reply to our CQ instead of picking the best one when
+# several stations answer in the same decode batch). Priority: when no
+# "new DXCC/grid" criterion applies (not implemented here - would need a
+# full DXCC prefix table, out of scope for this fix), fall back to picking
+# by worked-before status, then best SNR. Kept as a small, pure,
+# independently testable function - webapp.py collects candidates for a
+# short window (see _decide_best_caller) and calls this once to choose.
+def pick_best_caller(candidates: list) -> dict | None:
+    """Pick which of several simultaneous CQ-reply candidates to answer.
+
+    Each candidate: {'call_de': str, 'snr': float, 'worked_before': bool, ...}
+    (extra keys are ignored/passed through - the caller can stash whatever
+    else it needs, e.g. the raw decode, alongside these three).
+
+    Priority: a station NOT already in the log beats one that is,
+    regardless of SNR; within the same worked_before group, highest SNR
+    wins. Returns None for an empty list.
+    """
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: (bool(c.get('worked_before', False)), -float(c.get('snr', -99))))
 
 
 class QsoEngine:
@@ -777,6 +811,31 @@ class QsoEngine:
         if not self.is_active() or self.last_tx_at is None:
             return False
         return (time.time() - self.last_tx_at) >= period_s
+
+    def should_retransmit_slot(self, window_s: float) -> bool:
+        """Slot-grid-aware alternative to should_retransmit() (handoff
+        item F, 2026-10-20, live report: retry "slizga sie o 1 slot").
+
+        should_retransmit() compares a CONTINUOUS elapsed duration against
+        a threshold - but it's only ever evaluated when some decode
+        happens to trigger a check (there's no real timer), so depending
+        on exactly when that happens to land within a window, the
+        "period_s has elapsed" moment can fall on either side of an actual
+        slot boundary from one retry to the next, making the retry
+        occasionally fire a whole slot earlier or later than intended.
+
+        This counts whole slot-grid boundaries instead: last_tx_at and
+        "now" are each floor-divided into window_s-sized slot indices, and
+        a retransmit is due once at least 2 slot boundaries have passed
+        (our own parity repeats every 2 windows) - a discrete count tied
+        to the grid itself, which can't drift the way a continuous
+        duration measured at an arbitrary instant can.
+        """
+        if not self.is_active() or self.last_tx_at is None:
+            return False
+        last_slot = int(self.last_tx_at // window_s)
+        now_slot = int(time.time() // window_s)
+        return (now_slot - last_slot) >= 2
 
     def note_retry(self):
         """Called RIGHT BEFORE an actual retransmission (not on the first

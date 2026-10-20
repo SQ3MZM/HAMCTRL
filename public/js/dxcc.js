@@ -414,6 +414,7 @@ const DXCC_TABLE = {
   'CN': {n:'Morocco', f:'🇲🇦', c:'AF'},
   '5C': {n:'Morocco', f:'🇲🇦', c:'AF'},
   '7X': {n:'Algeria', f:'🇩🇿', c:'AF'},
+  '7T': {n:'Algeria', f:'🇩🇿', c:'AF'},
   '3V': {n:'Tunisia', f:'🇹🇳', c:'AF'},
   '5A': {n:'Libya', f:'🇱🇾', c:'AF'},
   'SU': {n:'Egypt', f:'🇪🇬', c:'AF'},
@@ -439,6 +440,7 @@ const DXCC_TABLE = {
   'YJ': {n:'Vanuatu', f:'🇻🇺', c:'OC'},
   '3D2': {n:'Fiji', f:'🇫🇯', c:'OC'},
   'A3': {n:'Tonga', f:'🇹🇴', c:'OC'},
+  '5W': {n:'Samoa', f:'🇼🇸', c:'OC'},
 
   // Rare DXCC — occasionally show up
   'JT': {n:'Mongolia', f:'🇲🇳', c:'AS'},
