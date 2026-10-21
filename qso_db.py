@@ -357,23 +357,42 @@ def add_qso(user_id: str, data: dict) -> dict:
     try:
         _new_dt = datetime.strptime(qso_date + time_on, "%Y%m%d%H%M%S")
         _dup_row = None
-        for _r in conn.execute(
+        _candidates = conn.execute(
             "SELECT * FROM qso WHERE user_id=? AND UPPER(call)=? AND band=? AND mode=? "
             "ORDER BY qso_date DESC, time_on DESC LIMIT 5",
             (user_id, call, band, mode)
-        ).fetchall():
+        ).fetchall()
+        # DIAGNOSTIC (2026-10-21, live report: "co kazdy rr73 szlo do logu",
+        # 3 entries for the same call/band/mode within well under 300s -
+        # the guard above SHOULD have caught #2 and #3 but apparently
+        # didn't; this logs the exact values compared so the next
+        # occurrence shows WHY (case mismatch on band/mode, a band/freq
+        # momentarily reading as "" instead of the real band, source=""
+        # vs "auto", etc. instead of guessing again).
+        print(f"[qso_db] add_qso dup-check: incoming call={call!r} band={band!r} "
+              f"mode={mode!r} qso_date={qso_date!r} time_on={time_on!r} "
+              f"-> {len(_candidates)} same call+band+mode row(s) found")
+        for _r in _candidates:
             try:
                 _existing_dt = datetime.strptime(_r["qso_date"] + _r["time_on"], "%Y%m%d%H%M%S")
             except (ValueError, TypeError):
+                print(f"[qso_db] dup-check: existing row {_r['id']} has "
+                      f"unparseable qso_date/time_on ({_r['qso_date']!r}/{_r['time_on']!r})")
                 continue
-            if abs((_new_dt - _existing_dt).total_seconds()) <= _DUP_WINDOW_S:
+            _delta = (_new_dt - _existing_dt).total_seconds()
+            print(f"[qso_db] dup-check: existing row {_r['id']} "
+                  f"band={_r['band']!r} mode={_r['mode']!r} "
+                  f"time_on={_r['time_on']!r} delta={_delta:.0f}s")
+            if abs(_delta) <= _DUP_WINDOW_S:
                 _dup_row = _r
                 break
         if _dup_row is not None:
             print(f"[qso_db] duplicate QSO suppressed: {call} {band} {mode} "
                   f"within {_DUP_WINDOW_S}s of an existing entry ({_dup_row['id']})")
             return dict(_dup_row)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as _e:
+        print(f"[qso_db] dup-check: skipped (fail-open), could not parse "
+              f"qso_date/time_on: {_e}")
         pass  # qso_date/time_on in an unexpected format - fail open, insert normally
 
     row = {

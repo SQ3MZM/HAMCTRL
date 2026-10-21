@@ -592,6 +592,16 @@ function handleMessage(msg) {
       if (msg.rigPowerOn !== undefined) {
         if (window.AppState) window.AppState.rigPowerOn = !!msg.rigPowerOn;
         window.RadioFunctions?.handlePowerState?.(!!msg.rigPowerOn);
+        // FIX (2026-10-21, live report: "pokazuje sie [RADIO WYLACZONE] w
+        // momencie wylaczenia ale sie wyloguje zaloguje i napis znika") -
+        // the waterfall's own "RADIO WYLACZONE" source badge only ever
+        // reacted to a LIVE power-off event (Waterfall.onPowerReset(),
+        // elsewhere in this file) or a live scope frame resuming - a fresh
+        // client that logs in while the radio is ALREADY off never gets
+        // either of those (no transition happens during ITS session), so
+        // the badge sat on its default "● SIM" placeholder, same class of
+        // bug as rigPowerOn above (which already had this exact fix).
+        if (!msg.rigPowerOn) window.Waterfall?.onPowerReset?.();
       }
       // Set the radio lock state from init
       if (window.AppState && msg.locked !== undefined) {

@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.15"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-20-STARTUP-MARKER-CWFIX"
+BUILD_MARKER = "BUILD-2026-10-21-DXCLUSTER-AUTOSTART-SPOT-TIME"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -842,6 +842,40 @@ class App:
         # connection never torn down) fighting a fresh login with the SAME
         # cluster callsign for the one session DXSpider allows per call.
         self._supervise(lambda: self._dxcluster_idle_watchdog(), "dxcluster_idle_watchdog")
+        asyncio.ensure_future(self._dxcluster_autostart_admins())
+
+    async def _dxcluster_autostart_admins(self):
+        """FIX (2026-10-21, live report: "dx cluster w adminie mial chodzic
+        caly czas ... rano nie dzialalo dopoki ... nie zalogowalem sie jako
+        admin"): auto_connect used to fire ONLY when the user logged in
+        (the WS connect handler), so after every server restart (new EXE
+        install, reboot) the admin's cluster stayed down until an admin
+        opened the page. The admin connection is the one meant to run 24/7
+        (see _dxcluster_idle_watchdog's admin exemption), so start it at
+        server startup too. Non-admins stay login-triggered on purpose -
+        their connections get idle-disconnected after 1h anyway."""
+        if not self.dxcluster:
+            return
+        await asyncio.sleep(5)   # let the rest of startup settle first
+        for u in list(self.users):
+            if u.get("role") != "admin":
+                continue
+            dx_cfg = u.get("dxcluster", {}) or {}
+            if not (dx_cfg.get("auto_connect") and dx_cfg.get("host") and dx_cfg.get("login")):
+                continue
+            uid = u.get("id")
+            existing = self.dxcluster.get_client(uid)
+            if existing and existing.is_connected():
+                continue
+            try:
+                print(f"[dxcluster] startup auto-connect for admin {u.get('username')!r} "
+                      f"-> {dx_cfg['host']}:{dx_cfg.get('port', 7300)}", flush=True)
+                await self.dxcluster.connect_user(
+                    uid, dx_cfg["host"], int(dx_cfg.get("port", 7300)),
+                    dx_cfg["login"], decrypt_secret(dx_cfg.get("password", "")))
+            except Exception as e:
+                print(f"[dxcluster] startup auto-connect failed for "
+                      f"{u.get('username')!r}: {e}", flush=True)
 
     async def _dxcluster_idle_watchdog(self):
         """
@@ -1408,8 +1442,22 @@ class App:
 
     def touch_activity(self, user_id: str):
         """Update the active operator's last-activity timestamp."""
+        # DIAGNOSTIC (2026-10-21, live report: "ja klikalem ... to nie bylo
+        # zanotowane przez serwer" - the operator insists they clicked to
+        # select a station, but still got auto-released as idle) - logs
+        # every call so we can see whether this ever gets called at all for
+        # that click (a frontend path that never sends a WS message would
+        # mean nothing reaches here), and if it does, whether
+        # _user_has_lock actually matched (a stale/mismatched user_id would
+        # silently no-op here without this).
+        _held_by = self.radio_lock.get("user_id")
         if self._user_has_lock(user_id):
             self.radio_lock["last_activity"] = time.time()
+            print(f"[radio_lock] touch_activity: OK for uid={user_id!r} "
+                  f"(held_by={_held_by!r})")
+        else:
+            print(f"[radio_lock] touch_activity: NO-OP for uid={user_id!r} "
+                  f"- lock held by {_held_by!r} instead")
 
     # NOTE: _start_tx_watchdog used to be DEFINED TWICE in this same class
     # (Python takes the second one - see the definition near
@@ -7690,6 +7738,18 @@ class App:
             print(f"[ft8] TX held back — radio taken over by another operator "
                   f"({self.radio_lock.get('callsign') or self.radio_lock.get('username')})")
             return
+        # FIX (2026-10-21, live report: "nagle mi sie zatrzymal wodospad ft8
+        # i stracilem radio" - the idle watchdog's 20min auto-release fired
+        # mid-automation). _ws_msg's activity-touch (see its own big comment
+        # on this same bug class) only fires on a WS message FROM the
+        # browser - once FT8 automation is running unattended (the whole
+        # point of it), the operator may not click anything for well over
+        # 20 minutes while the automation keeps transmitting/replying the
+        # entire time. An automated TX actually going out IS activity, just
+        # not operator-click activity - touch it here too, for whichever
+        # operator the automation is running for.
+        if auto_respond and self._autoqso_uid:
+            self.touch_activity(self._autoqso_uid)
         # Block TX on a disallowed band
         if not self._is_band_allowed():
             await self.hub.broadcast({"type": "toast", "msg": "⛔ FT8 TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})

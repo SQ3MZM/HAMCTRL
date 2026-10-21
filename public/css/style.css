@@ -1302,9 +1302,14 @@ html[data-mode="light"] .wsjtx-freq { color: #0284c7; background: #ffffff; borde
 .wj-mode-btn.active { background: #0284c7 !important; color: #fff !important; }
 
 .wj-band-select {
+  /* Natural (auto) width on purpose - checked live 2026-10-21: both 80px
+     and 19ch cut the selected option to "20m (14.074 ..." because the
+     native dropdown arrow eats into the box. Auto sizes to the widest
+     option, which is the smallest width that shows the full text. */
   font-family: var(--mono); font-size: 12px; font-weight: 800;
   background: var(--wj-input-bg); border: 1px solid var(--wj-border-bright);
   color: var(--green); padding: 5px 9px; border-radius: 6px; outline: none; cursor: pointer;
+  width: auto; flex-shrink: 0;
 }
 
 .wj-topbar-check {
@@ -1714,8 +1719,12 @@ html[data-mode="light"] .wj-decode-row:hover { background: rgba(2,132,199,0.08);
 }
 
 /* Pola DX i SNR */
-#wj-dx-call { font-size: 15.5px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 10px !important; }
-#wj-dx-grid { width: 68px !important; font-size: 15.5px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 8px !important; text-align: center; }
+/* Font shrunk 15.5px -> 12px (2026-10-21, live request: the DX field's
+   placeholder "-- KLIKNIJ WIERSZ LUB WPISZ --" didn't fit the field at the
+   old size) - kept identical between DX and Grid on purpose, so the two
+   fields still look consistent with each other, per the same request. */
+#wj-dx-call { font-size: 12px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 10px !important; }
+#wj-dx-grid { width: 68px !important; font-size: 12px !important; font-weight: 800 !important; color: var(--green) !important; padding: 7px 8px !important; text-align: center; }
 #wj-dx-snr  { font-size: 15px !important; font-weight: 800 !important; color: #22c55e !important; }
 
 /* Antena i Rotor */

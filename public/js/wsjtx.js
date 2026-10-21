@@ -1844,7 +1844,10 @@ function _startTxWaitCountdown(waitSeconds, text) {
 function _onFt8TxStatus(d) {
   const btns = document.querySelectorAll('.wj-tx-btn');
   if (d.status === 'waiting') {
-    window.UI?.showToast(I18n.t('wj_toast_waiting_window').replace('{s}', (d.waitSeconds||0).toFixed(1)).replace('{text}', d.text));
+    // Toast removed (2026-10-21, live request: "usun wyskakujace toasty ...
+    // skoro na ft8 sa one dublowane w dymku") - duplicated the
+    // #wj-tx-wait-status countdown pill below, which already shows this
+    // exact text persistently (the toast only flashed for a couple seconds).
     _startTxWaitCountdown(d.waitSeconds||0, d.text);
     // Highlight ALREADY at the waiting stage (not only once transmitting
     // starts), so it's visible what will go on air before PTT actually
@@ -1854,7 +1857,8 @@ function _onFt8TxStatus(d) {
     btns.forEach(b=>b.classList.remove('active'));
     if (n) document.getElementById(`wj-tx${n}`)?.classList.add('active');
   } else if (d.status === 'starting') {
-    window.UI?.showToast(I18n.t('wj_toast_transmitting').replace('{text}', d.text));
+    // Toast removed (2026-10-21, same reason as 'waiting' above) - the pill
+    // below is updated to the "transmitting" text instead.
     _stopTxWaitCountdown();
     const el = document.getElementById('wj-tx-wait-status');
     if (el) { el.style.display = ''; el.textContent = I18n.t('wj_tx_transmitting_status').replace('{text}', d.text); }

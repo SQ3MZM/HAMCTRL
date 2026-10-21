@@ -259,6 +259,16 @@ _DX_RE = re.compile(
     re.IGNORECASE
 )
 
+# FIX (2026-10-21, live report: spot comments showed "1755Z JO82" /
+# "1755Z00" glued on, or just the time when there was no comment): _DX_RE
+# above only recognises the time when it's the LAST thing on the line.
+# Many clusters append more after it (the spotter's locator "1755Z JO82",
+# stray characters, BEL \x07 control chars), so the time silently ended up
+# inside the comment. This finds the time token at the tail regardless of
+# what follows it and cuts it (plus everything after) off the comment.
+_DX_TAIL_TIME_RE = re.compile(r'(?<!\d)(\d{4})Z\S*(?:\s+\S+)?\s*$', re.IGNORECASE)
+_CTRL_CHARS_RE = re.compile(r'[\x00-\x1f\x7f]')
+
 
 class DXClusterClient:
     """A single connection to a DX Cluster server for one user."""
@@ -407,6 +417,7 @@ class DXClusterClient:
 
     async def _process_line(self, text: str):
         """Parse a line and (if it's a spot) call the callback."""
+        text = _CTRL_CHARS_RE.sub('', text).rstrip()
         m = _DX_RE.match(text)
         if not m:
             # Non-spot lines (banner, prompts, sysop announcements, kick
@@ -423,6 +434,11 @@ class DXClusterClient:
         call       = m.group(3)
         comment    = (m.group(4) or '').strip()
         utc        = m.group(5) or ''
+        if not utc:
+            _t = _DX_TAIL_TIME_RE.search(comment)
+            if _t:
+                utc = _t.group(1) + 'Z'
+                comment = comment[:_t.start()].strip()
 
         # Freq is usually in kHz with a fraction (14074.0)
         try:

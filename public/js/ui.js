@@ -189,6 +189,12 @@ function gotoFreq(freq, mode) {
 // ── Mode ──────────────────────────────────────────────────────────────────────
 function buildModeGrid() {
   const modes = (S.modes && S.modes.length) ? S.modes : ['USB','LSB','AM','FM','CW'];
+  // DIAGNOSTIC (2026-10-21, see the matching note in loadBandsConfig above) -
+  // logs every single call, including the caller (via console.trace-style
+  // stack in the 2nd console.log arg), so a double-render from two different
+  // triggers (app:ready vs a WS config_update) with different values would
+  // show up as two distinct log lines here.
+  console.log('[modes-debug] buildModeGrid: S.modes =', S.modes, '-> rendering', modes);
   const modeHtml = modes.map(m =>
     `<button class="mode-btn ${m === S.mode ? 'active' : ''}" onclick="UI.setMode('${m}')">${m}</button>`
   ).join('');
@@ -262,6 +268,15 @@ async function loadBandsConfig() {
     // Modes and filters
     S.modes       = dm.enabledModes || dm.allModes || ['USB','LSB','AM','FM','CW'];
     S.modeFilters = dm.modeFilters  || {};
+    // DIAGNOSTIC (2026-10-21, live report: some operators intermittently see
+    // ALL modes as buttons on the RADIO tab instead of the admin-restricted
+    // set, even though the server-side modes_config.log confirms the backend
+    // always returned the correct restricted list for every request in that
+    // session - this is the frontend-side counterpart, to catch it from the
+    // browser's own console (F12) next time it happens, since static code
+    // review found only this one call site setting S.modes).
+    console.log('[modes-debug] loadBandsConfig: raw response', dm,
+                '-> S.modes =', S.modes);
 
     buildBandGrid();
     buildModeGrid();
