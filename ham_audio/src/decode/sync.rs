@@ -5,17 +5,6 @@ use rustfft::num_complex::Complex;
 use super::fft_cache::cached_fft_forward;
 use super::params::{Params, FT8_COSTAS, FT4_COSTAS};
 
-/// Local search grid step counts for fine sync refinement below: the
-/// candidate grid (find_candidates_ft8/ft4) has ~0.08s time / ~3Hz freq
-/// spacing, coarse enough that even a strong, unambiguously-detected
-/// candidate can fail LDPC convergence purely from that residual offset.
-/// Confirmed 2026-08-13 against captured band audio: several candidates
-/// scored well above threshold with no nearby competing signal, yet
-/// bp_decode never converged at the coarse position.
-const REFINE_TIME_STEPS: i32 = 3;   // ±3 * 0.02s = ±0.06s
-const REFINE_TIME_STEP_S: f32 = 0.02;
-const REFINE_FREQ_STEPS: i32 = 3;   // ±3 * 1.0Hz = ±3Hz
-const REFINE_FREQ_STEP_HZ: f32 = 1.0;
 
 /// Magnitude spectrogram: [time_blocks x freq_bins]
 pub struct Spectrogram {
@@ -73,39 +62,6 @@ pub fn compute_spectrogram(audio: &[f32], p: &Params, freq_osr: usize, time_osr:
     }
 
     Spectrogram { mag, n_blocks, n_bins, freq_step, time_step, bin_min }
-}
-
-/// Noise floor z USREDNIONEGO po czasie widma (nie z surowego spektrogramu!).
-/// Kluczowa naprawa SNR: najpierw usredniamy moc po czasie per bin (avg[fi]),
-/// POTEM bierzemy 10. percentyl z usrednionego widma = tlo miedzy sygnalami.
-/// Wczesniej percentyl liczony z surowego spektrogramu (blok x bin) dawal
-/// noise floor ~54dB za nisko (mnostwo cichych momentow miedzy symbolami),
-/// przez co WSZYSTKIE stacje clampowaly na +20. Zweryfikowane na ft8.wav.
-pub fn noise_floor_from_spec(spec: &Spectrogram) -> f32 {
-    if spec.mag.is_empty() || spec.n_blocks == 0 || spec.n_bins == 0 {
-        return 1e-9;
-    }
-    // Tylko do NOISE_F_MAX: wyszukiwanie siega 4000 Hz (F_MAX), ale filtr
-    // radia (IC-7300 USB-D ~3 kHz) zostawia powyzej ~3 kHz prawie cisze -
-    // 10. percentyl z takiego widma lapal te pusta czesc, poziom szumu
-    // wychodzil zanizony i KAZDA stacja dostawala SNR +20 (zgloszone na zywo).
-    const NOISE_F_MAX: f32 = 3000.0;
-    let n_noise = (((NOISE_F_MAX / spec.freq_step) as usize).saturating_sub(spec.bin_min)).min(spec.n_bins);
-    let mut avg: Vec<f32> = Vec::with_capacity(n_noise);
-    for fi in 0..n_noise {
-        let mut acc = 0f32;
-        for bi in 0..spec.n_blocks {
-            acc += spec.mag[bi * spec.n_bins + fi];
-        }
-        let m = acc / spec.n_blocks as f32;
-        if m.is_finite() && m > 0.0 {
-            avg.push(m);
-        }
-    }
-    if avg.is_empty() { return 1e-9; }
-    avg.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let idx = ((avg.len() as f32 * 0.10) as usize).min(avg.len() - 1);
-    avg[idx].max(1e-9)
 }
 
 /// Usrednione po czasie widmo (moc na bin) - liczone raz na przebieg,
@@ -364,130 +320,4 @@ pub fn find_candidates_ft4(spec: &Spectrogram, p: &Params, max_cands: usize, min
     }
     candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     candidates
-}
-
-/// Local Costas-correlation search around a coarse candidate, returning the
-/// (time, freq) offset within it that best fits the audio. Run once per
-/// candidate before extract_tone_power - see REFINE_* constants above for
-/// why this matters. Shared search core parametrized by the Costas symbol
-/// index/tone pairs to check (FT8: one pattern repeated at 3 positions;
-/// FT4: 4 different patterns, one per position).
-fn refine_offset(audio: &[f32], cand: &Candidate, p: &Params, costas_syms: &[(usize, usize)]) -> (f32, f32) {
-    let n = p.samples_per_sym;
-    let nfft = n * 4;
-    let freq_step = p.sample_rate as f32 / nfft as f32;
-
-    let fft = cached_fft_forward(nfft);
-    let mut scratch = vec![Complex::new(0f32, 0f32); fft.get_inplace_scratch_len()];
-
-    let window: Vec<f32> = (0..n).map(|i| {
-        0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos())
-    }).collect();
-
-    let mut best_score = f32::MIN;
-    let mut best_dt = 0f32;
-    let mut best_df = 0f32;
-    let mut tone_power = [0f32; 8]; // n_tones <= 8 for both FT8 and FT4
-
-    // The FFT of each Costas symbol's audio segment depends only on `dt`
-    // (which samples go in), NOT on `df` - `df` only changes which output
-    // bin gets read out afterward. The previous version recomputed the FFT
-    // inside the df loop too, so each symbol's spectrum was computed
-    // 2*REFINE_FREQ_STEPS+1 (7) times over instead of once - a pure,
-    // provably-redundant 7x FFT cost with no effect on the result (same
-    // spectrum, just re-derived). Confirmed as the dominant live cost via
-    // PassTiming's demod_ms_sum vs ldpc_ms_sum split (2026-08-15: LDPC
-    // ~25ms, demod ~7930ms out of ~8000ms/candidate-batch on the i7-3612QM -
-    // LDPC was never the bottleneck, this refine grid was). Fixed by
-    // computing each symbol's spectrum once per `dt` and reusing it across
-    // all `df` trials below.
-    let mut spectra: Vec<Vec<Complex<f32>>> = vec![vec![Complex::new(0f32, 0f32); nfft]; costas_syms.len()];
-    let mut spectra_valid: Vec<bool> = vec![false; costas_syms.len()];
-
-    for it in -REFINE_TIME_STEPS..=REFINE_TIME_STEPS {
-        let dt = it as f32 * REFINE_TIME_STEP_S;
-        let trial_time = cand.time_offset_s + dt;
-        let start_sample = (trial_time * p.sample_rate as f32) as isize;
-
-        for (idx, &(sym_idx, _tone)) in costas_syms.iter().enumerate() {
-            let s0 = start_sample + (sym_idx * n) as isize;
-            let s1 = s0 + n as isize;
-            if s0 < 0 || s1 > audio.len() as isize {
-                spectra_valid[idx] = false;
-                continue;
-            }
-            let s0 = s0 as usize;
-            let sbuf = &mut spectra[idx];
-            for i in 0..n { sbuf[i] = Complex::new(audio[s0 + i] * window[i], 0.0); }
-            for i in n..nfft { sbuf[i] = Complex::new(0.0, 0.0); }
-            fft.process_with_scratch(sbuf, &mut scratch);
-            spectra_valid[idx] = true;
-        }
-
-        for jf in -REFINE_FREQ_STEPS..=REFINE_FREQ_STEPS {
-            let df = jf as f32 * REFINE_FREQ_STEP_HZ;
-            let trial_freq = cand.freq_hz + df;
-
-            let mut score = 0f32;
-            let mut n_terms = 0f32;
-            for (idx, &(_sym_idx, tone)) in costas_syms.iter().enumerate() {
-                if !spectra_valid[idx] { continue; }
-                let spec = &spectra[idx];
-
-                let mut sum_all = 0f32;
-                for t in 0..p.n_tones {
-                    let f_target = trial_freq + t as f32 * p.tone_spacing as f32;
-                    let bin = (f_target / freq_step).round() as usize;
-                    let bin = bin.min(nfft / 2);
-                    let re = spec[bin].re;
-                    let im = spec[bin].im;
-                    let pw = re * re + im * im;
-                    if t < 8 { tone_power[t] = pw; }
-                    sum_all += pw;
-                }
-                let mean_all = sum_all / p.n_tones as f32;
-                if mean_all > 1e-12 {
-                    score += (tone_power[tone] - mean_all) / mean_all;
-                    n_terms += 1.0;
-                }
-            }
-            if n_terms > 0.0 {
-                let avg_score = score / n_terms;
-                if avg_score > best_score {
-                    best_score = avg_score;
-                    best_dt = dt;
-                    best_df = df;
-                }
-            }
-        }
-    }
-    (best_dt, best_df)
-}
-
-/// Fine-tune an FT8 candidate's time/frequency before demodulation.
-pub fn refine_candidate_ft8(audio: &[f32], cand: &Candidate, p: &Params) -> Candidate {
-    let costas_syms: Vec<(usize, usize)> = p.costas_pos.iter()
-        .flat_map(|&csym_offset| FT8_COSTAS.iter().enumerate()
-            .map(move |(k, &tone)| (csym_offset + k, tone)))
-        .collect();
-    let (dt, df) = refine_offset(audio, cand, p, &costas_syms);
-    Candidate {
-        freq_hz: cand.freq_hz + df,
-        time_offset_s: cand.time_offset_s + dt,
-        score: cand.score,
-    }
-}
-
-/// Fine-tune an FT4 candidate's time/frequency before demodulation.
-pub fn refine_candidate_ft4(audio: &[f32], cand: &Candidate, p: &Params) -> Candidate {
-    let costas_syms: Vec<(usize, usize)> = p.costas_pos.iter().zip(FT4_COSTAS.iter())
-        .flat_map(|(&csym_offset, pattern)| pattern.iter().enumerate()
-            .map(move |(k, &tone)| (csym_offset + k, tone)))
-        .collect();
-    let (dt, df) = refine_offset(audio, cand, p, &costas_syms);
-    Candidate {
-        freq_hz: cand.freq_hz + df,
-        time_offset_s: cand.time_offset_s + dt,
-        score: cand.score,
-    }
 }

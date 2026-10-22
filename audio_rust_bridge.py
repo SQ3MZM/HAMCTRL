@@ -433,7 +433,8 @@ class RustAudioBridge:
             self._ft8_receiver.set_mode(mode)
         print(f"[audio_bridge] FT8 RX enabled={enabled} mode={mode}", flush=True)
 
-    async def set_ap_hints(self, own_call: str, partner_call: str | None, queue: list[str]):
+    async def set_ap_hints(self, own_call: str, partner_call: str | None, queue: list[str],
+                           rx_freq: float | None = None):
         """Push AP (a priori) decode hints to Rust ham_audio.exe - operator's
         own callsign, current QSO partner (if any), and the Call-1st queue.
         Rust biases the LDPC channel LLR toward these when a normal (blind)
@@ -446,6 +447,10 @@ class RustAudioBridge:
             "own_call": own_call or "",
             "partner_call": partner_call,
             "queue": list(queue or []),
+            # Czestotliwosc audio RX (marker podaza za partnerem) - AP z
+            # partnerem (pelne komunikaty RR73/73/raporty) dziala tylko w
+            # jej poblizu, patrz decode::ap / AP_RX_WIN_HZ w ham_audio.
+            "rx_freq": float(rx_freq) if rx_freq is not None else None,
         })
 
     async def ft8_get_decode(self) -> dict | None:

@@ -351,11 +351,14 @@ pub fn demod_ft4(ws: &WindowSpectrum, coarse: &Candidate) -> Option<Demod> {
     let mut f1 = coarse.freq_hz;
     let mut cd = downsample_gen(ws, f1, NFFT2_FT4, BAUD4, 4.5);
 
-    // Czas: +-24 probki (+-36 ms, siatka zgrubna to 24 ms), krok 1.5 ms.
+    // Czas: +-60 probek (+-90 ms), krok 1.5 ms. Zgrubny czas FT4 z
+    // spektrogramu bywa przesuniety o 45-70 ms (zmierzone na pliku
+    // referencyjnym ze slabymi CQ) - przy +-36 ms czesc sygnalow nigdy nie
+    // trafiala we wlasciwe polozenie.
     let i0 = (coarse.time_offset_s * FS4).round() as isize;
     let mut ibest = i0;
     let mut smax = f32::MIN;
-    for idt in (i0 - 24)..=(i0 + 24) {
+    for idt in (i0 - 60)..=(i0 + 60) {
         let s = sync4d(&cd, idt, &tmpl, None);
         if s > smax { smax = s; ibest = idt; }
     }

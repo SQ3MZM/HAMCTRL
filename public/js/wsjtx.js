@@ -968,7 +968,8 @@ function _renderAutoQsoPanel() {
     }
   }
 }
-function setTxFreqManual(val) { window.WSJTXScope?.setTxFreqManual(val); }
+// Pole TX w pasku wodospadu - reczna zmiana, dziala tez przy blokadzie TX.
+function setTxFreqManual(val) { window.WSJTXScope?.setTxFreqManual(val, true); }
 function setRxFreqManual(val) { window.WSJTXScope?.setRxFreqManual(val); }
 function rxEqTx() { window.WSJTXScope?.rxEqTx(); }
 function txEqRx() { window.WSJTXScope?.txEqRx(); }

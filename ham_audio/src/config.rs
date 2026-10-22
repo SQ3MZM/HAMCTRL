@@ -33,6 +33,7 @@ pub struct Config {
     pub ap_own_call:     String,
     pub ap_partner_call: Option<String>,
     pub ap_queue:        Vec<String>,
+    pub ap_rx_freq:      Option<f32>,
 }
 
 impl Config {
@@ -63,6 +64,7 @@ impl Config {
             ap_own_call:     String::new(),
             ap_partner_call: None,
             ap_queue:        Vec::new(),
+            ap_rx_freq:      None,
         }
     }
     pub fn wss_port(&self) -> u16     { self.wss_port }

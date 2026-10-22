@@ -5,7 +5,6 @@ pub mod ap;
 pub mod baseband;
 pub mod buffer;
 pub mod crc14;
-pub mod demod;
 pub mod fft_cache;
 pub mod ldpc;
 pub mod osd;
@@ -16,10 +15,7 @@ pub mod sync;
 pub mod unpack;
 
 use params::{FT8, FT4, Params};
-use sync::{compute_spectrogram, find_candidates_ft8, find_candidates_ft4, noise_floor_from_spec,
-           refine_candidate_ft8, refine_candidate_ft4, Candidate, Spectrogram};
-use demod::{extract_tone_power, extract_llr_ft8, extract_llr_ft4, estimate_snr};
-use ldpc::bp_decode;
+use sync::{compute_spectrogram, find_candidates_ft8, find_candidates_ft4, Candidate, Spectrogram};
 use crc14::check_crc;
 use unpack::unpack77;
 use subtract::{bits_to_symbols_ft8, bits_to_symbols_ft4, estimate_ft8, estimate_ft4, apply_estimate};
@@ -152,6 +148,46 @@ const OSD_ORDER2_WIDTH: usize = 40;
 // na 600 plikach szumu (ft8sim -40 dB): wszystkie takie fantomy mialy nsync
 // 7..9, prawdziwe dekody z OSD na probkach referencyjnych 11+ (jeden FT4: 9).
 const OSD_MIN_NSYNC: usize = 10;
+// Akceptacja wynikow AP (czesciowe "MOJ ???"/"MOJ PARTNER ???", pelne
+// komunikaty od partnera, CQ): wzgledna niezgodnosc z sygnalem (ap_rel)
+// ponizej progu. Zmierzone: prawdziwe dekody AP glownie 0.10-0.19; jedyne
+// wyniki AP na 1000 przebiegach szumu (FT8+FT4) mialy 0.195 i 0.212.
+const AP_MAX_REL: f32 = 0.18;
+// W poblizu czestotliwosci RX (+-AP_RX_WIN_HZ): AP z partnerem i luzniejszy prog.
+const AP_RX_WIN_HZ: f32 = 50.0;
+// Zmierzone w oknie +-50 Hz: najlepsze dopasowanie szumu na 500 plikach 0.28,
+// prawdziwe sygnaly -22..-26 dB: 25% ponizej 0.21. Zapas celowy - fantom
+// "MOJ PARTNER RR73" moglby zakonczyc i zalogowac QSO, ktorego nie bylo.
+const AP_NEAR_MAX_REL: f32 = 0.24;
+// Pelne komunikaty od partnera (ap::try_ap_full, miara usredniona po zestawach
+// LLR): najlepsze dopasowanie szumu w oknie RX na 600 plikach 0.313,
+// prawdziwe sygnaly -22..-26 dB: 25% ponizej 0.25, 40% ponizej 0.31.
+const AP_FULL_MAX_REL: f32 = 0.28;
+// Jednoznacznosc: najlepsza hipoteza musi byc lepsza od drugiej o co najmniej
+// tyle. Gdy partner nadaje komunikat SPOZA listy (np. lokator), wszystkie
+// hipotezy dziela z nim bity obu znakow i najlepsza potrafi miec niska
+// niezgodnosc (zmierzone: do 0.15), ale przewage nad druga najwyzej 0.020;
+// prawdziwe trafienia zwykle 0.04-0.13.
+const AP_FULL_MIN_GAP: f32 = 0.035;
+
+/// Suma |LLR| na bitach niezgodnych ze slowem kodowym, wzgledem sumy |LLR|.
+fn ap_rel(llr: &[f32; 174], cw: &[u8; 174]) -> f32 {
+    let d: f32 = (0..174).filter(|&i| ((llr[i] < 0.0) as u8) != cw[i]).map(|i| llr[i].abs()).sum();
+    let t: f32 = llr.iter().map(|v| v.abs()).sum();
+    if t > 0.0 { d / t } else { 1.0 }
+}
+
+/// Gdy trwa QSO (znana czestotliwosc RX partnera), a wyszukiwanie zgrubne nie
+/// wystawilo kandydata w jej poblizu (+-10 Hz) - dokladamy najlepszy kandydat
+/// z tej okolicy bez progu. Przy bardzo slabym sygnale partnera to jedyna
+/// szansa, zeby AP (pelne komunikaty RR73/73/raporty) w ogole go sprawdzilo.
+fn add_rx_candidate(cands: &mut Vec<Candidate>, hints: &ap::ApHints, search_all: impl Fn(usize) -> Vec<Candidate>) {
+    let (Some(f), true) = (hints.rx_freq, hints.partner_call.is_some()) else { return };
+    if cands.iter().any(|c| (c.freq_hz - f).abs() <= 10.0) { return; }
+    if let Some(c) = search_all(2000).into_iter().find(|c| (c.freq_hz - f).abs() <= 10.0) {
+        cands.push(c);
+    }
+}
 
 /// Akceptacja slowa kodowego z OSD: <=36 bitow niezgodnych z twarda decyzja,
 /// albo niezgodnosci tylko na bitach prawie bez informacji (waga <1% sumy
@@ -193,11 +229,11 @@ pub fn decode_ft8(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut d
         let spec_ms = t_spec.elapsed().as_secs_f64() * 1000.0;
         let t_cand = std::time::Instant::now();
         // prog 0.4 dla nowego scoringu (ton-srednia)/srednia; stary log-scoring mial 0.15
-        let candidates = find_candidates_ft8(&spec, p, 60, 0.4);
+        let mut candidates = find_candidates_ft8(&spec, p, 60, 0.4);
+        add_rx_candidate(&mut candidates, ap_hints, |m| find_candidates_ft8(&spec, p, m, -10.0));
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
-        let noise_floor = noise_floor_from_spec(&spec);
         let ws = baseband::window_spectrum(&residual);
-        let new = decode_and_subtract(&mut residual, &candidates, p, true, Some(&ws), noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, true, &ws, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -224,11 +260,11 @@ pub fn decode_ft4(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut d
         let spec_ms = t_spec.elapsed().as_secs_f64() * 1000.0;
         let t_cand = std::time::Instant::now();
         // prog 0.4 dla nowego scoringu (jak FT8)
-        let candidates = find_candidates_ft4(&spec, p, 60, 0.4);
+        let mut candidates = find_candidates_ft4(&spec, p, 60, 0.4);
+        add_rx_candidate(&mut candidates, ap_hints, |m| find_candidates_ft4(&spec, p, m, -10.0));
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
-        let noise_floor = noise_floor_from_spec(&spec);
         let ws = baseband::window_spectrum_ft4(&residual);
-        let new = decode_and_subtract(&mut residual, &candidates, p, false, Some(&ws), noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
+        let new = decode_and_subtract(&mut residual, &candidates, p, false, &ws, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -272,8 +308,7 @@ fn decode_and_subtract(
     candidates: &[Candidate],
     p: &Params,
     is_ft8: bool,
-    ws: Option<&baseband::WindowSpectrum>,
-    noise_floor: f32,
+    ws: &baseband::WindowSpectrum,
     spec: &Spectrogram,
     already: &[DecodeResult],
     deadline: std::time::Instant,
@@ -290,12 +325,10 @@ fn decode_and_subtract(
     // current QSO-engine state Python last pushed. Empty when
     // ap_hints.own_call is empty (AP effectively disabled).
     let ap_hypotheses = ap::build_hypotheses(ap_hints);
+    let ap_full = ap::build_full_hypotheses(ap_hints);
+    // Poza okolica czestotliwosci RX tylko "ktos wola MNIE" (bez partnera).
+    let ap_hyp_own: Vec<ap::ApHypothesis> = ap_hypotheses.iter().filter(|h| h.call_de.is_none()).cloned().collect();
     let psd = sync::avg_psd(spec);
-
-    // Reborrow as shared/immutable for the parallel phase - subtraction
-    // (the only mutation) happens later, sequentially, once this borrow
-    // and the parallel iterator over it have gone out of scope.
-    let residual_ro: &[f32] = residual;
 
     let t_par = std::time::Instant::now();
     let demod_ns = std::sync::atomic::AtomicU64::new(0);
@@ -306,10 +339,10 @@ fn decode_and_subtract(
         .par_iter()
         .filter_map(|coarse_cand| {
             let t_demod = std::time::Instant::now();
-            // FT8: demodulacja w pasmie podstawowym (baseband.rs) - 4 zestawy
-            // LLR probowane po kolei, pierwszy ktory przejdzie LDPC+CRC wygrywa.
-            // Gdy zaden - AP/OSD na pierwszym zestawie, jak w starym torze.
-            if let Some(ws) = ws {
+            // Demodulacja w pasmie podstawowym (baseband.rs) - kilka zestawow
+            // LLR probowanych po kolei, pierwszy ktory przejdzie LDPC+CRC
+            // wygrywa. Gdy zaden - AP (podpowiedzi), OSD, AP "CQ".
+            {
                 let dm = if is_ft8 { baseband::demod_ft8(ws, coarse_cand)? } else { baseband::demod_ft4(ws, coarse_cand)? };
                 let scramble: Option<&[u8; 77]> = if is_ft8 { None } else { Some(&FT4_RVEC) };
                 demod_ns.fetch_add(t_demod.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -333,12 +366,28 @@ fn decode_and_subtract(
                     Some(b) => b,
                     None => {
                         if std::time::Instant::now() >= deadline { return None; }
-                        let ap_result = if ap_hypotheses.is_empty() { None } else {
+                        // AP z partnerem (czesciowe i pelne komunikaty) tylko w poblizu
+                        // czestotliwosci RX, gdzie partner nadaje - wtedy prob jest
+                        // kilkadziesiat razy mniej niz na calym pasmie i mozna
+                        // przyjmowac slabsze dopasowania (AP_NEAR_MAX_REL).
+                        let near_rx = ap_hints.rx_freq.map_or(false, |f| (dm.cand.freq_hz - f).abs() <= AP_RX_WIN_HZ);
+                        let (hyps, max_rel) = if near_rx { (&ap_hypotheses, AP_NEAR_MAX_REL) } else { (&ap_hyp_own, AP_MAX_REL) };
+                        // Jak OSD: AP tylko przy wyraznej synchronizacji (fantomy AP na
+                        // szumie mialy nsync 7-9).
+                        let ap_result = if hyps.is_empty() || dm.nsync < OSD_MIN_NSYNC { None } else {
                             let t_ap = std::time::Instant::now();
-                            let r = ap::try_ap(&dm.llrs[0], &ap_hypotheses, scramble, deadline);
+                            let r = ap::try_ap(&dm.llrs[0], hyps, scramble, deadline)
+                                .filter(|cw| ap_rel(&dm.llrs[0], cw) < max_rel);
                             ap_ns.fetch_add(t_ap.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
                             r
                         };
+                        // Pelne komunikaty od partnera QSO (RRR/RR73/73/raporty) -
+                        // patrz ap::build_full_hypotheses.
+                        let ap_result = ap_result.or_else(|| {
+                            if !near_rx { return None; }
+                            let best = ap::try_ap_full(&dm.llrs, &ap_full, is_ft8);
+                            best.filter(|(_, rel, sec)| *rel < AP_FULL_MAX_REL && sec - rel > AP_FULL_MIN_GAP).map(|(cw, _, _)| cw)
+                        });
                         match ap_result {
                             Some(fixed) => fixed,
                             None => {
@@ -361,7 +410,7 @@ fn decode_and_subtract(
                                 if r.is_none() && dm.nsync >= OSD_MIN_NSYNC && std::time::Instant::now() < deadline {
                                     for llr in dm.llrs.iter() {
                                         if let Some(cw) = ap::try_ap_cq(llr, scramble) {
-                                            if osd_accept(llr, &cw) { r = Some(cw); break; }
+                                            if ap_rel(llr, &cw) < AP_MAX_REL { r = Some(cw); break; }
                                         }
                                     }
                                 }
@@ -396,120 +445,8 @@ fn decode_and_subtract(
                     sender_call:    msg.sender_call,
                     msg_type:       msg.msg_type,
                 };
-                return Some((cand, bits174, result));
+                Some((cand, bits174, result))
             }
-            // Fine-tune time/freq before demodulation - the coarse candidate
-            // grid (~0.08s / ~3Hz spacing) leaves enough residual offset to
-            // measurably degrade LLR quality, confirmed against captured
-            // band audio: several strong, unambiguously-detected candidates
-            // failed LDPC convergence at the coarse position and decoded
-            // cleanly once refined. See sync::refine_offset for the local
-            // search itself.
-            let cand = if is_ft8 {
-                refine_candidate_ft8(residual_ro, coarse_cand, p)
-            } else {
-                refine_candidate_ft4(residual_ro, coarse_cand, p)
-            };
-            let power = extract_tone_power(residual_ro, &cand, p);
-
-            let llr174: [f32; 174] = if is_ft8 {
-                extract_llr_ft8(&power, p)
-            } else {
-                extract_llr_ft4(&power, p)
-            };
-            demod_ns.fetch_add(t_demod.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-            let t_ldpc = std::time::Instant::now();
-
-            // JTDX's own reference decoder (ft8b.f90: max_iterations=30) uses
-            // 30, not 50 - this port had been running 67% more BP iterations
-            // than the software it's modeled after. Matters most for
-            // candidates that DON'T converge (the majority on a real band -
-            // e.g. 60 candidates searched, ~18-20 typically succeed): those
-            // run the FULL iteration budget before giving up, so this is a
-            // direct, proportional cut to the dominant cost of the
-            // par_decode phase - confirmed live (i7-3612QM, 8 rayon threads
-            // actually in use) to be ~1.05s for 60 candidates, ~7-8x the
-            // ~130-165ms measured offline, with no other explanation found
-            // (thread count, CPU affinity and power plan all ruled out).
-            let (bits174, success, _iters) = bp_decode(&llr174, 30);
-            ldpc_ns.fetch_add(t_ldpc.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-            let bits174 = if success {
-                bits174
-            } else {
-                // BP failed to converge - try AP then OSD before giving up
-                // on this candidate. Both reuse the SAME llr174 (soft) and
-                // (for OSD) bits174 (BP's last hard-decision guess) already
-                // computed above, no extra demod/LLR work. Gated by the
-                // same wall-clock `deadline` as the rest of this pass.
-                //
-                // AP first: when a hypothesis applies, it's a targeted,
-                // strong prior (real side information - the operator's own
-                // callsign is DEFINITELY present if this is addressed to
-                // them) that resolves in one shot; OSD is a blind
-                // statistical search with no domain knowledge, so it only
-                // gets a turn once AP has nothing to offer (hints empty,
-                // or this candidate isn't addressed per any hypothesis).
-                if std::time::Instant::now() >= deadline { return None; }
-                let ap_result = if ap_hypotheses.is_empty() {
-                    None
-                } else {
-                    let t_ap = std::time::Instant::now();
-                    let r = ap::try_ap(&llr174, &ap_hypotheses, if is_ft8 { None } else { Some(&FT4_RVEC) }, deadline);
-                    ap_ns.fetch_add(t_ap.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                    r
-                };
-                match ap_result {
-                    Some(fixed) => fixed,
-                    None => {
-                        if std::time::Instant::now() >= deadline { return None; }
-                        let t_osd = std::time::Instant::now();
-                        let osd_result = osd::try_osd(&llr174, &bits174, 1, deadline);
-                        osd_ns.fetch_add(t_osd.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                        match osd_result {
-                            Some(fixed) => fixed,
-                            None => return None,
-                        }
-                    }
-                }
-            };
-            // Zabezpieczenie przed fantomami (jak w torze baseband FT8): slowo
-            // kodowe daleko od twardej decyzji to przypadkowe trafienie CRC.
-            if baseband::hard_errors(&llr174, &bits174) > 36 { return None; }
-
-            // bits174[0..91] = [data77/scrambled77 | crc14]
-            let data77: Vec<u8> = if is_ft8 {
-                // FT8: CRC liczone na data77, sprawdz bezposrednio
-                let mut b91 = [0u8; 91];
-                b91.copy_from_slice(&bits174[..91]);
-                if !check_crc(&b91) { return None; }
-                bits174[..77].to_vec()
-            } else {
-                // FT4: CRC liczone na SCRAMBLED bitach. Sprawdz CRC na scrambled,
-                // potem descrambluj zeby dostac plaintext do unpack77.
-                let mut b91 = [0u8; 91];
-                b91.copy_from_slice(&bits174[..91]);
-                if !check_crc(&b91) { return None; }
-                // Descrambling: data77 = scrambled77 XOR RVEC
-                (0..77).map(|i| bits174[i] ^ FT4_RVEC[i]).collect()
-            };
-
-            let msg = unpack77(&data77)?;
-            let snr = estimate_snr(spec, cand.freq_hz, noise_floor);
-
-            let result = DecodeResult {
-                freq_hz:        cand.freq_hz,
-                time_offset_s:  cand.time_offset_s,
-                snr_db:         snr,
-                message:        msg.message,
-                call_to:        msg.call_to,
-                call_de:        msg.call_de,
-                report_or_grid: msg.report_or_grid,
-                mode:           mode.to_string(),
-                is_dxpedition:  msg.is_dxpedition,
-                sender_call:    msg.sender_call,
-                msg_type:       msg.msg_type,
-            };
-            Some((cand, bits174, result))
         })
         .collect();
     let par_decode_ms = t_par.elapsed().as_secs_f64() * 1000.0;

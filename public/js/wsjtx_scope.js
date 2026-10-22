@@ -551,10 +551,8 @@ function _onMouseDown(ev) {
   // move BOTH markers there (ft8_set_both_freq), and the user can
   // continue dragging as a new starting point for both.
   if (distTx <= DRAG_HIT_PX && distTx <= distRx) {
-    if (txFrozen) {
-      window.UI?.showToast(I18n.t('wj_toast_tx_frozen'));
-      return;
-    }
+    // Blokada TX (Hold) zatrzymuje tylko AUTOMATYCZNE przesuwanie TX (za
+    // korespondentem, klik w stacje) - recznie znacznik da sie przeciagnac.
     _dragging = 'tx';
   } else if (distRx <= DRAG_HIT_PX) {
     _dragging = 'rx';
@@ -571,8 +569,7 @@ function _onMouseMove(ev) {
   if (!_dragging || !canvas) return;
   const freq = Math.round(_pxToFreq(ev.clientX));
   if (_dragging === 'tx') {
-    if (txFrozen) return;
-    window.WS?.send({ type: 'ft8_set_tx_freq', freqHz: freq });
+    window.WS?.send({ type: 'ft8_set_tx_freq', freqHz: freq, manual: true });
   } else if (_dragging === 'rx') {
     window.WS?.send({ type: 'ft8_set_rx_freq', freqHz: freq });
   } else if (_dragging === 'both') {
@@ -608,14 +605,17 @@ function toggleTxFreeze() {
 }
 
 
-function setTxFreqManual(val) {
+// manual=true: operator sam zmienia TX (pole TX w pasku wodospadu) - dziala
+// takze przy blokadzie TX. Bez flagi (automatyczne wywolania z wsjtx.js)
+// blokada obowiazuje.
+function setTxFreqManual(val, manual = false) {
   const freq = parseFloat(val);
   if (Number.isNaN(freq)) return;
-  if (txFrozen) {
+  if (txFrozen && !manual) {
     window.UI?.showToast(I18n.t('wj_toast_tx_frozen'));
     return;
   }
-  window.WS?.send({ type: 'ft8_set_tx_freq', freqHz: Math.round(freq) });
+  window.WS?.send({ type: 'ft8_set_tx_freq', freqHz: Math.round(freq), manual: !!manual });
 }
 
 function setRxFreqManual(val) {

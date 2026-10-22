@@ -6,6 +6,8 @@ pub struct Params {
     /// Okres symbolu [s] — deskryptor protokolu, zachowany pod port AP/subtraction.
     #[allow(dead_code)]
     pub symbol_period:   f64,
+    /// Odstep tonow [Hz] — deskryptor protokolu (demodulacja liczy go z czestotliwosci probkowania).
+    #[allow(dead_code)]
     pub tone_spacing:    f64,
     pub samples_per_sym: usize,
     pub n_tones:         usize,

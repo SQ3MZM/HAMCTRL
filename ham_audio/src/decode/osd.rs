@@ -140,62 +140,6 @@ pub fn ldpc_encode_systematic(bits91: &[u8; 91]) -> [u8; 174] {
     out
 }
 
-/// Returns the 91 systematic-bit indices (0..91), sorted by ascending
-/// |llr| (least reliable / most likely wrong, first).
-fn order_by_reliability_91(llr174: &[f32; 174]) -> [usize; 91] {
-    let mut idx: [usize; 91] = std::array::from_fn(|i| i);
-    idx.sort_by(|&a, &b| {
-        llr174[a].abs().partial_cmp(&llr174[b].abs()).unwrap_or(std::cmp::Ordering::Equal)
-    });
-    idx
-}
-
-// Order-1 search width: number of least-reliable systematic bits tried as
-// single-flip candidates. 12 attempts (vs. a single extra bp_decode retry,
-// the dominant cost elsewhere in this pipeline) is cheap; see the module
-// doc comment for why order-2 (pairwise flips, ~66 attempts at this width)
-// isn't enabled yet.
-const OSD_FLIP_CANDIDATES: usize = 12;
-
-/// Order-i reprocessing on the 91 systematic bits (see module doc comment
-/// for the v1 scope trade-off). `base_bits174` is BP's own last
-/// hard-decision guess (bp_decode's failure-path return value) — used as
-/// the order-0 starting word, so no extra demod/LLR work is needed.
-/// Returns the first 174-bit codeword whose re-encoding passes LDPC
-/// parity; the caller still must run CRC + unpack77 (same as the normal
-/// decode path) before accepting it as a real decode.
-pub fn try_osd(
-    llr174: &[f32; 174],
-    base_bits174: &[u8; 174],
-    max_order: usize,
-    deadline: std::time::Instant,
-) -> Option<[u8; 174]> {
-    if std::time::Instant::now() >= deadline { return None; }
-
-    let mut base91 = [0u8; 91];
-    base91.copy_from_slice(&base_bits174[..91]);
-
-    // Order 0: BP's own best-effort guess, re-encoded as-is (BP got the
-    // parity bits it computed from a NON-converged state — re-deriving
-    // them from just the 91 systematic bits can independently pass parity
-    // even when BP itself didn't converge).
-    if check_crc(&base91) { return Some(ldpc_encode_systematic(&base91)); }
-    if max_order < 1 { return None; }
-
-    // Order 1: flip each of the OSD_FLIP_CANDIDATES least-reliable bits
-    // singly, starting from the least reliable (most likely BP got it
-    // wrong), check CRC after each flip.
-    let order = order_by_reliability_91(llr174);
-    let k = OSD_FLIP_CANDIDATES.min(91);
-    for &pos in order.iter().take(k) {
-        if std::time::Instant::now() >= deadline { return None; }
-        let mut cand = base91;
-        cand[pos] ^= 1;
-        if check_crc(&cand) { return Some(ldpc_encode_systematic(&cand)); }
-    }
-    None
-}
-
 /// Pelny OSD (ordered statistics decoding) w ogolnej pozycji, uzywany gdy BP
 /// nie zbiegl na zadnym zestawie LLR. W odroznieniu od try_osd (odwraca
 /// pojedyncze bity tylko w stalych 91 bitach systematycznych) tutaj baza
@@ -343,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn osd_recovers_known_codeword_with_one_bit_flipped() {
+    fn osd_full_recovers_codeword_with_confident_wrong_bits() {
         // Build a 91-bit message+CRC word with a VALID CRC-14 - check_crc
         // is the real acceptance gate for OSD (see the module doc comment:
         // LDPC parity alone is trivially satisfied by ANY systematic word
@@ -371,27 +315,29 @@ mod tests {
         // this only proves recovery, not that ordering itself helps -
         // that's fine, ordering is a heuristic for trying fewer candidates
         // first, not a correctness requirement).
+        // Slabe, ale poprawne LLR wszedzie poza kilkoma bitami o PEWNYM,
+        // blednym znaku (tak, ze sama twarda decyzja daje zle slowo). Pelny
+        // OSD musi wrocic do poprawnego slowa kodowego (z poprawnym CRC).
         let mut llr = [0f32; 174];
         for i in 0..174 {
-            llr[i] = if good_cw[i] == 0 { 5.0 } else { -5.0 };
+            let m = 1.0 + (i % 7) as f32;
+            llr[i] = if good_cw[i] == 0 { m } else { -m };
         }
-        llr[10] = -llr[10];
-        let mut wrong_bits174 = good_cw;
-        wrong_bits174[10] ^= 1;
-        let mut wrong91 = [0u8; 91];
-        wrong91.copy_from_slice(&wrong_bits174[..91]);
-        assert!(!check_crc(&wrong91), "test setup: flipped word should fail CRC");
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        let recovered = try_osd(&llr, &wrong_bits174, 1, deadline);
-        assert_eq!(recovered, Some(good_cw));
+        for &i in &[3usize, 120, 150] { llr[i] = -llr[i] * 0.2; }
+        let (cw, _d) = osd_full(&llr, 40).expect("osd_full musi odzyskac slowo");
+        assert_eq!(cw, good_cw);
     }
 
     #[test]
-    fn osd_gives_up_past_deadline() {
-        let llr = [1.0f32; 174];
-        let bits = [0u8; 174];
-        let expired = std::time::Instant::now() - std::time::Duration::from_millis(1);
-        assert_eq!(try_osd(&llr, &bits, 1, expired), None);
+    fn osd_full_rejects_word_failing_crc() {
+        // Slowo kodowe z ZLYM CRC (dane bez poprawnej sumy) - OSD znajdzie je
+        // jako najblizsze, ale CRC musi je odrzucic.
+        let mut bits91 = [0u8; 91];
+        bits91[5] = 1;
+        let cw = ldpc_encode_systematic(&bits91);
+        assert!(!check_crc(&bits91));
+        let mut llr = [0f32; 174];
+        for i in 0..174 { llr[i] = if cw[i] == 0 { 4.0 } else { -4.0 }; }
+        assert!(osd_full(&llr, 40).is_none());
     }
 }

@@ -26,6 +26,8 @@ pub struct ApHints {
     pub partner_call: Option<String>,
     #[allow(dead_code)] // queue-based hypotheses deferred past v1 - see build_hypotheses
     pub queue:        Vec<String>,
+    /// Czestotliwosc audio RX (Hz) - AP z partnerem tylko w jej poblizu.
+    pub rx_freq:      Option<f32>,
 }
 
 /// Builds the v1 hypothesis list from raw hints: "own call as TO" (highest
@@ -56,24 +58,10 @@ pub struct ApHypothesis {
     pub call_de: Option<String>,
 }
 
-// Bias strength added to the channel LLR for each bit implied by a
-// hypothesis. Ported from ap_decode.py's prior_strength — large enough to
-// dominate a weak/noisy channel LLR for that bit.
-const AP_PRIOR_STRENGTH: f32 = 6.0;
 // More iterations than the normal 30 (ldpc.rs/mod.rs) — the biased LLR
 // starts further from convergence on the still-unbiased portion of the
 // message, needs more room. Ported from ap_decode.py's max_iters.
 const AP_MAX_ITERS: usize = 60;
-
-/// Adds ±AP_PRIOR_STRENGTH to llr174[start..start+28], sign per the known
-/// c28 bit (LLR convention throughout this crate: positive = bit likely
-/// 0). Mutates in place.
-fn apply_bias(llr174: &mut [f32; 174], start: usize, c28: u32, scramble: Option<&[u8; 77]>) {
-    for i in 0..28 {
-        let bit = known_bit(((c28 >> (27 - i)) & 1) as u8, start + i, scramble);
-        llr174[start + i] += if bit == 0 { AP_PRIOR_STRENGTH } else { -AP_PRIOR_STRENGTH };
-    }
-}
 
 /// Bit tresci komunikatu -> bit w slowie kodowym. FT4 nadaje komunikat
 /// XOR-owany z RVEC (scrambling), wiec znany bit trzeba przeksztalcic tak
@@ -81,11 +69,6 @@ fn apply_bias(llr174: &mut [f32; 174], start: usize, c28: u32, scramble: Option<
 /// pozycji w zla strone.
 fn known_bit(bit: u8, pos: usize, scramble: Option<&[u8; 77]>) -> u8 {
     match scramble { Some(r) if pos < 77 => bit ^ r[pos], _ => bit }
-}
-
-/// Czy zdekodowane slowo zgadza sie z hipoteza na polu c28 od `start`.
-fn matches_c28(cw: &[u8; 174], start: usize, c28: u32, scramble: Option<&[u8; 77]>) -> bool {
-    (0..28).all(|i| cw[start + i] == known_bit(((c28 >> (27 - i)) & 1) as u8, start + i, scramble))
 }
 
 /// Bias the callsign field(s) implied by `hyp` (c28_1 = bits[0..28] for
@@ -98,27 +81,41 @@ fn matches_c28(cw: &[u8; 174], start: usize, c28: u32, scramble: Option<&[u8; 77
 /// converge to something self-consistent, the same residual risk OSD's
 /// CRC-only gate already carries.
 fn ap_try_hypothesis(llr174: &[f32; 174], hyp: &ApHypothesis, scramble: Option<&[u8; 77]>) -> Option<[u8; 174]> {
-    let mut biased = *llr174;
     let to = match &hyp.call_to { Some(c) => Some(pack_c28(c)?), None => None };
     let de = match &hyp.call_de { Some(c) => Some(pack_c28(c)?), None => None };
     if to.is_none() && de.is_none() { return None; }
-    if let Some(c) = to { apply_bias(&mut biased, 0, c, scramble); }
-    if let Some(c) = de { apply_bias(&mut biased, 29, c, scramble); }
-    let (bits, ok, _iters) = bp_decode(&biased, AP_MAX_ITERS);
-    if !ok { return None; }
-    // Zbieznosc pod biasem nie znaczy jeszcze, ze to TEN komunikat -
-    // odrzucamy slowa niezgodne z hipoteza.
-    if let Some(c) = to { if !matches_c28(&bits, 0, c, scramble) { return None; } }
-    if let Some(c) = de { if !matches_c28(&bits, 29, c, scramble) { return None; } }
-    Some(bits)
+    // Znane bity: pola c28 z hipotezy, ich bity r1 (=0, bez /R) oraz typ
+    // komunikatu i3=1 (standardowy) - jak przy AP dla CQ (try_ap_cq).
+    let mut known: Vec<(usize, u8)> = Vec::with_capacity(64);
+    if let Some(c) = to {
+        for i in 0..28 { known.push((i, ((c >> (27 - i)) & 1) as u8)); }
+        known.push((28, 0));
+    }
+    if let Some(c) = de {
+        for i in 0..28 { known.push((29 + i, ((c >> (27 - i)) & 1) as u8)); }
+        known.push((57, 0));
+    }
+    known.extend_from_slice(&[(74, 0), (75, 0), (76, 1)]);
+    try_known_bits(llr174, &known, scramble)
 }
 
-/// Try hypotheses in order, first convergent one wins. Enforces the same
-/// shared `deadline` as OSD/the rest of this decode pass — AP is the MORE
-/// expensive fallback (a full extra bp_decode run per hypothesis, not a
-/// cheap re-encode like OSD's), so callers should keep the hypothesis
-/// list short (see mod.rs's hypothesis construction: "own call as TO"
-/// only in v1).
+/// Znane bity komunikatu dostaja pelna pewnosc (wieksza niz najpewniejszy bit
+/// z kanalu), potem BP, a gdy nie zbiegnie - pelny OSD (znane bity trafiaja
+/// wtedy na pewno do bazy informacyjnej). Wynik musi miec dokladnie te bity -
+/// zbieznosc pod wymuszeniem nie znaczy jeszcze, ze to TEN komunikat.
+fn try_known_bits(llr174: &[f32; 174], known: &[(usize, u8)], scramble: Option<&[u8; 77]>) -> Option<[u8; 174]> {
+    let apmag = llr174.iter().fold(0f32, |m, v| m.max(v.abs())) * 1.01;
+    let mut z = *llr174;
+    for &(pos, b) in known {
+        z[pos] = if known_bit(b, pos, scramble) == 0 { apmag } else { -apmag };
+    }
+    let ok_known = |cw: &[u8; 174]| known.iter().all(|&(pos, b)| cw[pos] == known_bit(b, pos, scramble));
+    let (bits, ok, _) = bp_decode(&z, AP_MAX_ITERS);
+    if ok && ok_known(&bits) { return Some(bits); }
+    let (cw, _d) = super::osd::osd_full(&z, 40)?;
+    if ok_known(&cw) { Some(cw) } else { None }
+}
+
 pub fn try_ap(llr174: &[f32; 174], hyps: &[ApHypothesis], scramble: Option<&[u8; 77]>, deadline: std::time::Instant) -> Option<[u8; 174]> {
     for hyp in hyps {
         if std::time::Instant::now() >= deadline { return None; }
@@ -138,21 +135,88 @@ pub fn try_ap(llr174: &[f32; 174], hyps: &[ApHypothesis], scramble: Option<&[u8;
 pub fn try_ap_cq(llr174: &[f32; 174], scramble: Option<&[u8; 77]>) -> Option<[u8; 174]> {
     let mut known: Vec<(usize, u8)> = Vec::with_capacity(32);
     for i in 0..28 { known.push((i, ((2u32 >> (27 - i)) & 1) as u8)); }
-    known.push((28, 0));
-    known.push((74, 0));
-    known.push((75, 0));
-    known.push((76, 1));
-    let apmag = llr174.iter().fold(0f32, |m, v| m.max(v.abs())) * 1.01;
-    let mut z = *llr174;
-    for &(pos, b) in &known {
-        let bit = known_bit(b, pos, scramble);
-        z[pos] = if bit == 0 { apmag } else { -apmag };
+    known.extend_from_slice(&[(28, 0), (74, 0), (75, 0), (76, 1)]);
+    try_known_bits(llr174, &known, scramble)
+}
+
+/// Pelne slowa kodowe (FT8 i FT4) wszystkich komunikatow, ktore partner QSO
+/// moze do nas wyslac na etapie raportow i konczenia: "MOJ PARTNER RRR /
+/// RR73 / 73 / +-NN / R+-NN" (raporty -30..+20). Dla takiego komunikatu
+/// znane jest CALE slowo kodowe, wiec zamiast dekodowac wystarczy sprawdzic,
+/// ktore z nich pasuje do odebranego sygnalu (try_ap_full).
+pub struct FullHypotheses {
+    cw: Vec<[[u8; 174]; 2]>,
+}
+
+pub fn build_full_hypotheses(hints: &ApHints) -> FullHypotheses {
+    let mut cw = Vec::new();
+    let (Some(partner), false) = (&hints.partner_call, hints.own_call.is_empty()) else {
+        return FullHypotheses { cw };
+    };
+    let (Some(c1), Some(c2)) = (pack_c28(&hints.own_call), pack_c28(partner)) else {
+        return FullHypotheses { cw };
+    };
+    // RRR=32402, 73=32404; RR73 nadawane jest jako LOKATOR "RR73" (32373),
+    // nie kod 32403 - oba wyswietlaja sie tak samo, ale maja inne slowa kodowe.
+    let mut tails: Vec<(bool, u32)> = vec![(false, 32402), (false, 32373), (false, 32404)];
+    for rep in -30i32..=20 {
+        let g15 = (32400 + 35 + rep) as u32;
+        tails.push((false, g15));
+        tails.push((true, g15));
     }
-    let ok_known = |cw: &[u8; 174]| known.iter().all(|&(pos, b)| cw[pos] == known_bit(b, pos, scramble));
-    let (bits, ok, _) = bp_decode(&z, 30);
-    if ok && ok_known(&bits) { return Some(bits); }
-    let (cw, _d) = super::osd::osd_full(&z, 40)?;
-    if ok_known(&cw) { Some(cw) } else { None }
+    for (rflag, g15) in tails {
+        let mut bits77 = [0u8; 77];
+        for i in 0..28 { bits77[i] = ((c1 >> (27 - i)) & 1) as u8; }
+        for i in 0..28 { bits77[29 + i] = ((c2 >> (27 - i)) & 1) as u8; }
+        bits77[58] = rflag as u8;
+        for i in 0..15 { bits77[59 + i] = ((g15 >> (14 - i)) & 1) as u8; }
+        bits77[76] = 1; // i3 = 1
+        let mut scr = bits77;
+        for i in 0..77 { scr[i] ^= super::FT4_RVEC[i]; }
+        cw.push([encode77(&bits77), encode77(&scr)]);
+    }
+    FullHypotheses { cw }
+}
+
+fn encode77(bits77: &[u8; 77]) -> [u8; 174] {
+    let mut padded = [0u8; 82];
+    padded[..77].copy_from_slice(bits77);
+    let crc = super::crc14::crc14(&padded);
+    let mut b91 = [0u8; 91];
+    b91[..77].copy_from_slice(bits77);
+    for i in 0..14 { b91[77 + i] = ((crc >> (13 - i)) & 1) as u8; }
+    super::osd::ldpc_encode_systematic(&b91)
+}
+
+/// Najlepiej pasujace pelne slowo kodowe. Miara: wazona niezgodnosc (suma
+/// |LLR| na bitach niezgodnych ze slowem, wzgledem sumy |LLR|) USREDNIONA po
+/// wszystkich zestawach LLR z demodulacji - dla prawdziwego komunikatu
+/// wszystkie zestawy wskazuja to samo slowo, dla szumu usrednianie zmniejsza
+/// przypadkowe wahania (najlepszy z kilku zestawow dawal szumowi kilka szans).
+/// Zwraca (slowo, niezgodnosc najlepszego, niezgodnosc drugiego) - progi
+/// (bezwzgledny i jednoznacznosci) ustawia wywolujacy.
+pub fn try_ap_full(llr_sets: &[[f32; 174]], h: &FullHypotheses, is_ft8: bool) -> Option<([u8; 174], f32, f32)> {
+    if h.cw.is_empty() || llr_sets.is_empty() { return None; }
+    let tots: Vec<f32> = llr_sets.iter().map(|l| l.iter().map(|v| v.abs()).sum()).collect();
+    if tots.iter().any(|&t| t <= 0.0) { return None; }
+    let k = if is_ft8 { 0 } else { 1 };
+    let mut best: Option<([u8; 174], f32)> = None;
+    let mut second = f32::MAX;
+    for pair in &h.cw {
+        let cw = &pair[k];
+        let mut acc = 0f32;
+        for (l, t) in llr_sets.iter().zip(tots.iter()) {
+            let d: f32 = (0..174).filter(|&i| ((l[i] < 0.0) as u8) != cw[i]).map(|i| l[i].abs()).sum();
+            acc += d / t;
+        }
+        let rel = acc / llr_sets.len() as f32;
+        match &best {
+            Some(b) if rel >= b.1 => { if rel < second { second = rel; } }
+            _ => { if let Some(b) = &best { second = b.1; } best = Some((*cw, rel)); }
+        }
+    }
+    // (slowo, niezgodnosc najlepszego, niezgodnosc drugiego najlepszego)
+    best.map(|(cw, rel)| (cw, rel, second))
 }
 
 #[cfg(test)]

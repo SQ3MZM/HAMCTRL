@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.15"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-22-DECODER-COHSYNC-SNR"
+BUILD_MARKER = "BUILD-2026-10-22-AP-QSO-TXHOLD-MANUAL"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -7088,8 +7088,12 @@ class App:
             if not can:
                 await ws.send_json({"type": "toast", "msg": f"⛔ {why}", "level": "error"})
                 return
-            if self._ft8_tx_frozen:
-                # Frozen — ignore change requests, reply with the current state
+            if self._ft8_tx_frozen and not msg.get("manual"):
+                # Frozen — ignore AUTOMATIC change requests, reply with the
+                # current state. A manual change (operator dragging the TX
+                # marker / typing the TX field, manual=True) is allowed even
+                # when frozen: Hold only stops TX from following the
+                # correspondent, it shouldn't lock the operator out.
                 await ws.send_json({"type": "ft8_tx_freq", "freqHz": self._ft8_tx_freq_hz,
                                      "frozen": True})
                 return
@@ -8222,10 +8226,12 @@ class App:
             # (#[allow(dead_code)] in ap.rs, build_hypotheses doesn't use
             # them) - and the engine no longer HAS a queue (removed
             # 2026-08-26), so always pass an empty list here.
+            partner = self._qso_engine.partner_call
             await self.rust_audio.set_ap_hints(
                 own_call,
-                self._qso_engine.partner_call,
+                partner,
                 [],
+                self._ft8_rx_freq_hz if partner else None,
             )
         except Exception as e:
             print(f"[ap] hint sync error: {e}", flush=True)

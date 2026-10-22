@@ -78,6 +78,7 @@ async fn run_loop(
                 own_call:     c.ap_own_call.clone(),
                 partner_call: c.ap_partner_call.clone(),
                 queue:        c.ap_queue.clone(),
+                rx_freq:      c.ap_rx_freq,
             };
             (c.ft8_decode_mode.clone(), c.ft8_rx_enabled, hints)
         };

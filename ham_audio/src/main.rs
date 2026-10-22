@@ -40,7 +40,9 @@ pub enum CtrlCmd {
     SetFt8Rx     { enabled: bool },  // enable/disable FT8 decode
     // AP (a priori) decode hints - operator's own callsign, current QSO
     // partner (if any), and the Call-1st queue. See decode::ap.
-    SetApHints   { own_call: String, partner_call: Option<String>, queue: Vec<String> },
+    // rx_freq: czestotliwosc audio RX (marker podaza za partnerem) - AP z
+    // partnerem dziala tylko w jej poblizu. Opcjonalne (starszy Python go nie wysyla).
+    SetApHints   { own_call: String, partner_call: Option<String>, queue: Vec<String>, #[serde(default)] rx_freq: Option<f32> },
     GetStatus,
     ListDevices,
     Shutdown,
@@ -345,12 +347,13 @@ async fn handle_ctrl(
                 cfg.write().await.ft8_rx_enabled = enabled;
                 r#"{"ok":true}"#.into()
             }
-            CtrlCmd::SetApHints  { own_call, partner_call, queue } => {
-                info!("[ap] hints: own={} partner={:?} queue_len={}", own_call, partner_call, queue.len());
+            CtrlCmd::SetApHints  { own_call, partner_call, queue, rx_freq } => {
+                info!("[ap] hints: own={} partner={:?} rx_freq={:?} queue_len={}", own_call, partner_call, rx_freq, queue.len());
                 let mut c = cfg.write().await;
                 c.ap_own_call = own_call;
                 c.ap_partner_call = partner_call;
                 c.ap_queue = queue;
+                c.ap_rx_freq = rx_freq;
                 r#"{"ok":true}"#.into()
             }
             CtrlCmd::ListDevices => serde_json::to_string(&audio::list_devices()).unwrap(),
