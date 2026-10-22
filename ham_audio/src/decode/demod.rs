@@ -16,10 +16,7 @@ pub fn extract_tone_power(audio: &[f32], cand: &Candidate, p: &Params) -> Vec<f3
 
     let fft = cached_fft_forward(nfft);
 
-    // Hanning window
-    let window: Vec<f32> = (0..n).map(|i| {
-        0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos())
-    }).collect();
+    let window: Vec<f32> = vec![1.0; n];
 
     let mut power = vec![0f32; p.n_sym * p.n_tones];
     let mut scratch = vec![Complex::new(0f32, 0f32); fft.get_inplace_scratch_len()];

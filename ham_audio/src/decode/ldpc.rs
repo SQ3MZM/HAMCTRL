@@ -1,4 +1,4 @@
-/// LDPC(174,91) belief propagation decoder — min-sum algorithm.
+/// LDPC(174,91) belief propagation decoder — sum-product (tanh).
 /// Direct port of ldpc_decode.py, optimized for Rust.
 
 use super::params::NM;
@@ -49,9 +49,23 @@ fn parity_ok(bits: &[u8], g: &LdpcGraph) -> bool {
 
 static GRAPH: OnceLock<LdpcGraph> = OnceLock::new();
 
+/// atanh z obcieciem przy |x|->1 (inaczej nieskonczonosc psuje kolejne iteracje).
+fn atanh_clamped(x: f32) -> f32 {
+    let x = x.clamp(-0.999_999_9, 0.999_999_9);
+    0.5 * ((1.0 + x) / (1.0 - x)).ln()
+}
+
 /// Decode LLRs (positive = bit likely 0, negative = bit likely 1).
 /// Returns (bits, success, iterations).
 pub fn bp_decode(llr_channel: &[f32; N_BITS], max_iters: usize) -> ([u8; N_BITS], bool, usize) {
+    bp_decode_save(llr_channel, max_iters, &mut [])
+}
+
+/// Jak bp_decode, ale dodatkowo zapisuje do `save[i]` sumaryczne LLR bitow
+/// (kanal + wiadomosci od checkow) po iteracji i+1 - wejscie dla pelnego OSD
+/// (osd::osd_full), gdy BP nie zbiegnie. OSD na LLR "wygladzonych" 1-2
+/// iteracjami BP trafia czesciej niz na surowych LLR z kanalu.
+pub fn bp_decode_save(llr_channel: &[f32; N_BITS], max_iters: usize, save: &mut [[f32; N_BITS]]) -> ([u8; N_BITS], bool, usize) {
     // LdpcGraph::build() only depends on the constant NM matrix, never on
     // input data - it was previously rebuilt (with ~500 small heap
     // allocations for bit_checks) on EVERY call, i.e. up to 60x per decode
@@ -74,29 +88,17 @@ pub fn bp_decode(llr_channel: &[f32; N_BITS], max_iters: usize) -> ([u8; N_BITS]
     let mut bit_total = [0f32; N_BITS];
 
     for it in 0..max_iters {
-        // Check node update (min-sum)
+        // Check node update: pelny sum-product (tanh), nie min-sum. Min-sum
+        // zawyza wiarygodnosc wiadomosci i przy slabych sygnalach zbiega
+        // gorzej - zmierzone na plikach ft8sim (patrz baseband.rs).
         for c in 0..N_CHECKS {
             let deg = g.check_deg[c];
-            // Collect values
-            let mut vals = [0f32; 7];
-            for i in 0..deg { vals[i] = q[c][i]; }
-
-            // Total sign product
-            let total_sign: f32 = vals[..deg].iter().map(|v| if *v >= 0.0 { 1.0 } else { -1.0 }).product();
-
+            let mut th = [0f32; 7];
+            for i in 0..deg { th[i] = (q[c][i] * 0.5).tanh(); }
             for j in 0..deg {
-                let sign_j = if vals[j] >= 0.0 { 1.0f32 } else { -1.0 };
-                let sign_others = total_sign * sign_j; // remove j-th sign
-
-                // Min magnitude excluding j
-                let min_mag = vals[..deg]
-                    .iter()
-                    .enumerate()
-                    .filter(|&(k, _)| k != j)
-                    .map(|(_, v)| v.abs())
-                    .fold(f32::INFINITY, f32::min);
-
-                r[c][j] = sign_others * min_mag;
+                let mut prod = 1.0f32;
+                for k in 0..deg { if k != j { prod *= th[k]; } }
+                r[c][j] = 2.0 * atanh_clamped(prod);
             }
         }
 
@@ -115,6 +117,7 @@ pub fn bp_decode(llr_channel: &[f32; N_BITS], max_iters: usize) -> ([u8; N_BITS]
             }
             bit_total[b] = total;
         }
+        if it < save.len() { save[it] = bit_total; }
 
         // Hard decision
         let mut bits = [0u8; N_BITS];

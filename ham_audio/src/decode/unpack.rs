@@ -318,6 +318,12 @@ pub struct Ft8Message {
     /// webapp.py, patrz qso_engine.parse_dxpedition_message) uzywa tego
     /// zamiast zgadywac nadawce z call_to/call_de.
     pub sender_call:     String,
+    /// Rodzaj komunikatu: "std" (i3=1/2), "nonstd" (4), "dxped" (0.1),
+    /// "text" (0.0), "fd" (0.3/0.4), "tel" (0.5), "rttyru" (3), "euvhf" (5).
+    /// Automat QSO (webapp.py) i klik w oknie RX (wsjtx.js) reaguja tylko na
+    /// std/nonstd/dxped - pozostale sa tylko wyswietlane, zeby np. wolny
+    /// tekst "SQ3MZM DE SP3XYZ" nie zostal wziety za wywolanie od stacji "DE".
+    pub msg_type:        &'static str,
 }
 
 fn bits_to_u64(bits: &[u8]) -> u64 {
@@ -343,15 +349,20 @@ pub fn unpack77(bits77: &[u8]) -> Option<Ft8Message> {
             // unpack_type0_1.
             let n3 = bits_to_u32(&bits77[71..74]);
             match n3 {
-                1 => unpack_type0_1(bits77),
-                _ => None,
+                0     => unpack_free_text(bits77),
+                1     => unpack_type0_1(bits77),
+                3 | 4 => unpack_field_day(bits77, n3),
+                5     => unpack_telemetry(bits77),
+                // 0.2 nieuzywany, 0.6 WSPR, 0.7 zarezerwowany - odrzucamy
+                // (bledna interpretacja pol dawalaby fantomy).
+                _     => None,
             }
         }
         1 | 2 => unpack_standard(bits77, i3),
+        3     => unpack_rtty_ru(bits77),
         4     => unpack_nonstandard(bits77),
-        // Typy ktorych nie dekodujemy (3=RTTY RU, 5=EU VHF...): odrzucamy
-        // zamiast produkowac smieci. LDPC+CRC moga przejsc dla kazdego typu
-        // — bledna interpretacja pol dawala fantomy.
+        5     => unpack_eu_vhf(bits77),
+        // i3=6/7 nie sa zdefiniowane w protokole.
         _     => None,
     }
 }
@@ -399,6 +410,7 @@ fn unpack_standard(bits77: &[u8], i3: u32) -> Option<Ft8Message> {
         message,
         is_dxpedition: false,
         sender_call,
+        msg_type: "std",
     })
 }
 
@@ -443,6 +455,7 @@ fn unpack_type0_1(bits77: &[u8]) -> Option<Ft8Message> {
         message,
         is_dxpedition:  true,
         sender_call:    fox_disp, // NIE call1/call2 - prawdziwy nadawca (Fox/MSHV)
+        msg_type:       "dxped",
     })
 }
 
@@ -509,7 +522,152 @@ fn unpack_nonstandard(bits77: &[u8]) -> Option<Ft8Message> {
         message,
         is_dxpedition: false,
         sender_call,
+        msg_type: "nonstd",
     })
+}
+
+fn bits_to_u128(bits: &[u8]) -> u128 {
+    bits.iter().fold(0u128, |acc, &b| (acc << 1) | (b as u128 & 1))
+}
+
+/// Komunikat bez pary znakow (wolny tekst, telemetria) - call_to/call_de
+/// puste, zeby cache grid/last-heard w webapp.py ich nie lapaly.
+fn text_only(message: String, msg_type: &'static str) -> Option<Ft8Message> {
+    if message.is_empty() { return None; }
+    Some(Ft8Message {
+        call_to: String::new(), call_de: String::new(), report_or_grid: String::new(),
+        r_flag: false, message, is_dxpedition: false, sender_call: String::new(), msg_type,
+    })
+}
+
+/// Komunikat zawodowy z dwoma znakami (Field Day, RTTY RU, EU VHF):
+/// call_to/call_de jak w standardowym, reszta wymiany w report_or_grid.
+fn contest_msg(call_to: String, call_de: String, exch: String, r_flag: bool,
+               message: String, msg_type: &'static str) -> Option<Ft8Message> {
+    for call in [&call_to, &call_de] {
+        if !call.is_empty() && !call.starts_with('<') { remember_call(call); }
+    }
+    let sender_call = call_de.clone();
+    Some(Ft8Message {
+        call_to, call_de, report_or_grid: exch, r_flag, message,
+        is_dxpedition: false, sender_call, msg_type,
+    })
+}
+
+/// Typ 0.0: wolny tekst - 13 znakow base-42 z 71 bitow.
+fn unpack_free_text(bits77: &[u8]) -> Option<Ft8Message> {
+    const ALPHA42: &[u8] = b" 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?";
+    let mut n = bits_to_u128(&bits77[0..71]);
+    let mut chars = [b' '; 13];
+    for i in (0..13).rev() {
+        chars[i] = ALPHA42[(n % 42) as usize];
+        n /= 42;
+    }
+    text_only(String::from_utf8_lossy(&chars).trim().to_string(), "text")
+}
+
+/// Typ 0.5: telemetria - 71 bitow jako 18 cyfr hex (23+24+24 bity),
+/// bez zer wiodacych.
+fn unpack_telemetry(bits77: &[u8]) -> Option<Ft8Message> {
+    let a = bits_to_u32(&bits77[0..23]);
+    let b = bits_to_u32(&bits77[23..47]);
+    let c = bits_to_u32(&bits77[47..71]);
+    let hex = format!("{:06X}{:06X}{:06X}", a, b, c);
+    text_only(hex.trim_start_matches('0').to_string(), "tel")
+}
+
+const ARRL_SECTIONS: [&str; 86] = [
+    "AB","AK","AL","AR","AZ","BC","CO","CT","DE","EB",
+    "EMA","ENY","EPA","EWA","GA","GH","IA","ID","IL","IN",
+    "KS","KY","LA","LAX","NS","MB","MDC","ME","MI","MN",
+    "MO","MS","MT","NC","ND","NE","NFL","NH","NL","NLI",
+    "NM","NNJ","NNY","TER","NTX","NV","OH","OK","ONE","ONN",
+    "ONS","OR","ORG","PAC","PR","QC","RI","SB","SC","SCV",
+    "SD","SDG","SF","SFL","SJV","SK","SNJ","STX","SV","TN",
+    "UT","VA","VI","VT","WCF","WI","WMA","WNY","WPA","WTX",
+    "WV","WWA","WY","DX","PE","NB",
+];
+
+/// Typ 0.3/0.4: ARRL Field Day - c28 c28 r1 n4(liczba TX-1) k3(klasa) s7(sekcja).
+fn unpack_field_day(bits77: &[u8], n3: u32) -> Option<Ft8Message> {
+    let n28a  = bits_to_u32(&bits77[0..28]);
+    let n28b  = bits_to_u32(&bits77[28..56]);
+    let ir    = bits77[56] != 0;
+    let intx  = bits_to_u32(&bits77[57..61]);
+    let class = bits_to_u32(&bits77[61..64]);
+    let isec  = bits_to_u32(&bits77[64..71]) as usize;
+    if isec < 1 || isec > ARRL_SECTIONS.len() || n28a <= 2 || n28b <= 2 { return None; }
+    let call1 = unpack_c28(n28a);
+    let call2 = unpack_c28(n28b);
+    let ntx = intx + 1 + if n3 == 4 { 16 } else { 0 };
+    let exch = format!("{}{} {}", ntx, (b'A' + class as u8) as char, ARRL_SECTIONS[isec - 1]);
+    let message = format!("{} {} {}{}", call1, call2, if ir { "R " } else { "" }, exch);
+    contest_msg(call1, call2, exch, ir, message, "fd")
+}
+
+// Stany USA + prowincje VE + kilka DX; indeksy 73..171 to "X01".."X99".
+const RTTY_MULTS: [&str; 72] = [
+    "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
+    "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
+    "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+    "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
+    "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY",
+    "NB","NS","QC","ON","MB","SK","AB","BC","NWT","NF",
+    "LB","NU","YT","PEI","DC","DR","FR","GD","GR","OV",
+    "ZH","ZL",
+];
+
+/// Typ 3: ARRL RTTY Roundup - t1(TU;) c28 c28 r1 r3(RST 5x9) s13(numer
+/// seryjny albo 8000+indeks stanu/prowincji).
+fn unpack_rtty_ru(bits77: &[u8]) -> Option<Ft8Message> {
+    let itu   = bits77[0] != 0;
+    let n28a  = bits_to_u32(&bits77[1..29]);
+    let n28b  = bits_to_u32(&bits77[29..57]);
+    let ir    = bits77[57] != 0;
+    let irpt  = bits_to_u32(&bits77[58..61]);
+    let nexch = bits_to_u32(&bits77[61..74]);
+    let exch_tail = if nexch > 8000 {
+        let imult = (nexch - 8000) as usize;
+        if imult <= RTTY_MULTS.len() { RTTY_MULTS[imult - 1].to_string() }
+        else if imult <= 171 { format!("X{:02}", imult - RTTY_MULTS.len()) }
+        else { return None; }
+    } else if nexch >= 1 && nexch <= 7999 {
+        format!("{:04}", nexch)
+    } else {
+        return None;
+    };
+    let call1 = unpack_c28(n28a);
+    let call2 = unpack_c28(n28b);
+    let exch = format!("5{}9 {}", irpt + 2, exch_tail);
+    let message = format!("{}{} {} {}{}", if itu { "TU; " } else { "" },
+                          call1, call2, if ir { "R " } else { "" }, exch);
+    contest_msg(call1, call2, exch, ir, message, "rttyru")
+}
+
+/// Typ 5: EU VHF contest - h12 h22 r1 r3(RS 52..59) s11(numer) g25(lokator 6-znakowy).
+fn unpack_eu_vhf(bits77: &[u8]) -> Option<Ft8Message> {
+    let n12     = bits_to_u32(&bits77[0..12]);
+    let n22     = bits_to_u32(&bits77[12..34]);
+    let ir      = bits77[34] != 0;
+    let irpt    = bits_to_u32(&bits77[35..38]);
+    let iserial = bits_to_u32(&bits77[38..49]);
+    let mut n   = bits_to_u32(&bits77[49..74]);
+    if n > 18_662_399 { return None; }
+    let j1 = n / (18 * 10 * 10 * 24 * 24); n -= j1 * 18 * 10 * 10 * 24 * 24;
+    let j2 = n / (10 * 10 * 24 * 24);      n -= j2 * 10 * 10 * 24 * 24;
+    let j3 = n / (10 * 24 * 24);           n -= j3 * 10 * 24 * 24;
+    let j4 = n / (24 * 24);                n -= j4 * 24 * 24;
+    let j5 = n / 24;
+    let j6 = n - j5 * 24;
+    if j1 > 17 || j2 > 17 { return None; }
+    let grid6: String = [b'A' + j1 as u8, b'A' + j2 as u8, b'0' + j3 as u8,
+                         b'0' + j4 as u8, b'A' + j5 as u8, b'A' + j6 as u8]
+        .iter().map(|&c| c as char).collect();
+    let call1 = format!("<{}>", lookup_hash12(n12).unwrap_or_else(|| "...".to_string()));
+    let call2 = format!("<{}>", lookup_hash(n22).unwrap_or_else(|| "...".to_string()));
+    let exch = format!("{:02}{:04} {}", 52 + irpt, iserial, grid6);
+    let message = format!("{} {} {}{}", call1, call2, if ir { "R " } else { "" }, exch);
+    contest_msg(call1, call2, exch, ir, message, "euvhf")
 }
 
 #[cfg(test)]
@@ -591,6 +749,55 @@ mod tests {
         assert_eq!(msg.report_or_grid, "-08");
         assert!(msg.message.contains("KH1/KH7Z"), "hash Foxa powinien sie rozwiazac z cache: {}", msg.message);
         assert_eq!(msg.sender_call, "KH1/KH7Z"); // prawdziwy nadawca, NIE call_to/call_de
+    }
+
+    // Wektory 77-bitowe z ft8code.exe (WSJT-X) - po jednym na kazdy typ
+    // komunikatu, ktory wczesniej byl odrzucany w unpack77.
+    fn bits(s: &str) -> Vec<u8> {
+        assert_eq!(s.len(), 77);
+        s.bytes().map(|b| b - b'0').collect()
+    }
+
+    fn check(b: &str, text: &str, msg_type: &str) {
+        let msg = unpack77(&bits(b)).unwrap_or_else(|| panic!("nie zdekodowano: {text}"));
+        assert_eq!(msg.message, text);
+        assert_eq!(msg.msg_type, msg_type);
+    }
+
+    #[test]
+    fn free_text_type0_0() {
+        check("00000000000000000000001000011010110010000111101011111000101011110000000000000", "TNX 73 GL", "text");
+        let m = unpack77(&bits("01100000110101110101001011111111100111010011111110010001111101001001100000000")).unwrap();
+        assert_eq!(m.message, "SQ3MZM DE SP3");
+        // wolny tekst NIE moze udawac pary znakow (automat by odpowiedzial "DE")
+        assert!(m.call_to.is_empty() && m.call_de.is_empty());
+    }
+
+    #[test]
+    fn field_day_type0_3_and_0_4() {
+        check("00001001101111011110001101010000110000101001001110111000001010001001100011000", "K1ABC W9XYZ 6A WI", "fd");
+        check("00001100001010010011101110000000100110111101111000110101100000010001011100000", "W9XYZ K1ABC R 17B EMA", "fd");
+    }
+
+    #[test]
+    fn telemetry_type0_5() {
+        check("00100100011010001010110011110001001101010111100110111101111000000010010101000", "123456789ABCDEF012", "tel");
+    }
+
+    #[test]
+    fn rtty_roundup_type3() {
+        check("00000100110111101111000110101000011000010100100111011100001011111101110001011", "K1ABC W9XYZ 579 WI", "rttyru");
+        check("10000110000101001001110111000000010011011110111100011010111100000000001101011", "TU; W9XYZ K1ABC R 589 0013", "rttyru");
+        check("00000110000101001001110111000000010011011110111100011010100001111110010111011", "W9XYZ K1ABC 529 X15", "rttyru");
+    }
+
+    #[test]
+    fn eu_vhf_type5() {
+        remember_call("PA3XYZ");
+        remember_call("G4ABC/P");
+        // ft8code dla "<PA3XYZ> <G4ABC/P> ..." sam koduje w h12 hash
+        // G4ABC/P i tak tez to wypisuje w kolumnie "Decoded" - zgodnosc z nim.
+        check("11001000101111001000101111100100111111000000000110100010111010110000000111101", "<G4ABC/P> <G4ABC/P> R 590003 IO91NP", "euvhf");
     }
 }
 

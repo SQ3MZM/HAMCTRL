@@ -221,6 +221,7 @@ async fn run_loop(
                         "mode":           mode_str,
                         "isDxpedition":   r.is_dxpedition,
                         "senderCall":     r.sender_call,
+                        "msgType":        r.msg_type,
                     });
                     let line = format!("{}\n", json);
                     if stream.write_all(line.as_bytes()).await.is_err() {

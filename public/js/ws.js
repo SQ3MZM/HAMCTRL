@@ -571,7 +571,14 @@ function handleMessage(msg) {
         // Now: when msg.bands doesn't exist, we keep whatever is already
         // in S.bands (the same defensive pattern as freq/mode/etc. below, ?? instead of ||).
         bands:     msg.bands     ?? S.bands,
-        modes:     msg.modes     || [],
+        // FIX (2026-10-22, live report with [modes-debug] console logs:
+        // regular users intermittently saw ALL modes instead of the 4 the
+        // admin granted). msg.modes is the FULL hardcoded mode list, not the
+        // admin's enabled set - this overwrote the correct S.modes that
+        // loadBandsConfig() had already set, on every init (login AND every
+        // WS reconnect). Same bug class as bands above. Use the enabled list
+        // init already carries, and keep the current one if it's missing.
+        modes:     (msg.enabledModes && msg.enabledModes.length) ? msg.enabledModes : S.modes,
         rigs:      msg.rigs      || [],
         callsign:  msg.callsign  || '',
         stationLocator:  msg.stationLocator  || S.stationLocator,

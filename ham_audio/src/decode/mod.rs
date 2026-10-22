@@ -2,6 +2,7 @@
 /// Integrates sync → demod → LDPC → CRC → unpack → subtract → re-scan.
 
 pub mod ap;
+pub mod baseband;
 pub mod buffer;
 pub mod crc14;
 pub mod demod;
@@ -21,7 +22,7 @@ use demod::{extract_tone_power, extract_llr_ft8, extract_llr_ft4, estimate_snr};
 use ldpc::bp_decode;
 use crc14::check_crc;
 use unpack::unpack77;
-use subtract::{bits_to_symbols_ft8, bits_to_symbols_ft4, subtract_ft8, subtract_ft4};
+use subtract::{bits_to_symbols_ft8, bits_to_symbols_ft4, estimate_ft8, estimate_ft4, apply_estimate};
 use serde::Serialize;
 use rayon::prelude::*;
 
@@ -79,6 +80,7 @@ pub struct DecodeResult {
     // patrz Ft8Message::is_dxpedition/sender_call w unpack.rs
     pub is_dxpedition:  bool,
     pub sender_call:    String,
+    pub msg_type:       &'static str,
 }
 
 // Passes over the window after subtracting each pass's successful decodes:
@@ -134,6 +136,33 @@ const MAX_SUBTRACT_PASSES: usize = 3;
 // out of 67 vs 1.0s (parallelism had already made the budget nearly
 // irrelevant to quality - the real cost only shows up below ~0.3s).
 const FT8_TIME_BUDGET_S: f64 = 0.5;
+
+// Pelny OSD (osd::osd_full) gdy BP nie zbiegl: na ilu zestawach LLR z
+// baseband::demod_ft8 probowac i na ilu najmniej pewnych bitach bazy robic
+// rzad 2 (pary bitow, width*(width-1)/2 prob).
+// SNR w skali WSJT-X (pasmo 2500 Hz) z tonow zdekodowanego komunikatu:
+// przesuniecie = 10*log10(2500 / szerokosc binu) + poprawka kalibracyjna
+// wzgledem jt9 na probkach referencyjnych.
+const SNR_OFFSET_FT8: f32 = -13.5;
+const SNR_OFFSET_FT4: f32 = -13.7;
+
+const OSD_LLR_SETS: usize = 4;
+const OSD_ORDER2_WIDTH: usize = 40;
+// OSD (wiele prob na kandydata) moze "trafic" CRC na samym szumie. Zmierzone
+// na 600 plikach szumu (ft8sim -40 dB): wszystkie takie fantomy mialy nsync
+// 7..9, prawdziwe dekody z OSD na probkach referencyjnych 11+ (jeden FT4: 9).
+const OSD_MIN_NSYNC: usize = 10;
+
+/// Akceptacja slowa kodowego z OSD: <=36 bitow niezgodnych z twarda decyzja,
+/// albo niezgodnosci tylko na bitach prawie bez informacji (waga <1% sumy
+/// |LLR| - np. symbole zagluszone przez sasiada; zywy przyklad: stacja z
+/// nsync 15 i 39 "bledami" o lacznej wadze 1.3).
+fn osd_accept(llr: &[f32; 174], cw: &[u8; 174]) -> bool {
+    if baseband::hard_errors(llr, cw) <= 36 { return true; }
+    let dch: f32 = (0..174).filter(|&i| ((llr[i] < 0.0) as u8) != cw[i]).map(|i| llr[i].abs()).sum();
+    let tot: f32 = llr.iter().map(|v| v.abs()).sum();
+    tot > 0.0 && dch / tot < 0.01
+}
 const FT4_TIME_BUDGET_S: f64 = 0.25;
 
 /// Decode one FT8 window (nominally 15s, at least 12.5s, 12000 Hz float32).
@@ -167,7 +196,8 @@ pub fn decode_ft8(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut d
         let candidates = find_candidates_ft8(&spec, p, 60, 0.4);
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, true, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
+        let ws = baseband::window_spectrum(&residual);
+        let new = decode_and_subtract(&mut residual, &candidates, p, true, Some(&ws), noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -197,7 +227,8 @@ pub fn decode_ft4(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut d
         let candidates = find_candidates_ft4(&spec, p, 60, 0.4);
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let noise_floor = noise_floor_from_spec(&spec);
-        let new = decode_and_subtract(&mut residual, &candidates, p, false, noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
+        let ws = baseband::window_spectrum_ft4(&residual);
+        let new = decode_and_subtract(&mut residual, &candidates, p, false, Some(&ws), noise_floor, &spec, &all_decoded, deadline, spec_ms, find_cand_ms, ap_hints, on_pass_results);
         if new.is_empty() { break; }
         all_decoded.extend(new);
     }
@@ -241,6 +272,7 @@ fn decode_and_subtract(
     candidates: &[Candidate],
     p: &Params,
     is_ft8: bool,
+    ws: Option<&baseband::WindowSpectrum>,
     noise_floor: f32,
     spec: &Spectrogram,
     already: &[DecodeResult],
@@ -258,6 +290,7 @@ fn decode_and_subtract(
     // current QSO-engine state Python last pushed. Empty when
     // ap_hints.own_call is empty (AP effectively disabled).
     let ap_hypotheses = ap::build_hypotheses(ap_hints);
+    let psd = sync::avg_psd(spec);
 
     // Reborrow as shared/immutable for the parallel phase - subtraction
     // (the only mutation) happens later, sequentially, once this borrow
@@ -273,6 +306,98 @@ fn decode_and_subtract(
         .par_iter()
         .filter_map(|coarse_cand| {
             let t_demod = std::time::Instant::now();
+            // FT8: demodulacja w pasmie podstawowym (baseband.rs) - 4 zestawy
+            // LLR probowane po kolei, pierwszy ktory przejdzie LDPC+CRC wygrywa.
+            // Gdy zaden - AP/OSD na pierwszym zestawie, jak w starym torze.
+            if let Some(ws) = ws {
+                let dm = if is_ft8 { baseband::demod_ft8(ws, coarse_cand)? } else { baseband::demod_ft4(ws, coarse_cand)? };
+                let scramble: Option<&[u8; 77]> = if is_ft8 { None } else { Some(&FT4_RVEC) };
+                demod_ns.fetch_add(t_demod.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                let t_ldpc = std::time::Instant::now();
+                let mut found: Option<[u8; 174]> = None;
+                // LLR po 1. i 2. iteracji BP kazdego zestawu - wejscie dla OSD.
+                let mut saved = vec![[[0f32; 174]; 2]; dm.llrs.len()];
+                for (k, llr) in dm.llrs.iter().enumerate() {
+                    let (bits174, success, _iters) = ldpc::bp_decode_save(llr, 30, &mut saved[k]);
+                    if success {
+                        let mut b91 = [0u8; 91];
+                        b91.copy_from_slice(&bits174[..91]);
+                        if check_crc(&b91) && baseband::hard_errors(llr, &bits174) <= 36 {
+                            found = Some(bits174);
+                            break;
+                        }
+                    }
+                }
+                ldpc_ns.fetch_add(t_ldpc.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                let bits174 = match found {
+                    Some(b) => b,
+                    None => {
+                        if std::time::Instant::now() >= deadline { return None; }
+                        let ap_result = if ap_hypotheses.is_empty() { None } else {
+                            let t_ap = std::time::Instant::now();
+                            let r = ap::try_ap(&dm.llrs[0], &ap_hypotheses, scramble, deadline);
+                            ap_ns.fetch_add(t_ap.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                            r
+                        };
+                        match ap_result {
+                            Some(fixed) => fixed,
+                            None => {
+                                if std::time::Instant::now() >= deadline { return None; }
+                                let t_osd = std::time::Instant::now();
+                                let mut r = None;
+                                // OSD tylko dla kandydatow z wyrazna synchronizacja -
+                                // patrz OSD_MIN_NSYNC.
+                                let osd_sets = if dm.nsync >= OSD_MIN_NSYNC { OSD_LLR_SETS } else { 0 };
+                                'osd: for (k, llr) in dm.llrs.iter().enumerate().take(osd_sets) {
+                                    for z in [llr, &saved[k][0], &saved[k][1]] {
+                                        if std::time::Instant::now() >= deadline { break 'osd; }
+                                        if let Some((cw, _d)) = osd::osd_full(z, OSD_ORDER2_WIDTH) {
+                                            if osd_accept(llr, &cw) { r = Some(cw); break 'osd; }
+                                        }
+                                    }
+                                }
+                                // AP "to jest CQ" (bez zadnych podpowiedzi) - ostatnia
+                                // proba dla kandydatow z wyrazna synchronizacja.
+                                if r.is_none() && dm.nsync >= OSD_MIN_NSYNC && std::time::Instant::now() < deadline {
+                                    for llr in dm.llrs.iter() {
+                                        if let Some(cw) = ap::try_ap_cq(llr, scramble) {
+                                            if osd_accept(llr, &cw) { r = Some(cw); break; }
+                                        }
+                                    }
+                                }
+                                osd_ns.fetch_add(t_osd.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                                r?
+                            }
+                        }
+                    }
+                };
+                let mut b91 = [0u8; 91];
+                b91.copy_from_slice(&bits174[..91]);
+                if !check_crc(&b91) { return None; }
+                // FT4: CRC liczone na bitach scramblowanych - descrambling dopiero tu.
+                let data77: Vec<u8> = if is_ft8 { bits174[..77].to_vec() } else { (0..77).map(|i| bits174[i] ^ FT4_RVEC[i]).collect() };
+                let msg = unpack77(&data77)?;
+                let cand = dm.cand;
+                let snr = if is_ft8 {
+                    baseband::snr_from_tones(&dm.mag, &bits_to_symbols_ft8(&bits174), 8, sync::local_noise(&psd, spec, cand.freq_hz + 22.0), SNR_OFFSET_FT8)
+                } else {
+                    baseband::snr_from_tones(&dm.mag, &bits_to_symbols_ft4(&bits174), 4, sync::local_noise(&psd, spec, cand.freq_hz + 31.0), SNR_OFFSET_FT4)
+                };
+                let result = DecodeResult {
+                    freq_hz:        cand.freq_hz,
+                    time_offset_s:  cand.time_offset_s,
+                    snr_db:         snr,
+                    message:        msg.message,
+                    call_to:        msg.call_to,
+                    call_de:        msg.call_de,
+                    report_or_grid: msg.report_or_grid,
+                    mode:           mode.to_string(),
+                    is_dxpedition:  msg.is_dxpedition,
+                    sender_call:    msg.sender_call,
+                    msg_type:       msg.msg_type,
+                };
+                return Some((cand, bits174, result));
+            }
             // Fine-tune time/freq before demodulation - the coarse candidate
             // grid (~0.08s / ~3Hz spacing) leaves enough residual offset to
             // measurably degrade LLR quality, confirmed against captured
@@ -329,7 +454,7 @@ fn decode_and_subtract(
                     None
                 } else {
                     let t_ap = std::time::Instant::now();
-                    let r = ap::try_ap(&llr174, &ap_hypotheses, deadline);
+                    let r = ap::try_ap(&llr174, &ap_hypotheses, if is_ft8 { None } else { Some(&FT4_RVEC) }, deadline);
                     ap_ns.fetch_add(t_ap.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
                     r
                 };
@@ -347,6 +472,9 @@ fn decode_and_subtract(
                     }
                 }
             };
+            // Zabezpieczenie przed fantomami (jak w torze baseband FT8): slowo
+            // kodowe daleko od twardej decyzji to przypadkowe trafienie CRC.
+            if baseband::hard_errors(&llr174, &bits174) > 36 { return None; }
 
             // bits174[0..91] = [data77/scrambled77 | crc14]
             let data77: Vec<u8> = if is_ft8 {
@@ -379,6 +507,7 @@ fn decode_and_subtract(
                 mode:           mode.to_string(),
                 is_dxpedition:  msg.is_dxpedition,
                 sender_call:    msg.sender_call,
+                msg_type:       msg.msg_type,
             };
             Some((cand, bits174, result))
         })
@@ -417,16 +546,21 @@ fn decode_and_subtract(
     // the wall-clock deadline - this decode result is kept either way, only
     // the (expensive) residual cleanup for LATER candidates/passes is what
     // gets sacrificed.
-    for (cand, bits174, _result) in &new_decoded {
-        if std::time::Instant::now() < deadline {
+    //
+    // Przebiegi do odjecia szacowane rownolegle (rayon) z residuum sprzed
+    // odejmowania, potem odejmowane wszystkie naraz - sekwencyjnie (kazdy
+    // sygnal = 2 FFT po ~180k punktow) przy 30+ dekodach to byla wiekszosc
+    // czasu calego dekodowania okna.
+    if std::time::Instant::now() < deadline {
+        let residual_ro: &[f32] = residual;
+        let estimates: Vec<_> = new_decoded.par_iter().map(|(cand, bits174, _)| {
             if is_ft8 {
-                let itone = bits_to_symbols_ft8(bits174);
-                subtract_ft8(residual, &itone, cand.freq_hz, cand.time_offset_s, sample_rate);
+                estimate_ft8(residual_ro, &bits_to_symbols_ft8(bits174), cand.freq_hz, cand.time_offset_s, sample_rate)
             } else {
-                let itone = bits_to_symbols_ft4(bits174);
-                subtract_ft4(residual, &itone, cand.freq_hz, cand.time_offset_s, sample_rate);
+                estimate_ft4(residual_ro, &bits_to_symbols_ft4(bits174), cand.freq_hz, cand.time_offset_s, sample_rate)
             }
-        }
+        }).collect();
+        for est in &estimates { apply_estimate(residual, est); }
     }
 
     results

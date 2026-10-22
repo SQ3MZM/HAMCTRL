@@ -273,6 +273,9 @@ _CTRL_CHARS_RE = re.compile(r'[\x00-\x1f\x7f]')
 class DXClusterClient:
     """A single connection to a DX Cluster server for one user."""
 
+    IDLE_PROBE_S = 300.0   # cisza po ktorej wysylamy sonde (pusta linie)
+    PROBE_WAIT_S = 120.0   # ile czekamy na odpowiedz na sonde
+
     def __init__(self, host: str, port: int, login: str, password: str = "",
                  on_spot: Optional[Callable[[dict], None]] = None,
                  on_status: Optional[Callable[[str, str], None]] = None):
@@ -345,12 +348,43 @@ class DXClusterClient:
                 delay = self._reconnect_delay  # reset the delay after success
                 await self._status("connected", "")
 
+                try:
+                    sock = self._writer.get_extra_info('socket')
+                    if sock is not None:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                except Exception:
+                    pass
+
                 # Login sequence
                 await self._do_login()
 
                 # Receive lines
+                # Wykrywanie martwego polaczenia (zgloszone na zywo: admin w
+                # nocy "wylaczyl sie" i wrocil dopiero po recznym
+                # rozlacz/polacz). readline() bez limitu czasu wisial w
+                # nieskonczonosc na polotwartym TCP (serwer/router zerwal
+                # polaczenie bez FIN) - _connected zostawal True, wiec ani
+                # petla reconnect, ani auto_connect przy logowaniu nic nie
+                # robily. Teraz: po IDLE_PROBE_S ciszy wysylamy pusta linie
+                # (DXSpider odpowiada promptem), a jesli przez PROBE_WAIT_S
+                # dalej nic nie przyjdzie - zrywamy i laczymy od nowa.
+                probe_sent = False
                 while self._should_run:
-                    line = await self._reader.readline()
+                    try:
+                        line = await asyncio.wait_for(
+                            self._reader.readline(),
+                            timeout=self.PROBE_WAIT_S if probe_sent else self.IDLE_PROBE_S)
+                    except asyncio.TimeoutError:
+                        if probe_sent:
+                            _log_line(f"{self.login}@{self.host}:{self.port} brak odpowiedzi na sonde "
+                                      f"- polaczenie martwe, reconnect")
+                            raise ConnectionError("brak danych z serwera - polaczenie martwe")
+                        _log_line(f"{self.login}@{self.host}:{self.port} cisza {self.IDLE_PROBE_S:.0f}s - wysylam sonde")
+                        self._writer.write(b"\r\n")
+                        await self._writer.drain()
+                        probe_sent = True
+                        continue
+                    probe_sent = False
                     if not line:
                         break  # server closed
                     try:

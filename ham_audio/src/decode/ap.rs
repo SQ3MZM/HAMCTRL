@@ -68,11 +68,24 @@ const AP_MAX_ITERS: usize = 60;
 /// Adds ±AP_PRIOR_STRENGTH to llr174[start..start+28], sign per the known
 /// c28 bit (LLR convention throughout this crate: positive = bit likely
 /// 0). Mutates in place.
-fn apply_bias(llr174: &mut [f32; 174], start: usize, c28: u32) {
+fn apply_bias(llr174: &mut [f32; 174], start: usize, c28: u32, scramble: Option<&[u8; 77]>) {
     for i in 0..28 {
-        let bit = (c28 >> (27 - i)) & 1;
+        let bit = known_bit(((c28 >> (27 - i)) & 1) as u8, start + i, scramble);
         llr174[start + i] += if bit == 0 { AP_PRIOR_STRENGTH } else { -AP_PRIOR_STRENGTH };
     }
+}
+
+/// Bit tresci komunikatu -> bit w slowie kodowym. FT4 nadaje komunikat
+/// XOR-owany z RVEC (scrambling), wiec znany bit trzeba przeksztalcic tak
+/// samo - wczesniej AP w FT4 biasowal NIEscramblowane bity, czyli w polowie
+/// pozycji w zla strone.
+fn known_bit(bit: u8, pos: usize, scramble: Option<&[u8; 77]>) -> u8 {
+    match scramble { Some(r) if pos < 77 => bit ^ r[pos], _ => bit }
+}
+
+/// Czy zdekodowane slowo zgadza sie z hipoteza na polu c28 od `start`.
+fn matches_c28(cw: &[u8; 174], start: usize, c28: u32, scramble: Option<&[u8; 77]>) -> bool {
+    (0..28).all(|i| cw[start + i] == known_bit(((c28 >> (27 - i)) & 1) as u8, start + i, scramble))
 }
 
 /// Bias the callsign field(s) implied by `hyp` (c28_1 = bits[0..28] for
@@ -84,20 +97,20 @@ fn apply_bias(llr174: &mut [f32; 174], start: usize, c28: u32) {
 /// accepting: biasing toward a WRONG hypothesis can, rarely, still
 /// converge to something self-consistent, the same residual risk OSD's
 /// CRC-only gate already carries.
-fn ap_try_hypothesis(llr174: &[f32; 174], hyp: &ApHypothesis) -> Option<[u8; 174]> {
+fn ap_try_hypothesis(llr174: &[f32; 174], hyp: &ApHypothesis, scramble: Option<&[u8; 77]>) -> Option<[u8; 174]> {
     let mut biased = *llr174;
-    let mut any = false;
-    if let Some(to) = &hyp.call_to {
-        apply_bias(&mut biased, 0, pack_c28(to)?);
-        any = true;
-    }
-    if let Some(de) = &hyp.call_de {
-        apply_bias(&mut biased, 29, pack_c28(de)?);
-        any = true;
-    }
-    if !any { return None; }
+    let to = match &hyp.call_to { Some(c) => Some(pack_c28(c)?), None => None };
+    let de = match &hyp.call_de { Some(c) => Some(pack_c28(c)?), None => None };
+    if to.is_none() && de.is_none() { return None; }
+    if let Some(c) = to { apply_bias(&mut biased, 0, c, scramble); }
+    if let Some(c) = de { apply_bias(&mut biased, 29, c, scramble); }
     let (bits, ok, _iters) = bp_decode(&biased, AP_MAX_ITERS);
-    if ok { Some(bits) } else { None }
+    if !ok { return None; }
+    // Zbieznosc pod biasem nie znaczy jeszcze, ze to TEN komunikat -
+    // odrzucamy slowa niezgodne z hipoteza.
+    if let Some(c) = to { if !matches_c28(&bits, 0, c, scramble) { return None; } }
+    if let Some(c) = de { if !matches_c28(&bits, 29, c, scramble) { return None; } }
+    Some(bits)
 }
 
 /// Try hypotheses in order, first convergent one wins. Enforces the same
@@ -106,14 +119,40 @@ fn ap_try_hypothesis(llr174: &[f32; 174], hyp: &ApHypothesis) -> Option<[u8; 174
 /// cheap re-encode like OSD's), so callers should keep the hypothesis
 /// list short (see mod.rs's hypothesis construction: "own call as TO"
 /// only in v1).
-pub fn try_ap(llr174: &[f32; 174], hyps: &[ApHypothesis], deadline: std::time::Instant) -> Option<[u8; 174]> {
+pub fn try_ap(llr174: &[f32; 174], hyps: &[ApHypothesis], scramble: Option<&[u8; 77]>, deadline: std::time::Instant) -> Option<[u8; 174]> {
     for hyp in hyps {
         if std::time::Instant::now() >= deadline { return None; }
-        if let Some(cw) = ap_try_hypothesis(llr174, hyp) {
+        if let Some(cw) = ap_try_hypothesis(llr174, hyp, scramble) {
             return Some(cw);
         }
     }
     None
+}
+
+/// AP "to jest CQ": znane 32 bity - c28 = CQ (2) z r1=0 (bity 0..29) oraz
+/// i3=1 (bity 74..77) - nie wymaga zadnej wiedzy o stacjach, wiec dziala dla
+/// kazdego slabego CQ na pasmie. Znane bity dostaja pelna pewnosc (wieksza
+/// niz najpewniejszy bit z kanalu), potem BP, a gdy nie zbiegnie - pelny OSD
+/// (znane bity trafiaja wtedy na pewno do bazy informacyjnej). Wynik musi
+/// miec dokladnie te 32 bity.
+pub fn try_ap_cq(llr174: &[f32; 174], scramble: Option<&[u8; 77]>) -> Option<[u8; 174]> {
+    let mut known: Vec<(usize, u8)> = Vec::with_capacity(32);
+    for i in 0..28 { known.push((i, ((2u32 >> (27 - i)) & 1) as u8)); }
+    known.push((28, 0));
+    known.push((74, 0));
+    known.push((75, 0));
+    known.push((76, 1));
+    let apmag = llr174.iter().fold(0f32, |m, v| m.max(v.abs())) * 1.01;
+    let mut z = *llr174;
+    for &(pos, b) in &known {
+        let bit = known_bit(b, pos, scramble);
+        z[pos] = if bit == 0 { apmag } else { -apmag };
+    }
+    let ok_known = |cw: &[u8; 174]| known.iter().all(|&(pos, b)| cw[pos] == known_bit(b, pos, scramble));
+    let (bits, ok, _) = bp_decode(&z, 30);
+    if ok && ok_known(&bits) { return Some(bits); }
+    let (cw, _d) = super::osd::osd_full(&z, 40)?;
+    if ok_known(&cw) { Some(cw) } else { None }
 }
 
 #[cfg(test)]
@@ -174,7 +213,7 @@ mod tests {
 
         let hyps = vec![ApHypothesis { call_to: Some("K1ABC".to_string()), call_de: None }];
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        let recovered = try_ap(&llr, &hyps, deadline);
+        let recovered = try_ap(&llr, &hyps, None, deadline);
         assert_eq!(recovered, Some(good_cw));
     }
 
@@ -196,7 +235,7 @@ mod tests {
         // one actually sent.
         let hyps = vec![ApHypothesis { call_to: Some("N0CALL".to_string()), call_de: None }];
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        let recovered = try_ap(&llr, &hyps, deadline);
+        let recovered = try_ap(&llr, &hyps, None, deadline);
         // Either BP fails to converge under the wrong bias (most likely -
         // the rest of the message's real channel LLR fights it), or it
         // converges to something that is NOT the real codeword (the
@@ -211,6 +250,6 @@ mod tests {
         let llr = [1.0f32; 174];
         let hyps = vec![ApHypothesis { call_to: Some("K1ABC".to_string()), call_de: None }];
         let expired = std::time::Instant::now() - std::time::Duration::from_millis(1);
-        assert_eq!(try_ap(&llr, &hyps, expired), None);
+        assert_eq!(try_ap(&llr, &hyps, None, expired), None);
     }
 }

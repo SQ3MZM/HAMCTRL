@@ -196,6 +196,113 @@ pub fn try_osd(
     None
 }
 
+/// Pelny OSD (ordered statistics decoding) w ogolnej pozycji, uzywany gdy BP
+/// nie zbiegl na zadnym zestawie LLR. W odroznieniu od try_osd (odwraca
+/// pojedyncze bity tylko w stalych 91 bitach systematycznych) tutaj baza
+/// informacyjna to 91 NAJPEWNIEJSZYCH niezaleznych pozycji z calych 174
+/// (eliminacja Gaussa na kolumnach macierzy generujacej posortowanych wg
+/// |LLR|), a przeszukiwanie obejmuje rzad 0, caly rzad 1 i rzad 2 na
+/// `order2_width` najmniej pewnych bitach bazy. Wybierane jest slowo kodowe
+/// o najmniejszej wazonej odleglosci od odebranego sygnalu; na koniec CRC.
+/// Zwraca (slowo kodowe w oryginalnej kolejnosci bitow, odleglosc wazona).
+pub fn osd_full(llr174: &[f32; 174], order2_width: usize) -> Option<([u8; 174], f32)> {
+    type Row = [u64; 3];
+    let get = |r: &Row, c: usize| (r[c >> 6] >> (c & 63)) & 1 == 1;
+    let set = |r: &mut Row, c: usize| r[c >> 6] |= 1u64 << (c & 63);
+
+    // Kolejnosc kolumn: od najpewniejszej.
+    let mut perm: [usize; 174] = std::array::from_fn(|i| i);
+    perm.sort_by(|&a, &b| llr174[b].abs().partial_cmp(&llr174[a].abs()).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Wiersze macierzy generujacej [I | P] w permutowanej kolejnosci kolumn.
+    let mut inv = [0usize; 174];
+    for (c, &orig) in perm.iter().enumerate() { inv[orig] = c; }
+    let mut rows: Vec<Row> = (0..91).map(|r| {
+        let mut row: Row = [0; 3];
+        set(&mut row, inv[r]);
+        for j in 0..83 {
+            if GEN_PARITY[j][r] == 1 { set(&mut row, inv[91 + j]); }
+        }
+        row
+    }).collect();
+
+    // Eliminacja Gaussa: pivoty na kolejnych (najpewniejszych) kolumnach.
+    let mut pivot_col = [0usize; 91];
+    let mut k = 0usize;
+    for c in 0..174 {
+        if k == 91 { break; }
+        let Some(r) = (k..91).find(|&r| get(&rows[r], c)) else { continue };
+        rows.swap(r, k);
+        let pr = rows[k];
+        for rr in 0..91 {
+            if rr != k && get(&rows[rr], c) {
+                for w in 0..3 { rows[rr][w] ^= pr[w]; }
+            }
+        }
+        pivot_col[k] = c;
+        k += 1;
+    }
+    if k < 91 { return None; }
+
+    let mut hd: Row = [0; 3];
+    let mut absl = [0f32; 174];
+    for c in 0..174 {
+        let l = llr174[perm[c]];
+        absl[c] = l.abs();
+        if l < 0.0 { set(&mut hd, c); }
+    }
+    let dist = |cw: &Row| -> f32 {
+        let mut d = 0f32;
+        for w in 0..3 {
+            let mut x = cw[w] ^ hd[w];
+            while x != 0 {
+                let b = x.trailing_zeros() as usize;
+                d += absl[w * 64 + b];
+                x &= x - 1;
+            }
+        }
+        d
+    };
+
+    // Rzad 0: twarda decyzja na bazie informacyjnej, przekodowana.
+    let mut c0: Row = [0; 3];
+    for kk in 0..91 {
+        if get(&hd, pivot_col[kk]) {
+            for w in 0..3 { c0[w] ^= rows[kk][w]; }
+        }
+    }
+    let mut best = c0;
+    let mut best_d = dist(&c0);
+    // Rzad 1.
+    for kk in 0..91 {
+        let mut c: Row = c0;
+        for w in 0..3 { c[w] ^= rows[kk][w]; }
+        let d = dist(&c);
+        if d < best_d { best_d = d; best = c; }
+    }
+    // Rzad 2 na najmniej pewnych bitach bazy (pivoty sa w kolejnosci malejacej pewnosci).
+    let lo = 91 - order2_width.min(91);
+    for a in lo..91 {
+        let mut ca: Row = c0;
+        for w in 0..3 { ca[w] ^= rows[a][w]; }
+        for b in (a + 1)..91 {
+            let mut c: Row = ca;
+            for w in 0..3 { c[w] ^= rows[b][w]; }
+            let d = dist(&c);
+            if d < best_d { best_d = d; best = c; }
+        }
+    }
+
+    let mut cw = [0u8; 174];
+    for c in 0..174 {
+        if get(&best, c) { cw[perm[c]] = 1; }
+    }
+    let mut b91 = [0u8; 91];
+    b91.copy_from_slice(&cw[..91]);
+    if !check_crc(&b91) { return None; }
+    Some((cw, best_d))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

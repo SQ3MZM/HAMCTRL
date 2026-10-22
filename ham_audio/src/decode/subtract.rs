@@ -19,6 +19,22 @@
 use rustfft::num_complex::Complex;
 use super::fft_cache::{cached_fft_forward, cached_fft_inverse};
 use super::params::{FT8_COSTAS, FT8_GRAYMAP, FT4_COSTAS, FT4_GRAYMAP};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
+// Filtr dolnoprzepustowy zalezy tylko od nfft (stalego dla danej dlugosci
+// okna), a byl liczony od nowa (pelna FFT ~180k punktow) przy KAZDYM
+// odejmowanym sygnale - przy 30+ dekodach na przebieg to byla jedna trzecia
+// calego czasu dekodowania. Liczony raz na nfft.
+static LOWPASS_CACHE: OnceLock<Mutex<HashMap<usize, Arc<(Vec<Complex<f32>>, Vec<f32>)>>>> = OnceLock::new();
+
+fn cached_lowpass(nfft: usize) -> Arc<(Vec<Complex<f32>>, Vec<f32>)> {
+    let m = LOWPASS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = m.lock().unwrap().get(&nfft) { return v.clone(); }
+    let v = Arc::new(build_lowpass(nfft));
+    m.lock().unwrap().insert(nfft, v.clone());
+    v
+}
 
 const SAMPLES_PER_SYM_FT8: usize = 1920;
 const TONE_SPACING_FT8: f64 = 6.25;
@@ -154,13 +170,34 @@ pub fn bits_to_symbols_ft4(bits174: &[u8]) -> [usize; 103] {
     let costas_pos = [0usize, 33, 66, 99];
     let data_ranges = [(0usize, 29usize), (29, 58), (58, 87)]; // 3 gaps of 29 data symbols
     symbols[costas_pos[0]..costas_pos[0] + 4].copy_from_slice(&FT4_COSTAS[0]);
-    symbols[7..7 + 29].copy_from_slice(&data[data_ranges[0].0..data_ranges[0].1]);
+    symbols[4..4 + 29].copy_from_slice(&data[data_ranges[0].0..data_ranges[0].1]);
     symbols[costas_pos[1]..costas_pos[1] + 4].copy_from_slice(&FT4_COSTAS[1]);
-    symbols[40..40 + 29].copy_from_slice(&data[data_ranges[1].0..data_ranges[1].1]);
+    symbols[37..37 + 29].copy_from_slice(&data[data_ranges[1].0..data_ranges[1].1]);
     symbols[costas_pos[2]..costas_pos[2] + 4].copy_from_slice(&FT4_COSTAS[2]);
-    symbols[73..73 + 29].copy_from_slice(&data[data_ranges[2].0..data_ranges[2].1]);
+    symbols[70..70 + 29].copy_from_slice(&data[data_ranges[2].0..data_ranges[2].1]);
     symbols[costas_pos[3]..costas_pos[3] + 4].copy_from_slice(&FT4_COSTAS[3]);
+    // Dane zaczynaja sie zaraz za kazdym 4-symbolowym blokiem Costas (4, 37,
+    // 70) - jak w ft4_encoder.py. Wczesniej wpisywane od 7/40/73, wiec
+    // odejmowanie stacji FT4 odejmowalo ZLY przebieg (nadpisany Costas i
+    // przesuniete dane) - kolejne przebiegi dostawaly residuum z dodatkowym
+    // zaklóceniem zamiast oczyszczonego.
     symbols
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Kolejnosc tonow FT4 dla "K1ABC W9XYZ EN37" z ft4_encoder.py (ten sam
+    // koder co TX), slowo kodowe z tego samego wywolania.
+    #[test]
+    fn ft4_symbols_match_encoder() {
+        let cw = "010000111110001101101010111001001101000111000011101001010101110111101000011000000000011011100110010101001110010101010011010001000111111010110100111000111000101101001100010100";
+        let tones = "0132100223021333231021012002331111023121233013000013231311102311112310021010122332102302303210201103201";
+        let bits: Vec<u8> = cw.bytes().map(|b| b - b'0').collect();
+        let want: Vec<usize> = tones.bytes().map(|b| (b - b'0') as usize).collect();
+        assert_eq!(bits_to_symbols_ft4(&bits).to_vec(), want);
+    }
 }
 
 /// Zero-phase low-pass filter (raised-cosine-squared, NFILT1+1 taps),
@@ -211,16 +248,32 @@ fn build_lowpass(nfft: usize) -> (Vec<Complex<f32>>, Vec<f32>) {
     (h, endcorr)
 }
 
-/// Subtract a successfully-decoded signal's estimated waveform from
-/// `audio` in place, at its (refined) frequency/time position. `itone` is
-/// the tone sequence recovered from the decode (bits_to_symbols_ft8/ft4).
-fn subtract_signal(
-    audio: &mut [f32], cref: &[Complex<f32>], nframe: usize,
+/// Oszacowany przebieg jednego sygnalu do odjecia: (probka startowa, przebieg).
+pub struct SignalEstimate {
+    nstart: isize,
+    wave: Vec<f32>,
+}
+
+/// Odejmuje oszacowany przebieg od `audio`.
+pub fn apply_estimate(audio: &mut [f32], est: &SignalEstimate) {
+    for (i, &w) in est.wave.iter().enumerate() {
+        let id = est.nstart + i as isize;
+        if id >= 0 && (id as usize) < audio.len() {
+            audio[id as usize] -= w;
+        }
+    }
+}
+
+/// Tylko czyta `audio` - mozna liczyc wiele sygnalow rownolegle z tego
+/// samego residuum, a potem odjac je wszystkie (apply_estimate).
+fn estimate_signal(
+    audio: &[f32], cref: &[Complex<f32>], nframe: usize,
     time_offset_s: f32, sample_rate: u32,
-) {
+) -> SignalEstimate {
     let nstart = (time_offset_s * sample_rate as f32).round() as isize;
     let nfft = audio.len().max(nframe + NFILT1);
-    let (h_freq, endcorr) = build_lowpass(nfft);
+    let lp = cached_lowpass(nfft);
+    let (h_freq, endcorr) = (&lp.0, &lp.1);
 
     let mut cfilt = vec![Complex::new(0f32, 0f32); nfft];
     for i in 0..nframe {
@@ -250,20 +303,17 @@ fn subtract_signal(
         cfilt[nframe - 1 - j] = cfilt[nframe - 1 - j] * endcorr[j];
     }
 
-    for i in 0..nframe {
-        let id = nstart + i as isize;
-        if id >= 0 && (id as usize) < audio.len() {
-            audio[id as usize] -= 2.0 * (cfilt[i] * cref[i]).re;
-        }
-    }
+    let wave: Vec<f32> = (0..nframe).map(|i| 2.0 * (cfilt[i] * cref[i]).re).collect();
+    SignalEstimate { nstart, wave }
 }
 
-pub fn subtract_ft8(audio: &mut [f32], itone: &[usize; 79], freq_hz: f32, time_offset_s: f32, sample_rate: u32) {
+pub fn estimate_ft8(audio: &[f32], itone: &[usize; 79], freq_hz: f32, time_offset_s: f32, sample_rate: u32) -> SignalEstimate {
     let cref = gen_ft8wave_complex(itone, freq_hz, sample_rate);
-    subtract_signal(audio, &cref, NFRAME_FT8, time_offset_s, sample_rate);
+    estimate_signal(audio, &cref, NFRAME_FT8, time_offset_s, sample_rate)
 }
 
-pub fn subtract_ft4(audio: &mut [f32], itone: &[usize; 103], freq_hz: f32, time_offset_s: f32, sample_rate: u32) {
+pub fn estimate_ft4(audio: &[f32], itone: &[usize; 103], freq_hz: f32, time_offset_s: f32, sample_rate: u32) -> SignalEstimate {
     let cref = gen_ft4wave_complex(itone, freq_hz, sample_rate);
-    subtract_signal(audio, &cref, NFRAME_FT4, time_offset_s, sample_rate);
+    estimate_signal(audio, &cref, NFRAME_FT4, time_offset_s, sample_rate)
 }
+

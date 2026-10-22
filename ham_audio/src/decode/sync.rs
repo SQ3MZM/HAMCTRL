@@ -28,7 +28,10 @@ pub struct Spectrogram {
 }
 
 const F_MIN: f32 = 100.0;
-const F_MAX: f32 = 3000.0;
+// 4000 (bylo 3000): z 3000 zaden sygnal nie mogl ZACZYNAC sie powyzej
+// ~2940 Hz (FT4 zajmuje ~60 Hz), a na probkach referencyjnych gubilismy
+// przez to mocne stacje FT4 na 2995-3337 Hz. Koszt czasu pomijalny (~+0.02s).
+const F_MAX: f32 = 4000.0;
 
 pub fn compute_spectrogram(audio: &[f32], p: &Params, freq_osr: usize, time_osr: usize) -> Spectrogram {
     let n = p.samples_per_sym;
@@ -82,8 +85,14 @@ pub fn noise_floor_from_spec(spec: &Spectrogram) -> f32 {
     if spec.mag.is_empty() || spec.n_blocks == 0 || spec.n_bins == 0 {
         return 1e-9;
     }
-    let mut avg: Vec<f32> = Vec::with_capacity(spec.n_bins);
-    for fi in 0..spec.n_bins {
+    // Tylko do NOISE_F_MAX: wyszukiwanie siega 4000 Hz (F_MAX), ale filtr
+    // radia (IC-7300 USB-D ~3 kHz) zostawia powyzej ~3 kHz prawie cisze -
+    // 10. percentyl z takiego widma lapal te pusta czesc, poziom szumu
+    // wychodzil zanizony i KAZDA stacja dostawala SNR +20 (zgloszone na zywo).
+    const NOISE_F_MAX: f32 = 3000.0;
+    let n_noise = (((NOISE_F_MAX / spec.freq_step) as usize).saturating_sub(spec.bin_min)).min(spec.n_bins);
+    let mut avg: Vec<f32> = Vec::with_capacity(n_noise);
+    for fi in 0..n_noise {
         let mut acc = 0f32;
         for bi in 0..spec.n_blocks {
             acc += spec.mag[bi * spec.n_bins + fi];
@@ -99,12 +108,44 @@ pub fn noise_floor_from_spec(spec: &Spectrogram) -> f32 {
     avg[idx].max(1e-9)
 }
 
+/// Usrednione po czasie widmo (moc na bin) - liczone raz na przebieg,
+/// wejscie dla local_noise.
+pub fn avg_psd(spec: &Spectrogram) -> Vec<f32> {
+    (0..spec.n_bins).map(|fi| {
+        let mut acc = 0f32;
+        for bi in 0..spec.n_blocks { acc += spec.mag[bi * spec.n_bins + fi]; }
+        acc / spec.n_blocks.max(1) as f32
+    }).collect()
+}
+
+/// Poziom szumu w okolicy `freq_hz` (+-300 Hz): 10. percentyl usrednionego
+/// widma. Lokalnie, nie z calego pasma - filtr radia (zbocza, wezszy filtr
+/// niz 3 kHz) zmienia tlo wzdluz pasma i globalny percentyl dawal stacjom
+/// przy srodku pasma SNR zawyzony o kilka-kilkanascie dB.
+pub fn local_noise(avg: &[f32], spec: &Spectrogram, freq_hz: f32) -> f32 {
+    let half = (300.0 / spec.freq_step) as isize;
+    let c = (freq_hz / spec.freq_step) as isize - spec.bin_min as isize;
+    let lo = (c - half).max(0) as usize;
+    let hi = ((c + half) as usize).min(avg.len().saturating_sub(1));
+    if lo >= hi { return 1e-9; }
+    let mut v: Vec<f32> = avg[lo..=hi].iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    if v.is_empty() { return 1e-9; }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    v[((v.len() as f32 * 0.10) as usize).min(v.len() - 1)].max(1e-9)
+}
+
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub freq_hz:      f32,
     pub time_offset_s: f32,
     pub score:        f32,
 }
+
+// Ile blokow spektrogramu (po 0.08 s) przed poczatkiem okna szukamy startu
+// sygnalu (13 -> ok. -1.0 s od poczatku nagrania).
+const FT8_EARLY_BLOCKS: usize = 13;
+// Minimalna liczba tonow Costas (z 21) w oknie, zeby kandydat sie liczyl.
+const MIN_COSTAS_TERMS: usize = 14;
 
 /// FT8 candidate search using 3x7-symbol Costas correlation.
 pub fn find_candidates_ft8(spec: &Spectrogram, p: &Params, max_cands: usize, min_score: f32)
@@ -120,18 +161,27 @@ pub fn find_candidates_ft8(spec: &Spectrogram, p: &Params, max_cands: usize, min
     let costas = FT8_COSTAS;
     let costas_pos = p.costas_pos;
 
-    let max_tb = if spec.n_blocks > n_sym * sym_blocks {
-        spec.n_blocks - n_sym * sym_blocks
+    // Zakres czasu: sygnal moze zaczac sie do FT8_EARLY_BLOCKS blokow PRZED
+    // poczatkiem okna i konczyc PO jego koncu - wystarczy, ze w oknie sa
+    // co najmniej dwa z trzech blokow Costas (MIN_COSTAS_TERMS). Wczesniej
+    // caly sygnal musial sie miescic, wiec stacje nadajace z DT ok. -0.7 s
+    // albo +2 s (zywe przyklady na probkach referencyjnych, w tym +12 dB)
+    // w ogole nie trafialy do kandydatow. Brakujace symbole demodulator
+    // (baseband.rs) traktuje jak zera.
+    let _ = n_sym;
+    let late_sym = costas_pos[1] + 7; // dwa pierwsze bloki Costas
+    let max_tb = if spec.n_blocks > late_sym * sym_blocks {
+        spec.n_blocks - late_sym * sym_blocks
     } else { return vec![]; };
     let max_fb = if spec.n_bins > (n_tones - 1) * bins_per_tone {
         spec.n_bins - (n_tones - 1) * bins_per_tone
     } else { return vec![]; };
 
-    let n_t0 = (max_tb + sym_blocks / 2 - 1) / (sym_blocks / 2).max(1);
+    let n_t0 = max_tb + FT8_EARLY_BLOCKS;
     let n_f0 = (max_fb + bins_per_tone / 2 - 1) / (bins_per_tone / 2).max(1);
 
     let mut score_map = vec![0f32; n_t0 * n_f0];
-    let n_terms = (costas_pos.len() * costas.len()) as f32;
+    let mut term_count = vec![0u8; n_t0];
 
     // Scoring odporny na sasiadow: (moc_tonu - srednia_8_tonow) / srednia,
     // na LINIOWEJ mocy (spec.mag). Stara metoda log(ton)-log(max_z_7) karala
@@ -143,9 +193,10 @@ pub fn find_candidates_ft8(spec: &Spectrogram, p: &Params, max_cands: usize, min
             let sym_idx = csym_offset + k;
 
             for it0 in 0..n_t0 {
-                let t0 = it0 * (sym_blocks / 2).max(1);
-                let tb = t0 + sym_idx * sym_blocks;
-                if tb >= spec.n_blocks { continue; }
+                let tb = it0 as isize - FT8_EARLY_BLOCKS as isize + (sym_idx * sym_blocks) as isize;
+                if tb < 0 || tb >= spec.n_blocks as isize { continue; }
+                let tb = tb as usize;
+                term_count[it0] += 1;
 
                 for if0 in 0..n_f0 {
                     let f0 = if0 * (bins_per_tone / 2).max(1);
@@ -164,9 +215,17 @@ pub fn find_candidates_ft8(spec: &Spectrogram, p: &Params, max_cands: usize, min
                     let expected_bin = f0 + tone * bins_per_tone;
                     let expected = spec.mag[tb * spec.n_bins + expected_bin];
                     // kontrybucja: o ile wlasciwy ton przewyzsza srednia (znorm.)
-                    score_map[it0 * n_f0 + if0] += ((expected - mean_all) / mean_all) / n_terms;
+                    score_map[it0 * n_f0 + if0] += (expected - mean_all) / mean_all;
                 }
             }
+        }
+    }
+    // Srednia po wyrazach Costas, ktore faktycznie sa w oknie.
+    for it0 in 0..n_t0 {
+        let nt = term_count[it0] as usize;
+        for if0 in 0..n_f0 {
+            let v = &mut score_map[it0 * n_f0 + if0];
+            *v = if nt >= MIN_COSTAS_TERMS { *v / nt as f32 } else { 0.0 };
         }
     }
 
@@ -207,7 +266,7 @@ pub fn find_candidates_ft8(spec: &Spectrogram, p: &Params, max_cands: usize, min
         }
 
         let f0 = if0 * (bins_per_tone / 2).max(1);
-        let t0 = it0 * (sym_blocks / 2).max(1);
+        let t0 = it0 as isize - FT8_EARLY_BLOCKS as isize;
         let freq_hz = (f0 + spec.bin_min) as f32 * spec.freq_step;
         let time_offset_s = t0 as f32 * spec.time_step as f32 / p.sample_rate as f32;
 

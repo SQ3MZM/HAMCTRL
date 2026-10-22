@@ -1174,7 +1174,10 @@ function _addDecode(d) {
   // OUR OWN TRANSMISSION (is_tx): add it to the list (so it's visible in
   // the RX window alongside received ones), but DON'T pass it to Hound or
   // count it as a received DX decode — it's our TX, not a signal from the band.
-  if (!d.is_tx && _hound.active) _houndOnDecode(d);
+  // Wolny tekst/telemetria/komunikaty zawodowe (msgType z unpack.rs) tylko
+  // wyswietlamy - nie karmimy nimi Hounda ani automatu (patrz webapp.py).
+  const autoOk = !d.msgType || d.msgType === 'std' || d.msgType === 'nonstd' || d.msgType === 'dxped';
+  if (!d.is_tx && _hound.active && autoOk) _houndOnDecode(d);
   if (!d.is_tx) { _decodeCount++; _watchDxCall(d); }
   // Always add — isNew=false is replays from previous cycles (worth
   // showing too). On MSG_CLEAR, WSJT-X clears the table; we do the same in handleWS('wsjtx_clear')
@@ -1448,7 +1451,8 @@ function _selectRow(el, idx) {
   const upperMsg = (d.message||'').toUpperCase();
   const isCq = upperMsg.startsWith('CQ ');
   const isDirectToMe = _myCall && upperMsg.startsWith(_myCall.toUpperCase() + ' ');
-  if ((isCq || isDirectToMe) && _autoSeqEnabled && call && call !== 'CQ') {
+  const autoOk = !d.msgType || d.msgType === 'std' || d.msgType === 'nonstd' || d.msgType === 'dxped';
+  if ((isCq || isDirectToMe) && autoOk && _autoSeqEnabled && call && call !== 'CQ') {
     // recvEpoch (the exact receive timestamp of THIS decode from the
     // backend, not "now") is crucial — the backend computes our TX window
     // from it. Without this, correct window selection only worked if you

@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.15"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-21-DXCLUSTER-AUTOSTART-SPOT-TIME"
+BUILD_MARKER = "BUILD-2026-10-22-DECODER-COHSYNC-SNR"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -5073,12 +5073,18 @@ class App:
             # another tab/laptop+phone). If YES - don't stop WSJT-X or
             # release the radio (since they're still online).
             still_online = any(u.get("user_id") == uid for u in self.online_users.values())
-            # If the user held the radio and this was their LAST connection — release it
-            if uid and self.radio_lock["user_id"] == uid and not still_online:
-                self._release_radio()  # also stops WSJT-X if they were the owner
-            # If the user was the WSJT-X owner and this was their LAST connection — stop it
-            elif uid and uid == self._ft8_rx_owner_uid and not still_online:
-                await self._stop_wsjtx_auto("rozłączenie sesji")
+            # FIX (2026-10-22, live report + console screenshots: "serwer
+            # odebral mi posiadanie trx, zastopowal ft8 waterfall i
+            # dekodowanie"): this used to release the radio / stop FT8 the
+            # INSTANT the user's last WS dropped. The control WS drops and
+            # reconnects on its own on ordinary network jitter (see the
+            # WebRTC comment above - the screenshot showed exactly such a
+            # Disconnected -> Connected a second apart), so a 1-second blip
+            # took the radio away from an operator who never left. Now the
+            # release waits a grace period and is skipped if they're back.
+            if uid and not still_online and (
+                    self.radio_lock["user_id"] == uid or uid == self._ft8_rx_owner_uid):
+                asyncio.ensure_future(self._release_after_disconnect_grace(uid))
             # CW decoder viewer cleanup: a disconnect (logout, closed tab) must
             # drop this client from the viewer set, exactly like closing the
             # window. If it was the last viewer, stop the decoder so the server
@@ -5107,6 +5113,26 @@ class App:
             })
         return ws
 
+
+    async def _release_after_disconnect_grace(self, uid, grace_s: float = 60.0):
+        """Release the radio / stop FT8 for a user whose LAST WS dropped -
+        but only if they haven't reconnected within grace_s (see the
+        comment at the call site in ws_handler's finally block)."""
+        await asyncio.sleep(grace_s)
+        if any(u.get("user_id") == uid for u in self.online_users.values()):
+            print(f"[radio_lock] uid={uid!r} reconnected within {grace_s:.0f}s "
+                  f"- keeping the radio/FT8", flush=True)
+            return
+        if self.radio_lock["user_id"] == uid:
+            print(f"[radio_lock] uid={uid!r} gone for {grace_s:.0f}s - releasing the radio",
+                  flush=True)
+            self._release_radio()  # also stops WSJT-X if they were the owner
+            _st = self._radio_lock_state()
+            _st.pop("type", None)
+            await self.hub.broadcast({"type": "online_update",
+                                      "online": self._online_users_state(), **_st})
+        elif uid == self._ft8_rx_owner_uid and self._ft8_rx_enabled:
+            await self._stop_wsjtx_auto("rozłączenie sesji")
 
     async def com_bridge_ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         """
@@ -9113,6 +9139,13 @@ class App:
                     )
                 except Exception:
                     pass
+
+                # Wolny tekst, telemetria i komunikaty zawodowe (msgType z
+                # unpack.rs) sa tylko wyswietlane: parse_message rozbiera tekst
+                # po spacjach, wiec np. "SQ3MZM DE SP3XYZ" wygladalby jak
+                # wywolanie od stacji "DE", a "SQ3MZM K1ABC 559 FL" jak Tx1.
+                if msg.get("msgType", "std") not in ("std", "nonstd", "dxped"):
+                    continue
 
                 # Auto-follow RX/TX to the station transmitting to us
                 # (respects Hold TX). Called ALWAYS - the method itself
