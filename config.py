@@ -217,6 +217,19 @@ HAMLIB_PORT  = int(ENV.get("HAMLIB_PORT", 4532))
 # civ.py never hit this because it talks to the COM port directly over
 # serial, not through this TCP port at all.
 RIGCTLD_PORT = int(ENV.get("RIGCTLD_PORT", 4599))
+# WEBRTC_UDP_PORTS: staly zakres portow UDP dla audio WebRTC (RX i TX z
+# mikrofonu), np. "40000-40019" (20 portow = kilka osob jednoczesnie). Domyslnie ponizej puli portow dynamicznych
+# Windows (49152-65535) - tam system sam rezerwuje bloki (np. 50000-50059
+# zarezerwowane na komputerze deweloperskim), wiec bind by sie nie udal. Bez niego aiortc/aioice bierze losowe porty
+# i audio zza NAT dziala tylko, gdy routery "przepuszcza" polaczenie (zywy
+# przypadek 2026-10-27: ICE utknelo w "checking", audio wrocilo dopiero po
+# restarcie serwera). Ten zakres UDP przekierowac na routerze na komputer
+# z HAMCTRL. Pusty / "0" = losowe porty jak dawniej.
+WEBRTC_UDP_PORTS = ENV.get("WEBRTC_UDP_PORTS", "40000-40019")
+# WEBRTC_UPNP: serwer sam otwiera powyzszy zakres na routerze przez UPnP
+# (upnp_ports.py) - np. Funbox Orange nie pozwala recznie przekierowac zakresu.
+# "0" = wylaczone (porty przekierowane recznie albo wcale).
+WEBRTC_UPNP = ENV.get("WEBRTC_UPNP", "1") == "1"
 RIGCTLD_LOG  = str(Path(__file__).resolve().parent / "rigctld.log")
 
 MIME = {

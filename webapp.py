@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.15"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-22-AP-QSO-TXHOLD-MANUAL"
+BUILD_MARKER = "BUILD-2026-10-27-WEBRTC-UPNP"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -115,7 +115,8 @@ GITHUB_REPO = "SQ3MZM/HAMCTRL"
 
 from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
                     CIV_NATIVE_MODELS,
-                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE, DATA)
+                    MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE, DATA,
+                    WEBRTC_UDP_PORTS, WEBRTC_UPNP)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
                   verify_pw, needs_rehash)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
@@ -125,9 +126,14 @@ import callbook
 from audio import enumerate_audio_devices, auto_detect_radio_audio
 from audio_stream import AudioStream
 try:
-    from webrtc_audio import WebRTCAudioReceiver
+    from webrtc_audio import WebRTCAudioReceiver, install_udp_port_range
     from webrtc_rx_audio import WebRTCAudioSender
     _WEBRTC = True
+    _udp_range = install_udp_port_range(WEBRTC_UDP_PORTS)
+    if _udp_range:
+        print(f"[webrtc] audio UDP ports {_udp_range[0]}-{_udp_range[1]}"
+              + (" - otwieram na routerze przez UPnP" if WEBRTC_UPNP
+                 else " - przekieruj ten zakres UDP na routerze na ten komputer"), flush=True)
 except Exception as e:
     print(f"[webrtc] unavailable: {e}")
     _WEBRTC = False
@@ -843,6 +849,12 @@ class App:
         # cluster callsign for the one session DXSpider allows per call.
         self._supervise(lambda: self._dxcluster_idle_watchdog(), "dxcluster_idle_watchdog")
         asyncio.ensure_future(self._dxcluster_autostart_admins())
+        # Porty UDP audio WebRTC otwierane na routerze przez UPnP i odnawiane
+        # (upnp_ports.py) - bez recznego przekierowania na routerze.
+        if _WEBRTC and _udp_range and WEBRTC_UPNP:
+            from upnp_ports import UpnpPortMapper
+            self._upnp = UpnpPortMapper(*_udp_range)
+            self._supervise(lambda: self._upnp.refresh_loop(), "upnp")
 
     async def _dxcluster_autostart_admins(self):
         """FIX (2026-10-21, live report: "dx cluster w adminie mial chodzic

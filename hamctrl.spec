@@ -110,7 +110,7 @@ hiddenimports = [
     # "winloop", "orjson",  # odkomentuj jesli uzywasz
     # moduly projektu (zeby na pewno weszly)
     "config", "webapp", "server", "civ", "data", "auth",
-    "audio", "audio_stream", "audio_rust_bridge", "webrtc_audio",
+    "audio", "audio_stream", "audio_rust_bridge", "webrtc_audio", "upnp_ports",
     "qso_db", "qso_engine", "clock_check", "dxcluster", "rotator", "relay_controller",
     "tunnel_manager", "wsjtx_udp", "wsjtx_local", "com_bridge_ws",
     "rigcat", "hamlib_server", "hamlib_caps",

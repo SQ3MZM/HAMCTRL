@@ -10,7 +10,7 @@ separate HTTP endpoint is needed.
 Only one client transmits at a time (IC-746/PTT hardware limitation), so
 there's no need to mix — the newest connection replaces the previous one.
 """
-import asyncio, fractions, socket, struct, time
+import asyncio, errno, fractions, socket, struct, time
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaBlackhole
 
@@ -45,6 +45,63 @@ async def _stun_url() -> str:
         except OSError:
             _stun_ip_cache = _STUN_HOST
     return f"stun:{_stun_ip_cache}:{_STUN_PORT}"
+
+
+# EADDRINUSE / EACCES oraz ich odpowiedniki WinSock (10048, 10013).
+_PORT_BUSY_ERRNOS = {errno.EADDRINUSE, errno.EACCES, 10048, 10013}
+
+
+def install_udp_port_range(spec: str) -> tuple[int, int] | None:
+    """Kieruje gniazda UDP otwierane na losowym porcie (local_addr port 0 -
+    tak robi aioice dla kandydatow ICE) do stalego zakresu `spec` ("lo-hi"),
+    zeby dalo sie go raz przekierowac na routerze. aioice/aiortc nie maja
+    takiej opcji, wiec podmieniamy create_datagram_endpoint na poziomie klasy
+    petli asyncio (dziala dla kazdej petli). Gniazda z jawnym portem (np.
+    odbiornik UDP WSJT-X) i z remote_addr zostaja bez zmian. Porty
+    przydzielane po kolei w kolko - swiezo zwolniony port nie wraca od razu.
+    Zajety port -> nastepny; caly zakres zajety -> losowy port jak dawniej.
+    Zwraca (lo, hi) albo None, gdy wylaczone/bledna wartosc."""
+    spec = (spec or "").strip()
+    if not spec or spec == "0":
+        return None
+    try:
+        lo_s, _, hi_s = spec.partition("-")
+        lo, hi = int(lo_s), int(hi_s or lo_s)
+    except ValueError:
+        print(f"[webrtc] WEBRTC_UDP_PORTS={spec!r} - bledny format (oczekiwane np. 40000-40019), porty losowe", flush=True)
+        return None
+    if not (1024 <= lo <= hi <= 65535):
+        print(f"[webrtc] WEBRTC_UDP_PORTS={spec!r} - poza zakresem 1024-65535, porty losowe", flush=True)
+        return None
+    import asyncio.base_events as _be
+    current = _be.BaseEventLoop.create_datagram_endpoint
+    orig = getattr(current, "_hamctrl_orig", current)
+    state = {"next": lo}
+    n = hi - lo + 1
+
+    async def create_datagram_endpoint(self, protocol_factory, local_addr=None, remote_addr=None, **kw):
+        if local_addr and len(local_addr) >= 2 and local_addr[1] == 0 and remote_addr is None:
+            for k in range(n):
+                port = lo + (state["next"] - lo + k) % n
+                try:
+                    res = await orig(self, protocol_factory, local_addr=(local_addr[0], port), **kw)
+                except OSError as e:
+                    # Tylko "port zajety" / "port zablokowany" (np. zakres
+                    # zarezerwowany przez Windows) -> nastepny port. Inny blad
+                    # (np. adres 169.254.x.x, na ktorym nie da sie otworzyc
+                    # gniazda wcale) -> zachowanie jak dawniej.
+                    if (getattr(e, "winerror", None) or e.errno) in _PORT_BUSY_ERRNOS:
+                        continue
+                    break
+                state["next"] = lo + (port - lo + 1) % n
+                return res
+            else:
+                print(f"[webrtc] wszystkie porty UDP {lo}-{hi} zajete - port losowy", flush=True)
+        return await orig(self, protocol_factory, local_addr=local_addr, remote_addr=remote_addr, **kw)
+
+    create_datagram_endpoint._hamctrl_orig = orig
+    _be.BaseEventLoop.create_datagram_endpoint = create_datagram_endpoint
+    return lo, hi
 
 
 async def add_ice_candidate_to_pc(pc: RTCPeerConnection, candidate: dict):
