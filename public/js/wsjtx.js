@@ -2002,6 +2002,24 @@ async function addLog() {
   } catch(e) { window.UI?.showToast(I18n.t('wj_toast_log_error_generic'), 'error'); }
 }
 
+// Dziennik ALL.TXT (wszystko odebrane i nadane w FT8/FT4 - jak w WSJT-X).
+async function exportAllTxt() {
+  try {
+    const token = localStorage.getItem('token') || '';
+    const r = await fetch('/api/ft8/alltxt', {
+      headers: token ? {'Authorization': `Bearer ${token}`} : {}
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `ALL_${(_myCall||'unknown').replace('/','_')}_${new Date().toISOString().slice(0,10)}.TXT`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { window.UI?.showToast(I18n.t('wj_toast_export_error'), 'error'); }
+}
+
 async function exportAdif() {
   try {
     const token = localStorage.getItem('token') || '';
@@ -2635,7 +2653,7 @@ function toggleHideWorked(chk) {
 window.WSJTX = {
   getCqDecodes,
   init, refreshOperatorInfo, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
-  tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif,
+  tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif, exportAllTxt,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
   updateBeamRow, rotorGoBeam, rotorGoManual, rotorManualClose, rotorManualSubmit,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, setDecodeMode,

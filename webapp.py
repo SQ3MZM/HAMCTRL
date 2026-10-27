@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.15"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-27-WEBRTC-UPNP"
+BUILD_MARKER = "BUILD-2026-10-27-ALLTXT-FIX"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -138,6 +138,7 @@ except Exception as e:
     print(f"[webrtc] unavailable: {e}")
     _WEBRTC = False
 from wsjtx_udp import WsjtxUdpServer
+from ft8_all_log import Ft8AllLog
 from tunnel_manager import TunnelManager
 from rotator import Rotator
 from rigcat import RigCAT
@@ -849,6 +850,9 @@ class App:
         # cluster callsign for the one session DXSpider allows per call.
         self._supervise(lambda: self._dxcluster_idle_watchdog(), "dxcluster_idle_watchdog")
         asyncio.ensure_future(self._dxcluster_autostart_admins())
+        # Dziennik ALL.TXT (jak w WSJT-X): wszystko odebrane i nadane w
+        # FT8/FT4, osobno dla kazdego operatora - patrz ft8_all_log.py.
+        self._all_log = Ft8AllLog(DATA)
         # Porty UDP audio WebRTC otwierane na routerze przez UPnP i odnawiane
         # (upnp_ports.py) - bez recznego przekierowania na routerze.
         if _WEBRTC and _udp_range and WEBRTC_UPNP:
@@ -4393,6 +4397,21 @@ class App:
 
         # ── QSO Log API ──────────────────────────────────────────────────────────
         is_admin_user = (role == "admin")
+
+        if p == "/api/ft8/alltxt" and method == "GET":
+            # Pobranie dziennika ALL.TXT (ft8_all_log.py) - wlasnego; admin
+            # moze podac ?user_id= innego operatora.
+            target = uid
+            if is_admin_user and query.get("user_id"):
+                q = query["user_id"]
+                target = q[0] if isinstance(q, list) else q
+            u_t = self.find_user_by_id(target) or {}
+            call = (u_t.get("callsign") or str(target)).replace("/", "_")
+            return "export", {
+                "body": self._all_log.read(target),
+                "content_type": "text/plain",  # bez "; charset" - aiohttp go tu odrzuca (500)
+                "filename": f"ALL_{call}_{time.strftime('%Y%m%d')}.TXT",
+            }
 
         if p == "/api/qsolog/worked_before" and method == "GET":
             # Check whether a call has already been worked. Optional: band/mode.
@@ -8068,6 +8087,10 @@ class App:
                 "mode": self._ft8_decode_mode,
                 "is_tx": True,
             })
+            self._all_log.write(
+                self.radio_lock.get("user_id"), False, self.rig.freq,
+                self._ft8_decode_mode, 0, 0.0, int(self._ft8_tx_freq_hz),
+                display_text, "", _t0)
 
             # TX DIAGNOSTICS: check audio state before sending
             print(f"[ft8] TX audio state: tx_active={self.audio.tx_active} "
@@ -9093,6 +9116,11 @@ class App:
 
                 # Broadcast to browsers
                 await self.hub.broadcast(msg)
+                self._all_log.write(
+                    self.radio_lock.get("user_id"), True, self.rig.freq,
+                    msg.get("mode") or self._ft8_decode_mode, msg.get("snr", 0),
+                    msg.get("deltaTime", 0.0), msg.get("deltaFreq", 0),
+                    msg.get("message", ""), msg.get("timeStr", ""), msg["recvEpoch"])
 
                 # Cache call->grid from ALL decodes. A partner replying to
                 # OUR CQ doesn't send a grid (e.g. "XX0XXX JA3FYC +11"), so
