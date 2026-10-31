@@ -1295,8 +1295,20 @@ function _renderDecodes() {
   // Frequency (_renderRxFreqPanel) searches _decodes directly, without
   // the filter, since it's meant to show everything on that frequency
   // regardless of whether it's a CQ call or a reply within an ongoing QSO.
+  // Even with "CQ only" on, keep everything involving the station in the
+  // DX Call field and our own call - otherwise, when the called station is
+  // busy in a QSO with someone else, the operator can't tell whether it's
+  // still working that QSO or already calling CQ again.
+  const dx = (document.getElementById('wj-dx-call')?.value || '').trim().toUpperCase();
+  const mc = (_myCall || '').trim().toUpperCase();
+  const _involves = (d) => {
+    if (d.is_tx) return true;
+    const words = (d.message || '').toUpperCase().split(/\s+/)
+      .map(w => w.replace(/^<|>$/g, ''));
+    return (dx && words.includes(dx)) || (mc && words.includes(mc));
+  };
   const visible = _cqOnly
-    ? _decodes.filter(d => (d.message||'').toUpperCase().startsWith('CQ '))
+    ? _decodes.filter(d => (d.message||'').toUpperCase().startsWith('CQ ') || _involves(d))
     : _decodes;
   if (!visible.length) {
     el.innerHTML = _cqOnly
@@ -1420,6 +1432,13 @@ function _selectRow(el, idx) {
   const grid  = _extractGrid(d.message);
   const snr   = (d.snr>=0?'+':'')+d.snr+' dB';
   _setField('wj-dx-call', call);
+  if (_cqOnly) {
+    // Re-render so the newly selected station's exchanges appear under
+    // the CQ filter, then restore the highlight on the clicked row.
+    _renderDecodes();
+    document.querySelectorAll(`#wj-decodes .wj-decode-row[data-idx="${idx}"]`)
+      .forEach(r => r.classList.add('selected'));
+  }
   _setField('wj-dx-grid', grid);
   _lastDxSnr = d.snr;
   const snrEl = document.getElementById('wj-dx-snr');
@@ -1453,7 +1472,32 @@ function _selectRow(el, idx) {
   const isCq = upperMsg.startsWith('CQ ');
   const isDirectToMe = _myCall && upperMsg.startsWith(_myCall.toUpperCase() + ' ');
   const autoOk = !d.msgType || d.msgType === 'std' || d.msgType === 'nonstd' || d.msgType === 'dxped';
-  if ((isCq || isDirectToMe) && autoOk && _autoSeqEnabled && call && call !== 'CQ') {
+  // Clicking ANY row of a station (e.g. its exchange with someone else)
+  // also starts the automation, like a double-click in WSJT-X. If that
+  // station called US recently (e.g. while we were busy with another
+  // QSO), answer that call instead - the engine then sends the right step
+  // (report) rather than starting over with our grid.
+  let start = (isCq || isDirectToMe) ? d : null;
+  if (!start && _myCall && call && call !== 'CQ') {
+    const mine = _myCall.toUpperCase() + ' ';
+    // Reference = the newest decode (server clock), not the browser clock.
+    const nowS = _decodes.length ? (_decodes[_decodes.length - 1].recvEpoch || 0) : 0;
+    for (let i = _decodes.length - 1; i >= 0; i--) {
+      const o = _decodes[i];
+      if (o.is_tx) continue;
+      if (nowS && o.recvEpoch && nowS - o.recvEpoch > 180) break;
+      const om = (o.message || '').toUpperCase();
+      if (om.startsWith(mine) && _extractCall(om) === call) {
+        // A closing RR73/RRR/73 means that QSO is already over - don't
+        // replay it (it would log a duplicate), just call the station anew.
+        if (!/\s(RR73|RRR|73)$/.test(om.trim())) start = o;
+        break;
+      }
+    }
+    if (!start) start = d;
+  }
+  if (start && autoOk && _autoSeqEnabled && call && call !== 'CQ') {
+    const d = start;
     // recvEpoch (the exact receive timestamp of THIS decode from the
     // backend, not "now") is crucial — the backend computes our TX window
     // from it. Without this, correct window selection only worked if you

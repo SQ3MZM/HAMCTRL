@@ -35,16 +35,17 @@ impl LdpcGraph {
     }
 }
 
-fn parity_ok(bits: &[u8], g: &LdpcGraph) -> bool {
+fn unsatisfied_checks(bits: &[u8], g: &LdpcGraph) -> usize {
+    let mut n = 0;
     for c in 0..N_CHECKS {
         let deg = g.check_deg[c];
         let mut xor = 0u8;
         for i in 0..deg {
             xor ^= bits[g.checks[c][i]];
         }
-        if xor != 0 { return false; }
+        if xor != 0 { n += 1; }
     }
-    true
+    n
 }
 
 static GRAPH: OnceLock<LdpcGraph> = OnceLock::new();
@@ -86,6 +87,8 @@ pub fn bp_decode_save(llr_channel: &[f32; N_BITS], max_iters: usize, save: &mut 
     }
 
     let mut bit_total = [0f32; N_BITS];
+    let mut nclast = usize::MAX;
+    let mut ncnt = 0usize;
 
     for it in 0..max_iters {
         // Check node update: pelny sum-product (tanh), nie min-sum. Min-sum
@@ -125,9 +128,20 @@ pub fn bp_decode_save(llr_channel: &[f32; N_BITS], max_iters: usize, save: &mut 
             bits[b] = if bit_total[b] < 0.0 { 1 } else { 0 };
         }
 
-        if parity_ok(&bits, &g) {
+        let ncheck = unsatisfied_checks(&bits, &g);
+        if ncheck == 0 {
             return (bits, true, it + 1);
         }
+        // Wczesne przerwanie beznadziejnych przypadkow: po 10 iteracjach,
+        // jesli liczba niespelnionych rownan od 5 iteracji nie maleje i wciaz
+        // jest > 15, BP juz nie zbiegnie (ta sama regula co w dekoderze
+        // referencyjnym). Na zatloczonym pasmie wiekszosc kandydatow to takie
+        // przypadki - wczesniej kazdy liczyl pelne 30 iteracji.
+        if it > 0 {
+            if ncheck < nclast { ncnt = 0; } else { ncnt += 1; }
+            if ncnt >= 5 && it >= 10 && ncheck > 15 { break; }
+        }
+        nclast = ncheck;
 
         // Update Q (extrinsic): total - R from this check
         for c in 0..N_CHECKS {
@@ -142,7 +156,7 @@ pub fn bp_decode_save(llr_channel: &[f32; N_BITS], max_iters: usize, save: &mut 
         }
     }
 
-    // Non-convergence: return last hard decision
+    // Non-convergence (or early stop): return last hard decision
     let mut bits = [0u8; N_BITS];
     for b in 0..N_BITS { bits[b] = if bit_total[b] < 0.0 { 1 } else { 0 }; }
     (bits, false, max_iters)

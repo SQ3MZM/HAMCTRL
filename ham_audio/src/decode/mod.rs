@@ -85,7 +85,7 @@ pub struct DecodeResult {
 // frequency. Diminishing returns after a few passes, so capped low to
 // bound CPU cost (each pass re-runs the full candidate search + LDPC over
 // every candidate).
-const MAX_SUBTRACT_PASSES: usize = 3;
+const MAX_SUBTRACT_PASSES: usize = 4;
 
 // Wall-clock budget for the ENTIRE decode_ft8/decode_ft4 call (all passes +
 // subtraction combined), measured from when the window's audio snapshot is
@@ -170,6 +170,35 @@ const AP_FULL_MAX_REL: f32 = 0.28;
 // prawdziwe trafienia zwykle 0.04-0.13.
 const AP_FULL_MIN_GAP: f32 = 0.035;
 
+/// AP "to jest CQ" zgaduje caly znak z bardzo malej liczby znanych bitow, wiec
+/// na zatloczonym pasmie (wielu kandydatow z dobra synchronizacja od
+/// nakladajacych sie stacji) potrafi "trafic" w nieistniejacy znak. Zmierzone
+/// na godzinie nagrania z 40 m: fantomy AP-CQ to byly znaki z "/R" (rover -
+/// na KF w FT8 praktycznie nie wystepuje) albo bez budowy prefiks+cyfra+sufiks
+/// (np. "492OBI"), wszystkie prawdziwe dekody AP-CQ te reguly spelnialy.
+fn cq_result_plausible(cw: &[u8; 174], scramble: Option<&[u8; 77]>) -> bool {
+    let mut d77 = [0u8; 77];
+    for i in 0..77 { d77[i] = cw[i] ^ scramble.map_or(0, |r| r[i]); }
+    if d77[57] == 1 { return false; } // /R przy znaku nadawcy
+    let Some(msg) = unpack77(&d77) else { return false };
+    plausible_callsign(&msg.call_de)
+}
+
+/// Prosta budowa znaku: prefiks 1-2 znaki (litera; litera+znak; cyfra+litera),
+/// cyfra, sufiks 1-4 liter (np. K1ABC, SQ3MZM, 9A2AA, 3D2XX, A60FD). Podzial
+/// na ostatniej cyfrze w pierwszych trzech znakach.
+fn plausible_callsign(call: &str) -> bool {
+    let c: Vec<char> = call.chars().collect();
+    let Some(d) = (1..=2).rev().find(|&i| c.get(i).map_or(false, |ch| ch.is_ascii_digit())) else { return false };
+    let prefix_ok = match &c[..d] {
+        [a] => a.is_ascii_uppercase(),
+        [a, b] => (a.is_ascii_uppercase() && b.is_ascii_alphanumeric()) || (a.is_ascii_digit() && b.is_ascii_uppercase()),
+        _ => false,
+    };
+    let suffix = &c[d + 1..];
+    prefix_ok && (1..=4).contains(&suffix.len()) && suffix.iter().all(|ch| ch.is_ascii_uppercase())
+}
+
 /// Suma |LLR| na bitach niezgodnych ze slowem kodowym, wzgledem sumy |LLR|.
 fn ap_rel(llr: &[f32; 174], cw: &[u8; 174]) -> f32 {
     let d: f32 = (0..174).filter(|&i| ((llr[i] < 0.0) as u8) != cw[i]).map(|i| llr[i].abs()).sum();
@@ -229,7 +258,7 @@ pub fn decode_ft8(audio: &[f32], ap_hints: &ap::ApHints, on_pass_results: &mut d
         let spec_ms = t_spec.elapsed().as_secs_f64() * 1000.0;
         let t_cand = std::time::Instant::now();
         // prog 0.4 dla nowego scoringu (ton-srednia)/srednia; stary log-scoring mial 0.15
-        let mut candidates = find_candidates_ft8(&spec, p, 60, 0.4);
+        let mut candidates = find_candidates_ft8(&spec, p, 100, 0.4);
         add_rx_candidate(&mut candidates, ap_hints, |m| find_candidates_ft8(&spec, p, m, -10.0));
         let find_cand_ms = t_cand.elapsed().as_secs_f64() * 1000.0;
         let ws = baseband::window_spectrum(&residual);
@@ -410,7 +439,7 @@ fn decode_and_subtract(
                                 if r.is_none() && dm.nsync >= OSD_MIN_NSYNC && std::time::Instant::now() < deadline {
                                     for llr in dm.llrs.iter() {
                                         if let Some(cw) = ap::try_ap_cq(llr, scramble) {
-                                            if ap_rel(llr, &cw) < AP_MAX_REL { r = Some(cw); break; }
+                                            if ap_rel(llr, &cw) < AP_MAX_REL && cq_result_plausible(&cw, scramble) { r = Some(cw); break; }
                                         }
                                     }
                                 }
@@ -509,3 +538,17 @@ const FT4_RVEC: [u8; 77] = [
     1,0,0,1,0,1,1,0,0,0,0,1,0,0,0,1,0,1,0,0,1,1,1,1,0,0,1,0,1,
     0,1,0,1,0,1,1,0,1,1,1,1,1,0,0,0,1,0,1,
 ];
+
+#[cfg(test)]
+mod plausible_tests {
+    use super::plausible_callsign;
+    #[test]
+    fn callsign_shapes() {
+        for ok in ["K1ABC", "SQ3MZM", "9A2AA", "3D2XX", "GW1BSK", "A60FD", "R4PFY", "EA1CP"] {
+            assert!(plausible_callsign(ok), "{ok}");
+        }
+        for bad in ["492OBI", "1ABC", "K1", "SQ3MZMXX", "49ABC", ""] {
+            assert!(!plausible_callsign(bad), "{bad}");
+        }
+    }
+}

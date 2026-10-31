@@ -97,14 +97,14 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.15"
+SERVER_VERSION = "2.0.17"
 
 # Internal per-commit diagnostic marker (see the comment above). Defined
 # once here and printed both at server startup (server.py::amain, so it's
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-27-ALLTXT-FIX"
+BUILD_MARKER = "BUILD-2026-10-31-V2017-CLICK-ANY-ROW"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -9116,11 +9116,19 @@ class App:
 
                 # Broadcast to browsers
                 await self.hub.broadcast(msg)
-                self._all_log.write(
-                    self.radio_lock.get("user_id"), True, self.rig.freq,
-                    msg.get("mode") or self._ft8_decode_mode, msg.get("snr", 0),
-                    msg.get("deltaTime", 0.0), msg.get("deltaFreq", 0),
-                    msg.get("message", ""), msg.get("timeStr", ""), msg["recvEpoch"])
+                # ALL.TXT: do pliku kazdego zalogowanego, kto ma otwarta zakladke
+                # FT8 (widzi te dekody), oraz posiadacza radia. Wczesniej tylko
+                # posiadacza radia - zywy raport: z godziny pracy zapisalo sie 5
+                # minut, bo przez reszte czasu nikt nie mial przejetego radia.
+                _all_uids = {info.get("user_id") for _ws, info in list(self.online_users.items())
+                             if "ft8" in self.hub._subs.get(_ws, set())}
+                _all_uids.add(self.radio_lock.get("user_id"))
+                for _all_uid in _all_uids:
+                    self._all_log.write(
+                        _all_uid, True, self.rig.freq,
+                        msg.get("mode") or self._ft8_decode_mode, msg.get("snr", 0),
+                        msg.get("deltaTime", 0.0), msg.get("deltaFreq", 0),
+                        msg.get("message", ""), msg.get("timeStr", ""), msg["recvEpoch"])
 
                 # Cache call->grid from ALL decodes. A partner replying to
                 # OUR CQ doesn't send a grid (e.g. "XX0XXX JA3FYC +11"), so

@@ -5,8 +5,9 @@ w formacie pliku ALL.TXT z WSJT-X (jedna linia na komunikat):
     251027_183015    14.074 Rx FT8    -12  0.3 1500 K1ABC W9XYZ RR73
     251027_183030    14.074 Tx FT8      0  0.0 1500 W9XYZ K1ABC 73
 
-Osobny plik dla kazdego operatora (wedlug id konta - zapisuje sie temu, kto
-w danej chwili ma przejete radio), w DATA/all_txt/. Rozmiar pilnowany
+Osobny plik dla kazdego operatora (wedlug id konta): odebrane dekody trafiaja
+do kazdego zalogowanego z otwarta zakladka FT8 i do posiadacza radia, nadane -
+do tego, kto nadaje (patrz webapp.py). Pliki w DATA/all_txt/. Rozmiar pilnowany
 rotacja: po przekroczeniu MAX_BYTES biezacy plik staje sie kopia ".old" (poprzednia
 kopia jest kasowana), czyli na operatora najwyzej ~2 x MAX_BYTES.
 """

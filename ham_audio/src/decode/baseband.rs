@@ -309,6 +309,14 @@ fn normalize_llrs(sets: &[&[f32; 174]]) -> Option<Vec<[f32; 174]>> {
 
 const FT4_COSTAS_POS: [usize; 4] = [0, 33, 66, 99];
 
+/// Wzorce tonow 0..7 liczone raz - sync_coh siega po nie setki razy na
+/// kandydata (wczesniej liczyl sin/cos od nowa przy kazdym sprawdzanym
+/// polozeniu, co bylo najwiekszym kosztem demodulacji).
+fn tone_templates() -> &'static [[Complex<f32>; NSPS2]; 8] {
+    static T: std::sync::OnceLock<[[Complex<f32>; NSPS2]; 8]> = std::sync::OnceLock::new();
+    T.get_or_init(|| std::array::from_fn(tone_template))
+}
+
 fn tone_template(tone: usize) -> [Complex<f32>; NSPS2] {
     let mut t = [Complex::new(0f32, 0f32); NSPS2];
     let dphi = 2.0 * std::f32::consts::PI * tone as f32 / NSPS2 as f32;
@@ -468,8 +476,9 @@ fn sync_coh(cd: &[Complex<f32>], i0: isize, blocks: &[(usize, &[usize])], df: f3
         let start = start as usize;
         let mut z = Complex::new(0f32, 0f32);
         let mut tw = Complex::new(1f32, 0f32);
+        let tmpls = tone_templates();
         for (k, &t) in tones.iter().enumerate() {
-            let tmpl = tone_template(t);
+            let tmpl = &tmpls[t];
             for j in 0..NSPS2 {
                 z += cd[start + k * NSPS2 + j] * tmpl[j].conj() * tw;
                 tw *= rot;
