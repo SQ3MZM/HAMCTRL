@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.17"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-10-31-V2017-CLICK-ANY-ROW"
+BUILD_MARKER = "BUILD-2026-11-02-LIGHT-MODE-COLORS"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a

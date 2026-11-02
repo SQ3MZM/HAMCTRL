@@ -1582,6 +1582,22 @@ html[data-mode="light"] .wj-decode-row:hover { background: rgba(2,132,199,0.08);
 .wj-decode-row.wj-73      { color: #fbbf24; font-weight: 700; }  /* 73/RR73 — bursztyn */
 .wj-decode-row.wj-worked  { color: var(--wj-text-dimmer); text-decoration: line-through; opacity: 0.6; } /* juz w logu */
 .wj-decode-row.wj-own-tx  { color: #fef08a; background: rgba(245,158,11,0.16) !important; font-weight: 700; border-left: 3px solid #f59e0b; }  /* nasz TX */
+/* Tryb jasny: kolory wierszy powyzej (pastelowe, dobrane pod ciemne tlo)
+   zlewaly sie z jasnym tlem - zgloszenie 2026-11-02 (zrzut ft8.bmp: nasze
+   TX, 73/RR73 i CQ prawie niewidoczne). Te same barwy, ciemniejsze odcienie.
+   !important przy TX - tlo i znacznik "TX" sa ustawiane inline w wsjtx.js. */
+html[data-mode="light"] .wj-decode-row.wj-cq     { color: #0369a1; }
+html[data-mode="light"] .wj-decode-row.wj-mycall { color: #991b1b; background: rgba(239,68,68,0.14) !important; border-left-color: #dc2626; }
+html[data-mode="light"] .wj-decode-row.wj-dx     { color: #15803d; }
+html[data-mode="light"] .wj-decode-row.wj-73     { color: #b45309; }
+html[data-mode="light"] .wj-decode-row.wj-worked { color: #64748b; opacity: 0.8; }
+html[data-mode="light"] .wj-decode-row.wj-own-tx { color: #78350f !important; background: rgba(245,158,11,0.22) !important; border-left: 3px solid #d97706 !important; }
+html[data-mode="light"] .wj-decode-row.wj-own-tx .wj-tx-mark { color: #b45309 !important; }
+html[data-mode="light"] .wj-tx-btn { color: #334155; }
+html[data-mode="light"] .wj-tx-btn:hover { color: #0f172a; }
+html[data-mode="light"] .wj-tx-btn.active { color: #92400e !important; }
+html[data-mode="light"] .wj-tx-num { color: #b45309; }
+html[data-mode="light"] #wj-autoqso-status { color: #0f172a !important; }
 .wj-decode-row.selected   { outline: 1px solid var(--green); background: rgba(56,189,248,0.15) !important; }
 
 /* ── Belka separatora periodow dekodowania (dashed line + badge) —
