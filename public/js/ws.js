@@ -449,8 +449,7 @@ const _sendFreqDebounced = _debounce((freq) => {
       window.AppState.freq = window.AppState.freq; // trigger re-render
       window.UI?.updateFreqDisplay?.();
     }
-    const holder = lock.callsign || lock.username || '?';
-    window.UI?.showToast(`⛔ Radio zajęte przez ${holder} — przejmij TRX`, 'error');
+    window.UI?.radioBlockedToast?.();
     return;
   }
   WS.send({ type:'freq', freq });
@@ -875,12 +874,23 @@ function handleMessage(msg) {
         };
       }
       if (typeof window.OpPanel?.handleWS === 'function') window.OpPanel.handleWS(msg);
+      // Microphone in readiness while THIS browser holds the TRX (_txMic.setWarm).
+      if (msg.locked !== undefined) {
+        const _myUid = window.AppState?.my_uid || window.CurrentUser?.id;
+        _txMic.setWarm(!!msg.locked && msg.user_id != null && String(msg.user_id) === String(_myUid));
+      }
       // Update the visual graying of the Radio panel (readonly mode)
       window.UI?.applyRadioLockUI?.();
       break;
     case 'radio_request':
     case 'radio_request_received':
       if (typeof window.OpPanel?.handleRequest === 'function') window.OpPanel.handleRequest(msg);
+      break;
+    case 'voice_status':
+      window.VoiceKeyer?.onStatus?.(msg);
+      break;
+    case 'radio_lock_idle':
+      window.OpPanel?.handleIdle?.(msg);
       break;
     case 'radio_request_rejected':
       if (typeof window.OpPanel?.handleRejected === 'function') window.OpPanel.handleRejected(msg);
@@ -1474,7 +1484,17 @@ const _txMic = (() => {
   // Builds (once) or reuses the warm RTCPeerConnection. Resolves true once
   // it's actually usable (connected, or gave up after a timeout). Safe to
   // call every start() - a no-op (instant) once the connection is already up.
+  // Shared by PTT (_doStart) and the background mic (setWarm) - if one is
+  // already negotiating, the other waits for it instead of tearing the
+  // half-built connection down and starting over.
+  let _pcPromise = null;
   async function _ensureWarmPc() {
+    if (pc && pc.connectionState === 'connected') return true;
+    if (_pcPromise) return _pcPromise;
+    _pcPromise = _ensureWarmPcInner();
+    try { return await _pcPromise; } finally { _pcPromise = null; }
+  }
+  async function _ensureWarmPcInner() {
     if (pc && pc.connectionState === 'connected') return true;
     if (pc) { try { pc.close(); } catch(e) {} pc = null; sender = null; }
     if (typeof RTCPeerConnection === 'undefined') {
@@ -1580,24 +1600,34 @@ const _txMic = (() => {
     }
   }
 
-  async function _doStart() {
-    stopRequested = false;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      window.UI?.showToast('Mikrofon niedostepny (brak getUserMedia w przegladarce)', 'error');
-      return false;
-    }
+  // -- Microphone "in readiness" (2026-11-14) ---------------------------
+  // Opening the microphone (getUserMedia) takes 0.1-0.5 s on Windows, and
+  // it used to happen on EVERY PTT press - whatever the operator said in
+  // that time was never captured ("59" went out as "9"). Now the mic is
+  // opened in the background as soon as this browser holds the TRX
+  // (setWarm, driven by radio_lock_state) and closed when the TRX is
+  // given up. While open WITHOUT PTT its signal goes nowhere - it isn't
+  // attached to the WebRTC sender (nothing is sent to the server) and is
+  // never connected to the speakers. PTT only attaches the ready track.
+  let micTrack = null;       // processed (EQ) track, kept open while warm
+  let micOpenedFor = null;   // ham_audio_micId the mic was opened with
+  let warm = false;          // this browser holds the TRX
+  let _openPromise = null;
 
-    const pcOk = await _ensureWarmPc();
-    if (!pcOk) {
-      window.UI?.showToast('Nie udalo sie nawiazac polaczenia WebRTC z serwerem', 'error');
-      return false;
-    }
-    if (stopRequested) {
-      // Released again while the (first-time) warm connection was still
-      // negotiating - honor it now instead of continuing to open the mic.
-      stopRequested = false;
-      return false;
-    }
+  function _micIsOpen() {
+    const raw = stream && stream.getAudioTracks()[0];
+    return !!(raw && raw.readyState === 'live' && micTrack && micTrack.readyState === 'live');
+  }
+
+  async function _ensureMic() {
+    if (_micIsOpen() && micOpenedFor === (localStorage.getItem('ham_audio_micId') || '')) return true;
+    if (_micIsOpen()) closeMic();   // a different microphone was chosen in PROFILE
+    if (_openPromise) return _openPromise;
+    _openPromise = _openMic();
+    try { return await _openPromise; } finally { _openPromise = null; }
+  }
+
+  async function _openMic() {
     try {
       // Saved selection from PROFILE ("TX MICROPHONE", see
       // profile_audio.js) - KEY FIX: this used to read "ham_tx_micId",
@@ -1659,6 +1689,7 @@ const _txMic = (() => {
         audioConstraint.deviceId = { ideal: preferredMicId };
       }
       stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
+      micOpenedFor = localStorage.getItem('ham_audio_micId') || '';
     } catch (e) {
       // e.message is often EMPTY for OverconstrainedError - e.name/e.constraint
       // are where the actual reason lives, so log/show those too instead of
@@ -1695,53 +1726,101 @@ const _txMic = (() => {
       console.warn('[txmic] EQ chain not connected, sending raw stream:', e.message);
     }
 
-    // HOT PTT: swap the track feeding the ALREADY-connected sender, instead
-    // of adding a track + renegotiating. No SDP/ICE/DTLS round trip here -
-    // this is the whole point of keeping the connection warm (see the file
-    // header). Tell the server to open the TX audio device BEFORE the real
-    // track attaches (mirrors the old "start playback before attaching the
-    // track" ordering), then replace the track.
-    window.WS?.send({ type: 'webrtc_tx_on' });
+    micTrack = processedStream.getAudioTracks()[0] || null;
+    if (!micTrack) { closeMic(); return false; }
+    // Unplugged headset etc. - forget the dead stream, the next PTT reopens it.
+    const _raw = stream.getAudioTracks()[0];
+    if (_raw) _raw.onended = () => { if (!active) closeMic(); };
+    // VU meter source (Web Audio analyser, local only - never played back).
+    // Built once with the mic; the meter loop runs only while transmitting.
     try {
-      const track = processedStream.getAudioTracks()[0];
-      await sender.replaceTrack(track);
-    } catch (e) {
-      console.warn('[txmic] replaceTrack error:', e.message);
-      window.UI?.showToast('Blad podlaczenia mikrofonu do polaczenia WebRTC', 'error');
-      window.WS?.send({ type: 'webrtc_tx_off' });
-      cleanupMicOnly();
-      return false;
-    }
-
-    // VU meter (uses the Web Audio API to show the microphone level locally)
-    try {
-      if (!window._audioCtx && typeof initAudioContext === 'function') initAudioContext();
       const ctx = window._audioCtx || audioCtx;
       if (ctx) {
         const src = ctx.createMediaStreamSource(stream);
         audioAnalyzer = ctx.createAnalyser();
         audioAnalyzer.fftSize = 256;
         src.connect(audioAnalyzer);
-        const data = new Uint8Array(audioAnalyzer.frequencyBinCount);
-        const tick = () => {
-          if (!active || !audioAnalyzer) return;
-          audioAnalyzer.getByteTimeDomainData(data);
-          let peak = 0;
-          for (let i = 0; i < data.length; i++) {
-            const v = Math.abs(data[i] - 128);
-            if (v > peak) peak = v;
-          }
-          const pct = Math.min(100, (peak / 128) * 100 * 2);
-          const fill = document.getElementById('tx-vu-fill');
-          if (fill) {
-            fill.style.width = pct + '%';
-            fill.style.background = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--amber)' : 'var(--green)';
-          }
-          vuRaf = requestAnimationFrame(tick);
-        };
-        tick();
       }
-    } catch (e) { /* the VU meter is nice-to-have, don't block on it */ }
+    } catch (e) { audioAnalyzer = null; }
+    return true;
+  }
+
+  async function _doStart() {
+    stopRequested = false;
+    const _pttT0 = performance.now();
+    const _wasReady = _micIsOpen();
+    if (!navigator.mediaDevices?.getUserMedia) {
+      window.UI?.showToast('Mikrofon niedostepny (brak getUserMedia w przegladarce)', 'error');
+      return false;
+    }
+
+    const pcOk = await _ensureWarmPc();
+    if (!pcOk) {
+      window.UI?.showToast('Nie udalo sie nawiazac polaczenia WebRTC z serwerem', 'error');
+      return false;
+    }
+    if (stopRequested) {
+      // Released again while the (first-time) warm connection was still
+      // negotiating - honor it now instead of continuing to open the mic.
+      stopRequested = false;
+      return false;
+    }
+    if (!(await _ensureMic())) return false;
+    if (stopRequested) {
+      stopRequested = false;
+      if (!warm) closeMic();
+      return false;
+    }
+    // Page reloaded while holding the TRX: the browser keeps Web Audio
+    // asleep until the first click - the PTT press IS that click.
+    try {
+      const _ctx = window._audioCtx || audioCtx;
+      if (_ctx && _ctx.state === 'suspended') await _ctx.resume();
+    } catch (e) {}
+
+    // Tell the server to open the TX audio device BEFORE the track
+    // attaches, then attach the ready track (no renegotiation).
+    window.WS?.send({ type: 'webrtc_tx_on' });
+    try {
+      await sender.replaceTrack(micTrack);
+    } catch (e) {
+      console.warn('[txmic] replaceTrack error:', e.message);
+      window.UI?.showToast('Blad podlaczenia mikrofonu do polaczenia WebRTC', 'error');
+      window.WS?.send({ type: 'webrtc_tx_off' });
+      _detach();
+      if (!warm) closeMic();
+      return false;
+    }
+
+    // VU meter loop - only while transmitting.
+    if (audioAnalyzer) {
+      const data = new Uint8Array(audioAnalyzer.frequencyBinCount);
+      const tick = () => {
+        if (!active || !audioAnalyzer) return;
+        audioAnalyzer.getByteTimeDomainData(data);
+        let peak = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = Math.abs(data[i] - 128);
+          if (v > peak) peak = v;
+        }
+        const pct = Math.min(100, (peak / 128) * 100 * 2);
+        const fill = document.getElementById('tx-vu-fill');
+        if (fill) {
+          fill.style.width = pct + '%';
+          fill.style.background = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--amber)' : 'var(--green)';
+        }
+        vuRaf = requestAnimationFrame(tick);
+      };
+      // active is set right below - start the loop on the next frame.
+      requestAnimationFrame(tick);
+    }
+
+    // Measurement for ptt_timing.log: PTT press -> mic audio attached
+    // (the radio is keyed right after this), and whether the mic was
+    // already open in readiness or had to be opened now.
+    window.WS?.send({ type: 'tx_audio_timing',
+      pttToAudioMs: Math.round(performance.now() - _pttT0),
+      micReady: _wasReady });
 
     active = true;
     console.log('[txmic] active (WebRTC to the server)');
@@ -1771,42 +1850,61 @@ const _txMic = (() => {
   // Releases the microphone + EQ chain only - the warm `pc`/`sender` are
   // DELIBERATELY left alone so the next PTT press can reuse them (see the
   // file header). This is what stop() calls on every ordinary PTT release.
-  function cleanupMicOnly() {
+  // Stop sending: detach the track from the WebRTC sender (nothing goes to
+  // the server any more) and stop the VU meter. The mic itself stays open.
+  function _detach() {
     if (vuRaf) { cancelAnimationFrame(vuRaf); vuRaf = null; }
+    if (sender) { try { sender.replaceTrack(null); } catch(e) {} }
+    const fill = document.getElementById('tx-vu-fill');
+    if (fill) fill.style.width = '0%';
+  }
+  // Close the microphone completely (TRX given up, device gone, error).
+  function closeMic() {
+    _detach();
     audioAnalyzer = null;
     if (window.TxEq) window.TxEq.unregisterTxFilters();
     if (window._txGainNode) {
       try { window._txGainNode.disconnect(); } catch(e) {}
       window._txGainNode = null;
     }
-    if (sender) { try { sender.replaceTrack(null); } catch(e) {} }
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
     }
-    const fill = document.getElementById('tx-vu-fill');
-    if (fill) fill.style.width = '0%';
+    if (micTrack) { try { micTrack.stop(); } catch(e) {} micTrack = null; }
+    micOpenedFor = null;
   }
+  // Old name, still used by the connection-state handler above.
+  function cleanupMicOnly() { closeMic(); }
 
   function stop() {
     if (!active) {
-      // Might still be mid-start() (getUserMedia/WebRTC negotiation in
-      // flight, `stream`/`pc` possibly not even assigned yet) - can't
-      // clean up yet, remember the request so start() can honor it the
-      // moment it actually reaches a cleanable state.
       stopRequested = true;
       return;
     }
     active = false;
     window.WS?.send({ type: 'webrtc_tx_off' });
-    cleanupMicOnly();
-    console.log('[txmic] stopped (mic released, WebRTC connection stays warm)');
+    _detach();
+    if (!warm) closeMic();
+    console.log(warm ? '[txmic] stopped (mic stays ready - TRX held)'
+                     : '[txmic] stopped (mic released, WebRTC connection stays warm)');
   }
 
-  // Full teardown of the warm connection itself - NOT called on an ordinary
-  // PTT release (see stop() above). Used when the connection should really
-  // go away: explicit logout/radio-lock release, or a dead connection that
-  // _ensureWarmPc's onconnectionstatechange already detected and cleared.
+  // Called on every radio_lock_state: open the mic in the background while
+  // this browser holds the TRX, close it when the TRX is given up.
+  function setWarm(on) {
+    on = !!on;
+    if (on === warm) return;
+    warm = on;
+    if (on) {
+      if (!navigator.mediaDevices?.getUserMedia) return;
+      _ensureWarmPc().then(ok => { if (ok && warm) return _ensureMic(); })
+        .catch(e => console.warn('[txmic] background mic open failed:', e && e.message));
+    } else if (!active) {
+      closeMic();
+    }
+  }
+
   function teardown() {
     if (active) { try { stop(); } catch(e) {} }
     if (pc) { try { pc.close(); } catch(e) {} pc = null; sender = null; }
@@ -1814,7 +1912,7 @@ const _txMic = (() => {
   }
 
   return {
-    start, stop, teardown, onAnswer, onRemoteIce,
+    start, stop, teardown, onAnswer, onRemoteIce, setWarm,
     isActive: () => active,
   };
 })();

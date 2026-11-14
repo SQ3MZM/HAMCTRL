@@ -138,3 +138,56 @@ def consume_reset_token(token: str) -> Optional[dict]:
         return None
     return entry
 
+
+
+# ── Two-factor login (2026-11-14) ─────────────────────────────────────────────
+# Optional per account. TOTP (RFC 6238 - Google/Microsoft Authenticator etc.:
+# 30 s steps, 6 digits, SHA-1) or a one-time code sent by e-mail; plus
+# one-time recovery codes for a lost phone. Only hashes of the recovery
+# codes are stored (same scrypt as passwords).
+import struct as _struct
+
+def totp_new_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+def _totp_at(secret: str, counter: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    h = hmac.new(key, _struct.pack(">Q", counter), hashlib.sha1).digest()
+    o = h[-1] & 0x0F
+    code = (_struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1_000_000
+    return f"{code:06d}"
+
+def totp_verify(secret: str, code: str, window: int = 1) -> bool:
+    """True if `code` matches the current 30 s step or +-window steps
+    (clock drift between the phone and the server)."""
+    code = (code or "").strip().replace(" ", "")
+    if not secret or len(code) != 6 or not code.isdigit():
+        return False
+    now = int(time.time() // 30)
+    return any(hmac.compare_digest(_totp_at(secret, now + d), code)
+               for d in range(-window, window + 1))
+
+def totp_uri(secret: str, account: str, issuer: str = "HAMCTRL") -> str:
+    from urllib.parse import quote
+    return (f"otpauth://totp/{quote(issuer)}:{quote(account)}"
+            f"?secret={secret}&issuer={quote(issuer)}&digits=6&period=30")
+
+def new_recovery_codes(n: int = 8) -> list:
+    """Plain codes to show ONCE (xxxx-xxxx); store recovery_hashes() of them."""
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    return ["".join(secrets.choice(alphabet) for _ in range(4)) + "-" +
+            "".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(n)]
+
+def recovery_hashes(codes: list) -> list:
+    return [hash_pw_secure(c.strip().lower()) for c in codes]
+
+def use_recovery_code(code: str, hashes: list):
+    """Returns the remaining hashes if `code` matched one (that one is
+    removed - single use), else None."""
+    c = (code or "").strip().lower()
+    if len(c) < 8:
+        return None
+    for i, h in enumerate(hashes or []):
+        if verify_pw(c, h):
+            return hashes[:i] + hashes[i + 1:]
+    return None

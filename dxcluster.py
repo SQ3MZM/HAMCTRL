@@ -59,7 +59,17 @@ def _log_line(msg: str):
         pass  # logowanie nigdy nie moze wywrocic polaczenia
 
 
+# Mail ports - a cluster never runs there; blocked so the server can't be
+# used to talk to (or relay through) a mail server.
+_BLOCKED_PORTS = {25, 465, 587}
+
+
 async def _resolve_and_check_safe(host: str, port: int) -> tuple[bool, str]:
+    ok, why, _ip = await _resolve_safe_ip(host, port)
+    return ok, why
+
+
+async def _resolve_safe_ip(host: str, port: int) -> tuple[bool, str, str]:
     """
     SSRF guard (added 2026-09-02, found via a live permission audit): ANY
     logged-in user - operator or viewer, no admin gate on this endpoint -
@@ -73,25 +83,45 @@ async def _resolve_and_check_safe(host: str, port: int) -> tuple[bool, str]:
     DNS name that merely points at an internal address is caught too, and
     checks every address a name resolves to, not just the first.
     """
+    # 2026-11-14: returns the checked IP too, and the client connects to
+    # THAT address (see DXClusterClient._run_loop). Before, the name was
+    # resolved once here and again by open_connection - a hostile DNS name
+    # with a zero TTL could answer "public" to the check and "127.0.0.1"
+    # to the real connection (DNS rebinding), and reconnects weren't
+    # checked at all. not is_global also covers ranges is_private misses
+    # (e.g. 100.64.0.0/10 carrier-grade NAT).
     if not host:
-        return False, "Brak adresu hosta"
+        return False, "Brak adresu hosta", ""
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False, "Nieprawidlowy port", ""
+    if not (1 <= port <= 65535) or port in _BLOCKED_PORTS:
+        return False, f"Port {port} niedozwolony dla DX Cluster", ""
     try:
         loop = asyncio.get_event_loop()
         infos = await asyncio.wait_for(
             loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=5.0)
     except Exception as e:
-        return False, f"Nie mozna rozwiazac adresu {host!r}: {e}"
+        return False, f"Nie mozna rozwiazac adresu {host!r}: {e}", ""
+    first_ok = ""
     for info in infos:
         ip_str = info[4][0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             continue
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        if not ip.is_global or ip.is_multicast:
             return False, (f"Adres {host!r} ({ip_str}) wskazuje na siec "
-                            f"prywatna/lokalna - zablokowane")
-    return True, ""
+                            f"prywatna/lokalna - zablokowane"), ""
+        if not first_ok:
+            first_ok = ip_str
+    if not first_ok:
+        return False, f"Brak uzywalnego adresu dla {host!r}", ""
+    return True, "", first_ok
 
 
 # Band prefixes from the IARU table (to place a spot on the waterfall).
@@ -340,8 +370,19 @@ class DXClusterClient:
         while self._should_run:
             try:
                 await self._status("connecting", f"{self.host}:{self.port}")
+                # Re-checked on EVERY (re)connect, and the connection goes
+                # to exactly the address that passed - see _resolve_safe_ip.
+                _ok, _why, _ip = await _resolve_safe_ip(self.host, self.port)
+                if not _ok:
+                    if _why.startswith("Nie mozna rozwiazac"):
+                        # Temporary DNS failure (night-time network hiccup) -
+                        # retry with the normal back-off, don't give up.
+                        raise OSError(_why)
+                    await self._status("error", _why)
+                    self._should_run = False
+                    break
                 self._reader, self._writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port),
+                    asyncio.open_connection(_ip, self.port),
                     timeout=10.0
                 )
                 self._connected = True

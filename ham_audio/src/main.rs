@@ -181,7 +181,11 @@ async fn async_main() {
     let (ctrl_addr, ws_addr, wss_addr) = {
         let c = cfg.read().await;
         (
-            format!("0.0.0.0:{}", c.ctrl_port),
+            // Control port: only the Python server on this same machine
+            // talks to it (audio_rust_bridge.py -> 127.0.0.1). It has no
+            // login and can shut this process down or switch sound cards,
+            // so it must not be reachable from the network.
+            format!("127.0.0.1:{}", c.ctrl_port),
             format!("0.0.0.0:{}", c.ws_port),
             format!("0.0.0.0:{}", c.wss_port()),
         )
@@ -217,7 +221,7 @@ async fn async_main() {
                     let acc  = tls_acceptor.clone();
                     tokio::spawn(async move {
                         match tokio_rustls::TlsAcceptor::from(acc).accept(stream).await {
-                            Ok(tls_stream) => handle_ws_stream(tls_stream, ahi, alo, mix4, cfg4).await,
+                            Ok(tls_stream) => handle_ws_stream(tls_stream, ahi, alo, mix4, cfg4, addr.ip().is_loopback()).await,
                             Err(e) => warn!("TLS accept: {}", e),
                         }
                     });
@@ -242,7 +246,7 @@ async fn async_main() {
                 let alo  = audio_tx_lo.clone();
                 let mix2 = mixer.clone();
                 let cfg2 = cfg.clone();
-                tokio::spawn(handle_ws_plain(stream, ahi, alo, mix2, cfg2));
+                tokio::spawn(handle_ws_plain(stream, ahi, alo, mix2, cfg2, addr.ip().is_loopback()));
             }
         }
     }
@@ -363,18 +367,18 @@ async fn handle_ctrl(
     }
 }
 
-async fn handle_ws_plain(stream: TcpStream, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig) {
+async fn handle_ws_plain(stream: TcpStream, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig, tx_allowed: bool) {
     match accept_async(stream).await {
-        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg).await,
+        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg, tx_allowed).await,
         Err(e) => warn!("WS plain handshake: {}", e),
     }
 }
 
-async fn handle_ws_stream<S>(stream: S, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig)
+async fn handle_ws_stream<S>(stream: S, atx_hi: Arc<AudioTx>, atx_lo: Arc<AudioTx>, mixer: SharedMixer, cfg: SharedConfig, tx_allowed: bool)
 where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
 {
     match accept_async(stream).await {
-        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg).await,
+        Ok(ws) => handle_ws(ws, atx_hi, atx_lo, mixer, cfg, tx_allowed).await,
         Err(e) => warn!("WS TLS handshake: {}", e),
     }
 }
@@ -393,6 +397,10 @@ async fn handle_ws<S>(
     atx_lo:  Arc<AudioTx>,
     mixer:   SharedMixer,
     _cfg:    SharedConfig,
+    // Audio sent BY a client goes into the radio's TX input. These ports
+    // have no login, so TX audio is accepted only from this machine;
+    // remote clients can still listen (RX), they just can't inject audio.
+    tx_allowed: bool,
 )
 where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
 {
@@ -459,7 +467,7 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) if !data.is_empty() => {
-                        if data[0] == 0xA2 {
+                        if data[0] == 0xA2 && tx_allowed {
                             mixer.push_tx(client_id, Bytes::from(data[1..].to_vec()));
                         }
                     }

@@ -2357,6 +2357,9 @@ class CivRig:
                                 break
                         _dbg_swr = swr_val
                         _dbg_swr_raw = swr_raw
+                        # For the SWR TX protection (webapp._swr_guard_tick).
+                        self.swr = swr_val
+                        self.swr_n = getattr(self, "swr_n", 0) + 1
                         with self._telemetry_lock:
                             self._telemetry_pending["txmeter_SWR"] = {
                                 "type": "txmeter", "meter": "SWR",

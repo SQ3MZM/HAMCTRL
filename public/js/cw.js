@@ -292,20 +292,39 @@ function handleWS(msg) {
   }
 }
 
-// ── F1-F15 keys ───────────────────────────────────────────────────────────────
+// ── Function keys (2026-11-14) ────────────────────────────────────────────────
+//   FT8/WSJT-X tab:  F1-F6 = FT8 macros Tx1-Tx6, Esc = HALT TX
+//   RADIO tab:       F1-F15 = CW macros, Esc = stop CW
+// Before, F1-F15 sent CW macros from EVERY tab (F1 in the FT8 tab keyed
+// a CW macro), and the Esc line sat after "if (!f) return" so it never ran.
+// No shortcut fires while typing in a field. The server still decides who
+// may transmit (TRX holder) - a key press from anyone else is refused there.
 document.addEventListener('keydown', e => {
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const page = (id) => document.getElementById(id)?.classList.contains('active');
   const f = e.key?.match(/^F(\d+)$/);
-  if (!f) return;
-  const id = parseInt(f[1]);
-  if (id >= 1 && id <= 15) {
-    e.preventDefault();
-    const m = macros.find(x => x.id === id);
-    if (m?.text) sendMacro(id);
+  const n = f ? parseInt(f[1]) : 0;
+
+  if (page('page-wsjtx')) {
+    if (n >= 1 && n <= 6) { e.preventDefault(); window.WSJTX?.sendTx?.(n); }
+    else if (e.key === 'Escape') { e.preventDefault(); window.WSJTX?.haltTx?.(); }
+    return;
   }
-  // Escape = stop
-  if (e.key === 'Escape' && cwActive) { e.preventDefault(); stopCW(); }
+  if (!page('page-radio')) return;
+  // Voice modes: F1-F4 = recorded SSB messages (voicekeyer.js), Esc stops.
+  const mode = String(window.AppState?.mode || '').toUpperCase();
+  const voice = /^(USB|LSB|AM|FM)/.test(mode) && !mode.endsWith('-D');
+  if (voice && window.VoiceKeyer) {
+    if (n >= 1 && n <= 4) { e.preventDefault(); window.VoiceKeyer.play(n); return; }
+    if (e.key === 'Escape') { window.VoiceKeyer.stop(); }
+  }
+  if (e.key === 'Escape' && cwActive) { e.preventDefault(); stopCW(); return; }
+  if (n >= 1 && n <= 15) {
+    e.preventDefault();
+    const m = macros.find(x => x.id === n);
+    if (m?.text) sendMacro(n);
+  }
 });
 
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }

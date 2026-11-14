@@ -26,7 +26,7 @@
 ; (to inny numer niz znacznik [build] BUILD-YYYY-MM-DD-... w logu startowym,
 ; ktory zmienia sie prawie na kazdy commit i sluzy do potwierdzenia ze EXE
 ; spakowal najnowszy kod - nie do publicznego wersjonowania).
-#define AppVersion "2.0.17"
+#define AppVersion "2.0.18"
 #define AppPublisher "Franek (Claude.ai) & SQ3MZM Tom"
 #define AppExeName "HAM-RADIO-CTRL.exe"
 #define AppURL "https://github.com/SQ3MZM/HAMCTRL"
@@ -92,10 +92,11 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""H
 ; Osobna regula PORTOWA dla ham_audio.exe. Ten plik jest spakowany w bundlu
 ; PyInstaller i rozpakowywany przy KAZDYM starcie do losowej sciezki _MEIPASS,
 ; wiec regula "na program" nie zadziala (sciezka za kazdym razem inna) i zapora
-; pytalaby w kolko. Regula na PORTY (9400 ctrl, 9401 WS audio, 9443 WSS audio)
+; pytalaby w kolko. Regula na PORTY (9401 WS audio, 9443 WSS audio; 9400 ctrl
+; slucha tylko na 127.0.0.1 i nie potrzebuje reguly)
 ; dziala niezaleznie od sciezki pliku. Port 9444 to polaczenie wychodzace do
 ; Pythona - nie wymaga reguly wejsciowej.
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""HAM RADIO CTRL Audio"" dir=in action=allow protocol=TCP localport=9400,9401,9443 enable=yes profile=any"; Flags: runhidden waituntilterminated; StatusMsg: "Konfiguracja zapory (audio)..."
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""HAM RADIO CTRL Audio"" dir=in action=allow protocol=TCP localport=9401,9443 enable=yes profile=any"; Flags: runhidden waituntilterminated; StatusMsg: "Konfiguracja zapory (audio)..."
 ; Zadanie w Harmonogramie: automatyczne odnawianie certyfikatu Let's Encrypt
 ; co 60 dni (cert wazny 90 dni - odnawiamy z zapasem). Uruchamia --gen-cert
 ; z najwyzszymi uprawnieniami (win-acme wymaga admina), w tle. Serwer sam

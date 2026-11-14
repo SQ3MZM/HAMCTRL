@@ -157,13 +157,23 @@ function applyRadioLockUI() {
   updatePTT();
 }
 
+// One message for "you can't control the radio right now" (2026-11-14) -
+// it used to say "Radio zajęte przez ?" even when the radio was FREE.
+function radioBlockedToast() {
+  const lock = window.AppState?.radio_lock || {};
+  const holder = lock.callsign || lock.username;
+  let msg;
+  if (window.CurrentUser?.role === 'viewer') msg = I18n.t('radio_blocked_viewer');
+  else if (lock.locked && holder) msg = I18n.t('radio_blocked_busy').replace('{holder}', holder);
+  else msg = I18n.t('radio_blocked_free');
+  showToast(msg, 'error');
+}
+
 function sendFreq(freq) {
   freq = parseInt(freq);
   if (!freq || freq < 100000) return;
   if (!_canControlRadio()) {
-    const holder = window.AppState?.radio_lock?.callsign ||
-                   window.AppState?.radio_lock?.username || '?';
-    showToast(`⛔ Radio zajęte przez ${holder} — przejmij TRX`, 'error');
+    radioBlockedToast();
     return;
   }
   S.freq = freq;
@@ -349,9 +359,31 @@ window.addEventListener('app:ready', () => { loadBandsConfig(); loadTheme(); });
 
 // ── PTT ───────────────────────────────────────────────────────────────────────
 let _pttOwnsMic = false;
+// PTT tail (2026-11-14): after releasing PTT the audio keeps flowing for
+// a moment so the end of the last word, still on its way to the radio,
+// isn't cut off ("SQ3MZM" -> "...MAJ"). Short enough not to matter in a
+// fast exchange - nobody can answer in 0.15 s anyway. Pressing PTT again
+// within the tail simply continues the transmission (the carrier is
+// never dropped in between). Voice only - CW is keyed differently.
+const PTT_TAIL_MS = 150;
+let _pttTailTimer = null;
 function setPTT(on) {
   S.ptt = !!on;
   updatePTT();
+
+  if (S.mode !== 'CW') {
+    if (on && _pttTailTimer) {
+      clearTimeout(_pttTailTimer);
+      _pttTailTimer = null;
+      return;
+    }
+    if (!on) {
+      if (!_pttTailTimer) {
+        _pttTailTimer = setTimeout(() => { _pttTailTimer = null; _releasePTT(); }, PTT_TAIL_MS);
+      }
+      return;
+    }
+  }
 
   // TX mic tied directly to PTT (SSB/AM/FM only - CW is keyed via CI-V
   // text in civ.py, never touches the microphone at all). Used to
@@ -396,12 +428,56 @@ function setPTT(on) {
     // Mic already running (operator left "Nadawanie TX - mikrofon" on
     // manually) - audio is already flowing, nothing to wait for.
     _pttOwnsMic = false;
-  } else if (S.mode !== 'CW' && !on && _pttOwnsMic) {
+  }
+  WS.send({ type: 'ptt', ptt: on });
+}
+
+// "How do I sound": play back the last voice transmission exactly as it
+// went to the radio (recorded server-side after TX gain/AGC). Clicking
+// again while it plays stops it.
+let _lastTxAudio = null;
+async function playLastTx(btn) {
+  const label = (k) => { if (btn) { btn.removeAttribute('data-i18n'); btn.textContent = I18n.t(k); } };
+  if (_lastTxAudio) {
+    _lastTxAudio.pause();
+    URL.revokeObjectURL(_lastTxAudio.src);
+    _lastTxAudio = null;
+    label('tx_last_play');
+    return;
+  }
+  try {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
+    const r = await fetch('/api/audio/last_tx', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!r.ok) {
+      let msg = I18n.t('tx_last_none');
+      try { const j = await r.json(); if (r.status !== 404 && j.error) msg = j.error; } catch (e) {}
+      showToast(msg, 'error');
+      return;
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const a = new Audio(url);
+    _lastTxAudio = a;
+    a.onended = () => { URL.revokeObjectURL(url); if (_lastTxAudio === a) { _lastTxAudio = null; label('tx_last_play'); } };
+    label('tx_last_stop');
+    await a.play();
+  } catch (e) {
+    _lastTxAudio = null;
+    label('tx_last_play');
+    showToast('✗ ' + e.message, 'error');
+  }
+}
+
+// End of a voice transmission (after PTT_TAIL_MS): detach the mic (it
+// stays open in the background while the TRX is held - see _txMic.setWarm
+// in ws.js) and unkey the radio.
+function _releasePTT() {
+  if (S.ptt) return;   // pressed again meanwhile
+  if (_pttOwnsMic) {
     _pttOwnsMic = false;
     window.WS?.stopTX?.();
     _syncTxMicBtn(false);
   }
-  WS.send({ type: 'ptt', ptt: on });
+  WS.send({ type: 'ptt', ptt: false });
 }
 
 // Keeps the manual "Nadawanie TX - mikrofon" button (RADIO tab) in sync
@@ -798,7 +874,7 @@ function setPage(name) {
     if (m && Object.keys(m).length) { window.Settings?.renderRigs?.(m, window.AppState.rigs); }
     else { fetch('/api/config').then(r=>r.json()).then(d=>{ if(d.models) window.Settings?.renderRigs?.(d.models,d.rigs||[]); }).catch(()=>{}); }
   }
-  if (name === 'profile')  { if (typeof loadProfile === 'function') loadProfile(); window.ProfileAudio?.load?.(); }
+  if (name === 'profile')  { if (typeof loadProfile === 'function') loadProfile(); window.ProfileAudio?.load?.(); window.TwoFA?.load?.(); }
   else { window.ProfileAudio?.stopMeter?.(); }
   if (name === 'settings') {
     window.Settings?.loadStatus?.();
@@ -1166,7 +1242,8 @@ function startAutotune() {
 //   PageUp/Dn   — +/- 1 kHz (coarse tuning)
 //   Home/End    — +/- 10 kHz (very coarse tuning)
 //   +/- (num)   — switch to the next band up/down (if S.bands is defined)
-//   F1-F6       — CW macros (handled in CW.sendMacroKey)
+//   F1-F15      — CW macros, Esc stops CW (cw.js); in the FT8 tab F1-F6 =
+//                 FT8 macros and Esc = HALT TX (also cw.js)
 //   Ctrl+Space  — toggle PTT lock (click instead of hold)
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
@@ -1239,7 +1316,7 @@ window.UI = {
   editVfoB, wheelVfoB, applyRadioLockUI,
   toggleFreqHistory, renderFreqHistory, addFreqHistory,
   setTheme, loadTheme,
-  setMode, setPTT, setLevel,
+  setMode, setPTT, setLevel, playLastTx, radioBlockedToast,
   vfoSwap, vfoCopy, toggleSplit, toggleTuner, startAutotune,
   saveMemory, deleteMemory, renderMemories,
   textPrompt, _textPromptSubmit, _textPromptCancel,

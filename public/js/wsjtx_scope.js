@@ -306,10 +306,22 @@ function _initGL() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _buildPaletteRGBA());
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _paletteRGBA());
 
   return true;
 }
+
+// Selectable palette (wf_palettes.js) - "default" = PALETTE_STOPS above.
+function _paletteRGBA(name) {
+  const n = name || window.WfPalettes?.current() || 'default';
+  return window.WfPalettes?.rgba(n) || _buildPaletteRGBA();
+}
+window.WfPalettes?.onChange((name) => {
+  if (!gl || !paletteTex) return;
+  gl.bindTexture(gl.TEXTURE_2D, paletteTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, _paletteRGBA(name));
+  _requestRender();
+});
 
 function _reallocDataTextureIfNeeded() {
   if (dataBuf && dataBuf.length === nBins * MAX_ROWS) return;

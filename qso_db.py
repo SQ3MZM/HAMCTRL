@@ -206,6 +206,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 # ── CRUD ──────────────────────────────────────────────────────────────────────
+def export_all_rows() -> list:
+    """Every QSO of every operator as plain dicts - for the admin backup
+    (2026-11-14). Restored with add_qsos_bulk (duplicate-safe)."""
+    with _conn_lock:
+        conn = _get_conn()
+        cur = conn.execute("SELECT * FROM qso ORDER BY qso_date, time_on")
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 def add_qsos_bulk(user_id: str, qsos: list) -> dict:
     """
     Insert many QSOs at once — efficient bulk insert.

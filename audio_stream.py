@@ -105,6 +105,14 @@ class AudioStream:
         self.bulk_tx = False
         # SSB mic AGC state (see _apply_agc_ssb) - reset per TX session in start_tx.
         self._agc_gain = 1.0
+        # "How do I sound" (2026-11-14): the voice audio of the CURRENT
+        # transmission exactly as it is written to the radio's sound card
+        # (after TX gain/AGC), and the finished copy of the LAST one, which
+        # the operator can play back (webapp /api/audio/last_tx). Voice
+        # only - FT8/FT4 (bulk_tx) is not recorded. Capped at 60 s.
+        self._tx_rec = bytearray()
+        self.last_tx_pcm = b""
+        self._TX_REC_MAX = 60 * OPUS_RATE * 2
         self._webrtc_thread = None
         self._tx_dec    = None
         self._webm_buf  = b""
@@ -352,6 +360,7 @@ class AudioStream:
             if idx is not None: kw["output_device_index"] = idx
             self._tx_stream = pa.open(**kw)
             self.tx_active = True; self.tx_frames = 0; self.tx_frames_received = 0
+            self._tx_rec = bytearray()
             self._agc_gain = 1.0  # fresh AGC state each TX session, not carried over from the last one
             self._tx_thread = threading.Thread(target=self._tx_loop, daemon=True, name="audio-tx")
             self._tx_thread.start()
@@ -365,6 +374,11 @@ class AudioStream:
     def stop_tx(self):
         self.tx_active = False
         self._webm_buf = b""
+        # Keep the just-finished voice transmission for playback (a very
+        # short one - a stray click - doesn't replace the previous take).
+        if len(self._tx_rec) >= OPUS_RATE * 2 // 2:   # >= 0.5 s
+            self.last_tx_pcm = bytes(self._tx_rec)
+        self._tx_rec = bytearray()
         while True:
             try: self._webrtc_pcm_queue.get_nowait()
             except queue.Empty: break
@@ -525,12 +539,29 @@ class AudioStream:
                         pcm = arr.tobytes()
                 self._tx_stream.write(pcm, exception_on_underflow=False)
                 self.tx_frames += 1
+                if not self.bulk_tx and len(self._tx_rec) < self._TX_REC_MAX:
+                    self._tx_rec += pcm
                 if VERBOSE and self.tx_frames % 100 == 0:
                     print(f"[audio] TX (WebRTC) played {self.tx_frames} frames "
                           f"(queue={self._webrtc_pcm_queue.qsize()})")
             except OSError as e:
                 print(f"[audio] TX PCM write err: {e}")
         print(f"[audio] WebRTC playback thread ended — {self.tx_frames} frames")
+
+    def last_tx_wav(self) -> bytes:
+        """The last voice transmission as a WAV file (48 kHz mono 16-bit),
+        or b"" if there is none yet."""
+        pcm = self.last_tx_pcm
+        if not pcm:
+            return b""
+        import io, wave
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(OPUS_RATE)
+            w.writeframes(pcm)
+        return buf.getvalue()
 
     def _flush_webm(self):
         webm = self._webm_buf

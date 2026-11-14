@@ -23,9 +23,7 @@ function _canControl() {
   return String(lock.user_id) === myUid;
 }
 function _blockToast() {
-  const holder = window.AppState?.radio_lock?.callsign ||
-                 window.AppState?.radio_lock?.username || '?';
-  window.UI?.showToast(`⛔ Radio zajęte przez ${holder} — przejmij TRX`, 'error');
+  window.UI?.radioBlockedToast?.();
 }
 
 // ── Format frequency → array of 9 digits [MHz.kHz.Hz] ────────────────────────

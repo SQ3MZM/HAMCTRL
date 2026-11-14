@@ -222,6 +222,11 @@ async def amain():
             if app.rig.sim or not app.rig.connected:
                 continue
             cnt += 1
+            # SWR TX protection - see webapp._swr_guard_tick.
+            try:
+                await app._swr_guard_tick()
+            except Exception as e:
+                print(f"[swr] guard error: {e}", flush=True)
             # S-meter/mode/freq broadcast is already done by the reader in
             # civ.py (_poller_loop sends it via self.bcast). This is just a
             # console heartbeat.
@@ -244,6 +249,8 @@ async def amain():
     app.audio.set_loop(asyncio.get_running_loop())
     app._supervise(lambda: app._ft8_rx_loop(), "ft8_rx_loop")
     app._supervise(lambda: app._waterfall_loop(), "waterfall_loop")
+    app._supervise(lambda: app._psk.loop(), "psk_reporter")
+    app._supervise(lambda: app._health_watch(), "health_watch")
     asyncio.create_task(app.tunnel.autostart())
     print(f"[audio] Stream ready | opus={app.audio.get_status()['opus_lib']}")
 
@@ -386,6 +393,7 @@ async def amain():
     # the EXE or APPDATA when installed in Program Files). Without this,
     # "Permission denied" occurs on a Program Files install (read-only).
     _cert = _letsencrypt_cert or (DATA / "cert.pem")
+    app._tls_cert_path = _cert   # for the certificate-expiry admin alert
     _key  = _letsencrypt_key  or (DATA / "key.pem")
 
     if _cert.exists() and _key.exists():

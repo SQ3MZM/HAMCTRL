@@ -294,6 +294,8 @@ function handleMessage(msg) {
       _syncLockToAppState();
       renderLock(); renderLockedControls();
       window.OpPanel?.handleWS?.(msg);
+      // Microphone in readiness while this phone holds the TRX.
+      window.MobileAudio?.setWarm?.(iHaveLock());
       break;
     case 'online_update':
       // Reported live 2026-08-24: "nie widac userow na serwerze i nie
@@ -309,6 +311,9 @@ function handleMessage(msg) {
       // own _showRequestToast, works anywhere on the page - no dependency
       // on which tab is open or the Operatorzy card being visible).
       window.OpPanel?.handleRequest?.(msg);
+      break;
+    case 'radio_lock_idle':
+      window.OpPanel?.handleIdle?.(msg);
       break;
     case 'radio_request_rejected':
       window.OpPanel?.handleRejected?.(msg);
@@ -658,20 +663,35 @@ function renderMeters() {
 // ── PTT (press-and-hold — see plan for why not a toggle) ────────────────────
 function initPTT() {
   const btn = document.getElementById('m-ptt-btn');
+  // Same as desktop (ui.js setPTT): the mic is attached first and the
+  // radio keyed once audio actually flows (no dead carrier), and after
+  // release the audio keeps flowing for PTT_TAIL_MS so the end of the last
+  // word isn't cut off. Pressing again within the tail just continues.
+  const PTT_TAIL_MS = 150;
+  let held = false;
+  let tailTimer = null;
   function down(e) {
     if (btn.disabled) return;
     if (!canControl()) { showToast(I18n.t('m_need_radio_tx'), 'error'); return; }
     btn.setPointerCapture(e.pointerId);
-    wsSend({ type: 'ptt', ptt: true });
-    // Arms the microphone (fresh getUserMedia + WebRTC offer) in parallel
-    // with keying the radio — see mobile_audio.js header for why this is
-    // per-press rather than a separate long-lived toggle like desktop.
-    window.MobileAudio?.startMicTx?.();
+    held = true;
+    if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; return; }
+    const ma = window.MobileAudio;
+    if (!ma?.startMicTx) { wsSend({ type: 'ptt', ptt: true }); return; }
+    ma.startMicTx().then(ok => {
+      if (ok && (held || tailTimer)) wsSend({ type: 'ptt', ptt: true });
+    });
   }
   function up(e) {
     try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
-    wsSend({ type: 'ptt', ptt: false });
-    window.MobileAudio?.stopMicTx?.();
+    held = false;
+    if (tailTimer) return;
+    tailTimer = setTimeout(() => {
+      tailTimer = null;
+      if (held) return;
+      wsSend({ type: 'ptt', ptt: false });
+      window.MobileAudio?.stopMicTx?.();
+    }, PTT_TAIL_MS);
   }
   btn.addEventListener('pointerdown', down);
   btn.addEventListener('pointerup', up);

@@ -35,8 +35,14 @@ MODE_FROM_HAMLIB = {
 
 class HamlibSession:
 
-    def __init__(self, rig, hub, reader, writer, slot_name, app=None):
+    def __init__(self, rig, hub, reader, writer, slot_name, app=None,
+                 authenticated=False):
         self.rig      = rig
+        # True for the /hamlib WebSocket bridge (the user already logged in
+        # with a token there) - False for the raw TCP rigctl port, which
+        # has no login of its own (see _peer_allowed).
+        self.authenticated = authenticated
+        self._denied_logged = False
         self.hub      = hub
         # Reference to the app — needed to check radio_lock. Without it the
         # session wouldn't know who holds the TRX (the hub doesn't have
@@ -115,7 +121,41 @@ class HamlibSession:
         if app is None:
             return False  # no reference to app — SAFELY deny control
         lock = getattr(app, 'radio_lock', {})
-        return lock.get('user_id') is not None
+        if lock.get('user_id') is None:
+            return False
+        if self.authenticated or self._peer_allowed(app, lock.get('user_id')):
+            return True
+        if not self._denied_logged:
+            self._denied_logged = True
+            print(f"[hamlib:{self.slot}] control commands REFUSED for {self.addr} "
+                  f"- not the LAN and not the TRX holder's address", flush=True)
+        return False
+
+    def _peer_allowed(self, app, holder_uid) -> bool:
+        """SECURITY (2026-11-14): the rigctl protocol has no login, so
+        before this ANY address that could reach the port could key the
+        radio (T 1) while an operator held the TRX. Control is now accepted
+        only from:
+          - this computer or the local network (club PCs, WSJT-X next to
+            the radio) - private/loopback addresses,
+          - the public IP address the TRX holder is logged in from (a
+            remote operator running WSJT-X on their own PC).
+        Read commands are unaffected (see _can_control's docstring)."""
+        import ipaddress
+        peer = self.addr[0] if isinstance(self.addr, (tuple, list)) else self.addr
+        peer = str(peer or "")
+        if peer.startswith("::ffff:"):
+            peer = peer[7:]
+        try:
+            ip = ipaddress.ip_address(peer)
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                return True
+        except ValueError:
+            return False
+        holder_ips = {str(info.get("ip", "")) for info in
+                      getattr(app, "online_users", {}).values()
+                      if info.get("user_id") == holder_uid}
+        return peer in holder_ips
 
     async def _handle(self, cmd: str) -> str:
         raw   = cmd.strip()

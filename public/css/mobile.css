@@ -62,11 +62,13 @@ input, textarea { font-family: inherit; }
 .m-logout {
   background: transparent; border: 1px solid var(--border2); border-radius: 4px;
   color: var(--dim); font-size: 11px; padding: 6px 9px; cursor: pointer;
+  min-height: 40px;
 }
 .m-logout:active { border-color: var(--red); color: var(--red); }
 .m-icon-btn {
   background: transparent; border: 1px solid var(--border2); border-radius: 4px;
-  color: var(--dim); font-size: 13px; padding: 5px 8px; cursor: pointer; line-height: 1;
+  color: var(--dim); font-size: 16px; padding: 5px 8px; cursor: pointer; line-height: 1;
+  min-width: 40px; min-height: 40px;   /* finger-sized (2026-11-14) */
 }
 .m-icon-btn.active { border-color: var(--green); color: var(--green); }
 
@@ -122,7 +124,7 @@ input, textarea { font-family: inherit; }
   color: var(--text); font-size: 13px; font-weight: 600; padding: 10px 14px; cursor: pointer;
   min-height: 44px;
 }
-.m-btn-sm { min-height: 38px; padding: 8px 12px; font-size: 12px; }
+.m-btn-sm { min-height: 44px; padding: 8px 12px; font-size: 12px; }
 .m-btn-amber { border-color: var(--amber); color: var(--amber); }
 .m-btn-amber:active { background: var(--amber); color: var(--on-accent); }
 .m-btn-red { border-color: var(--red); color: var(--red); }
@@ -142,7 +144,7 @@ input, textarea { font-family: inherit; }
 .m-vfo-btn {
   flex: 1; border: 1px solid var(--border2); border-radius: 8px; background: var(--panel2);
   color: var(--dim); font-family: var(--mono); font-size: 12px; font-weight: 600;
-  padding: 8px; cursor: pointer; min-height: 36px;
+  padding: 8px; cursor: pointer; min-height: 44px;
 }
 .m-vfo-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 
@@ -166,8 +168,8 @@ input, textarea { font-family: inherit; }
 .m-chip-row::-webkit-scrollbar { display: none; }
 .m-chip {
   flex: 0 0 auto; border: 1px solid var(--border2); border-radius: 20px; background: var(--panel2);
-  color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 8px 14px; cursor: pointer;
-  min-height: 40px;
+  color: var(--dim); font-family: var(--mono); font-size: 13px; padding: 8px 14px; cursor: pointer;
+  min-height: 44px;
 }
 .m-chip.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 .m-band-row.m-chip-row .m-chip.active { border-color: var(--amber); color: var(--amber); background: rgba(var(--amber-rgb),0.10); }
@@ -212,7 +214,7 @@ input, textarea { font-family: inherit; }
 .rf-btn {
   flex: 0 0 auto; border: 1px solid var(--border2); border-radius: 20px; background: var(--panel2);
   color: var(--dim); font-family: var(--mono); font-size: 11px; padding: 8px 12px; cursor: pointer;
-  min-height: 38px; white-space: nowrap;
+  min-height: 44px; white-space: nowrap;
 }
 .rf-btn.active { border-color: var(--green); color: var(--green); background: rgba(var(--green-rgb),0.12); }
 .rf-btn-power.active { border-color: var(--red); color: var(--red); background: rgba(var(--red-rgb),0.12); }
@@ -240,9 +242,20 @@ input, textarea { font-family: inherit; }
 .m-meter-val { font-family: var(--mono); font-size: 17px; color: var(--green); }
 
 /* ── PTT ── */
-.m-ptt-card { display: flex; justify-content: center; }
+/* 2026-11-14: the PTT bar is pinned just above the bottom tab bar, full
+   width, so it stays under the thumb while scrolling to the functions
+   below (it used to scroll away). It lives inside the Radio tab panel, so
+   it only shows on the Radio tab. The panel gets matching bottom padding
+   so nothing ends up hidden behind it. */
+.m-ptt-card {
+  display: flex; justify-content: center;
+  position: fixed; left: 0; right: 0; bottom: calc(42px + var(--safe-bot)); z-index: 24;
+  border-radius: 0; border-left: none; border-right: none; padding: 8px 12px;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.25);
+}
+#tab-radio { padding-bottom: 100px; }
 .m-ptt-btn {
-  width: 100%; max-width: 260px; height: 84px; border-radius: 16px;
+  width: 100%; max-width: 480px; height: 76px; border-radius: 16px;
   background: var(--panel2); border: 2px solid var(--border2); color: var(--dim);
   font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: 3px;
   cursor: pointer; touch-action: none; user-select: none;

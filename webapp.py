@@ -3,7 +3,7 @@
 """
 webapp.py — WebSocket Hub + application (HTTP/WS routing, API).
 """
-import re, time, json, asyncio, struct
+import re, time, json, asyncio, struct, secrets
 import numpy as np
 import aiohttp
 import aiohttp.web as web
@@ -97,14 +97,14 @@ def _cache_static_file(fpath, mime: str) -> tuple:
 # nearly every commit, this one only on an actual release. Keep this in sync
 # with VERSION (repo root) and #define AppVersion in HAMCTRL-installer.iss -
 # all three are bumped together at release time, not per-commit.
-SERVER_VERSION = "2.0.17"
+SERVER_VERSION = "2.0.18"
 
 # Internal per-commit diagnostic marker (see the comment above). Defined
 # once here and printed both at server startup (server.py::amain, so it's
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-11-02-LIGHT-MODE-COLORS"
+BUILD_MARKER = "BUILD-2026-11-15-V2018"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -118,7 +118,9 @@ from config import (CALLSIGN, LOCATOR, PORT, HAMLIB_MODELS, SCOPE_MODELS,
                     MIME, PUBLIC, CFG_F, USR_F, ADMIN_PW, FIRST_RUN, VERBOSE, DATA,
                     WEBRTC_UDP_PORTS, WEBRTC_UPNP)
 from auth import (jwt_sign, jwt_verify, hash_pw, hash_pw_secure,
-                  verify_pw, needs_rehash)
+                  verify_pw, needs_rehash,
+                  totp_new_secret, totp_verify, totp_uri, new_recovery_codes,
+                  recovery_hashes, use_recovery_code)
 from data import get_cfg, get_users, load_json, save_json, DEFAULT_MACROS
 from crypto_secrets import encrypt_secret, decrypt_secret
 import qso_db
@@ -139,6 +141,8 @@ except Exception as e:
     _WEBRTC = False
 from wsjtx_udp import WsjtxUdpServer
 from ft8_all_log import Ft8AllLog
+from psk_reporter import PskReporter
+from audit_log import AuditLog
 from tunnel_manager import TunnelManager
 from rotator import Rotator
 from rigcat import RigCAT
@@ -853,6 +857,12 @@ class App:
         # Dziennik ALL.TXT (jak w WSJT-X): wszystko odebrane i nadane w
         # FT8/FT4, osobno dla kazdego operatora - patrz ft8_all_log.py.
         self._all_log = Ft8AllLog(DATA)
+        self._audit = AuditLog(DATA)   # station log for the admin
+        self._alert_last = {}          # alert kind -> last e-mail time (rate limit)
+        # PSK Reporter upload (2026-11-14) - off unless the admin enables it.
+        self._psk = PskReporter(self._psk_cfg)
+        self._clublog_last = {}   # user_id -> last ClubLog upload result
+        self._tfa_email_codes = {}   # user_id -> pending e-mail login code (hash, exp, tries)
         # Porty UDP audio WebRTC otwierane na routerze przez UPnP i odnawiane
         # (upnp_ports.py) - bez recznego przekierowania na routerze.
         if _WEBRTC and _udp_range and WEBRTC_UPNP:
@@ -1376,6 +1386,9 @@ class App:
             "callsign":      self.radio_lock["callsign"],
             "locked_at":     self.radio_lock["locked_at"],
             "timeout_min":   self.radio_lock["timeout_min"],
+            # Seconds until the idle auto-release (2026-11-14) - shown to
+            # everyone in the Operators panel as a countdown.
+            "idle_left_s":   self._radio_idle_left_s(),
             "requests":      [
                 {"user_id":    uid,
                  "username":   r["username"],
@@ -1399,8 +1412,17 @@ class App:
     def _user_has_lock(self, user_id: str) -> bool:
         return self.radio_lock["user_id"] == user_id
 
+    def _can_operate_tx(self, user_id: str, role: str) -> bool:
+        """FT8/TX stop & automation actions: the TRX holder or an admin.
+        When nobody holds the radio, any non-viewer may stop a leftover
+        transmission (safety) - see _HOLDER_ONLY_TYPES in _ws_msg."""
+        if role == "admin" or self._user_has_lock(user_id):
+            return True
+        return self.radio_lock.get("user_id") is None and role != "viewer"
+
     def _lock_radio(self, user: dict):
         """Take over the radio for a user."""
+        self._audit.add("trx_take", user.get("callsign") or user.get("username") or "")
         self.radio_lock.update({
             "user_id":       user["id"],
             "username":      user["username"],
@@ -1411,8 +1433,12 @@ class App:
         # Remove this user's request from the queue (if there was one)
         self.radio_requests.pop(user["id"], None)
 
-    def _release_radio(self):
+    def _release_radio(self, reason: str = ""):
         """Release the radio."""
+        if self.radio_lock.get("user_id"):
+            self._audit.add("trx_release",
+                            self.radio_lock.get("callsign") or self.radio_lock.get("username") or "",
+                            "", reason)
         # Whoever is releasing/losing the radio - also stop WSJT-X if they
         # owned it. Called WITHOUT await because _release_radio is sync
         # (also used from the watchdog). The actual stop happens asynchronously.
@@ -1496,6 +1522,7 @@ class App:
         import math
         try:
             self._tune_stop = False
+            self._tune_active = True   # SWR protection stays out of the way
             print(f"[tune] START {tone_hz}Hz for {duration_s}s")
             await self.hub.broadcast({"type": "tune_status", "active": True,
                                       "duration": duration_s, "tone": tone_hz})
@@ -1559,6 +1586,62 @@ class App:
             await self.hub.broadcast({"type": "tune_status", "active": False})
         finally:
             self.audio.bulk_tx = False  # restore anti-lag / SSB-mic path for whatever transmits next
+            self._tune_active = False
+
+    # ── SWR TX protection (2026-11-14) ─────────────────────────────────
+    # A remote operator can't see or hear that an antenna/feeder just failed
+    # (wind, connector, wrong antenna selected) - and the FT8 automation
+    # would keep keying into it every 30 s. If SWR stays above the limit
+    # for two consecutive fresh readings (~0.6 s) while WE are transmitting,
+    # TX is stopped and everyone is told why. Not during the TUNE carrier
+    # (tuning an external tuner = high SWR on purpose) and not during the
+    # radio's own ATU cycle (the radio transmits by itself then, our PTT is
+    # off). ALC is deliberately NOT guarded - speech peaks push it up in
+    # normal operation and it doesn't endanger the radio.
+    _SWR_TRIP = 3.0
+
+    async def _swr_guard_tick(self):
+        r = self.rig
+        if not getattr(r, "ptt", False) or getattr(self, "_tune_active", False):
+            self._swr_hi = 0
+            return
+        n = getattr(r, "swr_n", 0)
+        if n == getattr(self, "_swr_last_n", None):
+            return                      # no new reading since last tick
+        self._swr_last_n = n
+        swr = float(getattr(r, "swr", 1.0) or 1.0)
+        self._swr_hi = (getattr(self, "_swr_hi", 0) + 1) if swr > self._SWR_TRIP else 0
+        if self._swr_hi >= 2:
+            self._swr_hi = 0
+            await self._swr_trip(swr)
+
+    async def _swr_trip(self, swr: float):
+        print(f"[swr] TX STOPPED: SWR {swr:.1f} > {self._SWR_TRIP}", flush=True)
+        self._audit.add("swr_trip", self.radio_lock.get("callsign") or "", "",
+                        f"SWR {swr:.1f} na {getattr(self.rig, 'freq', 0) / 1e6:.3f} MHz")
+        asyncio.ensure_future(self._admin_alert(
+            "swr", f"Ochrona SWR przerwala nadawanie: SWR {swr:.1f} na "
+                   f"{getattr(self.rig, 'freq', 0) / 1e6:.3f} MHz "
+                   f"(operator {self.radio_lock.get('callsign') or '?'})"))
+        _ptt_log_line(f"SWR protection: TX stopped at SWR {swr:.1f}")
+        self._ft8_tx_abort = True
+        self._stop_cq_calling()
+        if self._qso_engine.is_active():
+            self._qso_engine.abort_qso()
+            self._autoqso_tx_seq += 1
+            self._qso_period_locked = False
+            await self.hub.broadcast({"type": "auto_qso_status",
+                                       "state": "IDLE", "partner": None})
+        self.rig.ptt = False
+        if not self.rig.sim:
+            try: await self.rig.set_ptt(False)
+            except Exception as e: print(f"[swr] set_ptt(False) error: {e}", flush=True)
+        if getattr(self.audio, "tx_active", False):
+            self.audio.stop_tx()
+        await self.hub.broadcast({"type": "ptt", "ptt": False})
+        await self.hub.broadcast({"type": "toast", "level": "error",
+            "msg": f"⛔ Nadawanie przerwane: SWR {swr:.1f} (limit {self._SWR_TRIP:.0f}:1) "
+                   f"— sprawdź antenę / tuner"})
 
     async def _relay_connect_task(self):
         """Connect to the Arduino relay controller in the background."""
@@ -1789,6 +1872,244 @@ class App:
         except Exception as e:
             print(f"[watchdog] relay check error: {e}", flush=True)
 
+    # ── Admin e-mail alerts (2026-11-14) ───────────────────────────────
+    # Things a remote admin can't see from home: the radio dropped off the
+    # COM port, the audio engine died, the HTTPS certificate is about to
+    # expire, the SWR protection stopped a transmission. Every alert goes to
+    # the station log; if the admin enabled it (config "alertEmail"), also
+    # by e-mail to every active admin with an address - at most once per
+    # 30 minutes per kind.
+    _ALERT_EVERY_S = 1800
+
+    async def _admin_alert(self, kind: str, text: str, force: bool = False):
+        self._audit.add("alert", "", "", text)
+        print(f"[alert] {kind}: {text}", flush=True)
+        if not (force or self.cfg.get("alertEmail")):
+            return []
+        now = time.time()
+        if not force and now - self._alert_last.get(kind, 0) < self._ALERT_EVERY_S:
+            return []
+        self._alert_last[kind] = now
+        to = sorted({(u.get("email") or "").strip() for u in self.users
+                     if u.get("role") == "admin" and u.get("active", True) and u.get("email")})
+        results = []
+        for addr in to:
+            ok, err = await self._send_email(addr, f"HAMCTRL - alarm: {text[:60]}",
+                                             f"{text}\n\nStacja: {CALLSIGN}\n"
+                                             f"Czas: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            results.append((addr, ok, err))
+            if not ok:
+                print(f"[alert] e-mail to {addr} failed: {err}", flush=True)
+        return results
+
+    async def _health_watch(self):
+        """Background check every 30 s for the admin alerts above."""
+        rig_down = audio_down = None
+        last_cert_check = 0.0
+        await asyncio.sleep(60)          # let everything start up first
+        while True:
+            try:
+                now = time.time()
+                # Radio (CI-V) connection
+                if not getattr(self.rig, "sim", True):
+                    if not getattr(self.rig, "connected", True):
+                        rig_down = rig_down or now
+                        if now - rig_down > 60:
+                            await self._admin_alert("radio", "Utracono polaczenie z radiem (CI-V / port COM) - od ponad minuty")
+                    else:
+                        rig_down = None
+                # Audio engine (ham_audio.exe)
+                ra = self.rust_audio
+                if ra is not None and not getattr(ra, "_connected", True):
+                    audio_down = audio_down or now
+                    if now - audio_down > 60:
+                        await self._admin_alert("audio", "Silnik audio (ham_audio) nie odpowiada od ponad minuty - brak dzwieku i dekodowania FT8")
+                else:
+                    audio_down = None
+                # HTTPS certificate - twice a day is plenty
+                if now - last_cert_check > 43200:
+                    last_cert_check = now
+                    cert = getattr(self, "_tls_cert_path", None)
+                    if cert and __import__("os").path.exists(str(cert)):
+                        import ssl as _ssl
+                        try:
+                            na = _ssl._ssl._test_decode_cert(str(cert)).get("notAfter")
+                            days = (_ssl.cert_time_to_seconds(na) - now) / 86400 if na else 999
+                            if days < 14:
+                                await self._admin_alert("cert", f"Certyfikat HTTPS wygasa za {max(0, int(days))} dni ({na})")
+                        except Exception as e:
+                            print(f"[alert] cert check error: {e}", flush=True)
+            except Exception as e:
+                print(f"[alert] health watch error: {e}", flush=True)
+            await asyncio.sleep(30)
+
+    # ── Voice keyer (2026-11-14) ───────────────────────────────────────
+    # Recorded SSB messages ("CQ contest SQ3MZM...") - 4 slots per operator,
+    # recorded in the browser (16 kHz mono WAV, max 30 s), stored in
+    # DATA/voice/. Played on air through the SAME TX audio path as the live
+    # microphone (TX volume/AGC, anti-lag, SWR protection all apply) with
+    # the server keying PTT itself.
+    _VK_SLOTS = 4
+    _VK_MAX_S = 30
+
+    def _vk_path(self, uid, slot: int):
+        import re as _re
+        safe = _re.sub(r"[^A-Za-z0-9_-]", "_", str(uid)) or "unknown"
+        return DATA / "voice" / f"{safe}_{int(slot)}.wav"
+
+    @staticmethod
+    def _vk_read_wav(data: bytes):
+        """(int16 numpy mono samples at 48 kHz, seconds) from a 16-bit PCM
+        WAV, or raise ValueError."""
+        import io, wave
+        with wave.open(io.BytesIO(data), "rb") as w:
+            if w.getsampwidth() != 2:
+                raise ValueError("tylko 16-bit PCM WAV")
+            ch, rate, n = w.getnchannels(), w.getframerate(), w.getnframes()
+            if not (8000 <= rate <= 48000) or ch not in (1, 2):
+                raise ValueError("nieobslugiwany format WAV")
+            pcm = np.frombuffer(w.readframes(n), dtype="<i2")
+        if ch == 2:
+            pcm = pcm.reshape(-1, 2).mean(axis=1).astype(np.int16)
+        secs = len(pcm) / rate
+        if rate != 48000 and len(pcm):
+            x_new = np.arange(int(len(pcm) * 48000 / rate)) * (rate / 48000.0)
+            pcm = np.interp(x_new, np.arange(len(pcm)), pcm.astype(np.float32)).astype(np.int16)
+        return pcm, secs
+
+    async def _vk_play(self, uid: str, slot: int):
+        """Transmit a recorded message. Runs as a task; _vk_stop aborts it."""
+        p = self._vk_path(uid, slot)
+        if not p.exists():
+            return
+        try:
+            pcm, secs = self._vk_read_wav(p.read_bytes())
+        except Exception as e:
+            print(f"[voice] bad recording {p.name}: {e}", flush=True)
+            return
+        if getattr(self.rig, "ptt", False):
+            return          # already transmitting (mic / FT8) - don't mix
+        self._vk_abort = False
+        self._vk_playing = slot
+        started_audio = False
+        try:
+            if not self.audio.tx_active:
+                dev = self.cfg.get("audio", {}).get("txDevice")
+                self.audio.start_tx(device=dev)
+                started_audio = True
+            frame = 960                      # 20 ms at 48 kHz
+            chunks = [pcm[i:i + frame].tobytes() for i in range(0, len(pcm), frame)]
+            # Two frames ready before keying, so the first syllable isn't lost
+            for c in chunks[:2]:
+                self.audio.feed_tx_pcm(c)
+            self.rig.ptt = True
+            if not self.rig.sim:
+                try: await self.rig.set_ptt(True)
+                except Exception as e: print(f"[voice] set_ptt error: {e}", flush=True)
+            await self.hub.broadcast({"type": "ptt", "ptt": True})
+            await self.hub.broadcast({"type": "voice_status", "playing": slot})
+            print(f"[voice] TX slot {slot} ({secs:.1f}s)", flush=True)
+            # Real-time pacing against a fixed clock (no drift), keeping the
+            # queue short - the playback thread's anti-lag drops anything
+            # above 8 queued frames.
+            t0 = time.time()
+            for i, c in enumerate(chunks[2:], start=2):
+                if self._vk_abort or not self.rig.ptt:
+                    break
+                self.audio.feed_tx_pcm(c)
+                delay = t0 + (i - 1) * 0.02 - time.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            if not self._vk_abort:
+                await asyncio.sleep(0.12)    # let the queue and the card buffer play out
+        finally:
+            self.rig.ptt = False
+            if not self.rig.sim:
+                try: await self.rig.set_ptt(False)
+                except Exception: pass
+            if started_audio and self.audio.tx_active:
+                self.audio.stop_tx()
+            self._vk_playing = None
+            await self.hub.broadcast({"type": "ptt", "ptt": False})
+            await self.hub.broadcast({"type": "voice_status", "playing": None})
+
+    def _psk_cfg(self):
+        """(enabled, receiver call, receiver locator, software) for the PSK
+        Reporter upload. The receiver is whoever operates the station now
+        (TRX holder's callsign), else the station callsign; the locator is
+        the station's (where the antenna is)."""
+        _holder = (self.radio_lock.get("callsign") or "").strip().upper()
+        _call = _holder if re.match(r"^(?=.*\d)(?=.*[A-Z])[A-Z0-9/]{3,12}$", _holder) else CALLSIGN
+        _grid = (self.cfg.get("stationLocator") or LOCATOR or "").strip().upper()
+        return (bool(self.cfg.get("pskReporter", False)), _call, _grid,
+                f"HAMCTRL {SERVER_VERSION}")
+
+    def _login_response(self, u: dict) -> dict:
+        """Session token + login info (after the password, and the second
+        factor if the account has one)."""
+        # pw_ver = password version. A password change increments it in
+        # users.json, invalidating all old tokens (they no longer match the new version).
+        token = jwt_sign({"id": u["id"], "role": u["role"], "username": u["username"],
+                          "pw_ver": int(u.get("pw_ver", 0))})
+        # Force a change of the default password: when an admin logs in
+        # still using the working default password (Admin1234!), the
+        # frontend shows a password-change screen. CRITICAL for the
+        # product - every club starts with the same default password,
+        # so it MUST be changed on first login.
+        must_change = (u.get("role") == "admin"
+                       and verify_pw(ADMIN_PW, u.get("password", ""))
+                       and not u.get("pw_changed"))
+        return {"ok": True, "token": token, "role": u["role"],
+                "username": u["username"],
+                "callsign": CALLSIGN, "locator": LOCATOR,
+                "must_change_password": must_change,
+                "first_run": FIRST_RUN}
+
+    # ── Two-factor login (2026-11-14) ──────────────────────────────────
+    def _check_2fa_code(self, u: dict, code: str) -> bool:
+        """Code from the authenticator app / the e-mail, or a one-time
+        recovery code (removed once used)."""
+        tfa = u.get("twofa") or {}
+        code = (code or "").strip()
+        if tfa.get("method") == "totp":
+            if totp_verify(decrypt_secret(tfa.get("secret", "")), code):
+                return True
+        elif tfa.get("method") == "email":
+            pend = self._tfa_email_codes.get(u["id"])
+            if (pend and time.time() < pend["exp"] and pend["tries"] < 5):
+                pend["tries"] += 1
+                if verify_pw(code, pend["hash"]):
+                    self._tfa_email_codes.pop(u["id"], None)
+                    return True
+        left = use_recovery_code(code, tfa.get("recovery", []))
+        if left is not None:
+            tfa["recovery"] = left
+            save_json(USR_F, self.users)
+            print(f"[auth] recovery code used by {u.get('username')!r} "
+                  f"({len(left)} left)", flush=True)
+            return True
+        return False
+
+    async def _send_2fa_email_code(self, u: dict, purpose: str = "logowanie"):
+        """Send a 6-digit one-time code (valid 10 min) to the account's
+        e-mail. Returns (ok, error)."""
+        if not u.get("email"):
+            return False, "konto nie ma adresu e-mail"
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        self._tfa_email_codes[u["id"]] = {"hash": hash_pw_secure(code),
+                                          "exp": time.time() + 600, "tries": 0}
+        return await self._send_email(
+            u["email"], f"HAMCTRL - kod: {code}",
+            f"Twoj jednorazowy kod ({purpose}) dla konta {u.get('username')}: {code}\n\n"
+            f"Kod jest wazny 10 minut. Jesli to nie Ty probujesz sie zalogowac, "
+            f"zmien haslo.\n")
+
+    def _radio_idle_left_s(self):
+        if not self.radio_lock.get("user_id"):
+            return None
+        last = self.radio_lock.get("last_activity") or self.radio_lock.get("locked_at") or time.time()
+        return max(0, int(self.radio_lock["timeout_min"] * 60 - (time.time() - last)))
+
     async def _radio_lock_watchdog(self):
         """
         Every 30s checks whether the active operator has exceeded the idle
@@ -1805,7 +2126,7 @@ class App:
                 timeout_s = self.radio_lock["timeout_min"] * 60
                 if time.time() - last > timeout_s:
                     uname = self.radio_lock["username"]
-                    self._release_radio()
+                    self._release_radio("bezczynnosc")
                     await self.hub.broadcast({
                         "type":    "radio_lock_state",
                         **self._radio_lock_state(),
@@ -1815,6 +2136,11 @@ class App:
                         "message": f"Radio zwolnione automatycznie ({uname} — przekroczono czas bezczynnosci {self.radio_lock['timeout_min']} min)",
                     })
                     print(f"[radio_lock] Auto-release: {uname} exceeded the {self.radio_lock['timeout_min']} min timeout")
+                else:
+                    # Refresh everyone's countdown (activity resets it
+                    # without a broadcast of its own).
+                    await self.hub.broadcast({"type": "radio_lock_idle",
+                                              "idle_left_s": self._radio_idle_left_s()})
             except Exception as e:
                 print(f"[radio_lock] watchdog error: {e}")
 
@@ -1963,7 +2289,89 @@ class App:
             print(f"[auth] token rejected: pw_ver={token_ver} != {user_ver} "
                   f"(user {u.get('username')!r} changed their password)", flush=True)
             return None
+        # SECURITY (2026-11-14): a token is valid for 7 days and used to
+        # carry the role from LOGIN time - a deactivated account kept full
+        # access, and a demoted admin kept admin rights, until the token
+        # expired. Reject inactive accounts and always use the CURRENT role
+        # from users.json (copy, so the caller can't mutate the payload).
+        if not u.get("active", True):
+            return None
+        payload = dict(payload)
+        payload["role"] = u.get("role", "viewer")
+        # An admin still on the installer's default password gets no admin
+        # (or any control) rights until it's changed - see
+        # _has_default_admin_pw. The login screen forces the change, so a
+        # real admin never notices; an attacker trying Admin1234! on a
+        # public install gets a read-only viewer at most.
+        if payload["role"] == "admin" and self._has_default_admin_pw(u):
+            payload["role"] = "viewer"
+            payload["must_change_password"] = True
         return payload
+
+    def _has_default_admin_pw(self, u: dict) -> bool:
+        """True if this account's password is still the installer default
+        (ADMIN_PW). scrypt is deliberately slow, so the answer is cached per
+        stored hash - it changes only when the password does."""
+        if u.get("pw_changed"):
+            return False
+        stored = u.get("password", "")
+        cache = getattr(self, "_default_pw_cache", None)
+        if cache is None:
+            cache = self._default_pw_cache = {}
+        if stored not in cache:
+            if len(cache) > 100:
+                cache.clear()
+            cache[stored] = verify_pw(ADMIN_PW, stored)
+        return cache[stored]
+
+    def _safe_reset_base_url(self, requested: str) -> str:
+        """Base address for the link in a password-reset e-mail.
+
+        SECURITY (2026-11-14): this used to be taken straight from the
+        request body, so anyone could request a reset for the admin with
+        base_url=https://attacker.example - the admin then got a GENUINE
+        e-mail from this server whose link handed the reset token to the
+        attacker (one click = account takeover). The browser's own address
+        (location.origin) is still accepted, but only if it really is this
+        server: the public address from the INTERNET tab (DuckDNS / own
+        domain / static IP / tunnel), localhost, or a private LAN address.
+        Anything else falls back to the public address."""
+        import ipaddress
+        from urllib.parse import urlsplit
+        public = (getattr(self.tunnel, "_public_url", "") or "").rstrip("/")
+        try:
+            parts = urlsplit((requested or "").strip())
+            host = (parts.hostname or "").lower()
+            if parts.scheme in ("http", "https") and host:
+                origin = f"{parts.scheme}://{parts.netloc}".rstrip("/")
+                if public and host == (urlsplit(public).hostname or "").lower():
+                    return origin
+                if host == "localhost":
+                    return origin
+                try:
+                    ip = ipaddress.ip_address(host)
+                    if ip.is_private or ip.is_loopback:
+                        return origin
+                except ValueError:
+                    pass
+                print(f"[auth] reset link: ignoring foreign base_url {origin!r}", flush=True)
+        except Exception:
+            pass
+        return public or f"https://localhost:{PORT}"
+
+    async def _kick_user_sessions(self, uid: str, reason: str):
+        """Close every open WebSocket of this user (role change,
+        deactivation, password reset, deletion). The frontend reconnects on
+        its own; the new connection goes through _check_pw_ver again, so it
+        gets the new role - or is refused."""
+        for _ws, _info in list(self.online_users.items()):
+            if _info.get("user_id") == uid:
+                print(f"[auth] closing session of {_info.get('username')!r}: {reason}",
+                      flush=True)
+                try:
+                    await _ws.close(code=4001, message=b"session ended")
+                except Exception:
+                    pass
 
     # ── Login rate limiting (brute-force protection) ──────────────────
     # The server is on the internet (duckdns) - bots scan and try to crack
@@ -2001,6 +2409,7 @@ class App:
 
     def _login_record_fail(self, ip: str, username: str):
         """Record a failed attempt. If the limit is exceeded - block."""
+        self._audit.add("login_fail", username, ip)
         now = time.time()
         for store, key, label in ((self._login_fails_ip, ip, "IP"),
                                   (self._login_fails_user, username, "user")):
@@ -2019,6 +2428,7 @@ class App:
 
     def _login_record_success(self, ip: str, username: str):
         """Successful login - clear the counters."""
+        self._audit.add("login_ok", username, ip)
         self._login_fails_ip.pop(ip, None)
         self._login_fails_user.pop(username, None)
 
@@ -2101,23 +2511,39 @@ class App:
                     save_json(USR_F, self.users)
                 except Exception:
                     pass
-            # pw_ver = password version. A password change increments it in
-            # users.json, invalidating all old tokens (they no longer match the new version).
-            token = jwt_sign({"id": u["id"], "role": u["role"], "username": u["username"],
-                              "pw_ver": int(u.get("pw_ver", 0))})
-            # Force a change of the default password: when an admin logs in
-            # still using the working default password (Admin1234!), the
-            # frontend shows a password-change screen. CRITICAL for the
-            # product - every club starts with the same default password,
-            # so it MUST be changed on first login.
-            must_change = (u.get("role") == "admin"
-                           and verify_pw(ADMIN_PW, u.get("password", ""))
-                           and not u.get("pw_changed"))
-            return 200, {"ok": True, "token": token, "role": u["role"],
-                         "username": u["username"],
-                         "callsign": CALLSIGN, "locator": LOCATOR,
-                         "must_change_password": must_change,
-                         "first_run": FIRST_RUN}
+            # Two-factor login (2026-11-14): the password was right, but the
+            # account wants a second factor - hand out a 5-minute challenge
+            # (NOT a session token: it has no "id", so _check_pw_ver rejects
+            # it everywhere else) and wait for /api/auth/login-2fa.
+            _tfa = u.get("twofa") or {}
+            if _tfa.get("method") in ("totp", "email"):
+                if _tfa["method"] == "email":
+                    _ok_mail, _err = await self._send_2fa_email_code(u)
+                    if not _ok_mail:
+                        return 500, {"error": f"Nie udalo sie wyslac kodu e-mail: {_err}"}
+                _chal = jwt_sign({"tfa_uid": u["id"], "pw_ver": int(u.get("pw_ver", 0))},
+                                 expires_in=300)
+                return 200, {"ok": False, "twofa_required": True,
+                             "method": _tfa["method"], "challenge": _chal}
+            return 200, self._login_response(u)
+
+        if p == "/api/auth/login-2fa" and method == "POST":
+            _pl = jwt_verify(str(body.get("challenge", ""))) or {}
+            u = self.find_user_by_id(_pl.get("tfa_uid")) if _pl.get("tfa_uid") else None
+            if not u or not u.get("active") or int(_pl.get("pw_ver", -1)) != int(u.get("pw_ver", 0)):
+                return 401, {"error": "Sesja logowania wygasla - zaloguj sie ponownie"}
+            un = (u.get("username") or "").lower()
+            blocked, secs_left = self._login_is_blocked(client_ip, un)
+            if blocked:
+                return 429, {"error": f"Za duzo nieudanych prob. "
+                                       f"Sprobuj ponownie za {max(1, secs_left // 60)} min."}
+            if not self._check_2fa_code(u, str(body.get("code", ""))):
+                self._login_record_fail(client_ip, un)
+                print(f"[auth] wrong 2FA code ip={client_ip} user={un!r}", flush=True)
+                self._audit.add("login_2fa_fail", un, client_ip)
+                return 401, {"error": "Zly kod"}
+            self._login_record_success(client_ip, un)
+            return 200, self._login_response(u)
 
         # ── Password reset: step 1 — send an email with a token ──────────────────
         if p == "/api/auth/reset-request" and method == "POST":
@@ -2125,11 +2551,31 @@ class App:
             # Look up by email or username
             u = (self.find_user_by_email(email_or_user) or
                  self.find_user(email_or_user))
+            # Throttle: without this anyone could flood a user's mailbox
+            # (and get the server's SMTP account blacklisted). Max 3 mails
+            # per account and 10 requests per IP in 15 minutes; the answer
+            # stays the same either way, so nothing is revealed.
+            _now_rr = time.time()
+            _rr = getattr(self, "_reset_req_log", None)
+            if _rr is None:
+                _rr = self._reset_req_log = {}
+            if len(_rr) > 500:
+                _rr.clear()
+            _rr_keys = [f"ip:{client_ip}"] + ([f"user:{u['id']}"] if u else [])
+            for _k in _rr_keys:
+                _rr[_k] = [t for t in _rr.get(_k, []) if _now_rr - t < 900]
+            _throttled = (len(_rr.get(f"ip:{client_ip}", [])) >= 10
+                          or (u is not None and len(_rr.get(f"user:{u['id']}", [])) >= 3))
+            for _k in _rr_keys:
+                _rr[_k].append(_now_rr)
+            if _throttled:
+                print(f"[auth] reset request throttled ip={client_ip}", flush=True)
+                u = None
             # Always respond "ok" — don't reveal whether the user exists
             if u and u.get("email"):
                 from auth import make_reset_token
                 token    = make_reset_token(u["id"], u["username"], u["email"])
-                base_url = body.get("base_url", f"http://localhost:{PORT}")
+                base_url = self._safe_reset_base_url(body.get("base_url", ""))
                 ok, err  = await self._send_reset_email(u["email"], u["username"], token, base_url)
                 if not ok:
                     # Do NOT log the token itself — the log is a place a token
@@ -2143,12 +2589,12 @@ class App:
         if p == "/api/auth/reset-confirm" and method == "POST":
             token    = body.get("token", "")
             new_pw   = body.get("password", "")
-            if len(new_pw) < 6:
-                return 400, {"error": "Haslo musi miec minimum 6 znakow"}
+            if len(new_pw) < 8:
+                return 400, {"error": "Haslo musi miec minimum 8 znakow"}
             from auth import consume_reset_token
             entry = consume_reset_token(token)
             if not entry:
-                return 400, {"error": "Link resetowania jest nieprawid³owy lub wygas³ (wazny 1h)"}
+                return 400, {"error": "Link resetowania jest nieprawidlowy lub wygasl (wazny 1h)"}
             u = self.find_user_by_id(entry["user_id"])
             if not u:
                 return 400, {"error": "Uzytkownik nie istnieje"}
@@ -2157,6 +2603,8 @@ class App:
             save_json(USR_F, self.users)
             print(f"[auth] Password reset for: {u['username']} "
                   f"(pw_ver={u['pw_ver']}, old sessions invalidated)")
+            await self._kick_user_sessions(u["id"], "haslo zresetowane")
+            self._audit.add("pw_reset_email", u.get("username"), client_ip)
             return 200, {"ok": True, "message": "Haslo zostalo zmienione — mozesz sie zalogowac"}
 
         # ── Password reset by an admin (no email) ─────────────────────────────
@@ -2165,15 +2613,22 @@ class App:
             if user.get("role") != "admin": return 403, {"error": "Tylko admin"}
             target_id = body.get("user_id")
             new_pw    = body.get("password", "")
-            if len(new_pw) < 6:
-                return 400, {"error": "Haslo musi miec minimum 6 znakow"}
+            if len(new_pw) < 8:
+                return 400, {"error": "Haslo musi miec minimum 8 znakow"}
             u = self.find_user_by_id(target_id)
             if not u: return 404, {"error": "Uzytkownik nie istnieje"}
             u["password"] = hash_pw_secure(new_pw)
             u["pw_ver"] = int(u.get("pw_ver", 0)) + 1  # invalidate the user's old tokens
+            # Account recovery by the admin also switches off two-factor
+            # login (lost phone + lost recovery codes) - the user can turn
+            # it back on in PROFILE.
+            u.pop("twofa", None)
+            u.pop("twofa_pending", None)
             save_json(USR_F, self.users)
             print(f"[auth] Admin reset the password for {u['username']!r} "
                   f"(pw_ver={u['pw_ver']}, old sessions invalidated)", flush=True)
+            await self._kick_user_sessions(u["id"], "haslo zresetowane przez admina")
+            self._audit.add("pw_reset_admin", u.get("username"), client_ip, f"przez {user.get('username')}")
             return 200, {"ok": True}
 
         if p == "/api/config/lang" and method == "GET":
@@ -2203,8 +2658,73 @@ class App:
         # partial one.
         if role != "admin":
             _u_obj_perm = self.find_user_by_id(uid) or {}
-            if _u_obj_perm.get("permissions", {}).get("admin"):
+            if _u_obj_perm.get("permissions", {}).get("admin") and not user.get("must_change_password"):
                 role = "admin"
+
+        # ── Two-factor login settings (own account, PROFILE) ─────────────
+        if p == "/api/auth/2fa" and method == "GET":
+            _u = self.find_user_by_id(uid) or {}
+            _t = _u.get("twofa") or {}
+            return 200, {"method": _t.get("method"), "recovery_left": len(_t.get("recovery", [])),
+                         "has_email": bool(_u.get("email")),
+                         "smtp": bool(self.cfg.get("smtp", {}).get("host"))}
+
+        if p.startswith("/api/auth/2fa/") and method == "POST":
+            _u = self.find_user_by_id(uid)
+            if not _u: return 404, {"error": "Brak konta"}
+            _act = p.rsplit("/", 1)[-1]
+            # Every change needs the current password (a stolen open session
+            # alone can't switch the protection off).
+            if _act in ("setup-totp", "setup-email", "disable", "logout-all"):
+                if not verify_pw(str(body.get("password", "")), _u.get("password", "")):
+                    return 403, {"error": "Zle haslo"}
+            if _act == "setup-totp":
+                _sec = totp_new_secret()
+                _u["twofa_pending"] = {"method": "totp", "secret": encrypt_secret(_sec)}
+                save_json(USR_F, self.users)
+                return 200, {"secret": _sec, "uri": totp_uri(_sec, _u.get("username", "user"))}
+            if _act == "setup-email":
+                _ok_mail, _err = await self._send_2fa_email_code(_u, "wlaczenie logowania dwuetapowego")
+                if not _ok_mail:
+                    return 400, {"error": f"Nie udalo sie wyslac kodu: {_err}"}
+                _u["twofa_pending"] = {"method": "email"}
+                save_json(USR_F, self.users)
+                return 200, {"ok": True}
+            if _act == "enable":
+                _pend = _u.get("twofa_pending") or {}
+                _code = str(body.get("code", ""))
+                if _pend.get("method") == "totp":
+                    _good = totp_verify(decrypt_secret(_pend.get("secret", "")), _code)
+                elif _pend.get("method") == "email":
+                    _good = self._check_2fa_code({**_u, "twofa": {"method": "email"}}, _code)
+                else:
+                    return 400, {"error": "Najpierw wybierz sposob (aplikacja / e-mail)"}
+                if not _good:
+                    return 400, {"error": "Zly kod - sprobuj jeszcze raz"}
+                _codes = new_recovery_codes()
+                _u["twofa"] = {"method": _pend["method"], "secret": _pend.get("secret", ""),
+                               "recovery": recovery_hashes(_codes)}
+                _u.pop("twofa_pending", None)
+                save_json(USR_F, self.users)
+                print(f"[auth] 2FA ({_pend['method']}) enabled for {_u.get('username')!r}", flush=True)
+                self._audit.add("2fa_on", _u.get("username"), client_ip, _pend["method"])
+                return 200, {"ok": True, "recovery_codes": _codes}
+            if _act == "disable":
+                _u.pop("twofa", None)
+                _u.pop("twofa_pending", None)
+                save_json(USR_F, self.users)
+                print(f"[auth] 2FA disabled for {_u.get('username')!r}", flush=True)
+                self._audit.add("2fa_off", _u.get("username"), client_ip)
+                return 200, {"ok": True}
+            if _act == "logout-all":
+                # Every token of this account stops working (other devices,
+                # forgotten browsers); this browser logs in again.
+                _u["pw_ver"] = int(_u.get("pw_ver", 0)) + 1
+                save_json(USR_F, self.users)
+                await self._kick_user_sessions(uid, "wylogowanie ze wszystkich urzadzen")
+                self._audit.add("logout_all", _u.get("username"), client_ip)
+                return 200, {"ok": True}
+            return 404, {"error": "Nieznana akcja"}
 
         if p == "/api/auth/change-password" and method == "POST":
             old_pw  = body.get("old_password", "")
@@ -2795,13 +3315,22 @@ class App:
             # Return config.json + users.json as one downloadable JSON
             # (user passwords included — this is a backup, the admin has access)
             import datetime as _dt
+            # 2026-11-14: the QSO log (all operators) is included too - it's
+            # the one thing a club can't recreate by hand.
+            self._audit.add("backup", user.get("username"), client_ip)
+            try:
+                _qso_rows = await asyncio.to_thread(qso_db.export_all_rows)
+            except Exception as _e:
+                print(f"[backup] QSO log export error: {_e}", flush=True)
+                _qso_rows = []
             return 200, {
                 "ok": True,
-                "backup_version": 1,
+                "backup_version": 2,
                 "created": _dt.datetime.utcnow().isoformat() + "Z",
                 "server_version": SERVER_VERSION,
                 "config": self.cfg,
                 "users": self.users,
+                "qso_log": _qso_rows,
             }
 
         if p == "/api/restore" and method == "POST":
@@ -2819,8 +3348,22 @@ class App:
                 self.users = data["users"]
                 save_json(USR_F, self.users)
                 restored.append("users")
+            if isinstance(data.get("qso_log"), list) and data["qso_log"]:
+                # Added to the existing log, never replacing it - the same
+                # duplicate check as ADIF import skips contacts already there.
+                _by_uid = {}
+                for _row in data["qso_log"]:
+                    if isinstance(_row, dict) and _row.get("user_id"):
+                        _by_uid.setdefault(str(_row["user_id"]), []).append(_row)
+                _ins = _dup = 0
+                for _u, _rows in _by_uid.items():
+                    _r = await asyncio.to_thread(qso_db.add_qsos_bulk, _u, _rows)
+                    _ins += _r.get("inserted", 0)
+                    _dup += _r.get("duplicates", 0)
+                restored.append(f"log QSO (+{_ins} nowych, {_dup} juz bylo)")
             if not restored:
-                return 400, {"error": "Backup nie zawiera config ani users"}
+                return 400, {"error": "Backup nie zawiera config, users ani logu QSO"}
+            self._audit.add("restore", user.get("username"), client_ip, ", ".join(restored))
             return 200, {"ok": True, "restored": restored,
                          "message": "Przywrocono. Zrestartuj serwer aby zastosowac wszystkie zmiany."}
 
@@ -2867,7 +3410,7 @@ class App:
             if self.radio_lock["user_id"] != uid and role != "admin":
                 return 403, {"error": "Nie masz aktywnej blokady radia"}
             released_by = self.radio_lock["username"] or user.get("username", "")
-            self._release_radio()
+            self._release_radio("oddane" if self._user_has_lock(uid) else f"admin {user.get('username')}")
             # Clear pending requests (same as force-release below) — once
             # the radio is free, everyone sees "TAKE TRX" directly anyway,
             # and stale requests would only leave the requester's "REQUEST
@@ -2882,6 +3425,10 @@ class App:
 
         if p == "/api/radio/request" and method == "POST":
             """Send a radio request to the active operator."""
+            # Same rule as /api/radio/lock: an observer can't hold the radio
+            # (if it was free, this endpoint used to hand it over directly).
+            if role == "viewer":
+                return 403, {"error": "Widz nie moze przejac radia"}
             if self._user_has_lock(uid):
                 return 400, {"error": "Juz masz radio"}
             if not self.radio_lock["user_id"]:
@@ -2946,7 +3493,7 @@ class App:
             """Admin: force-release the radio."""
             if role != "admin": return 403, {"error": "Tylko admin"}
             holder = self.radio_lock["username"] or "?"
-            self._release_radio()
+            self._release_radio(f"admin {user.get('username')} wymusil")
             self.radio_requests.clear()
             await self.hub.broadcast({**self._radio_lock_state(), "online": self._online_users_state()})
             await self.hub.broadcast({"type": "toast",
@@ -3001,6 +3548,117 @@ class App:
                 return 200, {"ok": True,  "message": f"✓ Email testowy wysłany do {to_email}"}
             return     200, {"ok": False, "message": f"✗ Błąd: {err}"}
             return 200, {"user": udata, "ok": True}
+
+        if p == "/api/clublog/config" and method == "GET":
+            u_obj = self.find_user_by_id(uid) or {}
+            cb = u_obj.get("clublog", {}) or {}
+            return 200, {"email": cb.get("email", ""), "callsign": cb.get("callsign", ""),
+                         "has_password": bool(cb.get("password")),
+                         "api_key_set": bool(self.cfg.get("clublogApiKey")),
+                         "last": self._clublog_last.get(uid)}
+
+        if p == "/api/clublog/config" and method == "POST":
+            u_obj = self.find_user_by_id(uid)
+            if not u_obj: return 404, {"error": "Brak konta"}
+            cb = dict(u_obj.get("clublog", {}) or {})
+            if "email" in body: cb["email"] = str(body.get("email") or "").strip()[:120]
+            if "callsign" in body: cb["callsign"] = str(body.get("callsign") or "").strip().upper()[:20]
+            if body.get("password"): cb["password"] = encrypt_secret(str(body["password"]))
+            if body.get("clear_password"): cb.pop("password", None)
+            u_obj["clublog"] = cb
+            if "api_key" in body and role == "admin":
+                _k = str(body.get("api_key") or "").strip()
+                self.cfg["clublogApiKey"] = encrypt_secret(_k) if _k else ""
+                save_json(CFG_F, self.cfg)
+            save_json(USR_F, self.users)
+            return 200, {"ok": True}
+
+        if p == "/api/voicekeyer" and method == "GET":
+            _out = []
+            for _s in range(1, self._VK_SLOTS + 1):
+                _p = self._vk_path(uid, _s)
+                _secs = 0.0
+                if _p.exists():
+                    try:
+                        _secs = round(self._vk_read_wav(_p.read_bytes())[1], 1)
+                    except Exception:
+                        _secs = 0.0
+                _out.append({"slot": _s, "secs": _secs})
+            return 200, {"slots": _out, "max_s": self._VK_MAX_S}
+
+        _vkm = re.match(r"^/api/voicekeyer/(\d)$", p)
+        if _vkm:
+            _s = int(_vkm.group(1))
+            if not (1 <= _s <= self._VK_SLOTS):
+                return 404, {"error": "Zly numer"}
+            _p = self._vk_path(uid, _s)
+            if method == "POST":
+                if role == "viewer" or not self._has_perm(uid, role, "ptt"):
+                    return 403, {"error": "Brak uprawnien"}
+                if not isinstance(body, (bytes, bytearray)) or not body:
+                    return 400, {"error": "Brak nagrania"}
+                try:
+                    _pcm, _secs = self._vk_read_wav(bytes(body))
+                except Exception as _e:
+                    return 400, {"error": f"Zly plik: {_e}"}
+                if _secs > self._VK_MAX_S + 0.5:
+                    return 400, {"error": f"Nagranie za dlugie (max {self._VK_MAX_S} s)"}
+                _p.parent.mkdir(parents=True, exist_ok=True)
+                _p.write_bytes(bytes(body))
+                return 200, {"ok": True, "secs": round(_secs, 1)}
+            if method == "GET":
+                if not _p.exists():
+                    return 404, {"error": "Brak nagrania"}
+                return "export", {"body": _p.read_bytes(), "content_type": "audio/wav",
+                                  "filename": f"wywolanie_F{_s}.wav"}
+            if method == "DELETE":
+                if _p.exists():
+                    _p.unlink()
+                return 200, {"ok": True}
+
+        if p == "/api/admin/alerts" and method == "GET":
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            _to = [u.get("email") for u in self.users
+                   if u.get("role") == "admin" and u.get("active", True) and u.get("email")]
+            return 200, {"enabled": bool(self.cfg.get("alertEmail")), "recipients": _to,
+                         "smtp": bool(self.cfg.get("smtp", {}).get("host"))}
+
+        if p == "/api/admin/alerts" and method == "POST":
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            if "enabled" in body:
+                self.cfg["alertEmail"] = bool(body["enabled"])
+                save_json(CFG_F, self.cfg)
+            if body.get("test"):
+                _res = await self._admin_alert("test", f"Test alarmow HAMCTRL (wyslal {user.get('username')})", force=True)
+                if not _res:
+                    return 400, {"error": "Brak adresow: zaden aktywny admin nie ma wpisanego e-maila"}
+                _bad = [a for a, ok, _e in _res if not ok]
+                if _bad:
+                    return 500, {"error": "Nie udalo sie wyslac do: " + ", ".join(_bad)}
+                return 200, {"ok": True, "sent": [a for a, ok, _e in _res]}
+            return 200, {"ok": True, "enabled": bool(self.cfg.get("alertEmail"))}
+
+        if p == "/api/admin/audit" and method == "GET":
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            try:
+                _n = max(10, min(int((query.get("n") or ["300"])[0]), 2000))
+            except (TypeError, ValueError):
+                _n = 300
+            return 200, {"entries": await asyncio.to_thread(self._audit.tail, _n)}
+
+        if p == "/api/pskreporter/config" and method == "GET":
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            _en, _call, _grid, _sw = self._psk_cfg()
+            _lu = self._psk.last_upload
+            return 200, {"enabled": _en, "call": _call, "grid": _grid,
+                         "last": ({"epoch": _lu[0], "spots": _lu[1], "error": _lu[2]} if _lu else None)}
+
+        if p == "/api/pskreporter/config" and method == "POST":
+            if role != "admin": return 403, {"error": "Tylko admin"}
+            self.cfg["pskReporter"] = bool(body.get("enabled", False))
+            save_json(CFG_F, self.cfg)
+            print(f"[pskreporter] {'ENABLED' if self.cfg['pskReporter'] else 'disabled'}", flush=True)
+            return 200, {"ok": True, "enabled": self.cfg["pskReporter"]}
 
         if p == "/api/update/config" and method == "GET":
             if role != "admin": return 403, {"error": "Tylko admin"}
@@ -3808,6 +4466,9 @@ class App:
                     return 400, {"error": "Nie można usunąć ostatniego aktywnego admina"}
                 self.users = [u for u in self.users if u["id"] != target_uid]
                 save_json(USR_F, self.users)
+                await self._kick_user_sessions(target_uid, "konto usuniete")
+                self._audit.add("user_delete", (_target or {}).get("username", target_uid), client_ip,
+                                f"przez {user.get('username')}")
                 return 200, {"ok": True}
             u = self.find_user_by_id(target_uid)
             if not u: return 404, {"error": "Nie znaleziono"}
@@ -3815,8 +4476,14 @@ class App:
             # Full set of editable fields - kept in sync with the user
             # profile (the user edits via /api/user/profile, the admin via
             # here - both write to the same fields in users.json).
+            _old_access = (u.get("role"), u.get("active", True))
+            _pw_set = False
             if "password"    in body and body["password"]:
                 u["password"] = hash_pw_secure(body["password"])
+                # Same as change-password/admin-reset: a new password must
+                # end every existing session of that user.
+                u["pw_ver"] = int(u.get("pw_ver", 0)) + 1
+                _pw_set = True
             if "role"        in body:
                 _new_role = body["role"]
                 if _new_role not in ("admin", "operator", "viewer"):
@@ -3835,6 +4502,16 @@ class App:
             if "email"       in body: u["email"]       = (body["email"] or "").strip()
             if "permissions" in body: u["permissions"] = body["permissions"]
             save_json(USR_F, self.users)
+            # Open WebSocket sessions keep the role they connected with -
+            # close them so the browser reconnects with the new rights
+            # (or gets refused, if the account was deactivated).
+            if _pw_set or (u.get("role"), u.get("active", True)) != _old_access:
+                await self._kick_user_sessions(target_uid, "zmiana uprawnien konta")
+            self._audit.add("user_edit", u.get("username"), client_ip,
+                            f"przez {user.get('username')}: " + ", ".join(
+                                k for k in ("role", "active", "password", "permissions") if k in body)
+                            + (f" (rola {u.get('role')}, aktywne={u.get('active', True)})"
+                               if ("role" in body or "active" in body) else ""))
             return 200, {"ok": True}
 
         if p.startswith("/api/scope"):
@@ -3917,7 +4594,10 @@ class App:
 
         if p == "/api/tunnel/config" and method == "POST":
             if role != "admin": return 403, {"error": "Tylko admin"}
-            self.tunnel.save_config(body)
+            try:
+                self.tunnel.save_config(body)
+            except ValueError as _e:
+                return 400, {"error": str(_e)}
             return 200, {"ok": True}
 
         if p == "/api/tunnel/start" and method == "POST":
@@ -3947,6 +4627,10 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/wsjtx/start" and method == "POST":
+            # 2026-11-14: was open to any logged-in user (even a viewer) -
+            # (re)binds a server UDP port. Same permission as the rest of
+            # the server-settings tab.
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             port = int(body.get("port", body.get("udpPort", 2237)))
             ok   = await self.wsjtx.start(port=port)
             if ok:
@@ -3955,6 +4639,10 @@ class App:
             return 200, {"ok": ok, "status": self.wsjtx.get_status()}
 
         if p == "/api/ft8/halt" and method == "POST":
+            # Same rule as ft8_tx_stop over WS (_can_operate_tx): only the
+            # TRX holder (or admin) may halt and reset the FT8 sequence.
+            if not self._can_operate_tx(uid, role):
+                return 403, {"error": "Tylko osoba trzymajaca TRX moze zatrzymac nadawanie"}
             self._ft8_tx_abort = True
             self._stop_cq_calling()  # stop periodic CQ
             # See the identical block/comment in WS "ft8_tx_stop" above —
@@ -3983,6 +4671,7 @@ class App:
             return 200, {"ok": True}
 
         if p == "/api/wsjtx/stop" and method == "POST":
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             await self.wsjtx.stop()
             await self.hub.broadcast({"type": "wsjtx_status", "running": False,
                                       "text": "UDP monitor zatrzymany"})
@@ -4514,6 +5203,7 @@ class App:
                 qso = qso_db.add_qso(uid, body)
                 # Push to CloudLog if configured
                 asyncio.ensure_future(self._cloudlog_push_qso(uid, qso))
+                asyncio.ensure_future(self._clublog_push_qso(uid, qso))
                 # Live-update the automation mini-log (WSJT-X page) - the
                 # same broadcast as on auto-save from the automation (see
                 # "QSO SAVED to the log" in _process_auto_qso) - one
@@ -4531,7 +5221,14 @@ class App:
             # it's fed to the model (after resampling and the filter).
             if deepcw_engine is None:
                 return 503, {"error": "Silnik DeepCW niedostepny"}
-            _sec = float(body.get("seconds", 15))
+            # Diagnostic recording to disk - not for viewers, and capped so
+            # one request can't fill the disk.
+            if role == "viewer":
+                return 403, {"error": "Brak uprawnien"}
+            try:
+                _sec = min(max(float(body.get("seconds", 15)), 1.0), 120.0)
+            except (TypeError, ValueError):
+                _sec = 15.0
             _path = deepcw_engine.start_capture(_sec)
             return 200, {"ok": True, "path": _path, "seconds": _sec}
 
@@ -4783,6 +5480,11 @@ class App:
             return 200, {"ok": True, "cfg": self.cfg["audio"]}
 
         if p == "/api/audio/rx/start" and method == "POST":
+            # 2026-11-14: was open to any logged-in user - a viewer could
+            # drop the operator's PTT mid-transmission (the safety reset
+            # below) or switch the shared RX sound card. The server starts
+            # RX audio by itself, so this is a settings action.
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             # Safety: make sure PTT is off before starting audio
             # The IC-7300 can enter TX via DATA VOX when the PC opens the USB audio channel
             if self.rig.ptt:
@@ -4797,7 +5499,21 @@ class App:
             if ok: await self.hub.broadcast({"type":"audio_status","rx":True,"device":dev})
             return 200, {"ok":ok,"status":self.audio.get_status()}
 
+        if p == "/api/audio/last_tx" and method == "GET":
+            # "How do I sound": the last voice transmission exactly as it
+            # went to the radio. Only for whoever holds the TRX (it's
+            # their own transmission) or an admin.
+            if role != "admin" and not self._user_has_lock(uid):
+                return 403, {"error": "Tylko osoba trzymajaca TRX"}
+            _wav = self.audio.last_tx_wav() if hasattr(self.audio, "last_tx_wav") else b""
+            if not _wav:
+                return 404, {"error": "Brak nagrania - najpierw nadaj cos przez PTT"}
+            return "export", {"body": _wav, "content_type": "audio/wav",
+                              "filename": "ostatnia_relacja.wav"}
+
         if p == "/api/audio/rx/stop" and method == "POST":
+            # Stopping RX audio cuts it for EVERY listener - settings only.
+            if not self._has_perm(uid, role, "settings"): return 403, {"error": "Brak uprawnien (ustawienia serwera)"}
             self.audio.stop_rx()
             return 200, {"ok":True}
 
@@ -4858,7 +5574,7 @@ class App:
         # per connection) and promoting role locally is far safer than
         # hunting down every "== admin" check in this file individually.
         u_obj = self.find_user_by_id(uid) or {}
-        if role != "admin" and u_obj.get("permissions", {}).get("admin"):
+        if role != "admin" and u_obj.get("permissions", {}).get("admin") and not user.get("must_change_password"):
             role = "admin"
 
         _ws_kwargs = dict(heartbeat=30, compress=False, max_msg_size=8*1024*1024)
@@ -4872,7 +5588,16 @@ class App:
 
         # Register the user as online
         if user:
+            # Client's real IP (X-Forwarded-For only via a local tunnel -
+            # same rule as the HTTP login rate limit). Used by the raw
+            # rigctl port (hamlib_server.py) to accept control commands from
+            # the TRX holder's own address.
+            _ws_remote = request.remote or ""
+            _ws_xff = request.headers.get("X-Forwarded-For", "")
+            _ws_ip = (_ws_xff.split(",")[0].strip()
+                      if _ws_xff and _ws_remote in ("127.0.0.1", "::1") else _ws_remote)
             self.online_users[ws] = {
+                "ip":       _ws_ip,
                 "user_id":  uid,
                 "username": user.get("username", ""),
                 "callsign": u_obj.get("callsign", user.get("username", "")),
@@ -5011,6 +5736,13 @@ class App:
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     data = msg.data
                     if data and len(data) > 1 and data[0] == 0xA2:
+                        # SECURITY (2026-11-14): TX audio had no gate at all -
+                        # any logged-in client (even a viewer) could push
+                        # audio into the radio's TX input and have it mixed
+                        # into the operator's transmission. Same rule as
+                        # ptt/webrtc_tx_on in _ws_msg: lock holder or admin.
+                        if role == "viewer" or (role != "admin" and not self._user_has_lock(uid)):
+                            continue
                         if not self.audio.tx_active:
                             dev = self.cfg.get("audio", {}).get("txDevice")
                             self.audio.start_tx(device=dev)
@@ -5157,7 +5889,7 @@ class App:
         if self.radio_lock["user_id"] == uid:
             print(f"[radio_lock] uid={uid!r} gone for {grace_s:.0f}s - releasing the radio",
                   flush=True)
-            self._release_radio()  # also stops WSJT-X if they were the owner
+            self._release_radio("rozlaczenie")  # also stops WSJT-X if they were the owner
             _st = self._radio_lock_state()
             _st.pop("type", None)
             await self.hub.broadcast({"type": "online_update",
@@ -5197,7 +5929,7 @@ class App:
         _role = user.get('role', 'viewer')
         if _role != 'admin':
             _u_obj_bridge = self.find_user_by_id(user.get('id', '')) or {}
-            if _u_obj_bridge.get('permissions', {}).get('admin'):
+            if _u_obj_bridge.get('permissions', {}).get('admin') and not user.get('must_change_password'):
                 _role = 'admin'
         if _role == 'viewer':
             print(f"[com_bridge_ws] REFUSED viewer "
@@ -5261,7 +5993,10 @@ class App:
                 'id':       u.get('id'),
                 'user_id':  u.get('id'),  # alias for compatibility
                 'callsign': u.get('callsign', ''),
-                'role':     u.get('role', 'user'),
+                # From _check_pw_ver - already the live role, downgraded to
+                # viewer while an admin is still on the default password.
+                'role':     payload.get('role', 'viewer'),
+                'must_change_password': payload.get('must_change_password', False),
             }
         except Exception as e:
             print(f"[com_bridge_ws] token verification error: {e}")
@@ -5296,7 +6031,7 @@ class App:
         _role = user.get('role', 'viewer')
         if _role != 'admin':
             _u_obj_hl = self.find_user_by_id(user.get('id', '')) or {}
-            if _u_obj_hl.get('permissions', {}).get('admin'):
+            if _u_obj_hl.get('permissions', {}).get('admin') and not user.get('must_change_password'):
                 _role = 'admin'
         if _role == 'viewer':
             return web.Response(
@@ -5330,7 +6065,7 @@ class App:
 
         # Run HamlibSession in a separate task
         session = HamlibSession(self.rig, self.hub, WSReader(), WSWriter(),
-                                "ws-bridge", app=self)
+                                "ws-bridge", app=self, authenticated=True)
 
         async def session_loop():
             try:
@@ -5490,6 +6225,36 @@ class App:
         return {"ok": True, "rigId": rig_id,
                 "enabledFeatures": self._get_enabled_features(rig_id),
                 "enabledDynamic": self._get_enabled_dynamic(rig_id)}
+
+    async def _clublog_push_qso(self, user_id: str, qso: dict):
+        """Real-time upload of one QSO to ClubLog (2026-11-14), if the
+        operator filled in their ClubLog account in SETTINGS and the admin
+        entered the server's ClubLog API key. ClubLog's realtime.php takes
+        one ADIF record per request; the answer (OK / duplicate / error) is
+        kept per user and shown in SETTINGS."""
+        try:
+            u = self.find_user_by_id(user_id) or {}
+            cb = u.get("clublog", {}) or {}
+            email = (cb.get("email") or "").strip()
+            pw = decrypt_secret(cb.get("password", ""))
+            call = (cb.get("callsign") or "").strip().upper()
+            key = decrypt_secret(self.cfg.get("clublogApiKey", ""))
+            if not (email and pw and call and key):
+                return
+            import aiohttp as _aiohttp
+            form = {"email": email, "password": pw, "callsign": call,
+                    "adif": qso_to_adif(qso), "api": key}
+            async with _aiohttp.ClientSession() as sess:
+                async with sess.post("https://clublog.org/realtime.php", data=form,
+                                     timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+                    txt = (await resp.text()).strip()[:120]
+                    _ok = resp.status == 200
+            _msg = f"{qso.get('call', '?')}: {txt or ('HTTP ' + str(resp.status))}"
+            self._clublog_last[user_id] = {"epoch": time.time(), "ok": _ok, "msg": _msg}
+            print(f"[clublog] {_msg}", flush=True)
+        except Exception as e:
+            self._clublog_last[user_id] = {"epoch": time.time(), "ok": False, "msg": str(e)}
+            print(f"[clublog] upload error: {e}", flush=True)
 
     async def _cloudlog_push_qso(self, user_id: str, qso: dict):
         """
@@ -6099,6 +6864,8 @@ class App:
             # webrtc_tx_off is its stop counterpart and, like webrtc_stop,
             # stays OUT of this set on purpose.
             "webrtc_tx_on",
+            # Recorded voice message on air (voice keyer) - same gate as ptt.
+            "voice_play",
         }
 
         # ── VIEWER: HARD WHITELIST ──────────────────
@@ -6158,8 +6925,62 @@ class App:
                 return
 
         # Ping — reply pong directly to the sender (RTT measurement)
+        # FT8/TX actions that are not in _CONTROL_TYPES above (mostly STOP /
+        # automation actions: HALT TX, abort QSO, safety-timer signals).
+        # 2026-11-14, per the operator: the radio and EVERYTHING tied to
+        # transmitting belongs to whoever holds the TRX - everyone else is
+        # an observer until they take it. Before this any logged-in tab
+        # could halt the holder's transmission and reset their macros, and
+        # a viewer's own expiring safety timer (ft8_timer_expired) locked
+        # the holder's automation. Exception: when NOBODY holds the radio,
+        # an operator may still stop a leftover transmission.
+        _HOLDER_ONLY_TYPES = {
+            "ft8_tx_stop", "ft8_tune_stop", "ft8_abort_auto_qso",
+            "ft8_toggle_auto_seq", "ft8_timer_expired", "ft8_timer_confirm",
+            "wsjtx_tx_start", "wsjtx_tx_stop",
+            "voice_stop",
+        }
+        if t in _HOLDER_ONLY_TYPES and not self._can_operate_tx(uid, role):
+            # The safety-timer signals are sent automatically by the page
+            # (FT8Timer), not by a click - ignore them silently.
+            if t in ("ft8_timer_expired", "ft8_timer_confirm"):
+                return
+            holder = self.radio_lock.get("callsign") or self.radio_lock.get("username") or ""
+            await ws.send_str(json.dumps({
+                "type":    "radio_locked",
+                "message": (f"Radio zajete przez {holder} — tylko on moze sterowac nadawaniem"
+                            if holder else "Najpierw przejmij radio (kliknij PRZEJMIJ TRX)"),
+                "holder":  holder,
+            }))
+            return
+
         if t == "ping":
             await ws.send_json({"type": "pong", "t": msg.get("t", 0)})
+            return
+
+        if t == "voice_play":
+            try:
+                _slot = int(msg.get("slot", 0))
+            except (TypeError, ValueError):
+                return
+            if not (1 <= _slot <= self._VK_SLOTS):
+                return
+            if not self._has_perm(uid, role, "ptt"):
+                await ws.send_json({"type": "toast", "msg": "⛔ PTT niedostepny (brak uprawnien)", "level": "error"})
+                return
+            if not self._is_band_allowed():
+                await ws.send_json({"type": "toast", "msg": "⛔ TX zablokowany — pasmo niedozwolone przez admina", "level": "error"})
+                return
+            if getattr(self, "_vk_playing", None):
+                return
+            if not self._vk_path(uid, _slot).exists():
+                await ws.send_json({"type": "toast", "msg": f"Brak nagrania w F{_slot}", "level": "error"})
+                return
+            asyncio.ensure_future(self._vk_play(uid, _slot))
+            return
+
+        if t == "voice_stop":
+            self._vk_abort = True
             return
 
         # ── Operator chat (session-only - see App._chat_history) ───────────
@@ -6498,6 +7319,12 @@ class App:
                             else:
                                 _stable = 0
                             await asyncio.sleep(0.05)
+                        # The queue being empty only means Python handed
+                        # the last audio to the sound card - its own output
+                        # buffer (40 ms, see audio_stream.py) still has to
+                        # play out, or the last syllable is clipped.
+                        if getattr(self.audio, "tx_active", False):
+                            await asyncio.sleep(0.04)
                         _drain_ms = (time.time() - _drain_t0) * 1000.0
                         if _drain_ms > 20:
                             print(f"[ptt] OFF: waited {_drain_ms:.0f}ms for the TX audio queue to drain "
@@ -7512,10 +8339,23 @@ class App:
             # file so the two can be correlated by timestamp. Answers the
             # live follow-up question to the PTT reordering fix: does PTT
             # now key the radio before or after WebRTC audio can actually flow.
-            _ptt_log_line(
-                f"TX audio (WebRTC) connect wait: {msg.get('connectWaitMs', '?')}ms, "
-                f"final state={msg.get('finalState', '?')}"
-            )
+            if "pttToAudioMs" in msg:
+                # Per PTT press (2026-11-14): how long from pressing PTT
+                # until the mic audio was attached, and whether the mic was
+                # already open in readiness (TRX held) or opened right now.
+                try:
+                    _ms = int(msg.get("pttToAudioMs", -1))
+                except (TypeError, ValueError):
+                    _ms = -1
+                _ptt_log_line(
+                    f"PTT -> audio: {_ms}ms "
+                    f"({'mic ready' if msg.get('micReady') else 'mic opened on press'})"
+                )
+            else:
+                _ptt_log_line(
+                    f"TX audio (WebRTC) connect wait: {msg.get('connectWaitMs', '?')}ms, "
+                    f"final state={msg.get('finalState', '?')}"
+                )
 
         # ── WebRTC RX audio (webrtc_rx_audio.py) - the RX audio path,
         # opposite direction from webrtc_offer above (server offers,
@@ -8682,6 +9522,7 @@ class App:
                 # QSOs made via auto-answer never reached
                 # CloudLog, only ones added by hand.
                 asyncio.ensure_future(self._cloudlog_push_qso(_uid, _saved))
+                asyncio.ensure_future(self._clublog_push_qso(_uid, _saved))
             else:
                 print("[autoqso] WARNING: no operator uid - "
                       "QSO NOT auto-saved", flush=True)
@@ -9129,6 +9970,24 @@ class App:
                         msg.get("mode") or self._ft8_decode_mode, msg.get("snr", 0),
                         msg.get("deltaTime", 0.0), msg.get("deltaFreq", 0),
                         msg.get("message", ""), msg.get("timeStr", ""), msg["recvEpoch"])
+                # PSK Reporter (if the admin enabled it): the transmitting
+                # station of every standard message. Free text is skipped
+                # ("TNX 73 GL" would otherwise look like a callsign "73").
+                if self.cfg.get("pskReporter") and msg.get("msgType", "std") in ("std", "nonstd", "dxped"):
+                    try:
+                        _pm = qso_engine.parse_message(msg.get("message", "")) or {}
+                        _pc = (_pm.get("call_de") or "").upper()
+                        if re.match(r"^(?=.*\d)(?=.*[A-Z])[A-Z0-9/]{3,12}$", _pc):
+                            _pg = (_pm.get("extra") or "").upper()
+                            if not re.match(r"^[A-R]{2}\d{2}$", _pg) or _pg == "RR73":
+                                _pg = ""
+                            self._psk.add(_pc, _pg,
+                                          int(self.rig.freq or 0) + int(msg.get("deltaFreq", 0) or 0),
+                                          int(msg.get("snr", 0) or 0),
+                                          msg.get("mode") or self._ft8_decode_mode,
+                                          msg["recvEpoch"])
+                    except Exception as _e:
+                        print(f"[pskreporter] add error: {_e}", flush=True)
 
                 # Cache call->grid from ALL decodes. A partner replying to
                 # OUR CQ doesn't send a grid (e.g. "XX0XXX JA3FYC +11"), so
@@ -9710,10 +10569,11 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             print(f"[download] COM bridge not found. Checked:", flush=True)
             for _c in _checked:
                 print(f"[download]   - {_c}", flush=True)
-            _list = "".join(f"<li><code>{_c}</code></li>" for _c in _checked)
+            # The checked paths go to the server log above only - the page
+            # is public and must not reveal the server's folder layout.
             return web.Response(
-                text=f"<h2>Most COM (HAM-RADIO-CTRL-bridge.exe) nie znaleziony</h2>"
-                     f"<p>Zbuduj most COM i umiesc jako <code>HAM-RADIO-CTRL-bridge.exe</code>:</p><ul>{_list}</ul>",
+                text="<h2>Most COM (HAM-RADIO-CTRL-bridge.exe) nie znaleziony</h2>"
+                     "<p>Administrator: lista sprawdzonych folderow jest w logu serwera ([download]).</p>",
                 content_type="text/html", status=404
             )
 
@@ -9752,9 +10612,16 @@ Panel www &#8594; <b>&#127908; TX mikrofon</b> przed nadawaniem FT8
             q = {k: [v] for k, v in query.items()}
             # Client IP for rate limiting. Behind a reverse proxy / tunnel
             # the real address is in X-Forwarded-For (first entry = original client).
+            # Trust the header ONLY when the connection itself comes from
+            # this machine (a local tunnel such as cloudflared) - a client
+            # connecting directly (DuckDNS / port forward) could otherwise
+            # send a fake X-Forwarded-For on every attempt and dodge the
+            # per-IP login lockout.
             _xff = request.headers.get("X-Forwarded-For", "")
-            _client_ip = (_xff.split(",")[0].strip() if _xff
-                          else (request.remote or ""))
+            _remote = request.remote or ""
+            _client_ip = (_xff.split(",")[0].strip()
+                          if _xff and _remote in ("127.0.0.1", "::1")
+                          else _remote)
             status, result = await self.api(method, path, body, user, q, _client_ip)
             # Special type — binary response (e.g. an ONNX model)
             if status == "binary":

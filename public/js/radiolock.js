@@ -27,12 +27,36 @@ function handleWS(msg) {
   if (msg.username !== undefined) _state.username   = msg.username;
   if (msg.callsign !== undefined) _state.callsign   = msg.callsign;
   if (msg.timeout_min !== undefined) _state.timeout_min = msg.timeout_min;
+  if (msg.idle_left_s !== undefined) _setIdle(msg.idle_left_s);
   if (msg.requests)  _state.requests  = msg.requests || [];
   if (msg.online)    _state.online    = msg.online   || [];
   _render();
 }
 
 // ── Powiadomienie o prośbie o radio ──────────────────────────────────────────
+// Countdown to the idle auto-release (2026-11-14). The server sends the
+// seconds left with every lock state and refreshes them every 30 s
+// (radio_lock_idle); in between this ticks down locally once a second.
+let _idleLeft = null, _idleAt = 0, _idleTimer = null;
+function _setIdle(sec) {
+  _idleLeft = (sec == null) ? null : Number(sec);
+  _idleAt = Date.now();
+  if (_idleLeft != null && !_idleTimer) _idleTimer = setInterval(_renderIdle, 1000);
+  if (_idleLeft == null && _idleTimer) { clearInterval(_idleTimer); _idleTimer = null; }
+  _renderIdle();
+}
+function handleIdle(msg) { _setIdle(msg.idle_left_s); }
+function _renderIdle() {
+  const el = document.getElementById('op-idle-left');
+  if (!el) return;
+  if (!_state.locked || _idleLeft == null) { el.textContent = ''; return; }
+  const left = Math.max(0, Math.round(_idleLeft - (Date.now() - _idleAt) / 1000));
+  const t = left >= 120 ? `${Math.ceil(left / 60)} min`
+          : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  el.textContent = I18n.t('trx_auto_release_in').replace('{t}', t);
+  el.style.color = left < 120 ? 'var(--amber)' : 'var(--dim)';
+}
+
 function handleRequest(msg) {
   const myUid    = window.AppState?.my_uid || window.CurrentUser?.id;
   const isHolder = _state.locked && _state.user_id === myUid;
@@ -185,6 +209,8 @@ function _renderOpPanel() {
     } else {
       status.innerHTML = `<span style="color:var(--amber)">🔒 ${_esc(_state.callsign || _state.username || '?')}</span>`;
     }
+    if (!isFree) status.innerHTML += `<div id="op-idle-left" style="font-size:9px;margin-top:2px;"></div>`;
+    _renderIdle();
   }
 
   // Przyciski — pokaż właściwy zestaw
@@ -225,6 +251,6 @@ async function _api(path, method, body) {
   return r.json();
 }
 
-window.OpPanel = { handleWS, handleRequest, handleRejected, lockRadio, releaseRadio, requestRadio, rejectRequest, forceRelease };
+window.OpPanel = { handleWS, handleIdle, handleRequest, handleRejected, lockRadio, releaseRadio, requestRadio, rejectRequest, forceRelease };
 return window.OpPanel;
 })();

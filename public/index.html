@@ -24,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css?v=202611021900">
+<link rel="stylesheet" href="css/style.css?v=202611141800">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <!-- opus-decoder.min.js usuniety: audio dekodowane natywnym AudioDecoder
      (Web Codecs API, patrz initOpusDecoder w ws.js). Biblioteka WASM byla
@@ -187,6 +187,40 @@
           onclick="this.removeAttribute('data-i18n'); WS.isTxActive() ? (WS.stopTX(), this.textContent=I18n.t('tx_mic_start'), this.style.color='var(--dim)', this.style.borderColor='rgba(var(--red-rgb),0.3)') : WS.startTX().then(ok => { if(ok){ this.textContent=I18n.t('tx_mic_stop'); this.style.color='var(--red)'; this.style.borderColor='var(--red)'; } })">
           🎤 Nadawanie TX — mikrofon
         </button>
+        <button id="tx-last-btn" class="audio-toggle-btn" data-perm="ptt" data-i18n="tx_last_play"
+          style="margin-top:4px;color:var(--dim);" onclick="UI.playLastTx(this)">▶ Odsłuchaj ostatnią relację</button>
+        <!-- Nagrane wywołania SSB (voice keyer, 2026-11-14) - see voicekeyer.js -->
+        <div style="margin-top:8px;font-family:var(--mono);font-size:10px;">
+          <div data-i18n="vk_hdr" style="color:var(--dim);letter-spacing:1px;">NAGRANE WYWOŁANIA SSB (F1–F4, Esc = stop)</div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:3px;">
+            <span style="width:22px;color:var(--amber);font-weight:700;">F1</span>
+            <button class="audio-toggle-btn" id="vk-rec-1" onclick="VoiceKeyer.toggleRecord(1)" data-perm="ptt" data-i18n-title="vk_rec_title" title="Nagraj / zakończ nagrywanie" style="width:30px;padding:2px;">●</button>
+            <button class="audio-toggle-btn" id="vk-play-1" onclick="VoiceKeyer.play(1)" data-perm="ptt" data-i18n-title="vk_play_title" title="Nadaj w eter (Esc = stop)" style="width:30px;padding:2px;" disabled>▶</button>
+            <button class="audio-toggle-btn" onclick="VoiceKeyer.listen(1)" data-i18n-title="vk_listen_title" title="Odsłuchaj lokalnie" style="width:30px;padding:2px;">🔊</button>
+            <span id="vk-len-1" style="color:var(--dim);">—</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:3px;">
+            <span style="width:22px;color:var(--amber);font-weight:700;">F2</span>
+            <button class="audio-toggle-btn" id="vk-rec-2" onclick="VoiceKeyer.toggleRecord(2)" data-perm="ptt" data-i18n-title="vk_rec_title" title="Nagraj / zakończ nagrywanie" style="width:30px;padding:2px;">●</button>
+            <button class="audio-toggle-btn" id="vk-play-2" onclick="VoiceKeyer.play(2)" data-perm="ptt" data-i18n-title="vk_play_title" title="Nadaj w eter (Esc = stop)" style="width:30px;padding:2px;" disabled>▶</button>
+            <button class="audio-toggle-btn" onclick="VoiceKeyer.listen(2)" data-i18n-title="vk_listen_title" title="Odsłuchaj lokalnie" style="width:30px;padding:2px;">🔊</button>
+            <span id="vk-len-2" style="color:var(--dim);">—</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:3px;">
+            <span style="width:22px;color:var(--amber);font-weight:700;">F3</span>
+            <button class="audio-toggle-btn" id="vk-rec-3" onclick="VoiceKeyer.toggleRecord(3)" data-perm="ptt" data-i18n-title="vk_rec_title" title="Nagraj / zakończ nagrywanie" style="width:30px;padding:2px;">●</button>
+            <button class="audio-toggle-btn" id="vk-play-3" onclick="VoiceKeyer.play(3)" data-perm="ptt" data-i18n-title="vk_play_title" title="Nadaj w eter (Esc = stop)" style="width:30px;padding:2px;" disabled>▶</button>
+            <button class="audio-toggle-btn" onclick="VoiceKeyer.listen(3)" data-i18n-title="vk_listen_title" title="Odsłuchaj lokalnie" style="width:30px;padding:2px;">🔊</button>
+            <span id="vk-len-3" style="color:var(--dim);">—</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:3px;">
+            <span style="width:22px;color:var(--amber);font-weight:700;">F4</span>
+            <button class="audio-toggle-btn" id="vk-rec-4" onclick="VoiceKeyer.toggleRecord(4)" data-perm="ptt" data-i18n-title="vk_rec_title" title="Nagraj / zakończ nagrywanie" style="width:30px;padding:2px;">●</button>
+            <button class="audio-toggle-btn" id="vk-play-4" onclick="VoiceKeyer.play(4)" data-perm="ptt" data-i18n-title="vk_play_title" title="Nadaj w eter (Esc = stop)" style="width:30px;padding:2px;" disabled>▶</button>
+            <button class="audio-toggle-btn" onclick="VoiceKeyer.listen(4)" data-i18n-title="vk_listen_title" title="Odsłuchaj lokalnie" style="width:30px;padding:2px;">🔊</button>
+            <span id="vk-len-4" style="color:var(--dim);">—</span>
+          </div>
+        </div>
         <!-- TX GAIN z dynamicznym VU metrem -->
         <div style="margin-top:8px;">
           <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:3px;">
@@ -446,6 +480,12 @@
           <option value="-5">REF: -5dB</option>
           <option value="0">REF: 0dB</option>
         </select>
+        <select class="wf-softkey-select wf-palette-select" id="wf-btn-palette" onchange="WfPalettes.set(this.value)">
+          <option value="default" data-i18n="wf_pal_default">PALETA: KLASYCZNA</option>
+          <option value="sdr" data-i18n="wf_pal_sdr">PALETA: SDR</option>
+          <option value="mono" data-i18n="wf_pal_mono">PALETA: MONO</option>
+          <option value="warm" data-i18n="wf_pal_warm">PALETA: CIEPŁA</option>
+        </select>
       </div>
     </div><!-- /tile-wf -->
 
@@ -698,6 +738,13 @@
             style="width:55px;accent-color:var(--red);vertical-align:middle;cursor:pointer;">
           <span id="wj-palette-gain-val" style="width:22px;display:inline-block;text-align:right;">1.0</span>
         </label>
+        <select class="wf-palette-select" id="wj-palette-select" onchange="WfPalettes.set(this.value)"
+          style="font-family:var(--mono);font-size:11px;padding:2px 4px;width:150px;flex:none;">
+          <option value="default" data-i18n="wf_pal_default">PALETA: KLASYCZNA</option>
+          <option value="sdr" data-i18n="wf_pal_sdr">PALETA: SDR</option>
+          <option value="mono" data-i18n="wf_pal_mono">PALETA: MONO</option>
+          <option value="warm" data-i18n="wf_pal_warm">PALETA: CIEPŁA</option>
+        </select>
         <button onclick="WSJTX.resetPaletteAdjust()" data-i18n-title="wj_reset_palette_title" title="Przywroc domyslne (REF=15, ZERO=0, GAIN=1.0)" class="wj-btn wj-btn-xs" style="padding:2px 6px;">↺</button>
       </div>
 
@@ -1079,6 +1126,7 @@
       <div style="display:flex;gap:6px;">
         <button onclick="WSJTX.addLog()" class="wj-btn" style="flex:1;background:rgba(34,197,94,0.25);border-color:#22c55e;color:#22c55e;font-weight:800;font-size:13.5px;padding:8px;" data-i18n="wj_addlog_btn">+ LOG QSO</button>
         <button onclick="WSJTX.exportAdif()" class="wj-btn" style="padding:8px 12px;font-size:12px;" data-i18n-title="wj_adif_btn_title" title="Eksport ADIF">⬇ ADIF</button>
+        <button onclick="WSJTX.openPskMap()" class="wj-btn" style="padding:8px 12px;font-size:12px;" data-i18n="wj_psk_map_btn" data-i18n-title="wj_psk_map_title" title="Mapa PSK Reporter: kto słyszy Twój znak (ostatnie 30 min)">🗺 KTO MNIE SŁYSZY</button>
         <button onclick="WSJTX.exportAllTxt()" class="wj-btn" style="padding:8px 12px;font-size:12px;" data-i18n-title="wj_alltxt_btn_title" title="Pobierz ALL.TXT - wszystko odebrane i nadane">⬇ ALL.TXT</button>
       </div>
 
@@ -1360,6 +1408,36 @@
           <button class="save-btn" onclick="changeProfilePassword()" data-i18n="profile_changepwd_btn">🔑 ZMIEŃ HASŁO</button>
           <span id="profile-pwd-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
         </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="profile-row">
+    <!-- LOGOWANIE DWUETAPOWE (2026-11-14) - optional, see webapp /api/auth/2fa -->
+    <div class="box">
+      <div class="box-header" data-i18n="profile_2fa_hdr">🔐 LOGOWANIE DWUETAPOWE</div>
+      <div class="box-body change-pwd-form">
+        <div id="tfa-status" style="font-family:var(--mono);font-size:11px;margin-bottom:6px;"></div>
+        <div data-i18n="profile_2fa_desc" style="font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;margin-bottom:8px;">
+          Dobrowolne. Po haśle trzeba podać jeszcze kod: z aplikacji w telefonie (Google/Microsoft Authenticator…) albo jednorazowy kod wysyłany na e-mail. Każda zmiana wymaga Twojego hasła.
+        </div>
+        <div class="field"><label data-i18n="profile_2fa_pw_lbl">TWOJE HASŁO (do zmian)</label>
+          <input type="password" id="tfa-pw" autocomplete="current-password"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">
+          <button class="save-btn" id="tfa-btn-app" onclick="TwoFA.setup('totp')" data-i18n="profile_2fa_app_btn">📱 WŁĄCZ — APLIKACJA</button>
+          <button class="save-btn" id="tfa-btn-email" onclick="TwoFA.setup('email')" data-i18n="profile_2fa_email_btn">✉ WŁĄCZ — KOD E-MAIL</button>
+          <button class="save-btn" id="tfa-btn-off" onclick="TwoFA.disable()" data-i18n="profile_2fa_off_btn" style="display:none;">WYŁĄCZ</button>
+          <button class="save-btn" onclick="TwoFA.logoutAll()" data-i18n="profile_logout_all_btn">🚪 WYLOGUJ ZE WSZYSTKICH URZĄDZEŃ</button>
+        </div>
+        <div id="tfa-setup" style="display:none;margin-top:10px;font-family:var(--mono);font-size:11px;line-height:1.6;">
+          <div id="tfa-setup-text"></div>
+          <div id="tfa-secret" style="font-size:14px;letter-spacing:2px;color:var(--green);margin:6px 0;word-break:break-all;"></div>
+          <div class="field"><label data-i18n="profile_2fa_code_lbl">KOD (6 cyfr)</label>
+            <input type="text" id="tfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" style="letter-spacing:4px;"></div>
+          <button class="save-btn" onclick="TwoFA.enable()" data-i18n="profile_2fa_confirm_btn">POTWIERDŹ I WŁĄCZ</button>
+        </div>
+        <div id="tfa-recovery" style="display:none;margin-top:10px;font-family:var(--mono);font-size:11px;line-height:1.6;"></div>
+        <span id="tfa-msg" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></span>
       </div>
     </div>
     </div>
@@ -1947,6 +2025,28 @@
       </div>
     </div>
 
+    <!-- CLUBLOG (2026-11-14) - each QSO is uploaded right after it's logged -->
+    <div class="box">
+      <div class="box-header">CLUBLOG</div>
+      <div class="settings-inner">
+        <div data-i18n="settings_clublog_desc" style="grid-column:1/-1;font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;">
+          Każda zapisana łączność trafia od razu do Twojego logu w ClubLog. Użyj hasła aplikacji z ClubLog (Settings → App Passwords), nie głównego hasła. LoTW: włącz automatyczną synchronizację w CloudLog/WaveLog — LoTW wymaga podpisu certyfikatem TQSL operatora.
+        </div>
+        <div class="sg"><label data-i18n="settings_clublog_email_lbl">E-mail konta ClubLog</label>
+          <input type="email" id="clb-email" autocomplete="off" style="flex:1;font-family:var(--mono);font-size:11px;"></div>
+        <div class="sg"><label data-i18n="settings_clublog_pw_lbl">Hasło aplikacji ClubLog</label>
+          <input type="password" id="clb-password" autocomplete="new-password" style="flex:1;font-family:var(--mono);font-size:11px;"></div>
+        <div class="sg"><label data-i18n="settings_clublog_call_lbl">Znak (log w ClubLog)</label>
+          <input type="text" id="clb-callsign" style="flex:1;font-family:var(--mono);font-size:11px;text-transform:uppercase;"></div>
+        <div class="sg" data-perm="admin"><label data-i18n="settings_clublog_key_lbl">Klucz API ClubLog (admin, wspólny)</label>
+          <input type="password" id="clb-api-key" autocomplete="off" style="flex:1;font-family:var(--mono);font-size:11px;"></div>
+        <div id="clb-status" style="grid-column:1/-1;font-family:var(--mono);font-size:10px;color:var(--dim);"></div>
+      </div>
+      <div style="padding:0 12px 12px;display:flex;gap:8px;">
+        <button class="save-btn" style="flex:1;" onclick="ClubLogCfg.save()" data-i18n="settings_save_btn">ZAPISZ</button>
+      </div>
+    </div>
+
     <!-- WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH.com, wlasne konto kazdego usera -->
     <div class="box">
       <div class="box-header" data-i18n="settings_lookup_hdr">🔍 WYSZUKIWANIE ZNAKÓW — QRZ.com / HamQTH</div>
@@ -2444,8 +2544,8 @@
     <div class="box">
       <div class="box-header" data-i18n="adm_backup_hdr">💾 BACKUP / RESTORE KONFIGURACJI</div>
       <div data-i18n-html="adm_backup_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.5;border-bottom:1px solid var(--border);">
-        Backup zawiera <b>config.json</b> (radia, pasma, przekaźniki, SMTP) oraz <b>users.json</b> (konta, uprawnienia, hasła).<br>
-        Trzymaj plik w bezpiecznym miejscu — zawiera hasła. Po restore zrestartuj serwer.
+        Backup zawiera <b>ustawienia</b> (radia, pasma, przekaźniki, SMTP), <b>konta</b> (uprawnienia, hasła) oraz <b>log QSO</b> wszystkich operatorów.<br>
+        Przy wczytaniu łączności są dopisywane do logu (bez duplikatów). Trzymaj plik w bezpiecznym miejscu — zawiera hasła. Po restore zrestartuj serwer.
       </div>
       <div style="padding:10px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <button onclick="AdminStatus.downloadBackup()" class="save-btn" data-i18n="adm_download_backup_btn"
@@ -2620,6 +2720,43 @@
         <button class="save-btn" onclick="AdminSmtp.save()" data-i18n="adm_save_smtp_btn">ZAPISZ SMTP</button>
       </div>
       <div id="smtp-msg" style="padding:0 12px 12px;font-family:var(--mono);font-size:10px;min-height:20px;"></div>
+    </div>
+
+    <!-- DZIENNIK STACJI (2026-11-14) - see audit_log.py -->
+    <div class="box">
+      <div class="box-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <span data-i18n="adm_audit_hdr">📋 DZIENNIK STACJI</span>
+        <button class="admin-btn" onclick="AdminAudit.load()" style="padding:2px 8px;">↻</button>
+      </div>
+      <div data-i18n="adm_audit_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.6;border-bottom:1px solid var(--border);">
+        Logowania (z adresem IP), przejęcia i oddania TRX, ochrona SWR, zmiany haseł, ról i logowania dwuetapowego, kopie zapasowe. Najnowsze na górze.
+      </div>
+      <div style="padding:8px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10px;">
+        <input type="checkbox" id="adm-alert-toggle" onchange="AdminAudit.saveAlerts()">
+        <label for="adm-alert-toggle" data-i18n="adm_alert_lbl" style="margin:0;">Alarmy mailem do adminów (radio / audio / certyfikat / SWR)</label>
+        <button class="admin-btn" onclick="AdminAudit.testAlert()" data-i18n="adm_alert_test_btn" style="padding:2px 8px;">WYŚLIJ TEST</button>
+        <span id="adm-alert-status" style="color:var(--dim);"></span>
+      </div>
+      <div style="max-height:320px;overflow:auto;">
+        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;">
+          <tbody id="adm-audit-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PSK REPORTER (2026-11-14) -->
+    <div class="box">
+      <div class="box-header">PSK REPORTER</div>
+      <div data-i18n="adm_psk_desc" style="padding:8px 12px;font-family:var(--mono);font-size:9px;color:var(--dim);line-height:1.9;border-bottom:1px solid var(--border);">
+        Wysyła odebrane stacje FT8/FT4 do pskreporter.info (co 5 minut). Na mapie widać wtedy, kogo słyszy ta stacja. Znak = operator trzymający TRX, lokator = lokator stacji.
+      </div>
+      <div class="settings-inner">
+        <div class="sg" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="adm-psk-toggle" onchange="AdminPsk.save()">
+          <label for="adm-psk-toggle" data-i18n="adm_psk_lbl" style="margin:0;">Wysyłaj odebrane stacje do PSK Reporter</label>
+        </div>
+        <div id="adm-psk-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);"></div>
+      </div>
     </div>
 
     <!-- AKTUALIZACJE — sprawdzanie nowej wersji na GitHub Releases -->
@@ -2837,15 +2974,16 @@
     }
   } catch (e) { /* fall through to i18n.js's own 'pl' default */ }
 </script>
-<script src="js/i18n.js?v=202610272000"></script>
+<script src="js/i18n.js?v=202611150400"></script>
 <script src="js/theme.js?v=202610161000"></script>
 <script src="js/auth.js?v=202610181800"></script>
 <script src="js/state.js?v=202606180504"></script>
-<script src="js/ws.js?v=202610221100"></script>
+<script src="js/ws.js?v=202611150300"></script>
 <script src="js/radiofunctions.js?v=202609040002"></script>
-<script src="js/ui.js?v=202610210900"></script>
+<script src="js/ui.js?v=202611150000"></script>
+<script src="js/voicekeyer.js?v=202611150400"></script>
 <script src="js/advradio.js?v=202610181650"></script>
-<script src="js/radiolock.js?v=202610162130"></script>
+<script src="js/radiolock.js?v=202611141600"></script>
 <script src="js/serial_ports.js?v=202609020001"></script>
 <script src="js/settings.js?v=202610162130"></script>
 <script src="js/tx_eq.js?v=202608210003"></script>
@@ -2857,18 +2995,19 @@
 <script src="js/rotator.js?v=202610180003"></script>
 <script src="js/rotormini.js?v=202610161030"></script>
 <script src="js/admin.js?v=202610181800"></script>
-<script src="js/admin_status.js?v=202608180002"></script>
+<script src="js/admin_status.js?v=202611142000"></script>
 <script src="js/profile_audio.js?v=202608243200"></script>
 <script src="js/relay_admin.js?v=202610162130"></script>
 <script src="js/tunnel.js?v=202610162130"></script>
 <script src="js/dxcc.js?v=202610202000"></script>
 <script src="js/grid_math.js?v=202607030001"></script>
 <script src="js/beamheading.js?v=202610202000"></script>
-<script src="js/wsjtx.js?v=202610312200"></script>
-<script src="js/wsjtx_scope.js?v=202610222330"></script>
+<script src="js/wsjtx.js?v=202611150000"></script>
+<script src="js/wf_palettes.js?v=202611141800"></script>
+<script src="js/wsjtx_scope.js?v=202611141800"></script>
 <script src="js/chat.js?v=202609030004"></script>
-<script src="js/vfo.js?v=202610172903"></script>
-<script src="js/waterfall.js?v=202610201930"></script>
+<script src="js/vfo.js?v=202611150000"></script>
+<script src="js/waterfall.js?v=202611141800"></script>
 <div class="modal-overlay" id="cw-edit-modal" onclick="if(event.target===this)CW.closeEdit()" style="display:none;">
   <div class="modal-box" style="min-width:280px;max-width:360px;">
     <div class="modal-header"><span id="cw-edit-title">MAKRO CW</span><button class="modal-close" onclick="CW.closeEdit()">✕</button></div>
@@ -2938,7 +3077,7 @@
   </div>
 </div>
 
-<script src="js/cw.js?v=202610202100"></script>
+<script src="js/cw.js?v=202611150300"></script>
 <script src="js/cloudlog.js?v=202608170001"></script>
 <script src="js/hamlib_ui.js?v=202608170001"></script>
 <script src="js/callbook.js?v=202608170001"></script>
@@ -3305,6 +3444,219 @@ window.AdminSmtp = {
 // mail, a i tak nic nie przychodzi": updateEmail (osobny flag od samego
 // SMTP) byl domyslnie wylaczony i nie bylo jak go wlaczyc, a _update_info
 // nigdzie sie nie wyswietlal.
+// Two-factor login (PROFILE) - see webapp /api/auth/2fa*.
+window.TwoFA = {
+  _hdr() { return {'Content-Type':'application/json','Authorization':'Bearer ' + (localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '')}; },
+  _msg(t, err) {
+    // Server errors are always Polish - swap the known ones for the UI language.
+    const map = {'Zle haslo': 'profile_2fa_err_pw', 'Zly kod - sprobuj jeszcze raz': 'profile_2fa_err_code',
+                 'Najpierw wybierz sposob (aplikacja / e-mail)': 'profile_2fa_err_method'};
+    if (err && map[t]) t = I18n.t(map[t]);
+    const m = document.getElementById('tfa-msg'); if (m) { m.textContent = t || ''; m.style.color = err ? 'var(--red)' : 'var(--green)'; } },
+  async _post(act, body) {
+    const r = await fetch('/api/auth/2fa/' + act, {method:'POST', headers: this._hdr(), body: JSON.stringify(body || {})});
+    let d = {}; try { d = await r.json(); } catch (e) {}
+    return {ok: r.ok, d};
+  },
+  async load() {
+    try {
+      const d = await (await fetch('/api/auth/2fa', {headers: this._hdr()})).json();
+      const st = document.getElementById('tfa-status');
+      const on = !!d.method;
+      st.textContent = on ? I18n.t('profile_2fa_on').replace('{m}', d.method === 'totp' ? I18n.t('profile_2fa_m_app') : 'e-mail').replace('{n}', d.recovery_left)
+                          : I18n.t('profile_2fa_off');
+      st.style.color = on ? 'var(--green)' : 'var(--dim)';
+      document.getElementById('tfa-btn-off').style.display = on ? '' : 'none';
+      document.getElementById('tfa-btn-app').style.display = on ? 'none' : '';
+      document.getElementById('tfa-btn-email').style.display = (on || !d.has_email || !d.smtp) ? 'none' : '';
+    } catch (e) {}
+  },
+  async setup(method) {
+    const pw = document.getElementById('tfa-pw').value;
+    if (!pw) { this._msg(I18n.t('profile_2fa_need_pw'), true); return; }
+    const {ok, d} = await this._post(method === 'totp' ? 'setup-totp' : 'setup-email', {password: pw});
+    if (!ok) { this._msg(d.error || 'Błąd', true); return; }
+    document.getElementById('tfa-setup').style.display = '';
+    document.getElementById('tfa-recovery').style.display = 'none';
+    const sec = document.getElementById('tfa-secret');
+    if (method === 'totp') {
+      document.getElementById('tfa-setup-text').textContent = I18n.t('profile_2fa_app_steps');
+      sec.innerHTML = '';
+      const a = document.createElement('a');
+      a.href = d.uri; a.textContent = d.secret.replace(/(.{4})/g, '$1 ').trim();
+      a.style.color = 'var(--green)';
+      sec.appendChild(a);
+    } else {
+      document.getElementById('tfa-setup-text').textContent = I18n.t('profile_2fa_email_steps');
+      sec.textContent = '';
+    }
+    this._msg('');
+    document.getElementById('tfa-code').focus();
+  },
+  async enable() {
+    const {ok, d} = await this._post('enable', {code: document.getElementById('tfa-code').value.trim()});
+    if (!ok) { this._msg(d.error || 'Błąd', true); return; }
+    document.getElementById('tfa-setup').style.display = 'none';
+    const rec = document.getElementById('tfa-recovery');
+    rec.style.display = '';
+    rec.innerHTML = '';
+    const p = document.createElement('div');
+    p.textContent = I18n.t('profile_2fa_recovery_note');
+    p.style.color = 'var(--amber)';
+    const codes = document.createElement('div');
+    codes.textContent = (d.recovery_codes || []).join('   ');
+    codes.style.cssText = 'font-size:13px;letter-spacing:1px;margin-top:4px;user-select:all;';
+    rec.append(p, codes);
+    document.getElementById('tfa-pw').value = '';
+    document.getElementById('tfa-code').value = '';
+    this._msg(I18n.t('profile_2fa_enabled'));
+    this.load();
+  },
+  async disable() {
+    const pw = document.getElementById('tfa-pw').value;
+    if (!pw) { this._msg(I18n.t('profile_2fa_need_pw'), true); return; }
+    const {ok, d} = await this._post('disable', {password: pw});
+    if (!ok) { this._msg(d.error || 'Błąd', true); return; }
+    document.getElementById('tfa-pw').value = '';
+    document.getElementById('tfa-recovery').style.display = 'none';
+    this._msg(I18n.t('profile_2fa_disabled'));
+    this.load();
+  },
+  async logoutAll() {
+    const pw = document.getElementById('tfa-pw').value;
+    if (!pw) { this._msg(I18n.t('profile_2fa_need_pw'), true); return; }
+    const {ok, d} = await this._post('logout-all', {password: pw});
+    if (!ok) { this._msg(d.error || 'Błąd', true); return; }
+    localStorage.removeItem('token'); sessionStorage.removeItem('ham_token');
+    location.replace('/login.html');
+  },
+};
+
+// ClubLog account (SETTINGS) - see webapp._clublog_push_qso.
+window.ClubLogCfg = {
+  _hdr() { return {'Content-Type':'application/json','Authorization':'Bearer ' + (localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '')}; },
+  async load() {
+    try {
+      const d = await (await fetch('/api/clublog/config', {headers: this._hdr()})).json();
+      document.getElementById('clb-email').value = d.email || '';
+      document.getElementById('clb-callsign').value = d.callsign || '';
+      const pw = document.getElementById('clb-password');
+      pw.value = ''; pw.placeholder = d.has_password ? '••••••• (' + I18n.t('settings_clublog_saved') + ')' : '';
+      const st = document.getElementById('clb-status');
+      let t = d.api_key_set ? '' : I18n.t('settings_clublog_no_key') + ' ';
+      if (d.last) t += `${new Date(d.last.epoch * 1000).toLocaleString()} — ${d.last.msg}`;
+      st.textContent = t;
+      st.style.color = d.last && !d.last.ok ? 'var(--red)' : 'var(--dim)';
+    } catch (e) {}
+  },
+  async save() {
+    const body = {
+      email: document.getElementById('clb-email').value,
+      callsign: document.getElementById('clb-callsign').value,
+    };
+    const pw = document.getElementById('clb-password').value;
+    if (pw) body.password = pw;
+    const key = document.getElementById('clb-api-key');
+    if (key && key.value) body.api_key = key.value;
+    const r = await fetch('/api/clublog/config', {method:'POST', headers: this._hdr(), body: JSON.stringify(body)});
+    window.UI?.showToast?.(r.ok ? I18n.t('settings_clublog_saved_toast') : '✕ HTTP ' + r.status, r.ok ? 'info' : 'error');
+    if (key) key.value = '';
+    this.load();
+  },
+};
+
+// Station log (admin) - see audit_log.py / /api/admin/audit.
+window.AdminAudit = {
+  async loadAlerts() {
+    try {
+      const d = await (await fetch('/api/admin/alerts')).json();
+      document.getElementById('adm-alert-toggle').checked = !!d.enabled;
+      const st = document.getElementById('adm-alert-status');
+      st.textContent = !d.smtp ? I18n.t('adm_alert_no_smtp')
+                     : (d.recipients && d.recipients.length ? '→ ' + d.recipients.join(', ') : I18n.t('adm_alert_no_email'));
+      st.style.color = (!d.smtp || !(d.recipients || []).length) ? 'var(--amber)' : 'var(--dim)';
+    } catch (e) {}
+  },
+  async saveAlerts() {
+    await fetch('/api/admin/alerts', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: document.getElementById('adm-alert-toggle').checked})});
+    this.loadAlerts();
+  },
+  async testAlert() {
+    const st = document.getElementById('adm-alert-status');
+    st.textContent = '…';
+    const r = await fetch('/api/admin/alerts', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({test: true})});
+    let d = {}; try { d = await r.json(); } catch (e) {}
+    st.textContent = r.ok ? '✓ ' + (d.sent || []).join(', ') : '✕ ' + (d.error || r.status);
+    st.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+    this.load();
+  },
+  async load() {
+    this.loadAlerts();
+    const body = document.getElementById('adm-audit-body');
+    if (!body) return;
+    try {
+      const d = await (await fetch('/api/admin/audit?n=300')).json();
+      const rows = d.entries || [];
+      body.innerHTML = '';
+      if (!rows.length) {
+        const tr = document.createElement('tr'); const td = document.createElement('td');
+        td.textContent = I18n.t('adm_audit_empty'); td.style.cssText = 'padding:8px;color:var(--dim);';
+        tr.appendChild(td); body.appendChild(tr); return;
+      }
+      const bad = new Set(['login_fail', 'login_2fa_fail', 'swr_trip']);
+      for (const e of rows) {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border)';
+        const cells = [
+          new Date(e.t * 1000).toLocaleString(),
+          I18n.t('adm_audit_ev_' + e.event) !== 'adm_audit_ev_' + e.event ? I18n.t('adm_audit_ev_' + e.event) : e.event,
+          e.who || '', e.ip || '', e.detail || ''];
+        cells.forEach((c, i) => {
+          const td = document.createElement('td');
+          td.textContent = c;   // textContent: entries contain user-typed names/IPs
+          td.style.cssText = 'padding:3px 6px;white-space:nowrap;' + (i === 4 ? 'white-space:normal;color:var(--dim);' : '');
+          if (i === 1 && bad.has(e.event)) td.style.color = 'var(--red)';
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      }
+    } catch (err) {}
+  },
+};
+
+// PSK Reporter upload toggle (admin) - see psk_reporter.py.
+window.AdminPsk = {
+  async load() {
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+      const d = await (await fetch('/api/pskreporter/config', {headers:{'Authorization':`Bearer ${token}`}})).json();
+      const t = document.getElementById('adm-psk-toggle');
+      if (t) t.checked = !!d.enabled;
+      const st = document.getElementById('adm-psk-status');
+      if (st) {
+        let txt = `${d.call || '?'} / ${d.grid || '?'}`;
+        if (d.last) {
+          const when = new Date(d.last.epoch * 1000).toLocaleTimeString();
+          txt += d.last.error ? ` — ✕ ${when}: ${d.last.error}`
+                              : ` — ${I18n.t('adm_psk_last').replace('{n}', d.last.spots).replace('{t}', when)}`;
+        }
+        st.textContent = txt;
+        st.style.color = d.last?.error ? 'var(--red)' : 'var(--dim)';
+      }
+    } catch(e) {}
+  },
+  async save() {
+    const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token');
+    await fetch('/api/pskreporter/config', {
+      method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},
+      body: JSON.stringify({enabled: document.getElementById('adm-psk-toggle').checked})
+    });
+    this.load();
+  },
+};
+
 window.AdminUpdate = {
   async load() {
     try {
@@ -3421,7 +3773,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (name === _lastPage) return;
     _lastPage = name;
     if (name === 'internet') { Tunnel.load(); Tunnel.checkCF(); }
-    if (name === 'admin')    { Admin.loadUsers(); Admin.loadFt8Timers?.(); AdminSmtp.load(); AdminUpdate.load(); }
+    if (name === 'admin')    { Admin.loadUsers(); Admin.loadFt8Timers?.(); AdminSmtp.load(); AdminUpdate.load(); AdminPsk.load(); AdminAudit.load(); }
     if (name === 'log')     { window.QSOLog?.load(); }
     // Odswiez stan radia przy kazdej zmianie strony
     fetch('/api/radio/state').then(r=>r.json()).then(msg=>window.OpPanel?.handleWS(msg)).catch(()=>{});
@@ -3435,7 +3787,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // statycznym HTML "AUTO" niezaleznie od realnie zapisanej.
       setTimeout(() => { window.Settings?._initCwStatus?.(); }, 500);
     }
-    if (name === 'settings') { setTimeout(() => { window.HamlibUI?.load?.(); }, 500); }
+    if (name === 'settings') { setTimeout(() => { window.HamlibUI?.load?.(); window.ClubLogCfg?.load(); }, 500); }
     if (name === 'wsjtx')    {
       // Ustaw wysokosc wsjtx-layout i zainicjuj po renderze
       setTimeout(() => {

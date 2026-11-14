@@ -74,7 +74,7 @@ h2 { font-size: 16px; color: var(--text); letter-spacing: 2px; margin-bottom: 8p
   <!-- KROK 2: ustawienie nowego hasła (gdy token w URL) -->
   <div id="step-confirm" style="display:none;">
     <h2>NOWE HASŁO</h2>
-    <div class="sub">Wpisz i potwierdź nowe hasło.<br>Minimum 6 znaków.</div>
+    <div class="sub">Wpisz i potwierdź nowe hasło.<br>Minimum 8 znaków.</div>
     <div class="field">
       <label>NOWE HASŁO</label>
       <input type="password" id="new-pw" placeholder="••••••••" autocomplete="new-password"
@@ -147,8 +147,8 @@ async function sendRequest() {
 async function confirmReset() {
   const pw  = document.getElementById('new-pw').value;
   const pw2 = document.getElementById('new-pw2').value;
-  if (!pw || pw.length < 6) {
-    _msg('conf-msg', 'Hasło musi mieć minimum 6 znaków', 'err'); return;
+  if (!pw || pw.length < 8) {
+    _msg('conf-msg', 'Hasło musi mieć minimum 8 znaków', 'err'); return;
   }
   if (pw !== pw2) {
     _msg('conf-msg', 'Hasła nie są identyczne', 'err'); return;

@@ -14,17 +14,15 @@
  *      is allowed to play anything; desktop just "hopes" for an incidental
  *      first click/keypress since it has no RX toggle left in its UI.
  *
- *   2. The TX microphone is acquired FRESH on every PTT press and fully
- *      released (track.stop()) on every release — never kept alive between
- *      presses. Desktop tried keeping a mic stream open continuously once
- *      (see ws.js's "REVERTED (2026-08-21)" comment) and hit a live bug: on
- *      Windows, any app holding a mic open ducks/mutes ALL other system
- *      audio — including this app's OWN RX playback — for as long as the
- *      mic stays open, not just while actually transmitting. A microphone
- *      permission, once granted, re-acquires in tens of ms on every later
- *      getUserMedia call (no repeat prompt) — so there's little latency to
- *      gain by keeping the stream open, and doing so risks hitting the
- *      same class of bug on whatever OS a given phone runs.
+ *   2. TX microphone (2026-11-14, same model as desktop ws.js _txMic):
+ *      the WebRTC connection is negotiated ONCE and kept warm, and the
+ *      microphone is opened in the background while this phone holds the
+ *      TRX (setWarm, driven by radio_lock_state in mobile.js). Without PTT
+ *      the mic track is NOT attached to the connection - nothing is sent.
+ *      PTT only attaches the ready track and tells the server to open the
+ *      TX sound card (webrtc_tx_on - before this the phone never sent it
+ *      after the 2026-10-18 hot-PTT server change, so the server never
+ *      opened the TX audio device for a phone at all).
  *
  * Backend contract (see webapp.py / webrtc_rx_audio.py / webrtc_audio.py):
  *   RX and TX both go over WebRTC (aiortc), signaling over the MAIN app WS.
@@ -128,101 +126,185 @@ function onRxWebrtcError(msg) {
   closeRxWebRTC();
 }
 
-// ── TX (microphone) — fresh getUserMedia per PTT press, see file header ──
+// ── TX (microphone) — warm connection + mic in readiness, see file header ──
 let pc = null;
+let sender = null;
 let micStream = null;
+let micTrack = null;
+let micOpenedFor = null;
 let micActive = false;
 let stopRequested = false;
-// Diagnostic timing (reported as "significant TX delay" live 2026-08-23,
-// not yet root-caused end-to-end) — logs each phase so the next test
-// pinpoints where the time actually goes (mic grant vs. negotiation vs.
-// ICE) instead of guessing again. See webrtc_audio.py for the matching
-// server-side timing log. Module-level so onAnswer() (called later, from
-// the WS dispatcher) can log against the same start point.
+let warm = false;
+let _pcPromise = null, _openPromise = null, _startPromise = null;
+// Diagnostic timing (each phase of a PTT press), see webrtc_audio.py.
 let _txT0 = 0;
+
+async function _ensurePc() {
+  if (pc && pc.connectionState === 'connected') return true;
+  if (_pcPromise) return _pcPromise;
+  _pcPromise = _ensurePcInner();
+  try { return await _pcPromise; } finally { _pcPromise = null; }
+}
+
+async function _ensurePcInner() {
+  if (pc) { try { pc.close(); } catch (e) {} pc = null; sender = null; }
+  if (typeof RTCPeerConnection === 'undefined') {
+    window.Mobile?.showToast?.(I18n.t('m_no_webrtc'), 'error');
+    return false;
+  }
+  const myPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  pc = myPc;
+  myPc.onicecandidate = (ev) => {
+    if (ev.candidate) window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
+  };
+  myPc.onconnectionstatechange = () => {
+    console.log(`[maudio] connectionState=${myPc.connectionState}`);
+    if ((myPc.connectionState === 'failed' || myPc.connectionState === 'closed') && pc === myPc) {
+      if (micActive) { micActive = false; _detach(); }
+      pc = null; sender = null;
+    }
+  };
+  sender = myPc.addTransceiver('audio', { direction: 'sendonly' }).sender;
+  try {
+    const offer = await myPc.createOffer();
+    await myPc.setLocalDescription(offer);
+    window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
+  } catch (e) {
+    try { myPc.close(); } catch (e2) {}
+    if (pc === myPc) { pc = null; sender = null; }
+    return false;
+  }
+  await new Promise((resolve) => {
+    if (myPc.connectionState === 'connected') { resolve(); return; }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      myPc.removeEventListener('connectionstatechange', onState);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onState = () => {
+      if (['connected', 'failed', 'closed'].includes(myPc.connectionState)) finish();
+    };
+    myPc.addEventListener('connectionstatechange', onState);
+    const timer = setTimeout(finish, 2500);
+  });
+  return pc === myPc && myPc.connectionState === 'connected';
+}
+
+function _micIsOpen() {
+  return !!(micTrack && micTrack.readyState === 'live');
+}
+
+async function _ensureMic() {
+  if (_micIsOpen() && micOpenedFor === (localStorage.getItem('ham_audio_micId') || '')) return true;
+  if (_micIsOpen()) closeMic();
+  if (_openPromise) return _openPromise;
+  _openPromise = _openMic();
+  try { return await _openPromise; } finally { _openPromise = null; }
+}
+
+async function _openMic() {
+  try {
+    const preferredMicId = localStorage.getItem('ham_audio_micId') || '';
+    const constraint = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000 };
+    // {ideal}, not {exact} - see ws.js's desktop _txMic for the same fix
+    // (a saved mic id that's gone must fall back, not block PTT).
+    if (preferredMicId) constraint.deviceId = { ideal: preferredMicId };
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: constraint });
+    micOpenedFor = preferredMicId;
+  } catch (e) {
+    const _detail = e.constraint ? `${e.name}: ${e.constraint}` : (e.message || e.name || 'unknown error');
+    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_no_access') + _detail, 'error');
+    return false;
+  }
+  micTrack = micStream.getAudioTracks()[0] || null;
+  if (!micTrack) { closeMic(); return false; }
+  micTrack.onended = () => { if (!micActive) closeMic(); };
+  return true;
+}
+
+// Stop sending - nothing goes to the server; the mic itself stays open.
+function _detach() {
+  if (sender) { try { sender.replaceTrack(null); } catch (e) {} }
+}
+
+function closeMic() {
+  _detach();
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  micTrack = null;
+  micOpenedFor = null;
+}
 
 async function startMicTx() {
   if (micActive) return true;
+  if (_startPromise) return _startPromise;
+  _startPromise = _doStart();
+  try { return await _startPromise; } finally { _startPromise = null; }
+}
+
+async function _doStart() {
   stopRequested = false;
   _txT0 = performance.now();
   if (!navigator.mediaDevices?.getUserMedia) {
     window.Mobile?.showToast?.(I18n.t('profile_toast_mic_unavailable'), 'error');
     return false;
   }
-  if (typeof RTCPeerConnection === 'undefined') {
-    window.Mobile?.showToast?.(I18n.t('m_no_webrtc'), 'error');
+  if (!(await _ensurePc())) {
+    window.Mobile?.showToast?.(I18n.t('m_mic_error_prefix') + 'WebRTC', 'error');
     return false;
   }
+  if (stopRequested) { stopRequested = false; return false; }
+  if (!(await _ensureMic())) return false;
+  if (stopRequested) { stopRequested = false; if (!warm) closeMic(); return false; }
+  // Server opens the TX sound card, then the ready track is attached.
+  window.WS?.send({ type: 'webrtc_tx_on' });
   try {
-    const preferredMicId = localStorage.getItem('ham_audio_micId') || '';
-    const constraint = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: 48000 };
-    // {ideal}, not {exact} - see ws.js's desktop _txMic.start() for the same
-    // fix (live-seen 2026-09-02): {exact} hard-fails with an OverconstrainedError
-    // (empty .message) whenever the saved mic id no longer matches a
-    // currently connected device, blocking PTT outright instead of just
-    // falling back to any working mic.
-    if (preferredMicId) constraint.deviceId = { ideal: preferredMicId };
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: constraint });
+    await sender.replaceTrack(micTrack);
   } catch (e) {
-    const _detail = e.constraint ? `${e.name}: ${e.constraint}` : (e.message || e.name || 'unknown error');
-    window.Mobile?.showToast?.(I18n.t('profile_toast_mic_no_access') + _detail, 'error');
+    window.WS?.send({ type: 'webrtc_tx_off' });
+    _detach();
+    if (!warm) closeMic();
     return false;
   }
-  console.log(`[maudio] getUserMedia: ${(performance.now() - _txT0).toFixed(0)}ms`);
-
-  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-  pc.onicecandidate = (ev) => {
-    if (ev.candidate) window.WS?.send({ type: 'webrtc_ice', candidate: ev.candidate.toJSON() });
-  };
-  pc.onconnectionstatechange = () => {
-    console.log(`[maudio] connectionState=${pc.connectionState} at ${(performance.now() - _txT0).toFixed(0)}ms`);
-    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') stopMicTx();
-  };
-  micStream.getAudioTracks().forEach(t => pc.addTrack(t, micStream));
-
-  try {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    window.WS?.send({ type: 'webrtc_offer', sdp: offer.sdp, sdpType: offer.type });
-    console.log(`[maudio] offer sent: ${(performance.now() - _txT0).toFixed(0)}ms`);
-  } catch (e) {
-    cleanupMicTx();
-    return false;
-  }
-
   micActive = true;
-  if (stopRequested) {
-    // A stop() (PTT released) arrived while we were still negotiating —
-    // honor it now instead of leaving the mic silently armed (same fix as
-    // ws.js's _txMic — see file header for why this matters).
-    stopRequested = false;
-    stopMicTx();
-    return false;
-  }
+  console.log(`[maudio] mic on air after ${(performance.now() - _txT0).toFixed(0)}ms`);
+  if (stopRequested) { stopRequested = false; stopMicTx(); return false; }
   return true;
+}
+
+function stopMicTx() {
+  if (!micActive) { stopRequested = true; return; }
+  micActive = false;
+  window.WS?.send({ type: 'webrtc_tx_off' });
+  _detach();
+  if (!warm) closeMic();
+}
+
+// From mobile.js on every radio_lock_state: mic ready in the background
+// while this phone holds the TRX, closed when the TRX is given up.
+function setWarm(on) {
+  on = !!on;
+  if (on === warm) return;
+  warm = on;
+  if (on) {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    _ensurePc().then(ok => { if (ok && warm) return _ensureMic(); })
+      .catch(e => console.warn('[maudio] background mic open failed:', e && e.message));
+  } else if (!micActive) {
+    closeMic();
+  }
 }
 
 function onAnswer(msg) {
   if (!pc) return;
-  console.log(`[maudio] answer received: ${(performance.now() - _txT0).toFixed(0)}ms`);
   pc.setRemoteDescription({ type: msg.sdpType || 'answer', sdp: msg.sdp }).catch(() => {});
 }
 
 function onRemoteIce(msg) {
   if (!pc || !msg.candidate) return;
   pc.addIceCandidate(msg.candidate).catch(() => {});
-}
-
-function cleanupMicTx() {
-  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-  if (pc) { try { pc.close(); } catch (e) {} pc = null; }
-}
-
-function stopMicTx() {
-  if (!micActive) { stopRequested = true; return; }
-  micActive = false;
-  window.WS?.send({ type: 'webrtc_stop' });
-  cleanupMicTx();
 }
 
 function onWebrtcError(msg) {
@@ -232,7 +314,7 @@ function onWebrtcError(msg) {
 
 window.MobileAudio = {
   enableRx, isRxEnabled: () => audioEnabled,
-  startMicTx, stopMicTx, onAnswer, onRemoteIce, onWebrtcError,
+  startMicTx, stopMicTx, onAnswer, onRemoteIce, onWebrtcError, setWarm,
   isMicActive: () => micActive,
   onRxOffer, onRxWebrtcError,
 };

@@ -326,6 +326,18 @@ body::after {
       <button type="submit" class="submit-btn" id="setup-btn">USTAW HASŁO I PRZEJDŹ DALEJ</button>
     </form>
 
+    <!-- Two-factor login (2026-11-14): shown when the password was right
+         but the account has a second factor (authenticator app / e-mail). -->
+    <form id="twofa-form" onsubmit="doTwofa(event)" style="display:none;">
+      <div style="font-size:12px;color:var(--dim,#888);margin-bottom:14px;line-height:1.5;" id="twofa-hint"></div>
+      <div class="field">
+        <label id="label-twofa">Kod</label>
+        <input type="text" id="twofa-code" inputmode="numeric" autocomplete="one-time-code"
+               placeholder="123456" maxlength="9" style="letter-spacing:4px;text-align:center;">
+      </div>
+      <button type="submit" class="submit-btn" id="twofa-btn">POTWIERDŹ</button>
+    </form>
+
     <div class="error-msg" id="error-msg"></div>
 
     <a href="/reset.html" class="reset-link" id="reset-link">Zapomniałem hasła</a>
@@ -377,6 +389,11 @@ const LOGIN_STRINGS = {
     errPwMismatch:       'Hasła nie są identyczne',
     errPwDefault:        'Nowe hasło nie może być domyślnym',
     errChangeFallback:   'Nie udało się zmienić hasła',
+    tfaTitle:     'Logowanie dwuetapowe',
+    tfaHintTotp:  'Wpisz 6-cyfrowy kod z aplikacji (Google/Microsoft Authenticator…). Nie masz telefonu? Wpisz jeden z kodów awaryjnych.',
+    tfaHintEmail: 'Wysłaliśmy 6-cyfrowy kod na e-mail konta (ważny 10 minut). Możesz też wpisać kod awaryjny.',
+    tfaLabel:     'Kod',
+    tfaBtn:       'POTWIERDŹ',
     // Znane komunikaty z backendu (zawsze po polsku - serwer nie zna
     // jezyka klienta) - tlumaczone tu po stronie klienta dla spojnosci.
     // Nierozpoznany komunikat wyswietla sie tak jak przyszedl z serwera.
@@ -384,6 +401,8 @@ const LOGIN_STRINGS = {
     srv_noAccount: 'Brak konta',
     srv_badOldPw: 'Złe stare hasło',
     srv_pwMin8:   'Hasło min. 8 znaków',
+    srv_badCode:  'Zly kod',
+    srv_tfaExpired: 'Sesja logowania wygasla - zaloguj sie ponownie',
   },
   en: {
     pageTitle:    'Ham Radio Control — Login',
@@ -405,10 +424,17 @@ const LOGIN_STRINGS = {
     errPwMismatch:       'Passwords do not match',
     errPwDefault:        'The new password cannot be the default one',
     errChangeFallback:   'Could not change the password',
+    tfaTitle:     'Two-factor login',
+    tfaHintTotp:  'Enter the 6-digit code from your authenticator app (Google/Microsoft Authenticator…). No phone? Enter one of your recovery codes.',
+    tfaHintEmail: 'We sent a 6-digit code to the account e-mail (valid 10 minutes). You can also enter a recovery code.',
+    tfaLabel:     'Code',
+    tfaBtn:       'CONFIRM',
     srv_badLogin: 'Incorrect username or password',
     srv_noAccount: 'No such account',
     srv_badOldPw: 'Incorrect current password',
     srv_pwMin8:   'Password must be at least 8 characters',
+    srv_badCode:  'Wrong code',
+    srv_tfaExpired: 'The login session expired - log in again',
   },
 };
 
@@ -430,6 +456,8 @@ function translateServerError(msg) {
     [d.srv_noAccount]: 'srv_noAccount',
     [d.srv_badOldPw]:  'srv_badOldPw',
     [d.srv_pwMin8]:    'srv_pwMin8',
+    [d.srv_badCode]:   'srv_badCode',
+    [d.srv_tfaExpired]: 'srv_tfaExpired',
   };
   const key = map[msg];
   return key ? L(key) : msg;
@@ -505,17 +533,11 @@ async function doLogin(e) {
     });
     const res = await r.json();
 
-    if (res.ok && res.token) {
-      // Zapisz token — auth.js w index.html szuka go w localStorage
-      localStorage.setItem('token', res.token);
-      sessionStorage.setItem('ham_token', res.token);
-      // Pierwsze uruchomienie: admin loguje sie domyslnym haslem -> zamiast
-      // wpuscic do aplikacji, pokaz ekran zmiany hasla (kreator).
-      if (res.must_change_password) {
-        showSetupForm();
-      } else {
-        location.replace('/');
-      }
+    if (res.twofa_required) {
+      _tfaChallenge = res.challenge;
+      showTwofaForm(res.method);
+    } else if (res.ok && res.token) {
+      _afterLogin(res);
     } else {
       showError(res.error ? translateServerError(res.error) : L('errBadLoginFallback'));
     }
@@ -528,6 +550,57 @@ async function doLogin(e) {
 }
 
 // Przelacz widok na formularz zmiany hasla (kreator pierwszego uruchomienia)
+function _afterLogin(res) {
+  localStorage.setItem('token', res.token);
+  sessionStorage.setItem('ham_token', res.token);
+  if (res.must_change_password) {
+    showSetupForm();
+  } else {
+    location.replace('/');
+  }
+}
+
+let _tfaChallenge = '';
+function showTwofaForm(method) {
+  document.getElementById('login-form').style.display = 'none';
+  document.getElementById('reset-link').style.display = 'none';
+  document.getElementById('twofa-form').style.display = 'block';
+  document.getElementById('card-title').textContent = L('tfaTitle');
+  document.getElementById('twofa-hint').textContent = L(method === 'email' ? 'tfaHintEmail' : 'tfaHintTotp');
+  document.getElementById('label-twofa').textContent = L('tfaLabel');
+  document.getElementById('twofa-btn').textContent = L('tfaBtn');
+  document.getElementById('error-msg').classList.remove('show');
+  document.getElementById('twofa-code').focus();
+}
+
+async function doTwofa(ev) {
+  if (ev) ev.preventDefault();
+  const btn = document.getElementById('twofa-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/auth/login-2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge: _tfaChallenge,
+                             code: document.getElementById('twofa-code').value.trim() }),
+    });
+    const res = await r.json();
+    if (res.ok && res.token) {
+      _afterLogin(res);
+    } else {
+      const el = document.getElementById('error-msg');
+      el.textContent = res.error ? translateServerError(res.error) : L('errBadLoginFallback');
+      el.classList.add('show');
+      document.getElementById('twofa-code').value = '';
+      document.getElementById('twofa-code').focus();
+    }
+  } catch (ex) {
+    showError(L('errConnPrefix') + ex.message + ')');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function showSetupForm() {
   document.getElementById('login-form').style.display = 'none';
   document.getElementById('reset-link').style.display = 'none';

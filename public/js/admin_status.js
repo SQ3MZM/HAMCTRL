@@ -101,7 +101,10 @@ window.AdminStatus = (function() {
     const status = document.getElementById('admin-backup-status');
     if (status) { status.textContent = I18n.t('adm_generating'); status.style.color = 'var(--dim)'; }
     try {
-      const r = await fetch('/api/backup', { credentials: 'include' });
+      // Bearer token - this API doesn't use cookies (without it the
+      // download always failed with 401).
+      const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
+      const r = await fetch('/api/backup', { headers: { 'Authorization': 'Bearer ' + token } });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       // Download as a file
@@ -133,10 +136,10 @@ window.AdminStatus = (function() {
     try {
       const text = await file.text();
       const backup = JSON.parse(text);
+      const token = localStorage.getItem('token') || sessionStorage.getItem('ham_token') || '';
       const r = await fetch('/api/restore', {
         method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({ backup }),
       });
       const d = await r.json();

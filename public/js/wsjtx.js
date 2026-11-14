@@ -525,8 +525,7 @@ function tuneToBand(hzStr) {
   const myUid = String(window.AppState?.my_uid || window.CurrentUser?.id || '');
   const role  = window.CurrentUser?.role;
   if (role !== 'admin' && (!lock?.locked || String(lock.user_id) !== myUid)) {
-    const holder = lock?.callsign || lock?.username || '?';
-    window.UI?.showToast(I18n.t('wj_toast_radio_busy').replace('{holder}', holder), 'error');
+    window.UI?.radioBlockedToast?.();
     return;
   }
   // A single atomic command — the server sets digital-USB + freq in the right order.
@@ -2047,6 +2046,16 @@ async function addLog() {
 }
 
 // Dziennik ALL.TXT (wszystko odebrane i nadane w FT8/FT4 - jak w WSJT-X).
+// "Who hears me": PSK Reporter's map for the operator's own callsign,
+// last 30 minutes (opens their website in a new tab).
+function openPskMap() {
+  const call = (_myCall || window.CurrentUser?.callsign || '').trim().toUpperCase();
+  if (!call) { window.UI?.showToast(I18n.t('wj_toast_no_mycall'), 'error'); return; }
+  window.open('https://pskreporter.info/pskmap.html?preset&callsign=' +
+              encodeURIComponent(call) + '&timerange=1800&txrx=tx&hideunrec=1',
+              '_blank', 'noopener');
+}
+
 async function exportAllTxt() {
   try {
     const token = localStorage.getItem('token') || '';
@@ -2697,7 +2706,7 @@ function toggleHideWorked(chk) {
 window.WSJTX = {
   getCqDecodes,
   init, refreshOperatorInfo, startWsjtx, stopWsjtx, haltTx, stopTx, clearDecodes, clearRxFreqPanel, handleWS, sendTx, toggleOwnRx,
-  tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif, exportAllTxt,
+  tuneToBand, rxEqTx, txEqRx, toggleTxFreeze, _selectRow, searchDxCall, addLog, exportAdif, exportAllTxt, openPskMap,
   toggleHideWorked, loadWorkedCalls: _loadWorkedCalls, toggleCountryMode,
   updateBeamRow, rotorGoBeam, rotorGoManual, rotorManualClose, rotorManualSubmit,
   toggleTxFreeze, toggleFakeSplit, toggleCqOnly, toggleAutoSeq, setDecodeMode,

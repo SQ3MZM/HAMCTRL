@@ -694,7 +694,7 @@ html[data-theme="amber-classic"] {
   --border2: rgba(15,23,42,0.20);
   --green:   #0284c7;
   --green2:  #0369a1;
-  --amber:   #d97706;
+  --amber:   #b45309;
   --red:     #dc2626;
   --dim:     #64748b;
   --text:    #0f172a;
@@ -720,7 +720,7 @@ html[data-theme="amber-classic"] {
     --border2: rgba(15,23,42,0.20);
     --green:   #0284c7;
     --green2:  #0369a1;
-    --amber:   #d97706;
+    --amber:   #b45309;
     --red:     #dc2626;
     --dim:     #64748b;
     --text:    #0f172a;
@@ -813,7 +813,7 @@ html[data-theme="amber-classic"] {
 /* ── PASEK SOFTKEYS (ekranowe przyciski radia, jak w IC-7300) ── */
 .wf-softkeys {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);   /* 7th = PALETA (2026-11-14) */
   gap: 3px;
   padding: 3px 5px;
   background: var(--panel2);
@@ -1598,6 +1598,32 @@ html[data-mode="light"] .wj-tx-btn:hover { color: #0f172a; }
 html[data-mode="light"] .wj-tx-btn.active { color: #92400e !important; }
 html[data-mode="light"] .wj-tx-num { color: #b45309; }
 html[data-mode="light"] #wj-autoqso-status { color: #0f172a !important; }
+/* Light mode, second pass (2026-11-14) - found with an automatic contrast
+   scan of every visible text element on every tab (WCAG ratio < 3:1
+   against its real background). Same hues, darker shades; many of these
+   colours are set inline in index.html or by JS, hence !important.
+   Dark mode is unchanged. */
+html[data-mode="light"] .rf-section-title { color: var(--dim); }
+html[data-mode="light"] #wf-source-badge { color: #64748b !important; }
+html[data-mode="light"] .wsjtx-status-pill.online { color: #15803d; }
+html[data-mode="light"] .wj-topbar-check.hound-box { color: #c2410c; }
+html[data-mode="light"] #wj-own-rx-btn.stopped { color: #b45309; }
+html[data-mode="light"] #wj-own-rx-btn.active { color: #15803d; }
+html[data-mode="light"] #wj-cycle-type { color: #0369a1 !important; }
+/* Phase text and cycle markers change colour from JS (RX green, decode
+   yellow, TX red) - darken whatever colour is set rather than replace it.
+   No background of their own, so the filter only affects the text. */
+html[data-mode="light"] #wj-cycle-phase,
+html[data-mode="light"] .c-marker-rx,
+html[data-mode="light"] .c-marker-dec,
+html[data-mode="light"] .c-marker-tx,
+html[data-mode="light"] #ft8-timer-display,
+html[data-mode="light"] #wj-dx-snr,
+html[data-mode="light"] #wj-beam-az,
+html[data-mode="light"] #wj-rotor-az { filter: brightness(0.6) saturate(1.3); }
+html[data-mode="light"] .wj-freq-field[style*="#5c5"] { color: #15803d !important; }
+html[data-mode="light"] [data-i18n="wj_auto_badge"] { color: #15803d !important; }
+html[data-mode="light"] [data-i18n="wj_addlog_btn"] { color: #15803d !important; }
 .wj-decode-row.selected   { outline: 1px solid var(--green); background: rgba(56,189,248,0.15) !important; }
 
 /* ── Belka separatora periodow dekodowania (dashed line + badge) —

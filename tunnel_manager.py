@@ -105,6 +105,21 @@ def save_cfg(cfg: dict):
         print(f"[tunnel] Config write error: {e}")
 
 
+_DUCK_DOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_DUCK_TOKEN_RE = re.compile(r"^[0-9a-fA-F-]{8,64}$")
+
+
+def _validate_duck(domain: str, token: str):
+    """Raise ValueError if a DuckDNS domain/token contains anything beyond
+    the characters DuckDNS itself uses (see TunnelManager.save_config)."""
+    d = (domain or "").strip().lower().replace(".duckdns.org", "")
+    if d and not _DUCK_DOMAIN_RE.match(d):
+        raise ValueError("Nieprawidlowa nazwa domeny DuckDNS "
+                         "(dozwolone: litery, cyfry, myslnik)")
+    if token and not _DUCK_TOKEN_RE.match(token.strip()):
+        raise ValueError("Nieprawidlowy token DuckDNS")
+
+
 class TunnelManager:
     def __init__(self, hub):
         self.hub        = hub
@@ -142,6 +157,15 @@ class TunnelManager:
         return dict(self._cfg)
 
     def save_config(self, cfg: dict):
+        # 2026-11-14: the DuckDNS domain and token end up inside .bat
+        # scripts (_create_duckdns_dns_scripts) that win-acme executes - a
+        # value like "x&calc" would run as a Windows command. Real values
+        # are simple (letters/digits/dash; token = hex UUID), so anything
+        # else is refused before it's stored.
+        if "duckDomain" in cfg:
+            _validate_duck(cfg.get("duckDomain", ""), "")
+        if "duckToken" in cfg and cfg.get("duckToken"):
+            _validate_duck("", cfg.get("duckToken", ""))
         self._cfg.update(cfg)
         save_cfg(self._cfg)
 
@@ -688,6 +712,7 @@ class TunnelManager:
         invocation, so scripts MUST live in a directory WITHOUT spaces.
         We use C:\\HAMCTRL (or %TEMP% as fallback).
         """
+        _validate_duck(domain, token)  # values go into .bat files below
         import tempfile
         hook_dir = None
         for cand in (pathlib.Path(r"C:\HAMCTRL"),

@@ -77,7 +77,7 @@ function ensureSimAnchors(center) {
 }
 
 // ── IC-7300 palette: deep dark navy → blue → cyan → yellow → red → white ────
-const PALETTE = (() => {
+const PALETTE_DEFAULT = (() => {
   const p = new Uint32Array(256);
   for (let i = 0; i < 256; i++) {
     let r = 0, g = 0, b = 0;
@@ -114,6 +114,21 @@ const PALETTE = (() => {
   }
   return p;
 })();
+// Selectable palette (wf_palettes.js) - "default" = the one above.
+let PALETTE = PALETTE_DEFAULT;
+function _applyPalette(name) {
+  const a = window.WfPalettes?.rgba(name);
+  if (!a) { PALETTE = PALETTE_DEFAULT; return; }
+  const p = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    p[i] = (255 << 24) | (a[i * 4 + 2] << 16) | (a[i * 4 + 1] << 8) | a[i * 4]; // ABGR
+  }
+  PALETTE = p;
+}
+if (window.WfPalettes) {
+  _applyPalette(window.WfPalettes.current());
+  window.WfPalettes.onChange(_applyPalette);
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 function init() {
