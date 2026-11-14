@@ -157,6 +157,64 @@ function applyRadioLockUI() {
   updatePTT();
 }
 
+// ── Any-radio panel (2026-11-14) ─────────────────────────────────────────────
+// Icom on CI-V: FIL1/2/3 filter slots, radio scope, autotune. Any other radio
+// (Hamlib): a filter WIDTH in Hz per mode family, no autotune button, and the
+// scope-only waterfall controls hidden (the waterfall then shows the receiver
+// audio - see webapp._audio_scope_loop).
+function _modeFamily(m) {
+  m = String(m || '').toUpperCase();
+  if (m.startsWith('CW')) return 'CW';
+  if (m.startsWith('AM')) return 'AM';
+  if (m.includes('FM')) return 'FM';
+  if (m.startsWith('PKT') || m.endsWith('-D') || m.startsWith('RTTY') || m.includes('DATA')) return 'DATA';
+  return 'SSB';
+}
+
+function refreshFilterSelect() {
+  const ui = S.rigUi;
+  const sel = document.getElementById('bw-select');
+  const lbl = document.getElementById('bw-select-lbl');
+  if (!sel || !ui) return;
+  if (ui.driver !== 'hamlib') {
+    if (sel.dataset.kind !== 'slots') {
+      sel.innerHTML = '<option value="1">FIL1</option><option value="2">FIL2</option><option value="3">FIL3</option>';
+      sel.dataset.kind = 'slots';
+      if (lbl) { lbl.setAttribute('data-i18n', 'radio_filter_lbl'); lbl.textContent = I18n.t('radio_filter_lbl'); }
+    }
+    return;
+  }
+  const widths = (ui.widths || {})[_modeFamily(S.mode)] || [];
+  const cur = parseInt(S.bandwidth) || 0;
+  const list = widths.slice();
+  if (cur && !list.includes(cur)) list.push(cur);
+  list.sort((a, b) => a - b);
+  sel.innerHTML = list.map(w => `<option value="${w}">${w >= 1000 ? (w / 1000).toFixed(w % 1000 ? 1 : 0) + ' kHz' : w + ' Hz'}</option>`).join('');
+  if (cur) sel.value = String(cur);
+  sel.dataset.kind = 'widths';
+  if (lbl) { lbl.setAttribute('data-i18n', 'radio_width_lbl'); lbl.textContent = I18n.t('radio_width_lbl'); }
+}
+
+function onFilterSelect(v) {
+  const n = parseInt(v);
+  if (!n) return;
+  if (S.rigUi?.driver === 'hamlib') {
+    S.bandwidth = n;
+    WS.send({ type: 'mode', mode: S.mode, bandwidth: n });
+  } else {
+    WS.send({ type: 'mode', mode: S.mode, filterNum: n });
+  }
+}
+
+function applyRigUi(ui) {
+  const show = (el, on) => { if (el) el.style.display = on ? '' : 'none'; };
+  show(document.getElementById('rf-btn-autotune'), !!ui.autotune);
+  // Scope-only controls (radio's own spectrum scope). Display options
+  // (peak, spots, speed, palette) stay - they work for the audio waterfall too.
+  ['wf-btn-cent', 'wf-btn-span', 'wf-btn-ref'].forEach(id => show(document.getElementById(id), !!ui.scope));
+  refreshFilterSelect();
+}
+
 // One message for "you can't control the radio right now" (2026-11-14) -
 // it used to say "Radio zajęte przez ?" even when the radio was FREE.
 function radioBlockedToast() {
@@ -1317,6 +1375,7 @@ window.UI = {
   toggleFreqHistory, renderFreqHistory, addFreqHistory,
   setTheme, loadTheme,
   setMode, setPTT, setLevel, playLastTx, radioBlockedToast,
+  refreshFilterSelect, onFilterSelect, applyRigUi,
   vfoSwap, vfoCopy, toggleSplit, toggleTuner, startAutotune,
   saveMemory, deleteMemory, renderMemories,
   textPrompt, _textPromptSubmit, _textPromptCancel,

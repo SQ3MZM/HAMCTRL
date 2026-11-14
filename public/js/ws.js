@@ -780,10 +780,11 @@ function handleMessage(msg) {
     case 'mode':
       S.mode = msg.mode;
       S.bandwidth = msg.bandwidth || S.bandwidth;
-      if (msg.filterNum) {
+      if (msg.filterNum && S.rigUi?.driver !== 'hamlib') {
         const sel = document.getElementById('bw-select');
         if (sel) sel.value = String(msg.filterNum);
       }
+      window.UI?.refreshFilterSelect?.();   // Hamlib radios: widths for the new mode
       window.UI?.updateModeButtons();
       window.UI?.updateVFOBadges?.();  // also update the mode badge
       window.AudioControls?.syncRxGainToMode?.();  // digi MUTE gate — see ws.js
@@ -885,6 +886,11 @@ function handleMessage(msg) {
     case 'radio_request':
     case 'radio_request_received':
       if (typeof window.OpPanel?.handleRequest === 'function') window.OpPanel.handleRequest(msg);
+      break;
+    case 'rig_ui':
+      // What the connected radio really has (any brand) - see webapp._rig_ui_state.
+      S.rigUi = msg;
+      window.UI?.applyRigUi?.(msg);
       break;
     case 'voice_status':
       window.VoiceKeyer?.onStatus?.(msg);

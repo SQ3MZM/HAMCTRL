@@ -18,6 +18,67 @@ from pathlib import Path
 from config import HAMLIB, RIGCTLD_PORT, RIGCTLD_LOG, ENV
 
 
+def find_rigctld() -> str:
+    """Path to rigctld(.exe), or "" if Hamlib isn't installed. Same search
+    order connect() has always used."""
+    if Path(HAMLIB).exists():
+        return str(HAMLIB)
+    import glob as _glob
+    cands = [r"C:\Program Files\hamlib-w64-4.7.1\bin\rigctld.exe",
+             r"C:\hamlib\bin\rigctld.exe"]
+    cands += sorted(_glob.glob(r"C:\Program Files\hamlib-*\bin\rigctld.exe"), reverse=True)
+    cands += sorted(_glob.glob(r"C:\hamlib*\bin\rigctld.exe"), reverse=True)
+    for c in cands:
+        if Path(c).exists():
+            return c
+    try:
+        _which = "where" if sys.platform == "win32" else "which"
+        r = subprocess.run([_which, "rigctld"], capture_output=True, text=True, timeout=2)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().splitlines()[0]
+    except Exception:
+        pass
+    return ""
+
+
+_MODEL_CACHE = None
+
+
+def hamlib_model_list():
+    """Every radio the INSTALLED Hamlib supports, grouped by manufacturer:
+    {"Kenwood": [{"id": "2037", "name": "TS-590SG"}, ...], ...} - from
+    `rigctl -l`, so the model numbers always match the Hamlib version that
+    will actually drive the radio (a hand-written list had wrong numbers,
+    e.g. TS-590SG as 2014, which is the TS-2000 driver). None if Hamlib
+    isn't available - the caller falls back to the built-in short list."""
+    global _MODEL_CACHE
+    if _MODEL_CACHE is not None:
+        return _MODEL_CACHE
+    d = find_rigctld()
+    if not d:
+        return None
+    rigctl = str(Path(d).with_name("rigctl" + Path(d).suffix))
+    try:
+        r = subprocess.run([rigctl, "-l"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    out = {}
+    for line in (r.stdout or "").splitlines()[1:]:
+        m = re.match(r"\s*(\d+)\s+(.+?)\s{2,}(.+?)\s{2,}\S+\s{2,}(\S+)", line)
+        if not m:
+            continue
+        num, mfg, model, status = m.group(1), m.group(2).strip(), m.group(3).strip(), m.group(4)
+        if mfg in ("Hamlib",) and num not in ("1",):
+            continue          # NET rigctl etc. - not radios
+        out.setdefault(mfg, []).append({"id": num, "name": model, "status": status})
+    if not out:
+        return None
+    for v in out.values():
+        v.sort(key=lambda x: x["name"])
+    _MODEL_CACHE = dict(sorted(out.items(), key=lambda kv: kv[0].lower()))
+    return _MODEL_CACHE
+
+
 class RigCAT:
     def __init__(self):
         self.freq      = 14074000
@@ -54,6 +115,18 @@ class RigCAT:
         self.last_msg  = ""
         self.rigctld_path = ""
         self.rigctld_found = False
+        # Live telemetry (2026-11-14) - same mechanism as civ.py: the
+        # freshest message per metric goes into _telemetry_pending and
+        # webapp._telemetry_pump broadcasts it. Before this a Hamlib radio
+        # was read only once at connect - turning the knob on a Kenwood /
+        # Yaesu / Elecraft never showed up in the panel, and there were no
+        # TX meters (so no SWR protection either).
+        self._telemetry_pending = {}
+        self._telemetry_lock = threading.Lock()
+        self._poll_task = None
+        self._unsupported = set()     # Hamlib levels this rig rejected
+        self.swr = 1.0
+        self.swr_n = 0
 
     async def _cmd_once(self, cmd: str, timeout: float) -> str:
         r, w = await asyncio.wait_for(
@@ -655,6 +728,7 @@ class RigCAT:
             self.last_msg  = (f"{rig.get('name','Radio')} model={model} {port} "
                               f"{speed}bd — {self.freq}Hz {self.mode}")
             print(f"[rig] {self.last_msg}")
+            self._start_poll()
             return True
         except Exception as e:
             tail = self._rigctld_log_tail()
@@ -682,6 +756,90 @@ class RigCAT:
                 self._logf = None
             return False
 
+    # ── Live polling (2026-11-14) ─────────────────────────────────────────
+    _POLL_S = 0.3
+
+    def _start_poll(self):
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._unsupported = set()
+        try:
+            self._poll_task = asyncio.get_running_loop().create_task(self._poll_loop())
+        except RuntimeError:
+            self._poll_task = None
+
+    def _pend(self, key: str, msg: dict):
+        with self._telemetry_lock:
+            self._telemetry_pending[key] = msg
+
+    async def _level(self, name: str):
+        """One Hamlib level as float, or None if this rig doesn't support it
+        (remembered, so an unsupported meter isn't asked for again)."""
+        if name in self._unsupported:
+            return None
+        try:
+            r = await self._cmd(f"l {name}", timeout=2.0)
+        except Exception as e:
+            if "RPRT" in str(e):          # rejected by the rig backend
+                self._unsupported.add(name)
+                print(f"[rig] level {name} not supported by this rig - skipped", flush=True)
+            return None
+        if "RPRT -" in r:
+            self._unsupported.add(name)
+            print(f"[rig] level {name} not supported by this rig - skipped", flush=True)
+            return None
+        m = re.findall(r"-?\d+\.?\d*", r)
+        return float(m[0]) if m else None
+
+    async def _poll_loop(self):
+        fails = 0
+        while self.connected and not self.sim:
+            try:
+                f = await self.get_freq()
+                if f and f != self.freq:
+                    self.freq = f
+                    self._pend("freq", {"type": "freq", "freq": f})
+                m, bw = await self.get_mode()
+                if (m, bw) != (self.mode, self.bw):
+                    self.mode, self.bw = m, bw
+                    self._pend("mode", {"type": "mode", "mode": m, "bandwidth": bw,
+                                        "filterNum": self.filter_num})
+                if not self.ptt:
+                    s = await self.get_smeter()
+                    if abs(s - self.s_meter) > 0.2:
+                        self.s_meter = s
+                        self._pend("smeter", {"type": "smeter", "value": round(s, 1)})
+                else:
+                    # TX meters - the same messages civ.py sends, so the
+                    # panel meters and the SWR protection work for any rig
+                    # whose Hamlib backend reports them.
+                    swr = await self._level("SWR")
+                    if swr is not None:
+                        swr = max(1.0, swr)
+                        self.swr = round(swr, 2)
+                        self.swr_n += 1
+                        self._pend("txmeter_SWR", {"type": "txmeter", "meter": "SWR",
+                                                   "raw": self.swr, "value": self.swr,
+                                                   "pct": min(1.0, (swr - 1.0) / 2.0)})
+                    alc = await self._level("ALC")
+                    if alc is not None:
+                        pct = max(0.0, min(100.0, alc * 100.0 if alc <= 1.0 else alc))
+                        self._pend("txmeter_ALC", {"type": "txmeter", "meter": "ALC",
+                                                   "raw": alc, "value": round(pct, 1), "pct": pct / 100})
+                    pwr = await self._level("RFPOWER_METER")
+                    if pwr is not None:
+                        pct = max(0.0, min(100.0, pwr * 100.0 if pwr <= 1.0 else pwr))
+                        self._pend("txmeter_PWR", {"type": "txmeter", "meter": "PWR",
+                                                   "raw": pwr, "value": round(pct, 1), "pct": pct / 100})
+                fails = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                fails += 1
+                if fails in (1, 10) or fails % 100 == 0:
+                    print(f"[rig] poll error ({fails}): {type(e).__name__}: {e}", flush=True)
+            await asyncio.sleep(self._POLL_S)
+
     def _rigctld_log_tail(self, n: int = 1800) -> str:
         try:
             with open(RIGCTLD_LOG, "rb") as f:
@@ -691,6 +849,9 @@ class RigCAT:
             return ""
 
     def close(self):
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+        self._poll_task = None
         if self._proc:
             try:
                 self._proc.terminate()

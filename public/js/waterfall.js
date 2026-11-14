@@ -335,7 +335,9 @@ function attachClickToTune() {
 function handleScopeData(msg) {
   if (msg.type !== 'scope_frame' && msg.type !== 'scope_data') return;
   lastScopeData = msg.data;
-  const newSource = msg.source === 'radio' ? 'radio' : 'sim';
+  // 'audio' = receiver-audio spectrum for radios without their own scope
+  // (webapp._audio_scope_loop).
+  const newSource = msg.source === 'radio' ? 'radio' : msg.source === 'audio' ? 'audio' : 'sim';
   // FOUND 2026-10-17: real scope frames resuming after a power-on correctly
   // updated `source` back to 'radio', but nothing ever re-painted
   // #wf-source-badge for it - onPowerReset() is the only other place that
@@ -902,7 +904,7 @@ function updateSourceBadge() {
     el.style.color = 'var(--red)';
     return;
   }
-  el.textContent = source === 'radio' ? '● IC-7300 SCOPE' :
+  el.textContent = source === 'radio' ? '● SCOPE' :
                    source === 'audio' ? '● AUDIO FFT' : '● SIM';
   el.style.color = source === 'radio' ? 'var(--green)' :
                    source === 'audio' ? 'var(--amber)' : 'rgba(200,200,200,0.35)';

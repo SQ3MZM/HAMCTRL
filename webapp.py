@@ -104,7 +104,7 @@ SERVER_VERSION = "2.0.18"
 # visible without needing to transmit anything first) and at first FT8/FT4
 # TX encode below - the two used to be out of sync (only the TX-time print
 # existed despite the comment above claiming "printed at startup").
-BUILD_MARKER = "BUILD-2026-11-15-V2018"
+BUILD_MARKER = "BUILD-2026-11-15-ANY-RADIO"
 
 # ── Update check ──────────────────────────────────────────────────────────────
 # HAMCTRL checks GitHub Releases for a newer version and shows the admin a
@@ -841,6 +841,7 @@ class App:
         # writes the freshest message per metric into rig._telemetry_pending;
         # this pump drains and broadcasts them at a steady rate instead.
         self._supervise(lambda: self._telemetry_pump(), "telemetry_pump")
+        self._supervise(lambda: self._audio_scope_loop(), "audio_scope")
         # Update check: once at startup, in the background, admin-only notice.
         # Never blocks startup and stays silent on any network error.
         self._supervise(lambda: self._update_check_loop(), "update_check")
@@ -2032,6 +2033,114 @@ class App:
             self._vk_playing = None
             await self.hub.broadcast({"type": "ptt", "ptt": False})
             await self.hub.broadcast({"type": "voice_status", "playing": None})
+
+    # ── Any-radio support (2026-11-14) ─────────────────────────────────
+    # The panel used to assume an Icom on CI-V everywhere (FIL1/2/3 filter
+    # slots, the radio's own scope, autotune). rig_ui tells the browser what
+    # the CONNECTED radio really has, so it can offer filter widths instead
+    # of filter slots, hide what doesn't exist, and show an audio waterfall
+    # when the radio has no scope of its own.
+    _HAMLIB_WIDTHS = {
+        "SSB": [1800, 2100, 2400, 2700, 3000],
+        "CW":  [250, 500, 1000, 2400],
+        "AM":  [3000, 6000, 9000],
+        "FM":  [7000, 10000, 15000],
+        "DATA": [500, 1200, 2400, 3000],
+    }
+
+    def _radio_models(self):
+        """Radio list for the settings: every model the installed Hamlib
+        knows (rigcat.hamlib_model_list), else the built-in short list."""
+        try:
+            from rigcat import hamlib_model_list
+            full = hamlib_model_list()
+        except Exception:
+            full = None
+        return full or HAMLIB_MODELS
+
+    def _rig_has_scope(self) -> bool:
+        return (isinstance(self.rig, CivRig)
+                and bool(self.rig.profile.get("capabilities", {}).get("scope", False)))
+
+    def _rig_ui_state(self) -> dict:
+        civ = isinstance(self.rig, CivRig)
+        return {"type": "rig_ui",
+                "driver": "civ" if civ else "hamlib",
+                "connected": bool(getattr(self.rig, "connected", False)),
+                "sim": bool(getattr(self.rig, "sim", True)),
+                "filterSlots": civ,                 # Icom FIL1/2/3
+                "scope": self._rig_has_scope(),     # radio's own spectrum scope
+                "autotune": civ,                    # CI-V 1C 01 02 tuner cycle
+                "widths": {} if civ else self._HAMLIB_WIDTHS}
+
+    async def _audio_scope_loop(self):
+        """RADIO-tab waterfall for radios WITHOUT their own scope: a
+        spectrum of the receiver audio (100-3000 Hz around the dial), sent
+        as the same scope_frame message the Icom scope uses (source
+        'audio'). Before this a non-scope radio showed the simulation with
+        made-up stations. Runs only while someone has the RADIO tab open.
+        Own level scaling - the waterfall module's smoothing state belongs
+        to the FT8 waterfall."""
+        q = None
+        buf = np.zeros(0, dtype=np.float32)
+        lo_db = hi_db = None
+        F0, F1, NB = 100, 3000, 320
+        while True:
+            try:
+                want = (not self._rig_has_scope()
+                        and getattr(self.audio, "rx_active", False)
+                        and any("scope" in s for s in list(self.hub._subs.values())))
+                if not want:
+                    if q is not None:
+                        self.audio.unsubscribe_rx_pcm(q)
+                        q = None
+                    await asyncio.sleep(1.0)
+                    continue
+                if q is None:
+                    q = self.audio.subscribe_rx_pcm(asyncio.get_running_loop(), maxsize=100)
+                    buf = np.zeros(0, dtype=np.float32)
+                rate = int(getattr(self.audio, "_rx_rate", 48000) or 48000)
+                t_end = time.time() + 0.1
+                while time.time() < t_end:
+                    try:
+                        chunk = await asyncio.wait_for(q.get(), timeout=0.15)
+                    except asyncio.TimeoutError:
+                        break
+                    a = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                    buf = np.concatenate((buf, a))[-8192:]
+                if len(buf) < 2048:
+                    continue
+                win = buf[-4096:] * np.hanning(min(4096, len(buf)))
+                spec = np.abs(np.fft.rfft(win, n=8192))
+                freqs = np.fft.rfftfreq(8192, 1.0 / rate)
+                edges = np.linspace(F0, F1, NB + 1)
+                idx = np.searchsorted(freqs, edges)
+                col = np.array([spec[idx[i]:max(idx[i] + 1, idx[i + 1])].max() for i in range(NB)])
+                db = 20 * np.log10(col + 1e-9)
+                p_lo, p_hi = float(np.percentile(db, 20)), float(np.percentile(db, 99.5))
+                lo_db = p_lo if lo_db is None else lo_db * 0.9 + p_lo * 0.1
+                hi_db = max(p_hi, lo_db + 25) if hi_db is None else hi_db * 0.9 + max(p_hi, lo_db + 25) * 0.1
+                arr = np.clip((db - lo_db) / max(1e-6, hi_db - lo_db), 0, 1) * 160
+                dial = int(getattr(self.rig, "freq", 0) or 0)
+                mode = str(getattr(self.rig, "mode", "USB") or "USB")
+                if mode.upper().startswith("LSB"):
+                    lo, hi, data = dial - F1, dial - F0, arr[::-1]
+                else:
+                    lo, hi, data = dial + F0, dial + F1, arr
+                await self.hub.broadcast({
+                    "type": "scope_frame", "source": "audio",
+                    "data": [int(v) for v in data],
+                    # centerHz = the dial, so the axis reads +1k/+2k from the
+                    # radio's frequency (like WSJT-X) rather than from the
+                    # middle of the picture.
+                    "centerHz": dial, "spanHz": hi - lo,
+                    "loHz": lo, "hiHz": hi, "mode": mode,
+                }, channel="scope")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[audio-scope] error: {e}", flush=True)
+                await asyncio.sleep(1.0)
 
     def _psk_cfg(self):
         """(enabled, receiver call, receiver locator, software) for the PSK
@@ -3700,7 +3809,7 @@ class App:
                          "rigs": self.cfg.get("rigs", []),
                          "rotators": self.cfg.get("rotators", []),
                          "cwMacros": self.cfg.get("cwMacros", DEFAULT_MACROS),
-                         "models": HAMLIB_MODELS,
+                         "models": self._radio_models(),
                          "modes":  ["USB","LSB","AM","FM","CW","RTTY","PKTUSB","PKTLSB"],
                          "enabledBands": self.cfg.get("enabledBands", []),
                          "enabledModes": self.cfg.get("enabledModes", [])}
@@ -3921,6 +4030,12 @@ class App:
                 save_json(CFG_F, self.cfg)
                 print(f"[rig] saved config for rig={rig_id}: {persist}")
 
+            # The panel adapts to the connected radio (filter slots vs widths,
+            # scope, autotune) - see _rig_ui_state.
+            try:
+                await self.hub.broadcast(self._rig_ui_state())
+            except Exception:
+                pass
             # After connecting, broadcast the full radio state so the panel
             # immediately shows the current freq/mode/S-meter (rig_poll only sends deltas).
             try:
@@ -5656,7 +5771,7 @@ class App:
                 "rigDisconnectedSince": getattr(self.rig, "_disconnected_since", None),
                 "rigPowerOn": self._rig_power_on,
                 "ovf": getattr(self.rig, "ovf", False),
-                "models": HAMLIB_MODELS,
+                "models": self._radio_models(),
                 "rigs":   self.cfg.get("rigs", []),
                 "modes":  ["USB","LSB","AM","FM","CW","CW-R","RTTY","RTTY-R","USB-D","LSB-D","PKTUSB","PKTLSB"],
                 "enabledBands": self.cfg.get("enabledBands", []),
@@ -5732,6 +5847,7 @@ class App:
                 "type": "chat_init",
                 "history": self._chat_history,
             }))
+            await ws.send_str(json.dumps(self._rig_ui_state()))
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.BINARY:
                     data = msg.data

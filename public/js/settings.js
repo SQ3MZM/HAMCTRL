@@ -18,6 +18,29 @@ function _esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Any-radio setup hints (2026-11-14): the manufacturer of the chosen model
+// decides the usual port speed, whether the CI-V address field applies
+// (Icom only) and a one-line reminder of what to set in the radio's menu.
+const _BRAND_SPEED = { Icom: '19200', Kenwood: '115200', Yaesu: '38400', Elecraft: '38400' };
+function _brandOf(sel) {
+  const o = sel && sel.selectedOptions && sel.selectedOptions[0];
+  return (o && o.parentElement && o.parentElement.label) || '';
+}
+function onModelChange(id, userChanged) {
+  const sel = document.getElementById(`cfg-model-${id}`);
+  const brand = _brandOf(sel);
+  const hint = document.getElementById(`cfg-hint-${id}`);
+  const key = { Icom: 'cfg_hint_icom', Kenwood: 'cfg_hint_kenwood', Yaesu: 'cfg_hint_yaesu', Elecraft: 'cfg_hint_elecraft' }[brand] || 'cfg_hint_other';
+  if (hint) hint.textContent = I18n.t(key);
+  const civ = document.getElementById(`cfg-civ-box-${id}`);
+  if (civ) civ.style.display = brand === 'Icom' ? '' : 'none';
+  // Only when the user picks another model - never overwrite a saved speed on load.
+  if (userChanged && _BRAND_SPEED[brand]) {
+    const sp = document.getElementById(`cfg-speed-${id}`);
+    if (sp) sp.value = _BRAND_SPEED[brand];
+  }
+}
+
 function buildModelOptions(sel, brands, current) {
   sel.innerHTML = '';
   Object.entries(brands).forEach(([brand, models]) => {
@@ -51,6 +74,7 @@ function renderRigs(brands, rigs) {
   (_rigs.length ? _rigs : [{}]).forEach((rig, idx) => {
     const id = rig.id || (idx + 1);
     container.appendChild(buildRigPanel(id, rig, isAdmin));
+    onModelChange(id, false);   // brand hint + CI-V field for the saved model
   });
 
   // Load audio cards and COM port lists after the DOM has rendered (short delay)
@@ -101,7 +125,8 @@ function buildRigPanel(id, rig, isAdmin) {
         <input type="text" id="cfg-name-${id}" value="${_esc(rig.name||'')}" placeholder="np. IC-7300">
       </div>
       <div class="sg" style="grid-column:1/-1"><label>${I18n.t('cfg_model_hamlib_lbl')}</label>
-        <select id="cfg-model-${id}">${modelOptsFn(rig.model||'3073')}</select>
+        <select id="cfg-model-${id}" onchange="Settings.onModelChange(${id}, true)">${modelOptsFn(rig.model||'3073')}</select>
+        <div id="cfg-hint-${id}" style="font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.5;margin-top:4px;"></div>
       </div>
       <div class="sg"><label>${I18n.t('cfg_port_com_lbl')}</label>
         <div style="display:flex;gap:5px;">
@@ -112,7 +137,7 @@ function buildRigPanel(id, rig, isAdmin) {
       <div class="sg"><label>${I18n.t('cfg_baud_lbl')}</label>
         <select id="cfg-speed-${id}">${speedOpts}</select>
       </div>
-      <div class="sg"><label>${I18n.t('cfg_civ_lbl')}</label>
+      <div class="sg" id="cfg-civ-box-${id}"><label>${I18n.t('cfg_civ_lbl')}</label>
         <input type="text" id="cfg-civ-${id}" value="${rig.civ||rig.civAddr||'0x94'}" placeholder="np. 0x94 / 0x56">
       </div>
       <div class="sg" style="grid-column:1/-1;margin-top:6px;padding-top:8px;border-top:1px solid var(--border);">
@@ -500,7 +525,7 @@ async function _initCwStatus() {
   } catch(e) {}
 }
 
-window.Settings = { populateModels, renderRigs, saveRig, connectRig, loadStatus, toggleAudio, loadAudioCards, addRig, removeRig,
+window.Settings = { onModelChange, populateModels, renderRigs, saveRig, connectRig, loadStatus, toggleAudio, loadAudioCards, addRig, removeRig,
   loadAudioDevices: loadAudioCards,
   loadPortSelects,
   _cwKeyerSave, _initCwStatus,
